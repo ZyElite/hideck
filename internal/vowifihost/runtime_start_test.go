@@ -19,6 +19,9 @@ func (runtimeStartTestModem) IsSimInserted() bool {
 func (runtimeStartTestModem) QuerySIMInserted() (bool, error) { return true, nil }
 func (runtimeStartTestModem) GetRegStatus() (int, string)     { return 1, "registered" }
 func (runtimeStartTestModem) GetNetworkMode() string          { return "LTE" }
+func (runtimeStartTestModem) Capabilities() runtimehost.ModemCapabilities { return runtimehost.ModemCapabilities{} }
+func (runtimeStartTestModem) IMSIdentityProvider() runtimehost.IMSIdentityProvider { return runtimeStartTestModem{} }
+func (runtimeStartTestModem) GetISIMIdentity() (identity.Identity, error) { return identity.Identity{IMPI: "310260123456789@ims.example.com", IMPU: []string{"sip:310260123456789@ims.example.com"}, Domain: "ims.example.com"}, nil }
 func (runtimeStartTestModem) ExecuteATSilent(string, time.Duration) (string, error) {
 	return "", nil
 }

@@ -1070,7 +1070,7 @@ func (s *Server) handleSMSDelivery(c *gin.Context) {
 		if svc == nil {
 			continue
 		}
-		status, err := svc.GetSMSDeliveryStatus(messageID)
+		status, err := svc.GetSMSDeliveryStatus(c.Request.Context(), messageID)
 		if err != nil {
 			continue
 		}

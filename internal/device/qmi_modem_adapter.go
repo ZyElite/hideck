@@ -7,6 +7,7 @@ import (
 
 	"github.com/iniwex5/vohive/internal/backend"
 	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 
@@ -122,4 +123,14 @@ func (a *qmiModemAdapter) GetNetworkMode() string {
 func (a *qmiModemAdapter) Stop() {
 	logger.Info("QMI modem adapter Stop() 被调用（不关闭 Backend，由 Worker 统一管理）",
 		"device", a.deviceID)
+}
+
+// Capabilities reports the modem capabilities (runtimehost.Modem).
+func (a *qmiModemAdapter) Capabilities() runtimehost.ModemCapabilities {
+	return runtimehost.ModemCapabilities{}
+}
+
+// IMSIdentityProvider returns the modem's identity provider.
+func (a *qmiModemAdapter) IMSIdentityProvider() runtimehost.IMSIdentityProvider {
+	return a
 }

@@ -3,6 +3,7 @@ package device
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -202,7 +203,7 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		return startCtx, err
 	}
 
-	runtimehost.SetLogger(logger.ZapLogger())
+	runtimehost.SetLogger(slog.Default())
 	prepared, errPrepare := identity.PrepareStart(identity.PrepareStartInput{
 		DeviceID:            deviceID,
 		Profile:             startProfile,

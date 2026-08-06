@@ -20,6 +20,8 @@ func (m vowifiIdentityTestModem) IsSimInserted() bool             { return true 
 func (m vowifiIdentityTestModem) QuerySIMInserted() (bool, error) { return true, nil }
 func (m vowifiIdentityTestModem) GetRegStatus() (int, string)     { return 1, "已注册" }
 func (m vowifiIdentityTestModem) GetNetworkMode() string          { return "LTE" }
+func (m vowifiIdentityTestModem) Capabilities() runtimehost.ModemCapabilities { return runtimehost.ModemCapabilities{} }
+func (m vowifiIdentityTestModem) IMSIdentityProvider() runtimehost.IMSIdentityProvider { return m }
 func (m vowifiIdentityTestModem) ExecuteATSilent(string, time.Duration) (string, error) {
 	return "", nil
 }

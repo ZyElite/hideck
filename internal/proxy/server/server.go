@@ -122,7 +122,7 @@ func newBoundDialer(id, iface string) *net.Dialer {
 			}
 			var sockErr error
 			if err := c.Control(func(fd uintptr) {
-				sockErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, iface)
+				sockErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, soBindToDevice, iface)
 			}); err != nil {
 				return err
 			}

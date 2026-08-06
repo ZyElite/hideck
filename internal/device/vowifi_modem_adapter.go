@@ -89,3 +89,13 @@ func normalizeVoWiFiAPDUError(err error) error {
 	}
 	return err
 }
+
+// Capabilities reports the modem capabilities (runtimehost.Modem).
+func (a *modemAdapter) Capabilities() runtimehost.ModemCapabilities {
+	return runtimehost.ModemCapabilities{}
+}
+
+// IMSIdentityProvider returns the modem's identity provider.
+func (a *modemAdapter) IMSIdentityProvider() runtimehost.IMSIdentityProvider {
+	return a
+}

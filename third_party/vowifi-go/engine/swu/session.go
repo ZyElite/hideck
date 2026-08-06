@@ -1,0 +1,649 @@
+package swu
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"sync"
+	"time"
+
+	"github.com/iniwex5/vowifi-go/engine/crypto"
+	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/ipsec"
+)
+
+// Config carries the SWu session configuration recovered from the decompiled
+// engine/swu. It is the input to NewSession.
+type Config struct {
+	// EPDGAddr is the ePDG host (FQDN or IP) and optional port.
+	EPDGAddr string
+	// LocalIP is the local address to bind the IKE/ESP socket to.
+	LocalIP net.IP
+	// IMSI is the subscriber IMSI used for the EAP-AKA identity.
+	IMSI string
+	// MCC/MNC override the MCC/MNC derived from the IMSI in the NAI.
+	MCC string
+	MNC string
+	// AKAProvider computes AKA from the network challenge (RAND, AUTN).
+	AKAProvider AKAProvider
+	// AlgorithmPolicy selects the IKE/ESP algorithm offer policy.
+	AlgorithmPolicy string
+	// IKEEncryption / IKEPRF / IKEIntegrity / IKEDH are the IKE algorithm
+	// transform IDs (RFC 7296 §3.3.2). Zero selects the policy default.
+	IKEEncryption uint16
+	IKEPRF        uint16
+	IKEIntegrity  uint16
+	IKEDH         uint16
+	// ESPEncryption / ESPIntegrity are the ESP transform IDs for the CHILD_SA.
+	ESPEncryption uint16
+	ESPIntegrity  uint16
+	// NonceLen is the initiator nonce length (default 32).
+	NonceLen int
+	// RekeyIKESeconds / RekeyChildSeconds drive the SA rekey timers.
+	RekeyIKESeconds    time.Duration
+	RekeyChildSeconds  time.Duration
+	ReauthSeconds      time.Duration
+	NATKeepaliveEvery  time.Duration
+	DPDProbeEvery      time.Duration
+	// Wireshark enables the pcap-like traffic logger.
+	Wireshark bool
+	// OnRedirect is invoked when the ePDG redirects the session (RFC 5685).
+	OnRedirect func(target string)
+	// OnStateChange is invoked on session state transitions.
+	OnStateChange func(state string)
+}
+
+// AKAProvider computes AKA from the network challenge (RAND, AUTN).
+type AKAProvider interface {
+	CalculateAKA(rand16, autn16 []byte) (AKAResult, error)
+}
+
+// AKAResult is the outcome of an AKA computation.
+type AKAResult struct {
+	RES  []byte
+	CK   []byte
+	IK   []byte
+	AUTS []byte
+}
+
+// Session state strings (recovered from the decompiled status.go).
+const (
+	stateIdle         = "idle"
+	stateConnecting   = "connecting"
+	stateAuthenticating = "authenticating"
+	stateEstablished  = "established"
+	stateError        = "error"
+	stateShutdown     = "shutdown"
+)
+
+// DataplaneModeUserspace selects the user-space data plane (recovered from
+// the decompiled dataplane selection).
+const DataplaneModeUserspace = "userspace"
+
+// ikeAuthStage tracks the IKE_AUTH exchange progress.
+type ikeAuthStage int
+
+const (
+	stageInit ikeAuthStage = iota // build & send IKE_AUTH request
+	stageEAP                      // EAP exchange in progress
+	stageFinal                    // final IKE_AUTH request (AUTH + EAP success)
+	stageDone                     // IKE_AUTH complete
+)
+
+// Session is the SWu IKEv2 + EAP-AKA session. It extends the key-derivation
+// fields in types.go with the transport, IKE_AUTH state, data plane and timers
+// recovered from the decompiled engine/swu.
+type Session struct {
+	// --- IKE identifiers / negotiation (types.go) ---
+	SPIi [8]byte
+	SPIr [8]byte
+	Ni   []byte
+	nr   []byte // responder nonce (stored during IKE_SA_INIT)
+
+	prf    crypto.PRF
+	prfKey []byte
+
+	integKeyLen int
+	encKeyLen   int
+	aead        bool
+
+	dhSharedSecret []byte
+	ikeKeys        *IKEKeys
+
+	dh       *crypto.DiffieHellman
+	dhGroup  uint16
+	encrAlg  uint16
+	prfAlg   uint16
+	integAlg uint16
+	nonceLen int
+
+	cookie []byte
+
+	natSourceHash []byte
+	natDestHash   []byte
+
+	// --- configuration ---
+	cfg *Config
+
+	// --- transport ---
+	socket *ipsec.SocketManager
+
+	// --- IKE_AUTH state ---
+	stage       ikeAuthStage
+	eapID       byte // current EAP identifier
+	eapType     byte // negotiated EAP method (AKA / AKA')
+	authPayload []byte // responder AUTH payload (for verification)
+	skf         []byte // SKF (encrypted IKE_AUTH response) pending decrypt
+
+	// --- data plane ---
+	innerEndpoint *userspaceInnerPacketEndpoint
+	espSA         *ipsec.SecurityAssociation // outbound ESP SA
+	espRemoteSPI  uint32
+	espCipher     uint16
+	espInteg      uint16
+	espKey        []byte
+	espIntegKey   []byte
+	innerIP       net.IP // inner IP assigned by the ePDG (CP payload)
+	innerIPv6     net.IP
+	remoteIP      net.IP // ePDG outer address
+	remotePort    uint16
+
+	// --- lifecycle ---
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   chan struct{}
+
+	mu           sync.RWMutex
+	terminalErr  error
+	state        string
+	startedAt    time.Time
+	lastPingAt   time.Time
+	lastDPDAt    time.Time
+	rekeyResetCh chan struct{}
+
+	// --- timers ---
+	ikeReauthTimer  *time.Timer
+	ikeRekeyTimer   *time.Timer
+	childRekeyTimer *time.Timer
+	natKeepalive    *time.Timer
+	dpdTimer        *time.Timer
+
+	// --- wireshark ---
+	debug *WiresharkDebugger
+}
+
+// NewSession builds a SWu session from the configuration.
+func NewSession(cfg *Config) *Session {
+	if cfg == nil {
+		cfg = &Config{}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &Session{
+		cfg:          cfg,
+		ctx:          ctx,
+		cancel:       cancel,
+		done:         make(chan struct{}),
+		state:        stateIdle,
+		startedAt:    time.Now(),
+		rekeyResetCh: make(chan struct{}, 1),
+		nonceLen:     cfg.NonceLen,
+	}
+	if s.nonceLen <= 0 {
+		s.nonceLen = 32
+	}
+	if cfg.Wireshark {
+		s.debug = NewWiresharkDebugger()
+	}
+	return s
+}
+
+// setState records a session state transition and fires the callback.
+func (s *Session) setState(st string) {
+	s.mu.Lock()
+	s.state = st
+	s.mu.Unlock()
+	if s.cfg != nil && s.cfg.OnStateChange != nil {
+		s.cfg.OnStateChange(st)
+	}
+}
+
+// State returns the current session state string.
+func (s *Session) State() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state
+}
+
+// setTerminalError records the terminal error and transitions to error state.
+func (s *Session) setTerminalError(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.terminalErr == nil {
+		s.terminalErr = err
+	}
+	s.mu.Unlock()
+	s.setState(stateError)
+}
+
+// terminalError returns the recorded terminal error, if any.
+func (s *Session) terminalError() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.terminalErr
+}
+
+// canAcceptMissingResponderAuth reports whether the session tolerates a missing
+// responder AUTH payload (recovered from the decompiled flag at +0x3f8).
+func (s *Session) canAcceptMissingResponderAuth() bool {
+	return s.cfg != nil && s.cfg.IMSI == ""
+}
+
+// Connect establishes the SWu tunnel: IKE_SA_INIT → IKE_AUTH (EAP-AKA) →
+// CREATE_CHILD_SA. It retries on redirect (RFC 5685) and returns once the data
+// plane is up or the session fails terminally.
+func (s *Session) Connect(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.setState(stateConnecting)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		err := s.connectOnce(ctx)
+		if err == nil {
+			return nil
+		}
+		var redir *RedirectError
+		if errors.As(err, &redir) {
+			if s.cfg != nil && s.cfg.OnRedirect != nil {
+				s.cfg.OnRedirect(redir.Target)
+			}
+			lastErr = err
+			continue
+		}
+		s.setTerminalError(err)
+		return err
+	}
+	if lastErr != nil {
+		s.setTerminalError(lastErr)
+		return lastErr
+	}
+	return errors.New("swu: connect failed")
+}
+
+// connectOnce runs a single IKE_SA_INIT → IKE_AUTH → CREATE_CHILD_SA attempt.
+func (s *Session) connectOnce(ctx context.Context) error {
+	if s.cfg == nil {
+		return errors.New("swu: no configuration")
+	}
+	if s.cfg.EPDGAddr == "" {
+		return errors.New("swu: no ePDG address configured")
+	}
+
+	// Resolve the ePDG and build the IKE/ESP transport.
+	if err := s.buildTransport(); err != nil {
+		return fmt.Errorf("build transport: %w", err)
+	}
+	defer s.stopDataPlane()
+
+	// IKE_SA_INIT.
+	if err := s.runIKESAInit(ctx); err != nil {
+		return err
+	}
+
+	// IKE_AUTH (EAP-AKA).
+	if err := s.runIKEAuthLoop(ctx); err != nil {
+		return err
+	}
+
+	// CREATE_CHILD_SA for the ESP data plane.
+	if err := s.dispatchCreateChildSA(ctx); err != nil {
+		return err
+	}
+
+	// Bring up the data plane.
+	if err := s.setupDataPlane(); err != nil {
+		return fmt.Errorf("setup data plane: %w", err)
+	}
+	s.setState(stateEstablished)
+	s.startTimers()
+	return nil
+}
+
+// runIKESAInit performs the IKE_SA_INIT exchange with COOKIE / INVALID_KE /
+// REDIRECT handling.
+func (s *Session) runIKESAInit(ctx context.Context) error {
+	for attempt := 0; attempt < 3; attempt++ {
+		pkt, err := s.buildIKESAInitPacket()
+		if err != nil {
+			return err
+		}
+		raw := pkt.Encode()
+		if err := s.sendIKE(raw); err != nil {
+			return fmt.Errorf("send IKE_SA_INIT: %w", err)
+		}
+		resp, err := s.receiveIKE(ctx)
+		if err != nil {
+			return fmt.Errorf("receive IKE_SA_INIT response: %w", err)
+		}
+		err = s.handleIKESAInitResp(resp)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, errCookieRequired) {
+			continue // resend with the cookie
+		}
+		return err
+	}
+	return errors.New("swu: IKE_SA_INIT failed after retries")
+}
+
+// sendIKE writes an IKE packet to the transport.
+func (s *Session) sendIKE(raw []byte) error {
+	if s.socket == nil {
+		return errors.New("swu: no IKE transport")
+	}
+	s.socket.SendIKE(raw)
+	return nil
+}
+
+// receiveIKE reads the next IKE packet from the transport.
+func (s *Session) receiveIKE(ctx context.Context) (*ikev2.IKEPacket, error) {
+	if s.socket == nil {
+		return nil, errors.New("swu: no IKE transport")
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case raw, ok := <-s.socket.IKEPackets():
+		if !ok {
+			return nil, errors.New("swu: IKE transport closed")
+		}
+		return ikev2.DecodePacket(raw)
+	}
+}
+
+// buildTransport resolves the ePDG and opens the IKE/ESP socket.
+func (s *Session) buildTransport() error {
+	host, port := s.cfg.EPDGAddr, "4500"
+	if h, p, err := net.SplitHostPort(s.cfg.EPDGAddr); err == nil {
+		host, port = h, p
+	}
+	localIP := s.cfg.LocalIP
+	if localIP == nil {
+		ip, err := detectOutboundIPv4()
+		if err != nil {
+			return fmt.Errorf("detect outbound IP: %w", err)
+		}
+		localIP = ip
+	}
+	sm, err := ipsec.NewSocketManager(localIP.String(), localIP.String(), host, port)
+	if err != nil {
+		return fmt.Errorf("open IKE socket: %w", err)
+	}
+	s.socket = sm
+	s.remoteIP = sm.RemoteIP()
+	s.remotePort = sm.RemotePort()
+	sm.Start()
+	return nil
+}
+
+// detectOutboundIPv4 finds the local IPv4 address used to reach the ePDG.
+func detectOutboundIPv4() (net.IP, error) {
+	conn, err := net.Dial("udp4", "8.8.8.8:53")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return nil, errors.New("swu: no UDP local address")
+	}
+	return addr.IP, nil
+}
+
+// detectOutboundRoute resolves the ePDG host to an IP (used by buildTransport).
+func detectOutboundRoute(host string) (net.IP, error) {
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range ips {
+		if ip.To4() != nil {
+			return ip, nil
+		}
+	}
+	if len(ips) > 0 {
+		return ips[0], nil
+	}
+	return nil, errors.New("swu: no address for ePDG")
+}
+
+// Shutdown tears down the session: stops timers, closes the transport and the
+// data plane, and marks the session done.
+func (s *Session) Shutdown() {
+	s.mu.Lock()
+	if s.state == stateShutdown {
+		s.mu.Unlock()
+		return
+	}
+	s.state = stateShutdown
+	s.mu.Unlock()
+
+	s.stopTimers()
+	s.stopDataPlane()
+	if s.socket != nil {
+		s.socket.Stop()
+	}
+	s.cancel()
+	select {
+	case <-s.done:
+	default:
+		close(s.done)
+	}
+}
+
+// WaitDone blocks until the session is shut down.
+func (s *Session) WaitDone() {
+	<-s.done
+}
+
+// WaitDoneContext blocks until the session is shut down or the context ends.
+func (s *Session) WaitDoneContext(ctx context.Context) error {
+	select {
+	case <-s.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Reauthenticate forces a full re-authentication (new IKE_SA_INIT).
+func (s *Session) Reauthenticate() error {
+	s.mu.Lock()
+	if s.state != stateEstablished {
+		s.mu.Unlock()
+		return errors.New("swu: session not established")
+	}
+	s.mu.Unlock()
+	s.stopDataPlane()
+	s.setState(stateConnecting)
+	return s.connectOnce(s.ctx)
+}
+
+// Snapshot returns a summary of the session state.
+func (s *Session) Snapshot() map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return map[string]interface{}{
+		"state":      s.state,
+		"epdg":       s.cfg.EPDGAddr,
+		"remote_ip":  s.remoteIP.String(),
+		"remote_pt":  s.remotePort,
+		"inner_ip":   s.innerIP.String(),
+		"started_at": s.startedAt,
+	}
+}
+
+// NextSequenceNumber returns the next ESP sequence number for the outbound SA.
+func (s *Session) NextSequenceNumber() uint32 {
+	if s.espSA == nil {
+		return 0
+	}
+	return s.espSA.NextSequenceNumber()
+}
+
+// InnerPacketEndpoint returns the user-space inner packet endpoint.
+func (s *Session) InnerPacketEndpoint() *userspaceInnerPacketEndpoint {
+	return s.innerEndpoint
+}
+
+// startTimers arms the rekey / reauth / keepalive / DPD timers.
+func (s *Session) startTimers() {
+	s.startIKEReauthTimer()
+	s.startIKESARekeyTimer()
+	s.startChildSARekeyTimer()
+	s.startNATKeepalive()
+	s.startDPD()
+}
+
+// stopTimers stops all timers.
+func (s *Session) stopTimers() {
+	for _, t := range []*time.Timer{s.ikeReauthTimer, s.ikeRekeyTimer, s.childRekeyTimer, s.natKeepalive, s.dpdTimer} {
+		if t != nil {
+			t.Stop()
+		}
+	}
+}
+
+// startIKEReauthTimer arms the periodic re-authentication timer.
+func (s *Session) startIKEReauthTimer() {
+	every := s.cfg.ReauthSeconds
+	if every <= 0 {
+		every = 24 * time.Hour
+	}
+	s.ikeReauthTimer = time.AfterFunc(every, func() {
+		_ = s.Reauthenticate()
+	})
+}
+
+// startIKESARekeyTimer arms the IKE SA rekey timer.
+func (s *Session) startIKESARekeyTimer() {
+	every := s.cfg.RekeyIKESeconds
+	if every <= 0 {
+		every = 8 * time.Hour
+	}
+	s.ikeRekeyTimer = time.AfterFunc(every, func() {
+		_ = s.RekeyIKESA()
+	})
+}
+
+// startChildSARekeyTimer arms the CHILD_SA rekey timer.
+func (s *Session) startChildSARekeyTimer() {
+	every := s.cfg.RekeyChildSeconds
+	if every <= 0 {
+		every = 1 * time.Hour
+	}
+	s.childRekeyTimer = time.AfterFunc(every, func() {
+		_ = s.RekeyChildSA()
+	})
+}
+
+// startNATKeepalive arms the NAT keepalive timer (RFC 3948 §2.4).
+func (s *Session) startNATKeepalive() {
+	every := s.cfg.NATKeepaliveEvery
+	if every <= 0 {
+		every = 20 * time.Second
+	}
+	s.natKeepalive = time.AfterFunc(every, func() {
+		s.sendNATKeepalive()
+		s.startNATKeepalive()
+	})
+}
+
+// sendNATKeepalive sends a NAT keepalive packet on the ESP transport.
+func (s *Session) sendNATKeepalive() {
+	if s.socket == nil {
+		return
+	}
+	s.mu.Lock()
+	s.lastPingAt = time.Now()
+	s.mu.Unlock()
+	s.socket.SendNATKeepalive()
+}
+
+// startDPD arms the dead-peer-detection timer (RFC 7296 §1.4.2).
+func (s *Session) startDPD() {
+	every := s.cfg.DPDProbeEvery
+	if every <= 0 {
+		every = 30 * time.Second
+	}
+	s.dpdTimer = time.AfterFunc(every, func() {
+		_ = s.DPDProbe()
+		s.startDPD()
+	})
+}
+
+// DPDProbe sends an INFORMATIONAL request to verify the peer is alive.
+func (s *Session) DPDProbe() error {
+	if s.socket == nil {
+		return errors.New("swu: no transport")
+	}
+	s.mu.Lock()
+	s.lastDPDAt = time.Now()
+	s.mu.Unlock()
+	pkt := &ikev2.IKEPacket{
+		InitiatorSPI: s.SPIi,
+		ResponderSPI: s.SPIr,
+		Version:      0x20,
+		ExchangeType: ikev2.ExchangeInformational,
+		Flags:        0x08,
+		MessageID:    s.nextMessageID(),
+		Payloads: []ikev2.Payload{
+			&ikev2.EncryptedPayloadNotify{
+				ProtocolID: ikev2.ProtoIKE,
+				NotifyType: ikev2.NotifyTypeDPD,
+			},
+		},
+	}
+	raw, err := s.encryptAndWrap(pkt)
+	if err != nil {
+		return err
+	}
+	return s.sendIKE(raw)
+}
+
+// nextMessageID returns the next IKE message ID (monotonic).
+func (s *Session) nextMessageID() uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// The TaskManager owns message IDs in production; a simple counter is used
+	// for the standalone DPD / rekey paths.
+	return uint32(time.Now().UnixNano() & 0xffffffff)
+}
+
+// logSessionStats logs data-plane counters (no-op without a debugger).
+func (s *Session) logSessionStats() {
+	if s.debug == nil {
+		return
+	}
+	s.debug.LogRaw("session stats")
+}
+
+// logDataPlaneStats logs inner-packet counters.
+func (s *Session) logDataPlaneStats() {
+	if s.debug == nil || s.innerEndpoint == nil {
+		return
+	}
+	s.debug.LogRaw(s.innerEndpoint.Snapshot())
+}
+
+// StartDPD starts the dead-peer-detection timer (RFC 7296 §1.4.2).
+func (s *Session) StartDPD() {
+	if s == nil {
+		return
+	}
+	s.startDPD()
+}

@@ -1093,7 +1093,7 @@ func (m *Manager) boundDialer(timeout time.Duration) *net.Dialer {
 	dialer.Control = func(network, address string, c syscall.RawConn) error {
 		var sockErr error
 		if err := c.Control(func(fd uintptr) {
-			sockErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, m.cfg.Interface)
+			sockErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, soBindToDevice, m.cfg.Interface)
 		}); err != nil {
 			return err
 		}

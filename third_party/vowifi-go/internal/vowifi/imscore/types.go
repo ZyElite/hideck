@@ -1,0 +1,220 @@
+// Package imscore is the IMS core: SIP registration (Digest-AKA), dialog
+// management, and SMS/USSD-over-IMS.
+//
+// Reconstructed from the decompiled internal/vowifi/imscore (RFC 3261, RFC
+// 2617, RFC 3310, 3GPP TS 24.229, TS 24.390).
+package imscore
+
+import (
+	"context"
+	"net"
+	"sync"
+	"time"
+)
+
+// IMS registration states (recovered from the decompiled registration_state.go).
+const (
+	regIdle        = "idle"
+	regRegistering = "registering"
+	regRegistered  = "registered"
+	regReregister  = "reregistering"
+	regFailed      = "failed"
+	regUnregister  = "unregistering"
+)
+
+// IMSConfig is the IMS configuration for a session.
+type IMSConfig struct {
+	// DeviceID identifies the device.
+	DeviceID string
+	// IMSI is the subscriber IMSI.
+	IMSI string
+	// IMPI / IMPU are the IMS identities.
+	IMPI string
+	IMPU []string
+	// Domain is the IMS domain.
+	Domain string
+	// Realm is the digest realm.
+	Realm string
+	// EPDGAddr is the ePDG address.
+	EPDGAddr string
+	// LocalIP is the local SIP address.
+	LocalIP net.IP
+	// Transport is the SIP transport ("udp"/"tcp").
+	Transport string
+	// Registrar is the registrar host:port.
+	Registrar string
+	// Expires is the registration interval.
+	Expires time.Duration
+	// AKAProvider computes AKA (RAND, AUTN) -> (RES, CK, IK).
+	AKAProvider AKAProvider
+	// IMSNetwork is the network surface.
+	IMSNetwork IMSNetwork
+	// DeliveryStore persists SMS delivery state.
+	DeliveryStore DeliveryStore
+	// EventBus receives IMS events.
+	EventBus *imsEventBus
+	// IPSec3GPPEnabled enables the 3GPP IPsec security.
+	IPSec3GPPEnabled bool
+	// TraceID is the session trace ID.
+	TraceID string
+}
+
+// AKAProvider computes AKA from the network challenge.
+type AKAProvider interface {
+	CalculateAKA(rand16, autn16 []byte) (AKAResult, error)
+}
+
+// AKAResult is the outcome of an AKA computation.
+type AKAResult struct {
+	RES  []byte
+	CK   []byte
+	IK   []byte
+	AUTS []byte
+}
+
+// IMSNetwork is the network surface used by the IMS stack.
+type IMSNetwork interface {
+	LocalIP() net.IP
+	HasLocalIP(ip net.IP) bool
+	ResolveIP(ctx context.Context, host string) (net.IP, error)
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+	ListenTCP(addr *net.TCPAddr) (net.Listener, error)
+	ListenPacket(network string, addr *net.UDPAddr) (net.PacketConn, error)
+}
+
+// SystemIMSNetwork is the default IMS network implementation.
+type SystemIMSNetwork struct {
+	localIP net.IP
+}
+
+// NewSystemIMSNetwork creates a network with the given local IP.
+func NewSystemIMSNetwork(localIP net.IP) *SystemIMSNetwork {
+	return &SystemIMSNetwork{localIP: localIP}
+}
+
+// LocalIP returns the local IP.
+func (n *SystemIMSNetwork) LocalIP() net.IP { return n.localIP }
+
+// HasLocalIP reports whether the network has the address.
+func (n *SystemIMSNetwork) HasLocalIP(ip net.IP) bool {
+	return n.localIP != nil && n.localIP.Equal(ip)
+}
+
+// ResolveIP resolves a host to an IP.
+func (n *SystemIMSNetwork) ResolveIP(ctx context.Context, host string) (net.IP, error) {
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) > 0 {
+		return ips[0], nil
+	}
+	return nil, net.ErrClosed
+}
+
+// DialContext dials a TCP connection.
+func (n *SystemIMSNetwork) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, network, addr)
+}
+
+// ListenTCP listens for TCP connections.
+func (n *SystemIMSNetwork) ListenTCP(addr *net.TCPAddr) (net.Listener, error) {
+	return net.ListenTCP("tcp", addr)
+}
+
+// ListenPacket listens for UDP packets.
+func (n *SystemIMSNetwork) ListenPacket(network string, addr *net.UDPAddr) (net.PacketConn, error) {
+	return net.ListenUDP("udp", addr)
+}
+
+// Service is the IMS core service.
+type Service struct {
+	cfg *IMSConfig
+
+	mu       sync.RWMutex
+	state    string
+	regState string
+
+	// Registration state.
+	regSession *registerSession
+	spiPairs   [][2]uint32
+
+	// SIP transport.
+	transport *sipTransport
+
+	// Dialogs.
+	dialogs *dialogRegistry
+
+	// Event bus.
+	bus *imsEventBus
+
+	// USSD.
+	ussd *ussdService
+
+	// Delivery store.
+	delivery DeliveryStore
+
+	// Callbacks.
+	onRegistered func()
+
+	lastPingAt time.Time
+
+	stop chan struct{}
+}
+
+// ServiceStatus is a snapshot of the IMS service state.
+type ServiceStatus struct {
+	Registered bool
+	State      string
+	RegState   string
+	IMPU       []string
+	Domain     string
+	LastError  string
+}
+
+// IsRegistered reports whether the service is registered.
+func (s *ServiceStatus) IsRegistered() bool {
+	return s != nil && s.Registered
+}
+
+// DeliveryStore persists SMS delivery state.
+type DeliveryStore interface {
+	CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, at time.Time) error
+	UpsertSMSDeliveryPart(messageID string, partNo int, callID string, rpMR int, state string, sentAt time.Time) error
+	MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID string, rpMR int, state string, sipCode int, rpCause int, errText string, at time.Time) (DeliveryPartMatch, error)
+	RecomputeSMSDelivery(messageID string, at time.Time) error
+	UpdateSMSDeliveryState(messageID, state, lastError string, acks int, at time.Time) error
+	GetSMSDeliveryStatus(messageID string) (*DeliveryStatus, error)
+}
+
+// DeliveryPartMatch identifies a delivery part.
+type DeliveryPartMatch struct {
+	MessageID string
+	PartNo    int
+	State     string
+	Matched   bool
+}
+
+// DeliveryStatus is the SMS delivery status.
+type DeliveryStatus struct {
+	MessageID  string
+	IMSI       string
+	DeviceID   string
+	Peer       string
+	Content    string
+	PartsTotal int
+	Acks       int
+	State      string
+	LastError  string
+	Parts      []DeliveryPartStatus
+}
+
+// DeliveryPartStatus is one delivery part.
+type DeliveryPartStatus struct {
+	PartNo  int
+	CallID  string
+	State   string
+	SIPCode int
+	RPCause int
+}
