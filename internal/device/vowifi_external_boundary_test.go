@@ -19,8 +19,6 @@ func TestVoWiFiHostImportsExternalRuntimehostOnly(t *testing.T) {
 		"github.com/iniwex5/vowifi-go/runtimehost/eventhost":   true,
 		"github.com/iniwex5/vowifi-go/runtimehost/identity":    true,
 		"github.com/iniwex5/vowifi-go/runtimehost/messaging":   true,
-		"github.com/iniwex5/vowifi-go/runtimehost/simauth":     true,
-		"github.com/iniwex5/vowifi-go/runtimehost/voiceclient": true,
 		"github.com/iniwex5/vowifi-go/runtimehost/voicehost":   true,
 	}
 	var offenders []string
