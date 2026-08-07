@@ -23,6 +23,9 @@ func (s *Session) handleRFCEAP(data []byte) error {
 		if len(s.eapKeys.MSK) == 0 {
 			return errors.New("swu: EAP success without derived MSK")
 		}
+		if s.eapResultIndicated && !s.eapResultConfirmed {
+			return errors.New("swu: EAP success before authenticated result indication")
+		}
 		s.stage = stageFinal
 		return nil
 	case eapaka.CodeFailure:
@@ -41,7 +44,12 @@ func (s *Session) handleRFCEAPRequest(packet eapaka.Packet, raw []byte) error {
 			Code: eapaka.CodeResponse, Identifier: packet.Identifier,
 			Type: eapTypeIdentity, Data: []byte(s.currentEAPIdentity()),
 		}
-		return s.sendEAPPacket(response)
+		encoded, err := response.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		s.recordEAPIdentityExchange(raw, encoded)
+		return s.sendEAPBytes(encoded)
 	case isAKAIdentityRequest(packet):
 		response := eapaka.Packet{
 			Code: eapaka.CodeResponse, Identifier: packet.Identifier,
@@ -52,14 +60,20 @@ func (s *Session) handleRFCEAPRequest(packet eapaka.Packet, raw []byte) error {
 		if err != nil {
 			return err
 		}
-		s.eapIdentityTranscript = append(s.eapIdentityTranscript,
-			append([]byte(nil), raw...), append([]byte(nil), encoded...))
+		s.recordEAPIdentityExchange(raw, encoded)
 		return s.sendEAPBytes(encoded)
 	case isAKAChallenge(packet):
 		return s.handleRFCChallenge(packet)
+	case isAKANotification(packet):
+		return s.handleRFCNotification(packet)
 	default:
 		return fmt.Errorf("swu: unsupported EAP request type=%d subtype=%d", packet.Type, packet.Subtype)
 	}
+}
+
+func (s *Session) recordEAPIdentityExchange(request, response []byte) {
+	s.eapIdentityTranscript = append(s.eapIdentityTranscript,
+		append([]byte(nil), request...), append([]byte(nil), response...))
 }
 
 func isAKAIdentityRequest(packet eapaka.Packet) bool {
@@ -70,6 +84,11 @@ func isAKAIdentityRequest(packet eapaka.Packet) bool {
 func isAKAChallenge(packet eapaka.Packet) bool {
 	return (packet.Type == eapaka.TypeAKA || packet.Type == eapaka.TypeAKAPrime) &&
 		packet.Subtype == eapaka.SubtypeChallenge
+}
+
+func isAKANotification(packet eapaka.Packet) bool {
+	return (packet.Type == eapaka.TypeAKA || packet.Type == eapaka.TypeAKAPrime) &&
+		packet.Subtype == eapaka.SubtypeNotification
 }
 
 func (s *Session) handleRFCChallenge(packet eapaka.Packet) error {
@@ -102,8 +121,54 @@ func (s *Session) handleRFCChallenge(packet eapaka.Packet) error {
 	if err != nil {
 		return err
 	}
+	_, s.eapResultIndicated = eapaka.FindAttribute(packet.Attributes, eapaka.AttributeResultInd)
+	s.eapResultConfirmed = false
 	s.eapKeys = keys
 	return s.sendEAPPacket(response)
+}
+
+func (s *Session) handleRFCNotification(packet eapaka.Packet) error {
+	if len(s.eapKeys.KAut) == 0 {
+		response, handled, err := eapaka.BuildNotificationResponse(packet)
+		if err != nil {
+			return err
+		}
+		if !handled {
+			return errors.New("swu: unsupported EAP-AKA notification")
+		}
+		return s.sendEAPPacket(response)
+	}
+	response, handled, err := eapaka.BuildAuthenticatedNotificationResponse(packet, s.eapKeys.KAut)
+	if err != nil {
+		return err
+	}
+	if !handled {
+		return errors.New("swu: unsupported authenticated EAP-AKA notification")
+	}
+	confirmed, err := s.validateResultNotification(packet)
+	if err != nil {
+		return err
+	}
+	if err := s.sendEAPPacket(response); err != nil {
+		return err
+	}
+	s.eapResultConfirmed = confirmed
+	return nil
+}
+
+func (s *Session) validateResultNotification(packet eapaka.Packet) (bool, error) {
+	attribute, ok := eapaka.FindAttribute(packet.Attributes, eapaka.AttributeNotification)
+	if !ok {
+		return false, errors.New("swu: EAP-AKA notification missing result code")
+	}
+	code, err := attribute.NotificationValue()
+	if err != nil {
+		return false, err
+	}
+	if code == eapaka.NotificationSuccess && !s.eapResultIndicated {
+		return false, errors.New("swu: unsolicited EAP-AKA success notification")
+	}
+	return code == eapaka.NotificationSuccess, nil
 }
 
 func (s *Session) sendEAPPacket(packet eapaka.Packet) error {

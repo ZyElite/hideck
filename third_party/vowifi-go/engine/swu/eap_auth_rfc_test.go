@@ -52,17 +52,26 @@ func TestRFCChallengePassesExactSIMInputsAndStoresMSK(t *testing.T) {
 }
 
 func signedAKAChallenge(t *testing.T, identity string, rand16, autn16 []byte, result enginesim.AKAResult) eapaka.Packet {
+	return signedAKAChallengeWithResultIndication(t, identity, rand16, autn16, result, false)
+}
+
+func signedAKAChallengeWithResultIndication(t *testing.T, identity string, rand16, autn16 []byte, result enginesim.AKAResult, resultIndication bool) eapaka.Packet {
 	t.Helper()
 	keys, err := eapaka.DeriveKeys(identity, result)
 	if err != nil {
 		t.Fatalf("derive keys: %v", err)
 	}
+	attributes := []eapaka.Attribute{
+		eapaka.RANDAttribute(rand16), eapaka.AUTNAttribute(autn16),
+	}
+	if resultIndication {
+		attributes = append(attributes, eapaka.ResultIndAttribute())
+	}
+	attributes = append(attributes, eapaka.MACAttribute(nil))
 	packet := eapaka.Packet{
 		Code: eapaka.CodeRequest, Identifier: 7, Type: eapaka.TypeAKA,
-		Subtype: eapaka.SubtypeChallenge,
-		Attributes: []eapaka.Attribute{
-			eapaka.RANDAttribute(rand16), eapaka.AUTNAttribute(autn16), eapaka.MACAttribute(nil),
-		},
+		Subtype:    eapaka.SubtypeChallenge,
+		Attributes: attributes,
 	}
 	raw, err := packet.MarshalBinary()
 	if err != nil {
@@ -71,6 +80,105 @@ func signedAKAChallenge(t *testing.T, identity string, rand16, autn16 []byte, re
 	mac, err := eapaka.CalculateMAC(keys.KAut, raw, nil)
 	if err != nil {
 		t.Fatalf("sign challenge: %v", err)
+	}
+	packet.Attributes[len(packet.Attributes)-1] = eapaka.MACAttribute(mac)
+	return packet
+}
+
+func TestRFCResultIndicationWaitsForAuthenticatedNotificationAndSuccess(t *testing.T) {
+	result := enginesim.AKAResult{
+		RES: bytes.Repeat([]byte{0x55}, 8),
+		CK:  bytes.Repeat([]byte{0x11}, 16),
+		IK:  bytes.Repeat([]byte{0x22}, 16),
+	}
+	session := NewSession(&Config{IMSI: "234102356143376", AKAProvider: &recordingAKAProvider{result: result}})
+	session.socket = newTestIKETransport()
+	session.ikeKeys = testIKEKeys()
+	session.stage = stageEAP
+	challenge := signedAKAChallengeWithResultIndication(t, session.currentEAPIdentity(),
+		bytes.Repeat([]byte{0x33}, 16), bytes.Repeat([]byte{0x44}, 16), result, true)
+	if err := session.handleRFCChallenge(challenge); err != nil {
+		t.Fatalf("handleRFCChallenge: %v", err)
+	}
+	if !session.eapResultIndicated || session.eapResultConfirmed {
+		t.Fatalf("result state indicated=%t confirmed=%t", session.eapResultIndicated, session.eapResultConfirmed)
+	}
+	if err := session.handleRFCEAP([]byte{eapaka.CodeSuccess, 8, 0, 4}); err == nil {
+		t.Fatal("accepted EAP Success before authenticated result notification")
+	}
+
+	notification := signedSuccessNotification(t, 8, session.eapKeys.KAut)
+	rawNotification, err := notification.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal notification: %v", err)
+	}
+	if err := session.handleRFCEAP(rawNotification); err != nil {
+		t.Fatalf("handle notification: %v", err)
+	}
+	if !session.eapResultConfirmed || session.stage != stageEAP {
+		t.Fatalf("notification state confirmed=%t stage=%d", session.eapResultConfirmed, session.stage)
+	}
+	if err := session.handleRFCEAP([]byte{eapaka.CodeSuccess, 9, 0, 4}); err != nil {
+		t.Fatalf("handle EAP Success: %v", err)
+	}
+	if session.stage != stageFinal {
+		t.Fatalf("stage=%d, want final", session.stage)
+	}
+}
+
+func TestRFCResultIndicationRejectsBadNotificationMAC(t *testing.T) {
+	session := NewSession(&Config{})
+	session.socket = newTestIKETransport()
+	session.ikeKeys = testIKEKeys()
+	session.eapKeys = eapaka.Keys{KAut: bytes.Repeat([]byte{0x6a}, eapaka.KeyLengthKAut)}
+	session.eapResultIndicated = true
+	notification := signedSuccessNotification(t, 8, session.eapKeys.KAut)
+	notification.Attributes[len(notification.Attributes)-1].Data[2] ^= 0xff
+	raw, err := notification.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal notification: %v", err)
+	}
+	if err := session.handleRFCEAP(raw); err == nil {
+		t.Fatal("accepted result notification with invalid AT_MAC")
+	}
+}
+
+func TestGenericEAPIdentityIsIncludedInCheckcodeTranscript(t *testing.T) {
+	session := NewSession(&Config{IMSI: "234102356143376"})
+	session.socket = newTestIKETransport()
+	session.ikeKeys = testIKEKeys()
+	request := []byte{eapaka.CodeRequest, 3, 0, 5, eapTypeIdentity}
+	if err := session.handleRFCEAP(request); err != nil {
+		t.Fatalf("handle identity: %v", err)
+	}
+	if len(session.eapIdentityTranscript) != 2 || !bytes.Equal(session.eapIdentityTranscript[0], request) {
+		t.Fatalf("identity transcript = %x", session.eapIdentityTranscript)
+	}
+	response, err := eapaka.ParsePacket(session.eapIdentityTranscript[1])
+	if err != nil {
+		t.Fatalf("parse identity response: %v", err)
+	}
+	if response.Code != eapaka.CodeResponse || response.Type != eapTypeIdentity || string(response.Data) != session.currentEAPIdentity() {
+		t.Fatalf("identity response = %+v", response)
+	}
+}
+
+func signedSuccessNotification(t *testing.T, identifier byte, kAut []byte) eapaka.Packet {
+	t.Helper()
+	packet := eapaka.Packet{
+		Code: eapaka.CodeRequest, Identifier: identifier, Type: eapaka.TypeAKA,
+		Subtype: eapaka.SubtypeNotification,
+		Attributes: []eapaka.Attribute{
+			eapaka.NotificationAttribute(eapaka.NotificationSuccess), eapaka.MACAttribute(nil),
+		},
+	}
+	raw, err := packet.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal unsigned notification: %v", err)
+	}
+	mac, err := eapaka.CalculateMAC(kAut, raw, nil)
+	if err != nil {
+		t.Fatalf("sign notification: %v", err)
 	}
 	packet.Attributes[len(packet.Attributes)-1] = eapaka.MACAttribute(mac)
 	return packet
