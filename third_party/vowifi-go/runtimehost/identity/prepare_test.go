@@ -2,6 +2,7 @@ package identity
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -56,13 +57,17 @@ func TestPrepareStart(t *testing.T) {
 		t.Errorf("carrier = %+v", prepared.EffectiveCarrier)
 	}
 	// Default ePDG FQDN from the carrier.
-	if !strings.Contains(prepared.EPDGAddr, "epdg.epc.mnc26.mcc310.pub.3gppnetwork.org") {
+	if !strings.Contains(prepared.EPDGAddr, "epdg.epc.mnc026.mcc310.pub.3gppnetwork.org") {
 		t.Errorf("EPDG = %q", prepared.EPDGAddr)
 	}
 }
 
 func TestPrepareStartOverride(t *testing.T) {
-	access := &stubAccess{ident: Identity{IMSI: "310260123456789"}}
+	access := &stubAccess{ident: Identity{
+		IMPI:   "310260123456789@ims.example.com",
+		IMPU:   []string{"sip:310260123456789@ims.example.com"},
+		Domain: "ims.example.com",
+	}}
 	prepared, err := PrepareStart(PrepareStartInput{
 		Profile:             Profile{IMSI: "310260123456789", MCC: "310", MNC: "26"},
 		RuntimeEPDGOverride: "epdg.example.com",
@@ -86,6 +91,39 @@ func TestPrepareStartErrors(t *testing.T) {
 		Access:  access,
 	}); err == nil {
 		t.Error("identity read failure should error")
+	}
+}
+
+func TestPrepareStartUsesUSIMOnlyWhenISIMUnavailable(t *testing.T) {
+	access := &stubAccess{err: fmt.Errorf("card status: %w", ErrISIMUnavailable)}
+	prepared, err := PrepareStart(PrepareStartInput{
+		Profile: Profile{IMSI: "234102356143376", MCC: "234", MNC: "10"},
+		Access:  access,
+	})
+	if err != nil {
+		t.Fatalf("PrepareStart() error = %v", err)
+	}
+	identity := prepared.IMSIdentity
+	if identity.ActualSource != IMSIdentitySourceUSIM || identity.AKAAppPreference != AKAAppPreferenceUSIMStrict {
+		t.Fatalf("identity = %+v, want strict USIM", identity)
+	}
+	wantDomain := "ims.mnc010.mcc234.3gppnetwork.org"
+	if identity.Domain != wantDomain || identity.IMPI != "234102356143376@"+wantDomain {
+		t.Fatalf("identity = %+v, want padded 3GPP domain", identity)
+	}
+	if prepared.EPDGAddr != "epdg.epc.mnc010.mcc234.pub.3gppnetwork.org" {
+		t.Fatalf("EPDGAddr = %q", prepared.EPDGAddr)
+	}
+}
+
+func TestPrepareStartDoesNotHideISIMTransportFailure(t *testing.T) {
+	transportErr := errors.New("QMI transport disconnected")
+	_, err := PrepareStart(PrepareStartInput{
+		Profile: Profile{IMSI: "234102356143376", MCC: "234", MNC: "10"},
+		Access:  &stubAccess{err: transportErr},
+	})
+	if !errors.Is(err, transportErr) {
+		t.Fatalf("PrepareStart() error = %v, want transport error chain", err)
 	}
 }
 

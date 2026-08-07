@@ -991,6 +991,10 @@ func (q *QMIBackend) ResolveSIMAuthAID(ctx context.Context, app string, fallback
 	}
 	aid, err := getAID(source, ctx)
 	if err != nil {
+		if errors.Is(err, qmi.ErrUIMApplicationNotFound) {
+			unavailable := fmt.Errorf("QMI %s application unavailable: %w", strings.ToUpper(strings.TrimSpace(app)), err)
+			return "", "sim_auth_application_unavailable", errors.Join(ErrSIMAuthAIDNotReady, ErrSIMAuthApplicationUnavailable, unavailable)
+		}
 		return "", "sim_auth_aid_not_ready", fmt.Errorf("%w: %v", ErrSIMAuthAIDNotReady, err)
 	}
 	aidHex := strings.ToUpper(hex.EncodeToString(aid))

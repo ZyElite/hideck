@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -72,7 +73,11 @@ func (a *qmiModemAdapter) TransmitAPDU(channel int, hexAPDU string) (string, err
 }
 
 func (a *qmiModemAdapter) GetISIMIdentity() (identity.Identity, error) {
-	return identity.ReadISIMIdentity(a)
+	result, err := identity.ReadISIMIdentityFromLogicalChannel(a)
+	if errors.Is(err, backend.ErrSIMAuthApplicationUnavailable) {
+		return identity.Identity{}, fmt.Errorf("%w: %v", identity.ErrISIMUnavailable, err)
+	}
+	return result, err
 }
 
 // ============================================================================

@@ -947,6 +947,22 @@ func TestQMIBackendResolveSIMAuthAIDReturnsNotReadyOnQMITimeout(t *testing.T) {
 	}
 }
 
+func TestQMIBackendResolveSIMAuthAIDReportsMissingApplication(t *testing.T) {
+	src := &qmiBackendSIMAuthChannelSourceStub{simAuthISIMErr: qmi.ErrUIMApplicationNotFound}
+	backend, err := NewQMIBackend("/dev/null", src)
+	if err != nil {
+		t.Fatalf("NewQMIBackend failed: %v", err)
+	}
+
+	aid, source, err := backend.ResolveSIMAuthAID(context.Background(), "isim", "A0000000871004")
+	if !errors.Is(err, ErrSIMAuthApplicationUnavailable) {
+		t.Fatalf("ResolveSIMAuthAID() error = %v, want unavailable", err)
+	}
+	if aid != "" || source != "sim_auth_application_unavailable" {
+		t.Fatalf("aid=%q source=%q, want explicit unavailable result", aid, source)
+	}
+}
+
 func TestQMIBackendResolveSIMAuthAIDRejectsShortAID(t *testing.T) {
 	src := &qmiBackendSIMAuthChannelSourceStub{
 		simAuthUSIMAID: []byte{0xA0, 0x00, 0x00, 0x00, 0x87, 0x10, 0x02},

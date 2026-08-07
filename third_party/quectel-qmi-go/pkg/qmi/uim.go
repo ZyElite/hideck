@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf16"
@@ -12,6 +13,10 @@ import (
 
 	"github.com/warthog618/sms/encoding/gsm7"
 )
+
+// ErrUIMApplicationNotFound distinguishes an absent SIM application from
+// transport and malformed-card-status failures.
+var ErrUIMApplicationNotFound = errors.New("UIM application not found")
 
 const (
 	// UIM Message IDs / UIM消息ID
@@ -487,7 +492,7 @@ func (u *UIMService) getCardStatusAID(ctx context.Context, appType uint8, prefix
 		}
 		return append([]byte(nil), app.aid...), nil
 	}
-	return nil, fmt.Errorf("UIM %s application not found: app_type=0x%02x", label, appType)
+	return nil, fmt.Errorf("%w: %s app_type=0x%02x", ErrUIMApplicationNotFound, label, appType)
 }
 
 // VerifyPIN verifies the PIN code / VerifyPIN 验证 PIN 码

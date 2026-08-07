@@ -34,13 +34,13 @@ const (
 
 // IMSIdentity is the resolved IMS identity.
 type IMSIdentity struct {
-	RequestedSource IMSIdentitySource
-	ActualSource    IMSIdentitySource
+	RequestedSource  IMSIdentitySource
+	ActualSource     IMSIdentitySource
 	AKAAppPreference AKAAppPreference
-	Applied         bool
-	IMPI            string
-	IMPU            string
-	Domain          string
+	Applied          bool
+	IMPI             string
+	IMPU             string
+	Domain           string
 }
 
 // EffectiveCarrier is the resolved carrier (PLMN) for the session.
@@ -57,14 +57,14 @@ type StartupState struct {
 
 // PreparedSession is the outcome of PrepareStart.
 type PreparedSession struct {
-	Profile          Profile
-	IMSIdentity      IMSIdentity
-	EffectiveCarrier EffectiveCarrier
-	EPDGSource       string
-	EPDGAddr         string
+	Profile            Profile
+	IMSIdentity        IMSIdentity
+	EffectiveCarrier   EffectiveCarrier
+	EPDGSource         string
+	EPDGAddr           string
 	IdentityIMEISource string
-	NetworkMode      string
-	StartupState     StartupState
+	NetworkMode        string
+	StartupState       StartupState
 }
 
 // PrepareStartInput is the input to PrepareStart.
@@ -93,9 +93,9 @@ type IMSIdentityProvider interface {
 
 // Identity is a raw ISIM identity.
 type Identity struct {
-	IMSI string
-	IMPI string
-	IMPU []string
+	IMSI   string
+	IMPI   string
+	IMPU   []string
 	Domain string
 }
 

@@ -1,6 +1,14 @@
 package backend
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrSIMAuthApplicationUnavailable means card status authoritatively reported
+// that the requested SIM application is absent. It is not a readiness or
+// transport failure.
+var ErrSIMAuthApplicationUnavailable = errors.New("sim_auth_application_unavailable")
 
 // SIMAuthProvider SIM 卡鉴权 / APDU 通道接口
 type SIMAuthProvider interface {

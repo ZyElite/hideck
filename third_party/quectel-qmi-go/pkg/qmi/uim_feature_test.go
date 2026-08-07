@@ -191,6 +191,20 @@ func TestUIMServiceGetISIMAIDUsesFullCardStatusAID(t *testing.T) {
 	}
 }
 
+func TestUIMServiceGetISIMAIDReportsApplicationNotFound(t *testing.T) {
+	client := newUIMUnitTestClient()
+	usimAID := []byte{0xA0, 0x00, 0x00, 0x00, 0x87, 0x10, 0x02, 0xFF, 0x49, 0xFF, 0x01, 0x89}
+	stop := serveUIMUnitTestRequests(t, client, func(req *Packet) *Packet {
+		return cardStatusPacketWithUSIMAID(usimAID)
+	})
+	defer stop()
+
+	_, err := (&UIMService{client: client, clientID: 1}).GetISIMAID(context.Background())
+	if !errors.Is(err, ErrUIMApplicationNotFound) {
+		t.Fatalf("GetISIMAID() error = %v, want ErrUIMApplicationNotFound", err)
+	}
+}
+
 func qmiErrorPacket(code uint16) *Packet {
 	value := make([]byte, 4)
 	binary.LittleEndian.PutUint16(value[0:2], 1)

@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -431,6 +432,42 @@ func TestQMIModemAdapterResolvesSIMAuthAIDThroughBackend(t *testing.T) {
 	}
 	if source != "qmi_card_status" {
 		t.Fatalf("source = %s, want qmi_card_status", source)
+	}
+}
+
+func TestQMIModemAdapterGetISIMIdentityDoesNotReenterProvider(t *testing.T) {
+	backendStub := &workerStatusBackendStub{
+		mode:                  backend.BackendQMI,
+		resolvedSIMAuthAID:    "A0000000871004FFFFFFFF8903020000",
+		resolvedSIMAuthSource: "qmi_card_status",
+	}
+	adapter := newQMIModemAdapter("dev-qmi", backendStub)
+
+	_, err := adapter.GetISIMIdentity()
+	if err == nil || !strings.Contains(err.Error(), "APDU response too short") {
+		t.Fatalf("GetISIMIdentity() error = %v, want explicit APDU error", err)
+	}
+	if backendStub.openLogicalChannelCalls != 1 {
+		t.Fatalf("openLogicalChannelCalls = %d, want 1", backendStub.openLogicalChannelCalls)
+	}
+	if backendStub.closeLogicalChannelCalls != 1 {
+		t.Fatalf("closeLogicalChannelCalls = %d, want 1", backendStub.closeLogicalChannelCalls)
+	}
+}
+
+func TestQMIModemAdapterMapsMissingISIMApplication(t *testing.T) {
+	backendStub := &workerStatusBackendStub{
+		mode:                 backend.BackendQMI,
+		resolveSIMAuthAIDErr: backend.ErrSIMAuthApplicationUnavailable,
+	}
+	adapter := newQMIModemAdapter("dev-qmi", backendStub)
+
+	_, err := adapter.GetISIMIdentity()
+	if !errors.Is(err, identity.ErrISIMUnavailable) {
+		t.Fatalf("GetISIMIdentity() error = %v, want ErrISIMUnavailable", err)
+	}
+	if backendStub.openLogicalChannelCalls != 0 {
+		t.Fatalf("openLogicalChannelCalls = %d, want 0", backendStub.openLogicalChannelCalls)
 	}
 }
 
