@@ -61,7 +61,7 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 				t.Fatalf("initial Authorization omitted %s: %q", field, authorization)
 			}
 		}
-		if got := sipHeaderValue(request, "P-Access-Network-Info"); got != `IEEE-802.11; i-wlan-node-id="ba25793d37ec";country=US` {
+		if got := sipHeaderValue(request, "P-Access-Network-Info"); got != `IEEE-802.11; i-wlan-node-id="ba25793d37ec"` {
 			t.Fatalf("REGISTER P-Access-Network-Info = %q", got)
 		}
 	case <-ctx.Done():

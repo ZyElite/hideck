@@ -176,17 +176,12 @@ func (s *Service) GetPAccessNetworkInfo() string {
 	if cfg == nil {
 		return ""
 	}
-	mcc := "000"
-	if len(cfg.IMSI) >= 3 {
-		mcc = cfg.IMSI[:3]
-	}
 	impu := ""
 	if len(cfg.IMPU) > 0 {
 		impu = cfg.IMPU[0]
 	}
 	seed := stablePANIGenerationSeed([]string{cfg.IMPI, impu, cfg.Domain, cfg.DeviceID})
-	pani := GenerateStablePAccessNetworkInfo(seed)
-	return AppendPAccessNetworkCountry(pani, CountryISO2FromMCC(mcc))
+	return GenerateStablePAccessNetworkInfo(seed)
 }
 
 // GetPubGRUU returns the public GRUU.

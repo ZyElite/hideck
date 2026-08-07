@@ -168,7 +168,7 @@ func TestPAccessNetworkInfo(t *testing.T) {
 		IMPI: "310260123456789@ims.example",
 	}
 	svc, _ := New(cfg)
-	want := `IEEE-802.11; i-wlan-node-id="ba25793d37ec";country=US`
+	want := `IEEE-802.11; i-wlan-node-id="ba25793d37ec"`
 	if pani := svc.GetPAccessNetworkInfo(); pani != want {
 		t.Errorf("pani = %q, want %q", pani, want)
 	}
