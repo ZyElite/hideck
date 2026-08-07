@@ -98,10 +98,11 @@ const (
 // recovered from the decompiled engine/swu.
 type Session struct {
 	// --- IKE identifiers / negotiation (types.go) ---
-	SPIi [8]byte
-	SPIr [8]byte
-	Ni   []byte
-	nr   []byte // responder nonce (stored during IKE_SA_INIT)
+	SPIi              [8]byte
+	SPIr              [8]byte
+	localIKEInitiator bool
+	Ni                []byte
+	nr                []byte // responder nonce (stored during IKE_SA_INIT)
 
 	prf    crypto.PRF
 	prfKey []byte
@@ -145,6 +146,10 @@ type Session struct {
 	authPayload            []byte // responder AUTH payload (for verification)
 	skf                    []byte // SKF (encrypted IKE_AUTH response) pending decrypt
 	responderAuthenticated bool
+	eapOnlyAuthentication  bool
+	eapOnlyRequested       bool
+	responderIDType        byte
+	responderID            []byte
 	ikeSAInitRequest       []byte
 	ikeSAInitResponse      []byte
 
@@ -175,6 +180,12 @@ type Session struct {
 	done   chan struct{}
 
 	mu               sync.RWMutex
+	childSAMu        sync.RWMutex
+	ikeExchangeMu    sync.Mutex
+	controlMu        sync.RWMutex
+	controlWG        sync.WaitGroup
+	controlResponses chan *ikev2.IKEPacket
+	controlRunning   bool
 	terminalErr      error
 	initErr          error
 	state            string
@@ -206,15 +217,16 @@ func NewSession(cfg *Config) *Session {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		cfg:            cfg,
-		ctx:            ctx,
-		cancel:         cancel,
-		done:           make(chan struct{}),
-		state:          stateIdle,
-		startedAt:      time.Now(),
-		rekeyResetCh:   make(chan struct{}, 1),
-		nonceLen:       cfg.NonceLen,
-		nextOutboundID: 1,
+		cfg:               cfg,
+		ctx:               ctx,
+		cancel:            cancel,
+		done:              make(chan struct{}),
+		state:             stateIdle,
+		startedAt:         time.Now(),
+		rekeyResetCh:      make(chan struct{}, 1),
+		nonceLen:          cfg.NonceLen,
+		nextOutboundID:    1,
+		localIKEInitiator: true,
 	}
 	if s.nonceLen <= 0 {
 		s.nonceLen = 32
@@ -343,6 +355,9 @@ func (s *Session) connectOnce(ctx context.Context) (err error) {
 	}
 	if err := s.startEstablishedDataPlane(); err != nil {
 		return fmt.Errorf("start data plane: %w", err)
+	}
+	if err := s.ensureIKEDispatcher(); err != nil {
+		return fmt.Errorf("start IKE control plane: %w", err)
 	}
 	s.setState(stateEstablished)
 	s.startTimers()
@@ -484,6 +499,7 @@ func (s *Session) Shutdown() {
 
 	s.stopTimers()
 	s.cancel()
+	s.controlWG.Wait()
 	s.dataPlaneWG.Wait()
 	s.stopDataPlane()
 	s.stopTransport()
@@ -511,15 +527,13 @@ func (s *Session) WaitDoneContext(ctx context.Context) error {
 
 // Reauthenticate forces a full re-authentication (new IKE_SA_INIT).
 func (s *Session) Reauthenticate() error {
-	s.mu.Lock()
-	if s.state != stateEstablished {
-		s.mu.Unlock()
+	s.mu.RLock()
+	established := s.state == stateEstablished
+	s.mu.RUnlock()
+	if !established {
 		return errors.New("swu: session not established")
 	}
-	s.mu.Unlock()
-	s.stopDataPlane()
-	s.setState(stateConnecting)
-	return s.connectOnce(s.ctx)
+	return errors.New("swu: full reauthentication requires a fresh runtime session")
 }
 
 // Snapshot returns a summary of the session state.
@@ -571,6 +585,8 @@ func cloneIPs(in []net.IP) []net.IP {
 
 // NextSequenceNumber returns the next ESP sequence number for the outbound SA.
 func (s *Session) NextSequenceNumber() uint32 {
+	s.childSAMu.RLock()
+	defer s.childSAMu.RUnlock()
 	if s.espOutboundSA == nil {
 		return 0
 	}
@@ -607,7 +623,11 @@ func (s *Session) startIKEReauthTimer() {
 		every = 24 * time.Hour
 	}
 	s.ikeReauthTimer = time.AfterFunc(every, func() {
-		_ = s.Reauthenticate()
+		if err := s.Reauthenticate(); err != nil {
+			s.failEstablishedControl(fmt.Errorf("swu: IKE reauthentication failed: %w", err))
+			return
+		}
+		s.startIKEReauthTimer()
 	})
 }
 
@@ -618,7 +638,11 @@ func (s *Session) startIKESARekeyTimer() {
 		every = 8 * time.Hour
 	}
 	s.ikeRekeyTimer = time.AfterFunc(every, func() {
-		_ = s.RekeyIKESA()
+		if err := s.RekeyIKESA(); err != nil {
+			s.failEstablishedControl(fmt.Errorf("swu: IKE SA rekey failed: %w", err))
+			return
+		}
+		s.startIKESARekeyTimer()
 	})
 }
 
@@ -629,7 +653,11 @@ func (s *Session) startChildSARekeyTimer() {
 		every = 1 * time.Hour
 	}
 	s.childRekeyTimer = time.AfterFunc(every, func() {
-		_ = s.RekeyChildSA()
+		if err := s.RekeyChildSA(); err != nil {
+			s.failEstablishedControl(fmt.Errorf("swu: CHILD_SA rekey failed: %w", err))
+			return
+		}
+		s.startChildSARekeyTimer()
 	})
 }
 
@@ -663,13 +691,18 @@ func (s *Session) startDPD() {
 		every = 30 * time.Second
 	}
 	s.dpdTimer = time.AfterFunc(every, func() {
-		_ = s.DPDProbe()
+		if err := s.DPDProbe(); err != nil {
+			s.failEstablishedControl(fmt.Errorf("swu: DPD failed: %w", err))
+			return
+		}
 		s.startDPD()
 	})
 }
 
 // DPDProbe sends an INFORMATIONAL request to verify the peer is alive.
 func (s *Session) DPDProbe() error {
+	s.ikeExchangeMu.Lock()
+	defer s.ikeExchangeMu.Unlock()
 	if s.socket == nil {
 		return errors.New("swu: no transport")
 	}
@@ -681,20 +714,17 @@ func (s *Session) DPDProbe() error {
 		ResponderSPI: s.SPIr,
 		Version:      0x20,
 		ExchangeType: ikev2.ExchangeInformational,
-		Flags:        0x08,
+		Flags:        s.localIKEFlags(false),
 		MessageID:    s.nextMessageID(),
-		Payloads: []ikev2.Payload{
-			&ikev2.EncryptedPayloadNotify{
-				ProtocolID: ikev2.ProtoIKE,
-				NotifyType: ikev2.NotifyTypeDPD,
-			},
-		},
 	}
-	raw, err := s.encryptAndWrap(pkt)
+	payloads, err := s.exchangeEstablishedIKE(s.ctx, pkt)
 	if err != nil {
 		return err
 	}
-	return s.sendIKE(raw)
+	if len(payloads) != 0 {
+		return fmt.Errorf("swu: DPD response contains unexpected payloads %s", ikePayloadTypes(payloads))
+	}
+	return nil
 }
 
 // nextMessageID returns the next initiator request ID. IKE_SA_INIT uses zero;

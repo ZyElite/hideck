@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
@@ -150,6 +153,13 @@ func (i *Instance) updateTunnelState(sessionState string) {
 		state.SessionState = sessionState
 		state.TunnelReady = sessionState == "established"
 		state.DataPlaneUp = state.TunnelReady
+		if sessionState == "error" || sessionState == "shutdown" {
+			state.IMSState = "failed"
+			state.IMSReady = false
+			state.SMSReady = false
+			state.RegStatus = 0
+			state.RegStatusText = "failed"
+		}
 	})
 }
 
@@ -212,6 +222,23 @@ func (i *Instance) setIMSRefreshFailure(err error) {
 		state.LastError = err.Error()
 		state.LastErrorClass = "ims"
 		state.LastReason = "IMS registration refresh failed"
+		state.IMSReady = false
+		state.SMSReady = false
+		state.RegStatus = 0
+		state.RegStatusText = "failed"
+	})
+}
+
+func (i *Instance) setTunnelControlFailure(err error) {
+	i.updateState(func(state *State) {
+		state.SessionState = "error"
+		state.IMSState = "failed"
+		state.Error = err.Error()
+		state.LastError = err.Error()
+		state.LastErrorClass = "network"
+		state.LastReason = "SWu tunnel control failed"
+		state.TunnelReady = false
+		state.DataPlaneUp = false
 		state.IMSReady = false
 		state.SMSReady = false
 		state.RegStatus = 0
@@ -309,11 +336,22 @@ func (i *Instance) CancelUSSD(ctx context.Context, sessionID string) error {
 
 // TriggerMOBIKE forces a MOBIKE update on the session after an address change.
 func (i *Instance) TriggerMOBIKE(oldIP, newIP string) error {
-	svc := i.Service()
-	if svc == nil {
-		return errNoService
+	oldAddress := net.ParseIP(oldIP)
+	newAddress := net.ParseIP(newIP)
+	if oldAddress == nil || newAddress == nil {
+		return errors.New("runtimehost: MOBIKE requires valid old and new IP addresses")
 	}
-	svc.TriggerRegisterImmediate()
+	i.mu.RLock()
+	tunnel := i.tunnel
+	i.mu.RUnlock()
+	if tunnel == nil {
+		return errors.New("runtimehost: no SWu tunnel installed")
+	}
+	if err := tunnel.UpdateAddresses(oldAddress, newAddress); err != nil {
+		wrapped := fmt.Errorf("runtimehost: MOBIKE address update failed: %w", err)
+		i.setTunnelControlFailure(wrapped)
+		return wrapped
+	}
 	return nil
 }
 

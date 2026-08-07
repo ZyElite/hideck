@@ -163,8 +163,8 @@ func (s *Service) SMSReceiverTransport() interface{} {
 }
 
 // TriggerFastReconnect triggers an immediate re-registration.
-func (s *Service) TriggerFastReconnect() {
-	s.TriggerRegisterImmediate()
+func (s *Service) TriggerFastReconnect() error {
+	return s.TriggerRegisterImmediate()
 }
 
 // UpdateLastPingAt records the last keepalive ping time.

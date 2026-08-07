@@ -26,14 +26,14 @@ type Socks5Transport struct {
 	ikeDropped     uint64
 	espDropped     uint64
 
-	targetStr  string           // ePDG "IP:port", for logs
-	clientAddr *net.UDPAddr     // ePDG endpoint announced in datagrams
-	mu         sync.RWMutex     // guards remotePort
+	targetStr  string       // ePDG "IP:port", for logs
+	clientAddr *net.UDPAddr // ePDG endpoint announced in datagrams
+	mu         sync.RWMutex // guards remotePort
 	remotePort uint16
 
-	tcpConn   net.Conn         // SOCKS5 control connection
-	udpConn   *net.UDPConn     // local UDP socket talking to the relay
-	relayAddr *net.UDPAddr     // relay returned by UDP associate
+	tcpConn   net.Conn     // SOCKS5 control connection
+	udpConn   *net.UDPConn // local UDP socket talking to the relay
+	relayAddr *net.UDPAddr // relay returned by UDP associate
 	localIP   net.IP
 	localPort uint16
 

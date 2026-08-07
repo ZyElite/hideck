@@ -1,6 +1,7 @@
 package swu
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 
@@ -48,7 +49,6 @@ func (s *Session) handleRFCEAPRequest(packet eapaka.Packet, raw []byte) error {
 		if err != nil {
 			return err
 		}
-		s.recordEAPIdentityExchange(raw, encoded)
 		return s.sendEAPBytes(encoded)
 	case isAKAIdentityRequest(packet):
 		response := eapaka.Packet{
@@ -60,7 +60,7 @@ func (s *Session) handleRFCEAPRequest(packet eapaka.Packet, raw []byte) error {
 		if err != nil {
 			return err
 		}
-		s.recordEAPIdentityExchange(raw, encoded)
+		s.recordAKAIdentityExchange(raw, encoded)
 		return s.sendEAPBytes(encoded)
 	case isAKAChallenge(packet):
 		return s.handleRFCChallenge(packet)
@@ -71,7 +71,13 @@ func (s *Session) handleRFCEAPRequest(packet eapaka.Packet, raw []byte) error {
 	}
 }
 
-func (s *Session) recordEAPIdentityExchange(request, response []byte) {
+func (s *Session) recordAKAIdentityExchange(request, response []byte) {
+	for index := 0; index+1 < len(s.eapIdentityTranscript); index += 2 {
+		if bytes.Equal(s.eapIdentityTranscript[index], request) &&
+			bytes.Equal(s.eapIdentityTranscript[index+1], response) {
+			return
+		}
+	}
 	s.eapIdentityTranscript = append(s.eapIdentityTranscript,
 		append([]byte(nil), request...), append([]byte(nil), response...))
 }

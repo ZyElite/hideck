@@ -87,11 +87,11 @@ func EncapsulateWithNextHeaderInto(dst []byte, plaintext []byte, nextHeader byte
 		return nil, err
 	}
 
-	// Payload: plaintext || padding(0..n-1) || padLen || nextHeader.
+	// Payload: plaintext || padding(1..n) || padLen || nextHeader.
 	payloadOff := len(out)
 	out = append(out, plaintext...)
 	for i := 0; i < padding; i++ {
-		out = append(out, byte(i))
+		out = append(out, byte(i+1))
 	}
 	out = append(out, byte(padding))
 	out = append(out, nextHeader)
@@ -205,6 +205,12 @@ func DecapsulateWithNextHeaderInto(dst []byte, packet []byte, sa *SecurityAssoci
 	nextHeader := plaintext[len(plaintext)-1]
 	if padLen+2 > len(plaintext) {
 		return nil, 0, errBadPaddingLength
+	}
+	padding := plaintext[len(plaintext)-padLen-2 : len(plaintext)-2]
+	for index, value := range padding {
+		if value != byte(index+1) {
+			return nil, 0, errInvalidPadding
+		}
 	}
 	if err := sa.acceptInboundSequence(sequence); err != nil {
 		return nil, 0, err

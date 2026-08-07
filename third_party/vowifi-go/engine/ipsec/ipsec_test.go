@@ -3,6 +3,9 @@ package ipsec
 import (
 	"bytes"
 	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha1"
 	"encoding/binary"
 	"errors"
 	"net"
@@ -127,6 +130,66 @@ func TestESPEncapsulateDecapsulateCBC(t *testing.T) {
 	if _, err := Decapsulate(bad, nil, sa); err == nil {
 		t.Error("Decapsulate accepted a frame with a bad ICV")
 	}
+}
+
+func TestESPDecapsulatesIndependentCBCWireTrailer(t *testing.T) {
+	key := bytes.Repeat([]byte{0x11}, 16)
+	integKey := bytes.Repeat([]byte{0x22}, 20)
+	inner := fakeIPPacket(7)
+	frame := independentCBCESPFrame(t, 0x55667788, 1, key, integKey, inner, false)
+	sa := NewSecurityAssociationCBC(
+		0x55667788, crypto.EncrAESCBC, key, crypto.NewIntegrity(2), integKey, 0,
+	)
+	decoded, nextHeader, err := DecapsulateWithNextHeaderInto(nil, frame, sa)
+	if err != nil {
+		t.Fatalf("Decapsulate independent frame: %v", err)
+	}
+	if nextHeader != 4 || !bytes.Equal(decoded, inner) {
+		t.Fatalf("decoded next=%d packet=%x", nextHeader, decoded)
+	}
+}
+
+func TestESPRejectsAuthenticatedInvalidPaddingWithoutAdvancingReplay(t *testing.T) {
+	key := bytes.Repeat([]byte{0x11}, 16)
+	integKey := bytes.Repeat([]byte{0x22}, 20)
+	inner := fakeIPPacket(7)
+	bad := independentCBCESPFrame(t, 0x55667788, 1, key, integKey, inner, true)
+	good := independentCBCESPFrame(t, 0x55667788, 1, key, integKey, inner, false)
+	sa := NewSecurityAssociationCBC(
+		0x55667788, crypto.EncrAESCBC, key, crypto.NewIntegrity(2), integKey, 0,
+	)
+	if _, err := Decapsulate(bad, nil, sa); !errors.Is(err, errInvalidPadding) {
+		t.Fatalf("invalid padding error = %v", err)
+	}
+	if _, err := Decapsulate(good, nil, sa); err != nil {
+		t.Fatalf("valid packet after bad padding: %v", err)
+	}
+}
+
+func independentCBCESPFrame(t *testing.T, spi, sequence uint32, key, integKey, inner []byte, corruptPadding bool) []byte {
+	t.Helper()
+	header := make([]byte, 8)
+	marshalESPHeader(header, spi, sequence)
+	iv := bytes.Repeat([]byte{0x5a}, aes.BlockSize)
+	paddingLength := (aes.BlockSize - (len(inner)+2)%aes.BlockSize) % aes.BlockSize
+	plain := append([]byte(nil), inner...)
+	for value := 1; value <= paddingLength; value++ {
+		plain = append(plain, byte(value))
+	}
+	if corruptPadding && paddingLength > 0 {
+		plain[len(inner)] = 0
+	}
+	plain = append(plain, byte(paddingLength), 4)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("AES: %v", err)
+	}
+	ciphertext := make([]byte, len(plain))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, plain)
+	frame := append(append(append([]byte(nil), header...), iv...), ciphertext...)
+	mac := hmac.New(sha1.New, integKey)
+	_, _ = mac.Write(frame)
+	return append(frame, mac.Sum(nil)[:12]...)
 }
 
 func TestESPReplayWindowAcceptsOutOfOrderAndRejectsDuplicates(t *testing.T) {

@@ -3,6 +3,7 @@ package swu
 import (
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/hmac"
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -10,11 +11,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/swu/eapaka"
 )
 
 const ikev2KeyPad = "Key Pad for IKEv2"
@@ -82,6 +85,121 @@ func (s *Session) verifyResponderCertificateAuth(payloads []ikev2.Payload) error
 	default:
 		return fmt.Errorf("swu: unsupported responder AUTH method %d", auth.AuthMethod)
 	}
+}
+
+func (s *Session) authenticateInitialResponder(payloads []ikev2.Payload) (bool, error) {
+	if err := ikeAuthenticationError(payloads); err != nil {
+		return false, err
+	}
+	idType, idData, hasID := responderIdentity(payloads)
+	if hasPayloadType(payloads, ikev2.PayloadAuth) {
+		if err := s.verifyResponderCertificateAuth(payloads); err != nil {
+			return false, err
+		}
+		s.responderIDType = idType
+		s.responderID = append([]byte(nil), idData...)
+		return false, nil
+	}
+	if !s.eapOnlyRequested {
+		return false, errors.New("swu: responder omitted AUTH without negotiated EAP-only authentication")
+	}
+	if hasPayloadType(payloads, ikev2.PayloadCert) {
+		return false, errors.New("swu: EAP-only response included a certificate without AUTH")
+	}
+	if !hasID || !hasPayloadType(payloads, ikev2.PayloadEAP) {
+		return false, fmt.Errorf(
+			"swu: IKE_AUTH response missing responder authentication material (payloads=%s)",
+			ikePayloadTypes(payloads),
+		)
+	}
+	s.eapOnlyAuthentication = true
+	s.responderIDType = idType
+	s.responderID = append([]byte(nil), idData...)
+	return true, nil
+}
+
+func (s *Session) verifyEAPResponderAuth(payloads []ikev2.Payload) error {
+	if s.eapType != eapaka.TypeAKA && s.eapType != eapaka.TypeAKAPrime {
+		return fmt.Errorf("swu: responder AUTH used unsafe EAP type %d", s.eapType)
+	}
+	if len(s.eapKeys.MSK) == 0 || len(s.responderID) == 0 {
+		return errors.New("swu: incomplete EAP responder authentication state")
+	}
+	auth := responderAuthPayload(payloads)
+	if auth == nil || auth.AuthMethod != ikev2.AuthMethodPSK || len(auth.Data) == 0 {
+		return fmt.Errorf("swu: final EAP IKE_AUTH response missing MSK AUTH (payloads=%s)", ikePayloadTypes(payloads))
+	}
+	signed, err := s.responderSignedOctets(s.responderIDType, s.responderID)
+	if err != nil {
+		return err
+	}
+	sharedKey := s.prf.Compute(s.eapKeys.MSK, []byte(ikev2KeyPad))
+	expected := s.prf.Compute(sharedKey, signed)
+	if !hmac.Equal(auth.Data, expected) {
+		return errors.New("swu: EAP responder MSK AUTH verification failed")
+	}
+	return nil
+}
+
+func responderIdentity(payloads []ikev2.Payload) (byte, []byte, bool) {
+	for _, payload := range payloads {
+		if payload == nil || payload.Type() != ikev2.PayloadIDr {
+			continue
+		}
+		identity, ok := payload.(*ikev2.EncryptedPayloadID)
+		if ok && len(identity.Data) > 0 {
+			return identity.IDType, append([]byte(nil), identity.Data...), true
+		}
+	}
+	return 0, nil, false
+}
+
+func responderAuthPayload(payloads []ikev2.Payload) *ikev2.EncryptedPayloadAuth {
+	for _, payload := range payloads {
+		if payload != nil && payload.Type() == ikev2.PayloadAuth {
+			auth, _ := payload.(*ikev2.EncryptedPayloadAuth)
+			return auth
+		}
+	}
+	return nil
+}
+
+func hasPayloadType(payloads []ikev2.Payload, payloadType byte) bool {
+	for _, payload := range payloads {
+		if payload != nil && payload.Type() == payloadType {
+			return true
+		}
+	}
+	return false
+}
+
+func ikeAuthenticationError(payloads []ikev2.Payload) error {
+	for _, payload := range payloads {
+		if payload == nil || payload.Type() != ikev2.PayloadNotify {
+			continue
+		}
+		raw, ok := payload.(*ikev2.RawPayload)
+		if !ok || len(raw.Data) < 4 {
+			return errors.New("swu: malformed IKE_AUTH Notify payload")
+		}
+		notifyType := binary.BigEndian.Uint16(raw.Data[2:4])
+		if notifyType < 16384 {
+			return fmt.Errorf("swu: IKE_AUTH rejected with %s (%d)", ikev2.NotifyTypeToString(notifyType), notifyType)
+		}
+	}
+	return nil
+}
+
+func ikePayloadTypes(payloads []ikev2.Payload) string {
+	types := make([]string, 0, len(payloads))
+	for _, payload := range payloads {
+		if payload == nil {
+			types = append(types, "nil")
+			continue
+		}
+		types = append(types, fmt.Sprintf("%d", payload.Type()))
+	}
+	return strings.Join(types, ",")
 }
 
 func responderAuthMaterial(payloads []ikev2.Payload) (byte, []byte, *ikev2.EncryptedPayloadAuth, []*x509.Certificate, error) {

@@ -10,6 +10,7 @@ import (
 
 const (
 	ikeResponseFlag        = 0x20
+	ikeInitiatorFlag       = 0x08
 	ikeHeaderLength        = 28
 	ikePayloadHeaderLength = 4
 	aesGCMTagLength        = 16
@@ -20,6 +21,20 @@ func (s *Session) ikeProtectionKeys(fromResponder bool) (encryption, integrity [
 		return s.ikeKeys.SK_er, s.ikeKeys.SK_ar
 	}
 	return s.ikeKeys.SK_ei, s.ikeKeys.SK_ai
+}
+
+func (s *Session) localIKEFlags(response bool) byte {
+	s.mu.RLock()
+	initiator := s.localIKEInitiator
+	s.mu.RUnlock()
+	var flags byte
+	if initiator {
+		flags |= ikeInitiatorFlag
+	}
+	if response {
+		flags |= ikeResponseFlag
+	}
+	return flags
 }
 
 func firstIKEPayloadType(payloads []ikev2.Payload) byte {

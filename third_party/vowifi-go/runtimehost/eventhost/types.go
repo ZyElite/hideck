@@ -20,7 +20,7 @@ type Event interface {
 
 // Generic is a generic runtime event.
 type Generic struct {
-	DevID string
+	DevID    string
 	TypeName string
 }
 

@@ -11,11 +11,11 @@ type SIPOption func(*sipOptions)
 
 // sipOptions carries the SIP stack configuration.
 type sipOptions struct {
-	userAgent    string
-	clientConn   string
-	clientHost   string
-	clientPort   int
-	clientNAT    string
+	userAgent            string
+	clientConn           string
+	clientHost           string
+	clientPort           int
+	clientNAT            string
 	terminateOnConnClose bool
 	unhandledRespHandler interface{}
 	transportLogger      *slog.Logger

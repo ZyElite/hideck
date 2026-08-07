@@ -12,9 +12,9 @@ type InviteHandle = imscoreInviteHandle
 
 // imscoreDialogHandle identifies a SIP dialog.
 type imscoreDialogHandle struct {
-	callID string
+	callID  string
 	fromTag string
-	toTag  string
+	toTag   string
 }
 
 // DialogID returns the dialog ID.
@@ -89,11 +89,11 @@ type inboundRequestResponseMemo struct {
 
 // dialogEntry is one registered dialog.
 type dialogEntry struct {
-	handle  *imscoreDialogHandle
-	localTag string
+	handle    *imscoreDialogHandle
+	localTag  string
 	remoteTag string
-	cseq    int
-	route   []string
+	cseq      int
+	route     []string
 }
 
 // dialogRegistry stores in-progress dialogs.

@@ -68,13 +68,25 @@ func (s *Session) pendingIKERequest() ([]byte, *ikev2.IKEPacket, error) {
 func (s *Session) waitForIKEResponse(ctx context.Context, expected *ikev2.IKEPacket, delay time.Duration) (*ikev2.IKEPacket, bool, error) {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
+	decoded := s.controlResponseSource()
+	var rawPackets <-chan []byte
+	if decoded == nil {
+		rawPackets = s.socket.IKEPackets()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, false, ctx.Err()
 		case <-timer.C:
 			return nil, true, nil
-		case raw, ok := <-s.socket.IKEPackets():
+		case packet, ok := <-decoded:
+			if !ok {
+				return nil, false, errors.New("swu: IKE control loop closed")
+			}
+			if validIKEResponseHeader(packet, expected) {
+				return packet, false, nil
+			}
+		case raw, ok := <-rawPackets:
 			if !ok {
 				return nil, false, errors.New("swu: IKE transport closed")
 			}
@@ -92,6 +104,15 @@ func (s *Session) waitForIKEResponse(ctx context.Context, expected *ikev2.IKEPac
 	}
 }
 
+func (s *Session) controlResponseSource() <-chan *ikev2.IKEPacket {
+	s.controlMu.RLock()
+	defer s.controlMu.RUnlock()
+	if !s.controlRunning {
+		return nil
+	}
+	return s.controlResponses
+}
+
 func validIKEResponseHeader(packet, request *ikev2.IKEPacket) bool {
 	if packet == nil || request == nil {
 		return false
@@ -99,7 +120,8 @@ func validIKEResponseHeader(packet, request *ikev2.IKEPacket) bool {
 	if packet.MessageID != request.MessageID || packet.ExchangeType != request.ExchangeType {
 		return false
 	}
-	if packet.Flags&0x20 == 0 || packet.Flags&0x08 != 0 {
+	if packet.Flags&ikeResponseFlag == 0 ||
+		packet.Flags&ikeInitiatorFlag == request.Flags&ikeInitiatorFlag {
 		return false
 	}
 	if packet.InitiatorSPI != request.InitiatorSPI {

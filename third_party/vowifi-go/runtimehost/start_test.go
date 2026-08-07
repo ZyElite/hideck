@@ -52,6 +52,9 @@ type lifecycleTunnel struct {
 	shutdownOnce  sync.Once
 	onStateChange func(string)
 	packetIO      *lifecyclePacketIO
+	updateErr     error
+	oldIP         net.IP
+	newIP         net.IP
 }
 
 type lifecycleIMS struct {
@@ -149,6 +152,12 @@ func (t *lifecycleTunnel) InnerNetwork() swu.InnerNetworkConfig {
 }
 
 func (t *lifecycleTunnel) InnerPacketIO() swu.InnerPacketIO { return t.packetIO }
+
+func (t *lifecycleTunnel) UpdateAddresses(oldIP, newIP net.IP) error {
+	t.oldIP = append(net.IP(nil), oldIP...)
+	t.newIP = append(net.IP(nil), newIP...)
+	return t.updateErr
+}
 
 func (t *lifecycleTunnel) setState(state string) {
 	t.mu.Lock()

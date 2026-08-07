@@ -104,9 +104,9 @@ func (s *Service) emitSMS(outcome *SMSSendOutcome) {
 		return
 	}
 	s.bus.Publish(&events.EventSMSSent{
-		DevID:    s.cfg.DeviceID,
-		Content:  "sms",
-		Time:     time.Now(),
+		DevID:   s.cfg.DeviceID,
+		Content: "sms",
+		Time:    time.Now(),
 	})
 }
 

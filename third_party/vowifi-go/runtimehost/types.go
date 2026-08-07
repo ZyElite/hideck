@@ -8,6 +8,7 @@ package runtimehost
 import (
 	"context"
 	"errors"
+	"net"
 	"sync"
 	"time"
 
@@ -91,7 +92,7 @@ type Service interface {
 	Status() Status
 	StatusSnapshot() Status
 	Stop()
-	TriggerRegisterImmediate()
+	TriggerRegisterImmediate() error
 }
 
 // SendOptions carries optional SMS delivery parameters.
@@ -149,6 +150,7 @@ type Tunnel interface {
 	WaitDoneContext(context.Context) error
 	InnerNetwork() swu.InnerNetworkConfig
 	InnerPacketIO() swu.InnerPacketIO
+	UpdateAddresses(oldIP, newIP net.IP) error
 }
 
 // IMSLifecycle is the registered IMS service owned by the runtime Instance.

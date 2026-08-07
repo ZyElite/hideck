@@ -148,6 +148,7 @@ var (
 	errIntegrityFailed   = errors.New("integrity check failed")
 	errPayloadTooShort   = errors.New("payload too short")
 	errBadPaddingLength  = errors.New("bad padding length")
+	errInvalidPadding    = errors.New("invalid ESP padding bytes")
 	errInvalidBlockSize  = errors.New("invalid block size")
 	errSequenceExhausted = errors.New("ESP sequence number exhausted")
 	errInvalidSequence   = errors.New("invalid ESP sequence number zero")

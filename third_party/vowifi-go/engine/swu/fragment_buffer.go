@@ -15,9 +15,9 @@ type fragmentBuffer struct {
 
 // fragmentSet holds the fragments received for a single IKE message id.
 type fragmentSet struct {
-	total uint16             // total fragment count declared by the sender
-	frags map[uint16][]byte  // fragment number → payload bytes
-	size  int                // accumulated payload bytes (overflow guard)
+	total uint16            // total fragment count declared by the sender
+	frags map[uint16][]byte // fragment number → payload bytes
+	size  int               // accumulated payload bytes (overflow guard)
 }
 
 // maxFragmentedMessageSize bounds a reassembled IKE message (the decompiled

@@ -293,14 +293,15 @@ func (s *Service) RegistrationErrors() <-chan error {
 	return s.registerErrors
 }
 
-// TriggerRegisterImmediate triggers an immediate re-registration.
-func (s *Service) TriggerRegisterImmediate() {
+// TriggerRegisterImmediate performs an immediate re-registration and exposes
+// the real result to its caller.
+func (s *Service) TriggerRegisterImmediate() error {
 	if s == nil {
-		return
+		return errors.New("imscore: nil service")
 	}
-	go func() {
-		_ = s.Register(context.Background())
-	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return s.Register(ctx)
 }
 
 // Unregister deregisters from the IMS network.

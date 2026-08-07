@@ -132,12 +132,17 @@ func monitorRegistrationFailures(ctx context.Context, inst *Instance, ims IMSLif
 	if !ok || source.RegistrationErrors() == nil {
 		return
 	}
-	select {
-	case <-ctx.Done():
-		return
-	case err := <-source.RegistrationErrors():
-		if err != nil {
-			inst.setIMSRefreshFailure(err)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case err, ok := <-source.RegistrationErrors():
+			if !ok {
+				return
+			}
+			if err != nil {
+				inst.setIMSRefreshFailure(err)
+			}
 		}
 	}
 }

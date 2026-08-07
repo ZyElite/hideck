@@ -156,10 +156,12 @@ func (s *Session) setupDataPlane() error {
 	if err != nil {
 		return err
 	}
+	s.childSAMu.Lock()
 	s.espOutboundSA = outbound
 	s.espInboundSA = inbound
 	s.espKey = append([]byte{}, childKeys.initiator.enc...)
 	s.espIntegKey = append([]byte{}, childKeys.initiator.integ...)
+	s.childSAMu.Unlock()
 
 	// Create the inner packet endpoint.
 	s.innerEndpoint = newUserspaceInnerPacketEndpoint(0, 0)
@@ -196,13 +198,17 @@ type childDirectionKeys struct {
 // deriveChildSAKeys derives the CHILD_SA encryption/integrity keys from SK_d
 // (RFC 7296 §2.17): prf+(SK_d, Ni | Nr).
 func (s *Session) deriveChildSAKeys() (*childSAKeys, error) {
+	return s.deriveChildSAKeysFor(s.childNi, s.childNr)
+}
+
+func (s *Session) deriveChildSAKeysFor(initiatorNonce, responderNonce []byte) (*childSAKeys, error) {
 	if s.prf == nil {
 		return nil, errors.New("swu: no PRF for child SA keys")
 	}
-	if len(s.childNi) == 0 || len(s.childNr) == 0 {
+	if len(initiatorNonce) == 0 || len(responderNonce) == 0 {
 		return nil, errors.New("swu: child SA nonces are incomplete")
 	}
-	seed := append(append([]byte{}, s.childNi...), s.childNr...)
+	seed := append(append([]byte{}, initiatorNonce...), responderNonce...)
 	encLen := s.espEncKeyLen
 	integLen := s.espIntegKeyLen
 	if encLen <= 0 {
@@ -298,6 +304,8 @@ func (s *Session) loopInnerToESP(transport ipsec.Transport, endpoint *userspaceI
 
 // encapsulateInnerPacket wraps an inner IP packet in ESP (RFC 4303).
 func (s *Session) encapsulateInnerPacket(inner []byte) ([]byte, error) {
+	s.childSAMu.RLock()
+	defer s.childSAMu.RUnlock()
 	if s.espOutboundSA == nil {
 		return nil, errors.New("swu: no ESP SA")
 	}
@@ -318,6 +326,8 @@ func (s *Session) encapsulateInnerPacketLease(inner []byte) (*packetLease, error
 
 // decapsulateOuterESP unwraps an ESP packet into the inner IP packet.
 func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, error) {
+	s.childSAMu.RLock()
+	defer s.childSAMu.RUnlock()
 	if s.espInboundSA == nil {
 		return nil, errors.New("swu: no ESP SA")
 	}
@@ -346,8 +356,10 @@ func (s *Session) stopDataPlane() {
 	if s.innerEndpoint != nil {
 		_ = s.innerEndpoint.Close()
 	}
+	s.childSAMu.Lock()
 	s.espOutboundSA = nil
 	s.espInboundSA = nil
+	s.childSAMu.Unlock()
 	s.mu.Lock()
 	s.dataPlaneStarted = false
 	s.mu.Unlock()
@@ -387,5 +399,7 @@ func (s *Session) resolveXFRMOuterTuple() (net.IP, net.IP, uint16, uint16, error
 
 // selectOutgoingSA selects the outbound ESP SA (single-SA model).
 func (s *Session) selectOutgoingSA() *ipsec.SecurityAssociation {
+	s.childSAMu.RLock()
+	defer s.childSAMu.RUnlock()
 	return s.espOutboundSA
 }

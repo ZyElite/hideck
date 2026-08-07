@@ -175,8 +175,8 @@ func reuseSocketOptions(network, address string, c syscall.RawConn) error {
 
 // --- Transport channel accessors ---
 
-func (r *SocketManager) IKEPackets() <-chan []byte     { return r.ikePackets }
-func (r *SocketManager) ESPPackets() <-chan []byte     { return r.espPackets }
+func (r *SocketManager) IKEPackets() <-chan []byte      { return r.ikePackets }
+func (r *SocketManager) ESPPackets() <-chan []byte      { return r.espPackets }
 func (r *SocketManager) NetEventsChan() <-chan NetEvent { return r.netEvents }
 
 // ReceiveIKE blocks until the next IKE packet is delivered by the transport,

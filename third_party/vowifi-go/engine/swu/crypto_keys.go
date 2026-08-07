@@ -23,7 +23,7 @@ func (s *Session) encryptAndWrapWithMsgID(pkt *ikev2.IKEPacket, msgID uint32) ([
 	if s.ikeKeys == nil {
 		return nil, errors.New("swu: no IKE SA keys")
 	}
-	encKey, integKey := s.ikeProtectionKeys(pkt.Flags&ikeResponseFlag != 0)
+	encKey, integKey := s.ikeProtectionKeys(pkt.Flags&ikeInitiatorFlag == 0)
 	cipher, err := crypto.PrepareCipher(s.encrAlg, encKey)
 	if err != nil {
 		return nil, fmt.Errorf("prepare cipher: %w", err)
@@ -66,7 +66,7 @@ func (s *Session) decryptAndParse(pkt *ikev2.IKEPacket) ([]ikev2.Payload, error)
 	if !ok {
 		return nil, errors.New("swu: payload is not Encrypted")
 	}
-	encKey, integKey := s.ikeProtectionKeys(pkt.Flags&ikeResponseFlag != 0)
+	encKey, integKey := s.ikeProtectionKeys(pkt.Flags&ikeInitiatorFlag == 0)
 	cipher, err := crypto.PrepareCipher(s.encrAlg, encKey)
 	if err != nil {
 		return nil, fmt.Errorf("prepare cipher: %w", err)

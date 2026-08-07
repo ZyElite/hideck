@@ -10,68 +10,18 @@ import (
 	"net"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/ipsec"
 )
 
 // RekeyIKESA initiates an IKE SA rekey (RFC 7296 §2.8): a CREATE_CHILD_SA
 // exchange with a new SAi1 proposal and fresh nonces.
 func (s *Session) RekeyIKESA() error {
-	if s.socket == nil || s.ikeKeys == nil {
-		return errors.New("swu: session not established")
-	}
-	ni := make([]byte, s.nonceLen)
-	if _, err := rand.Read(ni); err != nil {
-		return err
-	}
-	proposals := buildIKEProposals(s.encrAlg, s.prfAlg, s.integAlg, s.dhGroup)
-	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi,
-		ResponderSPI: s.SPIr,
-		Version:      0x20,
-		ExchangeType: ikev2.ExchangeCreateChildSA,
-		Flags:        0x08,
-		MessageID:    s.nextMessageID(),
-		Payloads: []ikev2.Payload{
-			&ikev2.EncryptedPayloadSA{Proposals: proposals},
-			&ikev2.EncryptedPayloadNonce{Data: ni},
-		},
-	}
-	raw, err := s.encryptAndWrap(pkt)
-	if err != nil {
-		return err
-	}
-	return s.sendIKE(raw)
+	return s.performIKESARekey(s.ctx)
 }
 
 // RekeyChildSA initiates a CHILD_SA rekey (RFC 7296 §2.8).
 func (s *Session) RekeyChildSA() error {
-	if s.socket == nil || s.ikeKeys == nil {
-		return errors.New("swu: session not established")
-	}
-	ni := make([]byte, s.nonceLen)
-	if _, err := rand.Read(ni); err != nil {
-		return err
-	}
-	espProposals := buildESPProposals(s.espCipher, s.espInteg)
-	tsi, tsr := buildTrafficSelectorsForIPStack(s.innerIP)
-	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi,
-		ResponderSPI: s.SPIr,
-		Version:      0x20,
-		ExchangeType: ikev2.ExchangeCreateChildSA,
-		Flags:        0x08,
-		MessageID:    s.nextMessageID(),
-		Payloads: []ikev2.Payload{
-			&ikev2.EncryptedPayloadSA{Proposals: espProposals},
-			&ikev2.EncryptedPayloadNonce{Data: ni},
-			tsi,
-			tsr,
-		},
-	}
-	raw, err := s.encryptAndWrap(pkt)
-	if err != nil {
-		return err
-	}
-	return s.sendIKE(raw)
+	return s.performChildSARekey(s.ctx)
 }
 
 // HandleRekeyIKESARequest handles an incoming IKE SA rekey request.
@@ -90,13 +40,39 @@ func (s *Session) handleCreateChildSAResp() error {
 }
 
 // handleIncomingCreateChildSAParsed processes an inbound CREATE_CHILD_SA.
-func (s *Session) handleIncomingCreateChildSAParsed() error {
-	return errors.New("swu: inbound CREATE_CHILD_SA handling not wired")
+func (s *Session) handleIncomingCreateChildSAParsed(packet *ikev2.IKEPacket) error {
+	payloads, err := s.decryptAndParse(packet)
+	if err != nil {
+		return err
+	}
+	protocolID, err := createChildSAProtocol(payloads)
+	if err != nil {
+		return err
+	}
+	if protocolID == ikev2.ProtoIKE {
+		return s.handlePeerIKESARekey(packet, payloads)
+	}
+	return s.handlePeerChildSARekeyPayloads(packet, payloads)
+}
+
+func createChildSAProtocol(payloads []ikev2.Payload) (byte, error) {
+	for _, payload := range payloads {
+		sa, ok := payload.(*ikev2.EncryptedPayloadSA)
+		if !ok || len(sa.Proposals) != 1 || sa.Proposals[0] == nil {
+			continue
+		}
+		protocolID := sa.Proposals[0].ProtocolID
+		if protocolID != ikev2.ProtoIKE && protocolID != ikev2.ProtoESP {
+			return 0, fmt.Errorf("swu: unsupported CREATE_CHILD_SA protocol %d", protocolID)
+		}
+		return protocolID, nil
+	}
+	return 0, errors.New("swu: CREATE_CHILD_SA request missing a single SA proposal")
 }
 
 // handleIncomingInformational processes an inbound INFORMATIONAL request.
-func (s *Session) handleIncomingInformational() error {
-	return errors.New("swu: inbound INFORMATIONAL handling not wired")
+func (s *Session) handleIncomingInformational(packet *ikev2.IKEPacket) error {
+	return s.handlePeerInformational(packet)
 }
 
 // dispatchCreateChildSA performs the CREATE_CHILD_SA exchange for the ESP data
@@ -117,7 +93,7 @@ func (s *Session) dispatchCreateChildSA(ctx context.Context) error {
 		ResponderSPI: s.SPIr,
 		Version:      0x20,
 		ExchangeType: ikev2.ExchangeCreateChildSA,
-		Flags:        0x08,
+		Flags:        s.localIKEFlags(false),
 		MessageID:    s.nextMessageID(),
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadSA{Proposals: espProposals},
@@ -186,17 +162,16 @@ func randomChildSPI() (uint32, error) {
 // UpdateAddresses handles a MOBIKE address update (RFC 4555): it records the
 // new local/remote addresses and sends an UPDATE_SA_ADDRESSES notification.
 func (s *Session) UpdateAddresses(oldIP, newIP net.IP) error {
-	if s.socket == nil {
-		return errors.New("swu: no transport")
+	if oldIP == nil || newIP == nil {
+		return errors.New("swu: MOBIKE requires old and new addresses")
 	}
-	s.mu.Lock()
-	s.remoteIP = newIP
-	s.mu.Unlock()
 	return s.sendMOBIKEUpdate()
 }
 
 // sendMOBIKEUpdate sends a MOBIKE UPDATE_SA_ADDRESSES INFORMATIONAL request.
 func (s *Session) sendMOBIKEUpdate() error {
+	s.ikeExchangeMu.Lock()
+	defer s.ikeExchangeMu.Unlock()
 	if s.socket == nil || s.ikeKeys == nil {
 		return errors.New("swu: session not established")
 	}
@@ -205,7 +180,7 @@ func (s *Session) sendMOBIKEUpdate() error {
 		ResponderSPI: s.SPIr,
 		Version:      0x20,
 		ExchangeType: ikev2.ExchangeInformational,
-		Flags:        0x08,
+		Flags:        s.localIKEFlags(false),
 		MessageID:    s.nextMessageID(),
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadNotify{
@@ -214,11 +189,8 @@ func (s *Session) sendMOBIKEUpdate() error {
 			},
 		},
 	}
-	raw, err := s.encryptAndWrap(pkt)
-	if err != nil {
-		return err
-	}
-	return s.sendIKE(raw)
+	_, err := s.exchangeEstablishedIKE(s.ctx, pkt)
+	return err
 }
 
 // updateXFRMState updates the XFRM SA state after a MOBIKE update.
@@ -246,7 +218,7 @@ func (s *Session) sendDeleteChildSA() error {
 		ResponderSPI: s.SPIr,
 		Version:      0x20,
 		ExchangeType: ikev2.ExchangeInformational,
-		Flags:        0x08,
+		Flags:        s.localIKEFlags(false),
 		MessageID:    s.nextMessageID(),
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadDelete{ProtocolID: ikev2.ProtoESP, SPIs: spiBytes(s.espRemoteSPI)},
@@ -269,7 +241,7 @@ func (s *Session) sendDeleteIKE() error {
 		ResponderSPI: s.SPIr,
 		Version:      0x20,
 		ExchangeType: ikev2.ExchangeInformational,
-		Flags:        0x08,
+		Flags:        s.localIKEFlags(false),
 		MessageID:    s.nextMessageID(),
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadDelete{ProtocolID: ikev2.ProtoIKE, SPIs: spiBytes(0)},
@@ -346,25 +318,81 @@ func (s *Session) fragmentMessage(raw []byte) ([][]byte, error) {
 
 // startIKEControlLoop starts the IKE control loop (dispatcher).
 func (s *Session) startIKEControlLoop() error {
-	go s.ikeDispatchLoop()
+	if s.socket == nil {
+		return errors.New("swu: no IKE transport")
+	}
+	s.controlMu.Lock()
+	if s.controlRunning {
+		s.controlMu.Unlock()
+		return nil
+	}
+	transport := s.socket
+	responses := make(chan *ikev2.IKEPacket, 8)
+	requests := make(chan *ikev2.IKEPacket, 8)
+	s.controlResponses = responses
+	s.controlRunning = true
+	s.controlWG.Add(2)
+	s.controlMu.Unlock()
+	go s.ikeDispatchLoop(transport, responses, requests)
+	go s.ikeRequestLoop(requests)
 	return nil
 }
 
 // ikeDispatchLoop dispatches inbound IKE messages.
-func (s *Session) ikeDispatchLoop() {
+
+func (s *Session) ikeDispatchLoop(transport ipsec.Transport, responses chan *ikev2.IKEPacket, requests chan<- *ikev2.IKEPacket) {
+	defer s.controlWG.Done()
+	defer func() {
+		s.controlMu.Lock()
+		if s.controlResponses == responses {
+			s.controlRunning = false
+		}
+		s.controlMu.Unlock()
+	}()
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case raw, ok := <-s.socket.IKEPackets():
+		case raw, ok := <-transport.IKEPackets():
 			if !ok {
 				return
 			}
 			pkt, err := ikev2.DecodePacket(raw)
 			if err != nil {
+				s.failEstablishedControl(fmt.Errorf("swu: decode established IKE packet: %w", err))
+				return
+			}
+			if pkt.Flags&ikeResponseFlag != 0 {
+				select {
+				case responses <- pkt:
+				case <-s.ctx.Done():
+					return
+				}
 				continue
 			}
-			_ = s.handleIncomingIKE(pkt)
+			select {
+			case requests <- pkt:
+			case <-s.ctx.Done():
+				return
+			}
+		}
+	}
+}
+
+func (s *Session) ikeRequestLoop(requests <-chan *ikev2.IKEPacket) {
+	defer s.controlWG.Done()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case packet := <-requests:
+			s.ikeExchangeMu.Lock()
+			err := s.handleIncomingIKE(packet)
+			s.ikeExchangeMu.Unlock()
+			if err != nil {
+				s.failEstablishedControl(err)
+				return
+			}
 		}
 	}
 }
@@ -373,12 +401,21 @@ func (s *Session) ikeDispatchLoop() {
 func (s *Session) handleIncomingIKE(pkt *ikev2.IKEPacket) error {
 	switch pkt.ExchangeType {
 	case ikev2.ExchangeInformational:
-		return s.handleIncomingInformational()
+		return s.handleIncomingInformational(pkt)
 	case ikev2.ExchangeCreateChildSA:
-		return s.handleIncomingCreateChildSAParsed()
+		return s.handleIncomingCreateChildSAParsed(pkt)
 	default:
-		return nil
+		return fmt.Errorf("swu: unsupported established IKE exchange %d", pkt.ExchangeType)
 	}
+}
+
+func (s *Session) failEstablishedControl(err error) {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	s.stopTimers()
+	s.setTerminalError(err)
+	s.cancel()
 }
 
 // ensureIKEDispatcher ensures the IKE dispatcher is running.

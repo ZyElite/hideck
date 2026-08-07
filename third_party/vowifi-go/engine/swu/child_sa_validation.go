@@ -62,7 +62,7 @@ func validateChildSAResponse(payloads []ikev2.Payload, offer childSAOffer) (*chi
 	if err := validateTrafficSelectorNarrowing("TSr", tsr, offer.tsr, ikev2.PayloadTSr); err != nil {
 		return nil, err
 	}
-	if !selectorsContainAnyIP(tsi, offer.localIPs) {
+	if len(offer.localIPs) > 0 && !selectorsContainAnyIP(tsi, offer.localIPs) {
 		return nil, errors.New("swu: selected TSi does not contain an assigned inner address")
 	}
 	if offer.requireNonce && len(nonce) == 0 {

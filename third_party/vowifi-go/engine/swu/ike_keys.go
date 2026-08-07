@@ -79,6 +79,24 @@ func (s *Session) GenerateIKESARekeyKeys(initiatorNonce, responderNonce []byte) 
 		return errors.New("no PRF configured")
 	}
 
+	keys, err := s.deriveIKESARekeyKeys(
+		s.ikeKeys.SK_d, s.dhSharedSecret,
+		initiatorNonce, responderNonce, s.SPIi, s.SPIr,
+	)
+	if err != nil {
+		return err
+	}
+	s.ikeKeys = keys
+	return nil
+}
+
+func (s *Session) deriveIKESARekeyKeys(
+	oldSKd, sharedSecret, initiatorNonce, responderNonce []byte,
+	initiatorSPI, responderSPI [8]byte,
+) (*IKEKeys, error) {
+	if len(oldSKd) == 0 || len(sharedSecret) == 0 {
+		return nil, errors.New("incomplete IKE SA rekey key material")
+	}
 	prfOut := s.prf.OutputSize()
 	ni, nr := initiatorNonce, responderNonce
 	if prfOut == 16 {
@@ -90,21 +108,18 @@ func (s *Session) GenerateIKESARekeyKeys(initiatorNonce, responderNonce []byte) 
 		}
 	}
 
-	// SKEYSEED_rekey = prf(SK_d, Ni | Nr).
-	rekeyData := append(append([]byte{}, ni...), nr...)
-	skeyseed := s.prf.Compute(s.ikeKeys.SK_d, rekeyData)
+	// SKEYSEED_rekey = prf(SK_d(old), g^ir(new) | Ni | Nr).
+	rekeyData := append([]byte{}, sharedSecret...)
+	rekeyData = append(rekeyData, ni...)
+	rekeyData = append(rekeyData, nr...)
+	skeyseed := s.prf.Compute(oldSKd, rekeyData)
 	wipe(rekeyData)
 
 	seed := append(append([]byte{}, initiatorNonce...), responderNonce...)
-	seed = append(seed, s.SPIi[:]...)
-	seed = append(seed, s.SPIr[:]...)
+	seed = append(seed, initiatorSPI[:]...)
+	seed = append(seed, responderSPI[:]...)
 
-	keys, err := s.deriveIKEKeys(skeyseed, seed, prfOut)
-	if err != nil {
-		return err
-	}
-	s.ikeKeys = keys
-	return nil
+	return s.deriveIKEKeys(skeyseed, seed, prfOut)
 }
 
 // deriveIKEKeys runs prf+ and slices the output into the seven IKE SA keys.

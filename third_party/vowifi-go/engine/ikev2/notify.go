@@ -2,8 +2,12 @@ package ikev2
 
 import "fmt"
 
-// NotifyTypeDPD is the IKEv2 Dead Peer Detection notify type (RFC 7296 §3.10.1).
-const NotifyTypeDPD uint16 = 36136
+const (
+	// NotifyTypeEAPOnlyAuthentication requests RFC 5998 EAP-only responder authentication.
+	NotifyTypeEAPOnlyAuthentication uint16 = 16417
+	// NotifyTypeRekeySA identifies the CHILD_SA replaced by CREATE_CHILD_SA.
+	NotifyTypeRekeySA uint16 = 16393
+)
 
 // notifyNames maps IKEv2 notify message types (RFC 7296 §3.10.1 plus common
 // extensions) to their string names. Recovered from the decompiled
@@ -54,7 +58,7 @@ var notifyNames = map[uint16]string{
 	16414: "PSK_CONFIRM",
 	16415: "FAILED_CP_REQUIRED",
 	16416: "SECURE_PASSWORD_METHODS",
-	16417: "INTERNAL_ADDRESS_FAILURE",
+	16417: "EAP_ONLY_AUTHENTICATION",
 	16418: "UNEXPECTED_NAT_DETECTED",
 	16419: "REGISTRATION_FAILED",
 }

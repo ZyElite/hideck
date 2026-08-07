@@ -3,12 +3,14 @@ package runtimehost
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 )
 
 type stubService struct {
-	sentSMS bool
-	ussd    string
+	sentSMS     bool
+	ussd        string
+	registerErr error
 }
 
 func (s *stubService) SendSMSWithOptions(ctx context.Context, to, text string, opts SendOptions) (SendOutcome, error) {
@@ -29,10 +31,10 @@ func (s *stubService) ContinueUSSD(ctx context.Context, sessionID, input string)
 	return &USSDResult{}, nil
 }
 func (s *stubService) CancelUSSD(ctx context.Context, sessionID string) error { return nil }
-func (s *stubService) Status() Status                                        { return Status{} }
-func (s *stubService) StatusSnapshot() Status                                { return Status{} }
+func (s *stubService) Status() Status                                         { return Status{} }
+func (s *stubService) StatusSnapshot() Status                                 { return Status{} }
 func (s *stubService) Stop()                                                  {}
-func (s *stubService) TriggerRegisterImmediate()                              {}
+func (s *stubService) TriggerRegisterImmediate() error                        { return s.registerErr }
 
 func TestInstanceStateAndService(t *testing.T) {
 	i := &Instance{}
@@ -94,6 +96,25 @@ func TestInstanceStop(t *testing.T) {
 	}
 	if err := i.Stop(context.Background()); err != nil {
 		t.Errorf("Stop (idempotent) = %v", err)
+	}
+}
+
+func TestTriggerMOBIKEUsesTunnelAndReportsFailure(t *testing.T) {
+	tunnel := newLifecycleTunnel(nil)
+	instance := &Instance{tunnel: tunnel}
+	if err := instance.TriggerMOBIKE("192.0.2.10", "198.51.100.20"); err != nil {
+		t.Fatalf("TriggerMOBIKE: %v", err)
+	}
+	if !tunnel.oldIP.Equal(net.ParseIP("192.0.2.10")) || !tunnel.newIP.Equal(net.ParseIP("198.51.100.20")) {
+		t.Fatalf("MOBIKE addresses old=%v new=%v", tunnel.oldIP, tunnel.newIP)
+	}
+	tunnel.updateErr = errors.New("update rejected")
+	if err := instance.TriggerMOBIKE("192.0.2.10", "198.51.100.21"); err == nil {
+		t.Fatal("TriggerMOBIKE hid tunnel failure")
+	}
+	state := instance.State()
+	if state.SessionState != "error" || state.IMSReady || state.DataPlaneUp {
+		t.Fatalf("state after MOBIKE failure = %+v", state)
 	}
 }
 

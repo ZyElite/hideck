@@ -14,13 +14,13 @@ import (
 func newKeyDerivationSession(t *testing.T) *Session {
 	t.Helper()
 	s := &Session{
-		SPIi:        [8]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
-		SPIr:        [8]byte{0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18},
-		Ni:          bytes.Repeat([]byte{0xa1}, 16),
-		prf:         crypto.NewPRF(2), // PRF_HMAC_SHA1
-		prfKey:      bytes.Repeat([]byte{0xaa}, 20),
-		integKeyLen: 12, // HMAC-SHA1-96
-		encKeyLen:   16, // AES-128-CBC
+		SPIi:           [8]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
+		SPIr:           [8]byte{0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18},
+		Ni:             bytes.Repeat([]byte{0xa1}, 16),
+		prf:            crypto.NewPRF(2), // PRF_HMAC_SHA1
+		prfKey:         bytes.Repeat([]byte{0xaa}, 20),
+		integKeyLen:    12, // HMAC-SHA1-96
+		encKeyLen:      16, // AES-128-CBC
 		dhSharedSecret: bytes.Repeat([]byte{0xdd}, 128),
 	}
 	return s
@@ -157,8 +157,10 @@ func TestGenerateIKESARekeyKeys(t *testing.T) {
 	if err := s.GenerateIKESARekeyKeys(ni2, nr2); err != nil {
 		t.Fatalf("rekey: %v", err)
 	}
-	// SKEYSEED_rekey = prf(SK_d, Ni|Nr).
-	rekeyData := append(append([]byte{}, ni2...), nr2...)
+	// SKEYSEED_rekey = prf(SK_d, g^ir(new)|Ni|Nr).
+	rekeyData := append([]byte{}, s.dhSharedSecret...)
+	rekeyData = append(rekeyData, ni2...)
+	rekeyData = append(rekeyData, nr2...)
 	want := s.prf.Compute(oldSKdCopy, rekeyData)
 	if !bytes.Equal(s.ikeKeys.SKEYSEED, want) {
 		t.Errorf("rekey SKEYSEED = %x, want %x", s.ikeKeys.SKEYSEED, want)

@@ -256,10 +256,16 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	// TSi / TSr.
 	tsi, tsr := buildTrafficSelectorsForIPStack(s.innerIP)
 
-	// CP (request inner address).
+	// CP (request inner address) and RFC 5998 EAP-only authentication. EAP-AKA
+	// and EAP-AKA' are mutually authenticating, key-generating methods; the
+	// responder's final AUTH is still mandatory and is verified with the MSK.
 	cp := s.buildCPRequestPayload()
+	eapOnly := &ikev2.EncryptedPayloadNotify{
+		NotifyType: ikev2.NotifyTypeEAPOnlyAuthentication,
+	}
+	s.eapOnlyRequested = true
 
-	return []ikev2.Payload{idi, cp, sa2, tsi, tsr}, nil
+	return []ikev2.Payload{idi, sa2, tsi, tsr, eapOnly, cp}, nil
 }
 
 // computeInitiatorAuth computes the EAP-only initiator AUTH from the MSK and
@@ -283,10 +289,13 @@ func (s *Session) executeIKEAuthDecision(resp *ikev2.IKEPacket) (string, error) 
 // returns the next decision.
 func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, error) {
 	if !s.responderAuthenticated {
-		if err := s.verifyResponderAuth(payloads); err != nil {
+		deferred, err := s.authenticateInitialResponder(payloads)
+		if err != nil {
 			return "", err
 		}
-		s.responderAuthenticated = true
+		if !deferred {
+			s.responderAuthenticated = true
+		}
 	}
 	for _, pl := range payloads {
 		switch pl.Type() {
@@ -337,8 +346,14 @@ func (s *Session) handleIKEAuthFinalResp(resp *ikev2.IKEPacket) error {
 		return err
 	}
 	if !s.responderAuthenticated {
-		return errors.New("swu: responder was not authenticated before EAP completion")
+		if !s.eapOnlyAuthentication {
+			return errors.New("swu: responder was not authenticated before EAP completion")
+		}
 	}
+	if err := s.verifyEAPResponderAuth(payloads); err != nil {
+		return err
+	}
+	s.responderAuthenticated = true
 	assigned, err := parseAssignedInnerConfig(payloads)
 	if err != nil {
 		return err

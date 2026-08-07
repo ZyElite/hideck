@@ -11,16 +11,16 @@ import (
 
 // SOCKS5 constants (RFC 1928).
 const (
-	socks5Version        = 5
-	socks5CmdConnect     = 1
+	socks5Version         = 5
+	socks5CmdConnect      = 1
 	socks5CmdUDPAssociate = 3
-	socks5MethodNoAuth   = 0
-	socks5MethodUserPass = 2
-	socks5NoAcceptable   = 0xff
-	socks5ATYPIPv4       = 1
-	socks5ATYPDomain     = 3
-	socks5ATYPIPv6       = 4
-	socks5DefaultPort    = 1080
+	socks5MethodNoAuth    = 0
+	socks5MethodUserPass  = 2
+	socks5NoAcceptable    = 0xff
+	socks5ATYPIPv4        = 1
+	socks5ATYPDomain      = 3
+	socks5ATYPIPv6        = 4
+	socks5DefaultPort     = 1080
 )
 
 // socks5Handshake negotiates the SOCKS5 version and authentication method

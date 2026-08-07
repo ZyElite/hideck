@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"testing"
 
+	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/engine/swu/eapaka"
@@ -143,7 +144,7 @@ func TestRFCResultIndicationRejectsBadNotificationMAC(t *testing.T) {
 	}
 }
 
-func TestGenericEAPIdentityIsIncludedInCheckcodeTranscript(t *testing.T) {
+func TestGenericEAPIdentityIsExcludedFromCheckcodeTranscript(t *testing.T) {
 	session := NewSession(&Config{IMSI: "234102356143376"})
 	session.socket = newTestIKETransport()
 	session.ikeKeys = testIKEKeys()
@@ -151,15 +152,32 @@ func TestGenericEAPIdentityIsIncludedInCheckcodeTranscript(t *testing.T) {
 	if err := session.handleRFCEAP(request); err != nil {
 		t.Fatalf("handle identity: %v", err)
 	}
-	if len(session.eapIdentityTranscript) != 2 || !bytes.Equal(session.eapIdentityTranscript[0], request) {
-		t.Fatalf("identity transcript = %x", session.eapIdentityTranscript)
+	if len(session.eapIdentityTranscript) != 0 {
+		t.Fatalf("generic Identity entered AKA checkcode transcript: %x", session.eapIdentityTranscript)
 	}
-	response, err := eapaka.ParsePacket(session.eapIdentityTranscript[1])
+}
+
+func TestAKAIdentityCheckcodeTranscriptDeduplicatesRetransmission(t *testing.T) {
+	session := NewSession(&Config{IMSI: "234102356143376"})
+	session.socket = newTestIKETransport()
+	session.ikeKeys = testIKEKeys()
+	request := eapaka.Packet{
+		Code: eapaka.CodeRequest, Identifier: 7, Type: eapaka.TypeAKA,
+		Subtype:    eapaka.SubtypeIdentity,
+		Attributes: []eapaka.Attribute{eapaka.IdentityAttribute("any")},
+	}
+	raw, err := request.MarshalBinary()
 	if err != nil {
-		t.Fatalf("parse identity response: %v", err)
+		t.Fatalf("marshal AKA Identity: %v", err)
 	}
-	if response.Code != eapaka.CodeResponse || response.Type != eapTypeIdentity || string(response.Data) != session.currentEAPIdentity() {
-		t.Fatalf("identity response = %+v", response)
+	if err := session.handleRFCEAP(raw); err != nil {
+		t.Fatalf("first AKA Identity: %v", err)
+	}
+	if err := session.handleRFCEAP(raw); err != nil {
+		t.Fatalf("retransmitted AKA Identity: %v", err)
+	}
+	if len(session.eapIdentityTranscript) != 2 || !bytes.Equal(session.eapIdentityTranscript[0], raw) {
+		t.Fatalf("AKA Identity transcript = %x", session.eapIdentityTranscript)
 	}
 }
 
@@ -213,7 +231,10 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
 	}
-	want := []byte{ikev2.PayloadIDi, ikev2.PayloadCP, ikev2.PayloadSA, ikev2.PayloadTSi, ikev2.PayloadTSr}
+	want := []byte{
+		ikev2.PayloadIDi, ikev2.PayloadSA, ikev2.PayloadTSi,
+		ikev2.PayloadTSr, ikev2.PayloadNotify, ikev2.PayloadCP,
+	}
 	if len(payloads) != len(want) {
 		t.Fatalf("payload count = %d, want %d", len(payloads), len(want))
 	}
@@ -221,6 +242,43 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 		if payload.Type() != want[index] {
 			t.Fatalf("payload[%d] = %d, want %d", index, payload.Type(), want[index])
 		}
+	}
+	notify := payloads[4].(*ikev2.EncryptedPayloadNotify)
+	if notify.NotifyType != ikev2.NotifyTypeEAPOnlyAuthentication || notify.ProtocolID != 0 || notify.SPISize != 0 || len(notify.NotifyData) != 0 {
+		t.Fatalf("EAP-only notify = %+v", notify)
+	}
+}
+
+func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
+	session := NewSession(&Config{IMSI: "234102356143376"})
+	session.ikeKeys = testIKEKeys()
+	session.prf = enginecrypto.NewPRF(2)
+	session.ikeSAInitResponse = []byte("ike-sa-init-response")
+	session.Ni = []byte("initiator-nonce")
+	session.eapOnlyRequested = true
+	initial := []ikev2.Payload{
+		&ikev2.EncryptedPayloadID{PayloadType: ikev2.PayloadIDr, IDType: 2, Data: []byte("epdg.example")},
+		&ikev2.EncryptedPayloadEAP{Data: []byte{eapaka.CodeRequest, 1, 0, 5, eapTypeIdentity}},
+	}
+	deferred, err := session.authenticateInitialResponder(initial)
+	if err != nil || !deferred || !session.eapOnlyAuthentication {
+		t.Fatalf("authenticateInitialResponder deferred=%t err=%v", deferred, err)
+	}
+	session.eapType = eapaka.TypeAKA
+	session.eapKeys = eapaka.Keys{MSK: bytes.Repeat([]byte{0x71}, eapaka.KeyLengthMSK)}
+	signed, err := session.responderSignedOctets(session.responderIDType, session.responderID)
+	if err != nil {
+		t.Fatalf("responderSignedOctets: %v", err)
+	}
+	sharedKey := session.prf.Compute(session.eapKeys.MSK, []byte(ikev2KeyPad))
+	auth := session.prf.Compute(sharedKey, signed)
+	final := []ikev2.Payload{&ikev2.EncryptedPayloadAuth{AuthMethod: ikev2.AuthMethodPSK, Data: auth}}
+	if err := session.verifyEAPResponderAuth(final); err != nil {
+		t.Fatalf("verifyEAPResponderAuth: %v", err)
+	}
+	final[0].(*ikev2.EncryptedPayloadAuth).Data[0] ^= 0xff
+	if err := session.verifyEAPResponderAuth(final); err == nil {
+		t.Fatal("accepted invalid final EAP-only AUTH")
 	}
 }
 
