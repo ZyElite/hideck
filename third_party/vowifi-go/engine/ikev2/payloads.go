@@ -129,7 +129,15 @@ func (p *EncryptedPayloadID) Encode(b []byte) []byte {
 	return p.encode(b, body)
 }
 
-// Authentication method types (RFC 7296 §3.3.3).
+// Identification types (RFC 7296 §3.5).
+const (
+	IDTypeIPv4Address byte = 1
+	IDTypeFQDN        byte = 2
+	IDTypeRFC822Addr  byte = 3
+	IDTypeIPv6Address byte = 5
+)
+
+// Authentication method types (RFC 7296 §3.8).
 const (
 	AuthMethodRSA              byte = 1                          // RSA digital signature
 	AuthMethodPSK              byte = 2                          // shared-key message integrity code

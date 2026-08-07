@@ -139,24 +139,22 @@ type Session struct {
 	socket ipsec.Transport
 
 	// --- IKE_AUTH state ---
-	stage                    ikeAuthStage
-	eapID                    byte // current EAP identifier
-	eapType                  byte // negotiated EAP method (AKA / AKA')
-	eapKeys                  eapaka.Keys
-	eapIdentityTranscript    [][]byte
-	eapResultIndicated       bool
-	eapResultConfirmed       bool
-	authPayload              []byte // responder AUTH payload (for verification)
-	skf                      []byte // SKF (encrypted IKE_AUTH response) pending decrypt
-	responderAuthenticated   bool
-	eapOnlyAuthentication    bool
-	eapOnlyRequested         bool
-	requestedResponderIDType byte
-	requestedResponderID     []byte
-	responderIDType          byte
-	responderID              []byte
-	ikeSAInitRequest         []byte
-	ikeSAInitResponse        []byte
+	stage                  ikeAuthStage
+	eapID                  byte // current EAP identifier
+	eapType                byte // negotiated EAP method (AKA / AKA')
+	eapKeys                eapaka.Keys
+	eapIdentityTranscript  [][]byte
+	eapResultIndicated     bool
+	eapResultConfirmed     bool
+	authPayload            []byte // responder AUTH payload (for verification)
+	skf                    []byte // SKF (encrypted IKE_AUTH response) pending decrypt
+	responderAuthenticated bool
+	eapOnlyAuthentication  bool
+	eapOnlyRequested       bool
+	responderIDType        byte
+	responderID            []byte
+	ikeSAInitRequest       []byte
+	ikeSAInitResponse      []byte
 
 	// --- data plane ---
 	innerEndpoint *userspaceInnerPacketEndpoint

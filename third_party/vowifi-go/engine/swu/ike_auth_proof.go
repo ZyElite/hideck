@@ -14,6 +14,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
@@ -112,17 +113,15 @@ func (s *Session) authenticateInitialResponder(payloads []ikev2.Payload) (bool, 
 			ikePayloadTypes(payloads),
 		)
 	}
-	// 3GPP carries the target APN in the initiator's IDr. Some ePDGs omit
-	// that already-known identity in the EAP-only response; retain the exact
-	// offered value so the final MSK AUTH still binds the responder identity.
-	if !hasID && len(s.requestedResponderID) > 0 {
-		idType = s.requestedResponderIDType
-		idData = append([]byte(nil), s.requestedResponderID...)
-		hasID = true
+	// 3GPP overloads the initiator's IDr with the target APN. If an ePDG
+	// omits its own IDr in the EAP-only response, bind the final MSK AUTH to
+	// the configured endpoint identity instead of treating the APN as IDr.
+	if !hasID {
+		idType, idData, hasID = configuredEPDGIdentity(s.cfg.EPDGAddr)
 	}
 	if !hasID {
 		return false, fmt.Errorf(
-			"swu: EAP-only response omitted IDr without a requested APN identity (payloads=%s)",
+			"swu: EAP-only response omitted IDr without a configured ePDG identity (payloads=%s)",
 			ikePayloadTypes(payloads),
 		)
 	}
@@ -130,6 +129,25 @@ func (s *Session) authenticateInitialResponder(payloads []ikev2.Payload) (bool, 
 	s.responderIDType = idType
 	s.responderID = append([]byte(nil), idData...)
 	return true, nil
+}
+
+func configuredEPDGIdentity(address string) (byte, []byte, bool) {
+	host := strings.TrimSpace(address)
+	if splitHost, _, err := net.SplitHostPort(host); err == nil {
+		host = splitHost
+	}
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return 0, nil, false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ipv4 := ip.To4(); ipv4 != nil {
+			return ikev2.IDTypeIPv4Address, append([]byte(nil), ipv4...), true
+		}
+		return ikev2.IDTypeIPv6Address, append([]byte(nil), ip.To16()...), true
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return ikev2.IDTypeFQDN, []byte(host), true
 }
 
 func (s *Session) verifyEAPResponderAuth(payloads []ikev2.Payload) error {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha1"
+	"net"
 	"testing"
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
@@ -244,7 +245,7 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 		}
 	}
 	idr := payloads[1].(*ikev2.EncryptedPayloadID)
-	if idr.IDType != 2 || string(idr.Data) != "ims" {
+	if idr.IDType != ikev2.IDTypeFQDN || string(idr.Data) != "ims" {
 		t.Fatalf("APN IDr = %+v", idr)
 	}
 	notify := payloads[5].(*ikev2.EncryptedPayloadNotify)
@@ -267,14 +268,12 @@ func TestInitialEAPIKEAuthOmitsIDrForDefaultAPN(t *testing.T) {
 }
 
 func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
-	session := NewSession(&Config{IMSI: "234102356143376", APN: "ims"})
+	session := NewSession(&Config{IMSI: "234102356143376", APN: "ims", EPDGAddr: "epdg.example"})
 	session.ikeKeys = testIKEKeys()
 	session.prf = enginecrypto.NewPRF(2)
 	session.ikeSAInitResponse = []byte("ike-sa-init-response")
 	session.Ni = []byte("initiator-nonce")
 	session.eapOnlyRequested = true
-	session.requestedResponderIDType = 2
-	session.requestedResponderID = []byte("ims")
 	initial := []ikev2.Payload{
 		&ikev2.EncryptedPayloadEAP{Data: []byte{eapaka.CodeRequest, 1, 0, 5, eapTypeIdentity}},
 	}
@@ -282,7 +281,7 @@ func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
 	if err != nil || !deferred || !session.eapOnlyAuthentication {
 		t.Fatalf("authenticateInitialResponder deferred=%t err=%v", deferred, err)
 	}
-	if session.responderIDType != 2 || string(session.responderID) != "ims" {
+	if session.responderIDType != ikev2.IDTypeFQDN || string(session.responderID) != "epdg.example" {
 		t.Fatalf("effective responder ID = type %d data %q", session.responderIDType, session.responderID)
 	}
 	session.eapType = eapaka.TypeAKA
@@ -303,14 +302,33 @@ func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
 	}
 }
 
-func TestEAPOnlyResponderCannotOmitUnrequestedIdentity(t *testing.T) {
+func TestEAPOnlyResponderCannotOmitUnconfiguredIdentity(t *testing.T) {
 	session := NewSession(&Config{IMSI: "234102356143376"})
 	session.eapOnlyRequested = true
 	payloads := []ikev2.Payload{
 		&ikev2.EncryptedPayloadEAP{Data: []byte{eapaka.CodeRequest, 1, 0, 5, eapTypeIdentity}},
 	}
 	if _, err := session.authenticateInitialResponder(payloads); err == nil {
-		t.Fatal("accepted an omitted IDr without a requested APN identity")
+		t.Fatal("accepted an omitted IDr without a configured ePDG identity")
+	}
+}
+
+func TestConfiguredEPDGIdentity(t *testing.T) {
+	tests := []struct {
+		address string
+		idType  byte
+		want    []byte
+	}{
+		{address: "EPDG.Example.", idType: ikev2.IDTypeFQDN, want: []byte("epdg.example")},
+		{address: "epdg.example:4500", idType: ikev2.IDTypeFQDN, want: []byte("epdg.example")},
+		{address: "192.0.2.10:500", idType: ikev2.IDTypeIPv4Address, want: net.IPv4(192, 0, 2, 10).To4()},
+		{address: "[2001:db8::1]:500", idType: ikev2.IDTypeIPv6Address, want: net.ParseIP("2001:db8::1").To16()},
+	}
+	for _, test := range tests {
+		gotType, got, ok := configuredEPDGIdentity(test.address)
+		if !ok || gotType != test.idType || !bytes.Equal(got, test.want) {
+			t.Errorf("configuredEPDGIdentity(%q) = (%d, %x, %t), want (%d, %x, true)", test.address, gotType, got, ok, test.idType, test.want)
+		}
 	}
 }
 

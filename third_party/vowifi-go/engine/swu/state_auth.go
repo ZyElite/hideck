@@ -33,7 +33,7 @@ func normalizeAKAChallengeMode(mode string) string {
 // AUTH computation (RFC 7296 §2.15).
 func (s *Session) currentIKEIdentity() (byte, []byte) {
 	// The 3GPP NAI is encoded as ID_RFC822_ADDR (RFC 7296 section 3.5).
-	return 3, []byte(s.currentEAPIdentity())
+	return ikev2.IDTypeRFC822Addr, []byte(s.currentEAPIdentity())
 }
 
 // currentEAPIdentity returns the EAP identity (NAI) for the session.
@@ -242,13 +242,8 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	idi := &ikev2.EncryptedPayloadID{IDType: idType, Data: idData}
 	payloads := []ikev2.Payload{idi}
 	if apn := strings.TrimSpace(s.cfg.APN); apn != "" {
-		idr := &ikev2.EncryptedPayloadID{PayloadType: ikev2.PayloadIDr, IDType: 2, Data: []byte(apn)}
-		s.requestedResponderIDType = idr.IDType
-		s.requestedResponderID = append([]byte(nil), idr.Data...)
+		idr := &ikev2.EncryptedPayloadID{PayloadType: ikev2.PayloadIDr, IDType: ikev2.IDTypeFQDN, Data: []byte(apn)}
 		payloads = append(payloads, idr)
-	} else {
-		s.requestedResponderIDType = 0
-		s.requestedResponderID = nil
 	}
 
 	if s.espLocalSPI == 0 {
