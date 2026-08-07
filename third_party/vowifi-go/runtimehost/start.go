@@ -221,7 +221,17 @@ func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.Pre
 		},
 		AuthPlan: profile.AuthPlan{AKAApp: profile.NormalizeAKAApp(string(prepared.IMSIdentity.AKAAppPreference))},
 		EPDGAddr: prepared.EPDGAddr, EPDGSource: prepared.EPDGSource,
+		APN: imsAPNFromDomain(prepared.IMSIdentity.Domain),
 	}
+}
+
+func imsAPNFromDomain(domain string) string {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return ""
+	}
+	apn, _, _ := strings.Cut(domain, ".")
+	return strings.TrimSpace(apn)
 }
 
 func stopRuntimeOnContext(ctx context.Context, inst *Instance) {

@@ -106,9 +106,23 @@ func (s *Session) authenticateInitialResponder(payloads []ikev2.Payload) (bool, 
 	if hasPayloadType(payloads, ikev2.PayloadCert) {
 		return false, errors.New("swu: EAP-only response included a certificate without AUTH")
 	}
-	if !hasID || !hasPayloadType(payloads, ikev2.PayloadEAP) {
+	if !hasPayloadType(payloads, ikev2.PayloadEAP) {
 		return false, fmt.Errorf(
 			"swu: IKE_AUTH response missing responder authentication material (payloads=%s)",
+			ikePayloadTypes(payloads),
+		)
+	}
+	// 3GPP carries the target APN in the initiator's IDr. Some ePDGs omit
+	// that already-known identity in the EAP-only response; retain the exact
+	// offered value so the final MSK AUTH still binds the responder identity.
+	if !hasID && len(s.requestedResponderID) > 0 {
+		idType = s.requestedResponderIDType
+		idData = append([]byte(nil), s.requestedResponderID...)
+		hasID = true
+	}
+	if !hasID {
+		return false, fmt.Errorf(
+			"swu: EAP-only response omitted IDr without a requested APN identity (payloads=%s)",
 			ikePayloadTypes(payloads),
 		)
 	}

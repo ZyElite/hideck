@@ -226,13 +226,13 @@ func TestComputeEAPInitiatorAuthUsesSignedOctetsAndMSK(t *testing.T) {
 }
 
 func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
-	session := NewSession(&Config{IMSI: "234102356143376"})
+	session := NewSession(&Config{IMSI: "234102356143376", APN: "ims"})
 	payloads, err := session.buildIKEAuthInitPayloads()
 	if err != nil {
 		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
 	}
 	want := []byte{
-		ikev2.PayloadIDi, ikev2.PayloadSA, ikev2.PayloadTSi,
+		ikev2.PayloadIDi, ikev2.PayloadIDr, ikev2.PayloadSA, ikev2.PayloadTSi,
 		ikev2.PayloadTSr, ikev2.PayloadNotify, ikev2.PayloadCP,
 	}
 	if len(payloads) != len(want) {
@@ -243,26 +243,47 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 			t.Fatalf("payload[%d] = %d, want %d", index, payload.Type(), want[index])
 		}
 	}
-	notify := payloads[4].(*ikev2.EncryptedPayloadNotify)
+	idr := payloads[1].(*ikev2.EncryptedPayloadID)
+	if idr.IDType != 2 || string(idr.Data) != "ims" {
+		t.Fatalf("APN IDr = %+v", idr)
+	}
+	notify := payloads[5].(*ikev2.EncryptedPayloadNotify)
 	if notify.NotifyType != ikev2.NotifyTypeEAPOnlyAuthentication || notify.ProtocolID != 0 || notify.SPISize != 0 || len(notify.NotifyData) != 0 {
 		t.Fatalf("EAP-only notify = %+v", notify)
 	}
 }
 
-func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
+func TestInitialEAPIKEAuthOmitsIDrForDefaultAPN(t *testing.T) {
 	session := NewSession(&Config{IMSI: "234102356143376"})
+	payloads, err := session.buildIKEAuthInitPayloads()
+	if err != nil {
+		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
+	}
+	for _, payload := range payloads {
+		if payload.Type() == ikev2.PayloadIDr {
+			t.Fatal("default APN request unexpectedly included IDr")
+		}
+	}
+}
+
+func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
+	session := NewSession(&Config{IMSI: "234102356143376", APN: "ims"})
 	session.ikeKeys = testIKEKeys()
 	session.prf = enginecrypto.NewPRF(2)
 	session.ikeSAInitResponse = []byte("ike-sa-init-response")
 	session.Ni = []byte("initiator-nonce")
 	session.eapOnlyRequested = true
+	session.requestedResponderIDType = 2
+	session.requestedResponderID = []byte("ims")
 	initial := []ikev2.Payload{
-		&ikev2.EncryptedPayloadID{PayloadType: ikev2.PayloadIDr, IDType: 2, Data: []byte("epdg.example")},
 		&ikev2.EncryptedPayloadEAP{Data: []byte{eapaka.CodeRequest, 1, 0, 5, eapTypeIdentity}},
 	}
 	deferred, err := session.authenticateInitialResponder(initial)
 	if err != nil || !deferred || !session.eapOnlyAuthentication {
 		t.Fatalf("authenticateInitialResponder deferred=%t err=%v", deferred, err)
+	}
+	if session.responderIDType != 2 || string(session.responderID) != "ims" {
+		t.Fatalf("effective responder ID = type %d data %q", session.responderIDType, session.responderID)
 	}
 	session.eapType = eapaka.TypeAKA
 	session.eapKeys = eapaka.Keys{MSK: bytes.Repeat([]byte{0x71}, eapaka.KeyLengthMSK)}
@@ -279,6 +300,17 @@ func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
 	final[0].(*ikev2.EncryptedPayloadAuth).Data[0] ^= 0xff
 	if err := session.verifyEAPResponderAuth(final); err == nil {
 		t.Fatal("accepted invalid final EAP-only AUTH")
+	}
+}
+
+func TestEAPOnlyResponderCannotOmitUnrequestedIdentity(t *testing.T) {
+	session := NewSession(&Config{IMSI: "234102356143376"})
+	session.eapOnlyRequested = true
+	payloads := []ikev2.Payload{
+		&ikev2.EncryptedPayloadEAP{Data: []byte{eapaka.CodeRequest, 1, 0, 5, eapTypeIdentity}},
+	}
+	if _, err := session.authenticateInitialResponder(payloads); err == nil {
+		t.Fatal("accepted an omitted IDr without a requested APN identity")
 	}
 }
 

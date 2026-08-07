@@ -76,6 +76,7 @@ type PreparedSessionStart struct {
 	AuthPlan    profile.AuthPlan
 	EPDGAddr    string
 	EPDGSource  string
+	APN         string
 }
 
 // PrepareSessionStart prepares a session start from the config.
@@ -134,6 +135,7 @@ func BuildSWUConfig(prepared *PreparedSessionStart, aka AKAProvider) (*swu.Confi
 	}
 	return &swu.Config{
 		EPDGAddr:    prepared.EPDGAddr,
+		APN:         prepared.APN,
 		IMSI:        prepared.Profile.IMSI,
 		MCC:         prepared.Profile.MCC,
 		MNC:         prepared.Profile.MNC,

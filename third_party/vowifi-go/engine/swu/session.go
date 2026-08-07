@@ -21,6 +21,9 @@ import (
 type Config struct {
 	// EPDGAddr is the ePDG host (FQDN or IP) and optional port.
 	EPDGAddr string
+	// APN is carried as IDr in the first IKE_AUTH request (3GPP TS 24.302).
+	// Empty requests the operator's default APN.
+	APN string
 	// LocalIP is the local address to bind the IKE/ESP socket to.
 	LocalIP net.IP
 	// ProxyAddr and Proxy route IKE/ESP through a SOCKS5 UDP associate.
@@ -136,22 +139,24 @@ type Session struct {
 	socket ipsec.Transport
 
 	// --- IKE_AUTH state ---
-	stage                  ikeAuthStage
-	eapID                  byte // current EAP identifier
-	eapType                byte // negotiated EAP method (AKA / AKA')
-	eapKeys                eapaka.Keys
-	eapIdentityTranscript  [][]byte
-	eapResultIndicated     bool
-	eapResultConfirmed     bool
-	authPayload            []byte // responder AUTH payload (for verification)
-	skf                    []byte // SKF (encrypted IKE_AUTH response) pending decrypt
-	responderAuthenticated bool
-	eapOnlyAuthentication  bool
-	eapOnlyRequested       bool
-	responderIDType        byte
-	responderID            []byte
-	ikeSAInitRequest       []byte
-	ikeSAInitResponse      []byte
+	stage                    ikeAuthStage
+	eapID                    byte // current EAP identifier
+	eapType                  byte // negotiated EAP method (AKA / AKA')
+	eapKeys                  eapaka.Keys
+	eapIdentityTranscript    [][]byte
+	eapResultIndicated       bool
+	eapResultConfirmed       bool
+	authPayload              []byte // responder AUTH payload (for verification)
+	skf                      []byte // SKF (encrypted IKE_AUTH response) pending decrypt
+	responderAuthenticated   bool
+	eapOnlyAuthentication    bool
+	eapOnlyRequested         bool
+	requestedResponderIDType byte
+	requestedResponderID     []byte
+	responderIDType          byte
+	responderID              []byte
+	ikeSAInitRequest         []byte
+	ikeSAInitResponse        []byte
 
 	// --- data plane ---
 	innerEndpoint *userspaceInnerPacketEndpoint

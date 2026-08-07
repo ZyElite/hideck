@@ -240,6 +240,16 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	// IDi (ID_NAI).
 	idType, idData := s.currentIKEIdentity()
 	idi := &ikev2.EncryptedPayloadID{IDType: idType, Data: idData}
+	payloads := []ikev2.Payload{idi}
+	if apn := strings.TrimSpace(s.cfg.APN); apn != "" {
+		idr := &ikev2.EncryptedPayloadID{PayloadType: ikev2.PayloadIDr, IDType: 2, Data: []byte(apn)}
+		s.requestedResponderIDType = idr.IDType
+		s.requestedResponderID = append([]byte(nil), idr.Data...)
+		payloads = append(payloads, idr)
+	} else {
+		s.requestedResponderIDType = 0
+		s.requestedResponderID = nil
+	}
 
 	if s.espLocalSPI == 0 {
 		localSPI, err := randomChildSPI()
@@ -265,7 +275,7 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	}
 	s.eapOnlyRequested = true
 
-	return []ikev2.Payload{idi, sa2, tsi, tsr, eapOnly, cp}, nil
+	return append(payloads, sa2, tsi, tsr, eapOnly, cp), nil
 }
 
 // computeInitiatorAuth computes the EAP-only initiator AUTH from the MSK and

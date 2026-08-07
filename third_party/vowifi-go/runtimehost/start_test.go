@@ -472,3 +472,12 @@ func TestIMSServiceUsesSWuInnerNetwork(t *testing.T) {
 		t.Fatal("runtime IMS service did not enable 3GPP IPsec")
 	}
 }
+
+func TestIMSAPNFromDomain(t *testing.T) {
+	if got := imsAPNFromDomain("ims.mnc010.mcc234.3gppnetwork.org"); got != "ims" {
+		t.Fatalf("imsAPNFromDomain() = %q, want ims", got)
+	}
+	if got := imsAPNFromDomain("   "); got != "" {
+		t.Fatalf("empty imsAPNFromDomain() = %q", got)
+	}
+}

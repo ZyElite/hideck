@@ -22,6 +22,7 @@ func TestBuildSWUConfigInjectsAKAProvider(t *testing.T) {
 	prepared := &PreparedSessionStart{
 		Profile:  profile.Profile{IMSI: "234102356143376", MCC: "234", MNC: "10"},
 		EPDGAddr: "epdg.example.com",
+		APN:      "ims",
 	}
 	cfg, err := BuildSWUConfig(prepared, provider)
 	if err != nil {
@@ -31,6 +32,9 @@ func TestBuildSWUConfigInjectsAKAProvider(t *testing.T) {
 	result, err := cfg.AKAProvider.CalculateAKA(rand16, autn16)
 	if err != nil || provider.calls != 1 || !bytes.Equal(result.RES, rand16) {
 		t.Fatalf("AKA delegation result=%+v calls=%d err=%v", result, provider.calls, err)
+	}
+	if cfg.APN != "ims" {
+		t.Fatalf("SWu APN = %q, want ims", cfg.APN)
 	}
 }
 
