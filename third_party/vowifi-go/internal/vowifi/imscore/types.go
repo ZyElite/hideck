@@ -14,6 +14,7 @@ import (
 	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
+	"github.com/iniwex5/vowifi-go/internal/smscodec"
 )
 
 // IMS registration states (recovered from the decompiled registration_state.go).
@@ -223,6 +224,9 @@ type Service struct {
 	onSMSReadiness   func(SMSReadiness)
 	smsReceiverReady bool
 	nextSMSRPMR      byte
+	nextSMSConcatRef byte
+	smsReassembler   *smscodec.Reassembler
+	smsReportTimeout time.Duration
 
 	lastPingAt     time.Time
 	securityVerify string

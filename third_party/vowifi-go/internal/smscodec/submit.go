@@ -14,7 +14,14 @@ type SubmitOptions struct {
 	// Encoding is the SMS alphabet to use: "auto" (default, GSM-7 when the
 	// text fits, else UCS-2) or "ucs2". See NormalizeSMSEncoding.
 	Encoding string
+	// ConcatReference identifies all parts of a multipart message. Zero lets
+	// the encoder select its default reference.
+	ConcatReference int
 }
+
+type fixedConcatCounter int
+
+func (c fixedConcatCounter) Count() int { return int(c) }
 
 // BuildSubmitTPDUsWithOptions builds one or more SMS-SUBMIT TPDUs for a
 // message, splitting it into a concatenated (multipart) series when it does
@@ -30,14 +37,18 @@ func BuildSubmitTPDUsWithOptions(dest, text string, opts SubmitOptions) ([]tpdu.
 	}
 	dest = strings.TrimSpace(dest)
 
-	options := []sms.EncoderOption{sms.To(dest)}
+	options := []sms.EncoderOption{sms.AsSubmit, sms.To(dest)}
 	message := []byte(text)
 	if enc == "ucs2" {
 		message = ucs2.Encode([]rune(text))
 		options = append(options, sms.AsUCS2)
 	}
 
-	parts, err := sms.Encode(message, options...)
+	encoder := sms.NewEncoder(options...)
+	if opts.ConcatReference != 0 {
+		encoder.ConcatRef = fixedConcatCounter(opts.ConcatReference)
+	}
+	parts, err := encoder.Encode(message)
 	if err != nil {
 		return nil, err
 	}

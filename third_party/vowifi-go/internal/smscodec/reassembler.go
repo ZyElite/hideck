@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+const reassemblerMaxGroups = 64
 
 // Fragment is one part of a concatenated (multipart) SMS.
 //
@@ -25,28 +28,44 @@ type Fragment struct {
 type Reassembler struct {
 	mu        sync.Mutex
 	fragments map[string][]Fragment
+	completed map[string]time.Time
 }
 
 // NewReassembler returns an empty reassembler.
 func NewReassembler() *Reassembler {
-	return &Reassembler{fragments: map[string][]Fragment{}}
+	return &Reassembler{
+		fragments: make(map[string][]Fragment),
+		completed: make(map[string]time.Time),
+	}
 }
 
 // Add stores one part of a concatenated message.
 //
-// The group key identifies the concatenation: originating address plus the
-// message reference and sequence number (the original builds
-// fmt.Sprintf("%s_%d%d.%d (%s)", from, ref, seqNo, total, partNo)).
+// The group key identifies the concatenation by originating address, the
+// 8-bit/16-bit reference components and the declared part count.
 //
 // It returns the fully reassembled payload with complete=true once every part
-// of the group has been seen; duplicate part numbers are ignored.
+// of the group has been seen. Duplicate parts, including repeats received
+// after completion, are ignored until Cleanup expires the completed key.
 func (r *Reassembler) Add(from string, ref, seqNo uint64, total, partNo int, data []byte, ts time.Time) ([]byte, bool) {
+	if r == nil || total <= 0 || partNo <= 0 || partNo > total {
+		return nil, false
+	}
+	if ts.IsZero() {
+		ts = time.Now()
+	}
 	key := fragmentKey(from, ref, seqNo, total)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, alreadyCompleted := r.completed[key]; alreadyCompleted {
+		return nil, false
+	}
 
 	parts := r.fragments[key]
+	if len(parts) == 0 && len(r.fragments)+len(r.completed) >= reassemblerMaxGroups {
+		r.evictOldestLocked()
+	}
 	for _, f := range parts {
 		if f.PartNo == partNo {
 			return nil, false // duplicate part
@@ -65,12 +84,40 @@ func (r *Reassembler) Add(from string, ref, seqNo uint64, total, partNo int, dat
 		buf.Write(f.Data)
 	}
 	delete(r.fragments, key)
+	r.completed[key] = ts
 	return buf.Bytes(), true
+}
+
+func (r *Reassembler) evictOldestLocked() {
+	oldestKey := ""
+	oldestAt := time.Time{}
+	completed := false
+	for key, at := range r.completed {
+		if oldestKey == "" || at.Before(oldestAt) {
+			oldestKey, oldestAt, completed = key, at, true
+		}
+	}
+	for key, parts := range r.fragments {
+		newest := time.Time{}
+		for _, part := range parts {
+			if part.Timestamp.After(newest) {
+				newest = part.Timestamp
+			}
+		}
+		if oldestKey == "" || newest.Before(oldestAt) {
+			oldestKey, oldestAt, completed = key, newest, false
+		}
+	}
+	if completed {
+		delete(r.completed, oldestKey)
+	} else {
+		delete(r.fragments, oldestKey)
+	}
 }
 
 // fragmentKey groups parts belonging to the same concatenated message.
 func fragmentKey(from string, ref, seqNo uint64, total int) string {
-	return fmt.Sprintf("%s_%d%d.%d (%d)", from, ref, seqNo, total, 0)
+	return fmt.Sprintf("%s|%d|%d|%d", strings.TrimSpace(from), ref, seqNo, total)
 }
 
 // Cleanup drops concatenation groups whose newest part is older than the
@@ -90,6 +137,11 @@ func (r *Reassembler) Cleanup(olderThan time.Duration) {
 		}
 		if newest.IsZero() || newest.Before(cutoff) {
 			delete(r.fragments, key)
+		}
+	}
+	for key, completedAt := range r.completed {
+		if completedAt.Before(cutoff) {
+			delete(r.completed, key)
 		}
 	}
 }

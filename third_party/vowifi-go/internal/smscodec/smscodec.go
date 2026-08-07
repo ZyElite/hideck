@@ -55,10 +55,14 @@ func IsShortCode(number string) bool {
 
 // DecodedMessage is the result of decoding an SMS-DELIVER TPDU.
 type DecodedMessage struct {
-	Sender    string    // TP-OA originating address (with "+" for international, see note)
-	Text      string    // message text, UTF-8 sanitized (strings.ToValidUTF8)
-	Timestamp time.Time // TP-SCTS service centre time stamp
-	Err       error     // non-nil when the PDU could not be decoded
+	Sender          string    // TP-OA originating address (with "+" for international, see note)
+	Text            string    // message text, UTF-8 sanitized (strings.ToValidUTF8)
+	Timestamp       time.Time // TP-SCTS service centre time stamp
+	ConcatReference int       // TP-UDH concatenation reference, zero for a single-part message
+	ConcatRefBits   int       // concatenation reference width: 8 or 16 bits
+	TotalParts      int       // number of concatenated parts, one for a single-part message
+	PartNo          int       // one-based concatenated part number
+	Err             error     // non-nil when the PDU could not be decoded
 }
 
 // DecodeDeliverTPDU decodes a hex SMS-DELIVER PDU into a DecodedMessage.
@@ -78,8 +82,19 @@ func DecodeDeliverTPDU(pdu []byte) DecodedMessage {
 	}
 
 	msg := DecodedMessage{
-		Sender:    t.OA.Number(),
-		Timestamp: t.SCTS.Time,
+		Sender:     t.OA.Number(),
+		Timestamp:  t.SCTS.Time,
+		TotalParts: 1,
+		PartNo:     1,
+	}
+	if total, partNo, reference, ok := t.ConcatInfo(); ok {
+		msg.ConcatReference = reference
+		msg.TotalParts = total
+		msg.PartNo = partNo
+		msg.ConcatRefBits = 16
+		if _, _, _, is8Bit := t.UDH.ConcatInfo8(); is8Bit {
+			msg.ConcatRefBits = 8
+		}
 	}
 
 	// 3GPP TS 23.040 9.2.3.9: TP-PID bits 6..4 == 1 ("no interworking,

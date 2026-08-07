@@ -12,9 +12,11 @@ import (
 )
 
 const (
-	outboundSMSTransactionTimeout = 30 * time.Second
-	smsDeliveryStatePending       = "pending"
-	smsDeliveryStateFailed        = "failed"
+	outboundSMSTransactionTimeout   = 30 * time.Second
+	defaultSMSDeliveryReportTimeout = 120 * time.Second
+	smsDeliveryStatePending         = "pending"
+	smsDeliveryStateFailed          = "failed"
+	smsDeliveryPartStateTimeout     = "timeout"
 )
 
 type outboundSMSPart struct {
@@ -50,6 +52,7 @@ func (s *Service) sendOutboundSMS(ctx context.Context, to, text string, opts SMS
 		}
 	}
 	s.publishOutboundSMS(recipient, text, len(parts))
+	s.scheduleSMSDeliveryTimeout(messageID, parts)
 	return &SMSSendOutcome{
 		Ref: messageID, MessageID: messageID,
 		PartsTotal: len(parts), State: smsDeliveryStatePending,
@@ -57,18 +60,21 @@ func (s *Service) sendOutboundSMS(ctx context.Context, to, text string, opts SMS
 }
 
 func (s *Service) buildOutboundSMSParts(recipient, text string, opts SMSSendOptions) ([]outboundSMSPart, error) {
-	tpdus, err := smscodec.BuildSubmitTPDUsWithOptions(recipient, text, smscodec.SubmitOptions{Encoding: opts.Encoding})
+	tpdus, err := smscodec.BuildSubmitTPDUsWithOptions(recipient, text, smscodec.SubmitOptions{
+		Encoding: opts.Encoding, ConcatReference: int(s.allocateSMSConcatReference()),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("imscore: encode SMS-SUBMIT: %w", err)
 	}
 	remoteURI := fmt.Sprintf("sip:%s@%s;user=phone", recipient, strings.TrimSpace(s.cfg.Domain))
 	parts := make([]outboundSMSPart, 0, len(tpdus))
 	for index := range tpdus {
+		rpMR := s.allocateSMSRPMR()
+		tpdus[index].MR = rpMR
 		tpduBytes, err := tpdus[index].MarshalBinary()
 		if err != nil {
 			return nil, fmt.Errorf("imscore: encode SMS-SUBMIT part %d: %w", index+1, err)
 		}
-		rpMR := s.allocateSMSRPMR()
 		request, err := s.buildSMSMESSAGE(remoteURI, smscodec.BuildRPData(rpMR, "", s.cfg.SMSC, tpduBytes))
 		if err != nil {
 			return nil, fmt.Errorf("imscore: build SMS MESSAGE part %d: %w", index+1, err)
@@ -139,6 +145,17 @@ func (s *Service) allocateSMSRPMR() byte {
 	s.mu.Lock()
 	reference := s.nextSMSRPMR
 	s.nextSMSRPMR++
+	s.mu.Unlock()
+	return reference
+}
+
+func (s *Service) allocateSMSConcatReference() byte {
+	s.mu.Lock()
+	s.nextSMSConcatRef++
+	if s.nextSMSConcatRef == 0 {
+		s.nextSMSConcatRef++
+	}
+	reference := s.nextSMSConcatRef
 	s.mu.Unlock()
 	return reference
 }

@@ -1,6 +1,7 @@
 package smscodec
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/warthog618/sms"
@@ -44,5 +45,24 @@ func TestBuildSubmitTPDUsUsesRealUCS2AndShortCodeTON(t *testing.T) {
 	}
 	if string(decoded) != "你好" {
 		t.Fatalf("decoded text = %q", decoded)
+	}
+}
+
+func TestBuildSubmitTPDUsUsesProvidedConcatReference(t *testing.T) {
+	parts, err := BuildSubmitTPDUsWithOptions(
+		"+447700900123", strings.Repeat("multipart ", 40),
+		SubmitOptions{ConcatReference: 37},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) < 2 {
+		t.Fatalf("parts = %d", len(parts))
+	}
+	for index := range parts {
+		total, sequence, reference, ok := parts[index].ConcatInfo()
+		if !ok || total != len(parts) || sequence != index+1 || reference != 37 {
+			t.Fatalf("part %d concat=(%d,%d,%d,%v)", index+1, total, sequence, reference, ok)
+		}
 	}
 }

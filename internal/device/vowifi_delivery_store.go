@@ -31,6 +31,7 @@ func (vowifiDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID
 		MessageID: part.MessageID,
 		PartNo:    part.PartNo,
 		State:     part.State,
+		Matched:   true,
 	}, nil
 }
 

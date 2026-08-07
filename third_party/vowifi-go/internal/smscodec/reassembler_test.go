@@ -35,6 +35,9 @@ func TestReassemblerAdd(t *testing.T) {
 	if string(msg) != "hello beautiful world!" {
 		t.Errorf("reassembled = %q", msg)
 	}
+	if msg, done := r.Add("+8613800138000", 42, 7, 3, 2, []byte("duplicate"), ts); done || msg != nil {
+		t.Fatalf("completed message duplicate not ignored: done=%v msg=%q", done, msg)
+	}
 }
 
 func TestReassemblerAdd_DifferentGroups(t *testing.T) {
@@ -51,6 +54,58 @@ func TestReassemblerAdd_DifferentGroups(t *testing.T) {
 	}
 	if string(msg) != "b" {
 		t.Errorf("single = %q", msg)
+	}
+}
+
+func TestReassemblerIsolatesConcurrentMessages(t *testing.T) {
+	r := NewReassembler()
+	ts := time.Now()
+	_, _ = r.Add("sender-a", 7, 0, 2, 1, []byte("a1"), ts)
+	_, _ = r.Add("sender-a", 8, 0, 2, 1, []byte("b1"), ts)
+	_, _ = r.Add("sender-b", 7, 0, 2, 1, []byte("c1"), ts)
+
+	if got, done := r.Add("sender-a", 8, 0, 2, 2, []byte("b2"), ts); !done || string(got) != "b1b2" {
+		t.Fatalf("reference-isolated message = %q, done=%v", got, done)
+	}
+	if got, done := r.Add("sender-b", 7, 0, 2, 2, []byte("c2"), ts); !done || string(got) != "c1c2" {
+		t.Fatalf("sender-isolated message = %q, done=%v", got, done)
+	}
+	if got, done := r.Add("sender-a", 7, 0, 2, 2, []byte("a2"), ts); !done || string(got) != "a1a2" {
+		t.Fatalf("remaining message = %q, done=%v", got, done)
+	}
+	_, _ = r.Add("sender-a", 9, 8, 2, 1, []byte("eight-"), ts)
+	_, _ = r.Add("sender-a", 9, 16, 2, 1, []byte("sixteen-"), ts)
+	if got, done := r.Add("sender-a", 9, 8, 2, 2, []byte("bit"), ts); !done || string(got) != "eight-bit" {
+		t.Fatalf("8-bit reference group = %q, done=%v", got, done)
+	}
+	if got, done := r.Add("sender-a", 9, 16, 2, 2, []byte("bit"), ts); !done || string(got) != "sixteen-bit" {
+		t.Fatalf("16-bit reference group = %q, done=%v", got, done)
+	}
+}
+
+func TestReassemblerRejectsInvalidPartMetadata(t *testing.T) {
+	r := NewReassembler()
+	for _, partNo := range []int{-1, 0, 3} {
+		if got, done := r.Add("sender", 1, 0, 2, partNo, []byte("x"), time.Now()); done || got != nil {
+			t.Fatalf("part %d accepted: done=%v got=%q", partNo, done, got)
+		}
+	}
+	if len(r.fragments) != 0 {
+		t.Fatalf("invalid fragments stored: %d", len(r.fragments))
+	}
+}
+
+func TestReassemblerEvictsOldestIncompleteGroupAtCapacity(t *testing.T) {
+	r := NewReassembler()
+	started := time.Now().Add(-time.Minute)
+	for reference := 1; reference <= reassemblerMaxGroups+1; reference++ {
+		r.Add("sender", uint64(reference), 8, 2, 1, []byte("part"), started.Add(time.Duration(reference)*time.Second))
+	}
+	if len(r.fragments) != reassemblerMaxGroups {
+		t.Fatalf("fragment groups = %d", len(r.fragments))
+	}
+	if _, exists := r.fragments[fragmentKey("sender", 1, 8, 2)]; exists {
+		t.Fatal("oldest fragment group was not evicted")
 	}
 }
 

@@ -16,6 +16,7 @@ const (
 	imsSMSContentType       = "application/vnd.3gpp.sms"
 	rpCauseTemporaryFailure = byte(41)
 	inboundSMSAckTimeout    = 10 * time.Second
+	inboundSMSFragmentTTL   = 10 * time.Minute
 )
 
 type inboundSMS struct {
@@ -24,6 +25,10 @@ type inboundSMS struct {
 	content   string
 	timestamp time.Time
 	rpMR      byte
+	concatRef int
+	refBits   int
+	total     int
+	partNo    int
 }
 
 func (s *Service) handleInboundSMS(raw string) (inboundSIPResult, error) {
@@ -37,18 +42,37 @@ func (s *Service) handleInboundSMS(raw string) (inboundSIPResult, error) {
 	}
 	rpdu := smscodec.DecodeBodyMaybeHex(body)
 	info := smscodec.ClassifyRPDU(rpdu)
-	if info.Kind != smscodec.RPDUKindData || info.RawType != 0x01 {
+	switch {
+	case info.Kind == smscodec.RPDUKindData && info.RawType == 0x01:
+		return s.handleInboundRPData(raw, rpdu, info.MR)
+	case info.Kind == smscodec.RPDUKindAck && info.RawType == 0x03:
+		return s.handleInboundRPReport(raw, info, "acked", "")
+	case info.Kind == smscodec.RPDUKindError && info.RawType == 0x05:
+		return s.handleInboundRPReport(raw, info, "failed", fmt.Sprintf("RP-ERROR cause %d", info.Cause))
+	default:
 		return s.inboundSMSProtocolError(raw, 400, info.MR, false, fmt.Errorf("unsupported inbound RPDU type 0x%02x", info.RawType))
+	}
+}
+
+func (s *Service) handleInboundRPData(raw string, rpdu []byte, rpMR byte) (inboundSIPResult, error) {
+	_, _, _, payload, err := smscodec.ParseRPDataWithAddresses(rpdu)
+	if err != nil {
+		return s.inboundSMSProtocolError(raw, 400, rpMR, true, err)
+	}
+	if len(payload) > 0 && payload[0]&0x03 == 0x02 {
+		return s.handleInboundTPStatusReport(raw, rpMR, payload)
 	}
 	message, err := decodeInboundRPData(raw, rpdu)
 	if err != nil {
-		return s.inboundSMSProtocolError(raw, 400, info.MR, true, err)
+		return s.inboundSMSProtocolError(raw, 400, rpMR, true, err)
 	}
 	response, err := buildSIPRequestResponse(raw, 200)
 	if err != nil {
 		return inboundSIPResult{}, err
 	}
-	s.publishInboundSMS(message)
+	if s.assembleInboundSMS(&message) {
+		s.publishInboundSMS(message)
+	}
 	return inboundSIPResult{
 		response: response,
 		afterReply: func() {
@@ -76,7 +100,25 @@ func decodeInboundRPData(raw string, rpdu []byte) (inboundSMS, error) {
 	return inboundSMS{
 		sender: sender, targetURI: firstSIPHeaderURI(rawSIPHeaderValue(raw, "To")),
 		content: decoded.Text, timestamp: decoded.Timestamp, rpMR: rpMR,
+		concatRef: decoded.ConcatReference, refBits: decoded.ConcatRefBits,
+		total: decoded.TotalParts, partNo: decoded.PartNo,
 	}, nil
+}
+
+func (s *Service) assembleInboundSMS(message *inboundSMS) bool {
+	if message == nil || message.total <= 1 {
+		return true
+	}
+	s.smsReassembler.Cleanup(inboundSMSFragmentTTL)
+	content, complete := s.smsReassembler.Add(
+		message.sender+"\x00"+message.targetURI,
+		uint64(message.concatRef), uint64(message.refBits), message.total, message.partNo,
+		[]byte(message.content), time.Now(),
+	)
+	if complete {
+		message.content = string(content)
+	}
+	return complete
 }
 
 func (s *Service) inboundSMSProtocolError(raw string, status int, rpMR byte, sendRPError bool, protocolErr error) (inboundSIPResult, error) {

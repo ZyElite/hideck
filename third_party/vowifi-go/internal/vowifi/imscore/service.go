@@ -6,6 +6,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/smscodec"
 )
 
 // New creates an IMS service from the configuration.
@@ -24,17 +26,19 @@ func New(cfg *IMSConfig) (*Service, error) {
 		bus = newIMSEventBus()
 	}
 	s := &Service{
-		cfg:            cfg,
-		state:          regIdle,
-		regState:       regIdle,
-		dialogs:        newDialogRegistry(),
-		bus:            bus,
-		delivery:       cfg.DeliveryStore,
-		stop:           make(chan struct{}),
-		registerErrors: make(chan error, 1),
-		protectedConns: make(map[net.Conn]struct{}),
-		transport:      newSIPTransport(),
-		ussd:           newUSSDService(),
+		cfg:              cfg,
+		state:            regIdle,
+		regState:         regIdle,
+		dialogs:          newDialogRegistry(),
+		bus:              bus,
+		delivery:         cfg.DeliveryStore,
+		stop:             make(chan struct{}),
+		registerErrors:   make(chan error, 1),
+		protectedConns:   make(map[net.Conn]struct{}),
+		transport:        newSIPTransport(),
+		ussd:             newUSSDService(),
+		smsReassembler:   smscodec.NewReassembler(),
+		smsReportTimeout: defaultSMSDeliveryReportTimeout,
 	}
 	return s, nil
 }
