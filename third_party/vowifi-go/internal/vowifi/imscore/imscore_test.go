@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/hex"
 	"net"
 	"strings"
 	"testing"
@@ -71,7 +70,7 @@ func TestComputeAKAv1MD5DigestResponse(t *testing.T) {
 
 // TestComputeAKAv1MD5DigestResponseVector verifies the Digest-AKA response
 // against a hand-computed RFC 3310 vector: response = H(H(A1):nonce:nc:
-// cnonce:qop:H(A2)) with A1 = user:realm:hex(RES) and A2 = method:uri.
+// cnonce:qop:H(A2)) with A1 containing the raw RES octets.
 func TestComputeAKAv1MD5DigestResponseVector(t *testing.T) {
 	// RES = 16 bytes of 0x33 -> hex "3333...33".
 	res := bytes.Repeat([]byte{0x33}, 16)
@@ -79,20 +78,13 @@ func TestComputeAKAv1MD5DigestResponseVector(t *testing.T) {
 	method, uri := "REGISTER", "sip:ims.example.com"
 	nonce, nc, cnonce, qop := "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=", "00000001", "abcdef0123456789", "auth"
 
-	// A1 = username:realm:hex(RES)
-	a1 := username + ":" + realm + ":" + hex.EncodeToString(res)
-	// A2 = method:uri
-	a2 := method + ":" + uri
-	ha1 := md5Hex([]byte(a1))
-	ha2 := md5Hex([]byte(a2))
-	want := md5Hex([]byte(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":" + qop + ":" + ha2))
-
 	got, err := ComputeAKAv1MD5DigestResponse(username, realm, res, method, uri, nonce, nc, cnonce, qop)
 	if err != nil {
 		t.Fatalf("ComputeAKAv1MD5DigestResponse: %v", err)
 	}
+	const want = "3eb26de281e29349b9af845c57bed302"
 	if got != want {
-		t.Errorf("response = %s, want %s", got, want)
+		t.Errorf("response = %s, want RFC 3310 raw-RES vector %s", got, want)
 	}
 }
 
@@ -120,13 +112,13 @@ func TestProcessAKAChallenge(t *testing.T) {
 
 func TestNewAndRegister(t *testing.T) {
 	cfg := &IMSConfig{
-		DeviceID:   "dev-1",
-		IMSI:       "310260123456789",
-		IMPI:       "310260123456789@ims.example.com",
-		Domain:     "ims.example.com",
-		LocalIP:    net.IPv4(10, 0, 0, 1),
-		Transport:  "udp",
-		Expires:    time.Hour,
+		DeviceID:    "dev-1",
+		IMSI:        "310260123456789",
+		IMPI:        "310260123456789@ims.example.com",
+		Domain:      "ims.example.com",
+		LocalIP:     net.IPv4(10, 0, 0, 1),
+		Transport:   "udp",
+		Expires:     time.Hour,
 		AKAProvider: stubAKAProvider{},
 	}
 	svc, err := New(cfg)

@@ -61,17 +61,38 @@ func (s *Session) buildCPRequestPayload() *ikev2.EncryptedPayloadCP {
 // buildTrafficSelectorsForIPStack builds the TSi/TSr traffic selectors for the
 // inner IP stack (RFC 7296 §3.13).
 func buildTrafficSelectorsForIPStack(innerIP net.IP) (*ikev2.EncryptedPayloadTS, *ikev2.EncryptedPayloadTS) {
-	tsi := &ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSi, Selectors: []*ikev2.TrafficSelector{
-		ikev2.NewTrafficSelectorIPV4(net.IPv4zero, 0, 0, 0xffff),
-	}}
-	tsr := &ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSr, Selectors: []*ikev2.TrafficSelector{
-		ikev2.NewTrafficSelectorIPV4(net.IPv4zero, 0, 0, 0xffff),
-	}}
-	if innerIP != nil && innerIP.To4() == nil {
-		tsi.Selectors[0] = ikev2.NewTrafficSelectorIPV6(net.IPv6unspecified, 0, 0, 0xffff)
-		tsr.Selectors[0] = ikev2.NewTrafficSelectorIPV6(net.IPv6unspecified, 0, 0, 0xffff)
+	if innerIP == nil {
+		return trafficSelectorPayloads(
+			[]*ikev2.TrafficSelector{anyIPv4Selector(), anyIPv6Selector()},
+			[]*ikev2.TrafficSelector{anyIPv4Selector(), anyIPv6Selector()},
+		)
 	}
-	return tsi, tsr
+	if ipv4 := innerIP.To4(); ipv4 != nil {
+		return trafficSelectorPayloads(
+			[]*ikev2.TrafficSelector{ikev2.NewTrafficSelectorIPV4(ipv4, 0, 0, 0xffff)},
+			[]*ikev2.TrafficSelector{anyIPv4Selector()},
+		)
+	}
+	return trafficSelectorPayloads(
+		[]*ikev2.TrafficSelector{ikev2.NewTrafficSelectorIPV6(innerIP, 0, 0, 0xffff)},
+		[]*ikev2.TrafficSelector{anyIPv6Selector()},
+	)
+}
+
+func trafficSelectorPayloads(initiator, responder []*ikev2.TrafficSelector) (*ikev2.EncryptedPayloadTS, *ikev2.EncryptedPayloadTS) {
+	return &ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSi, Selectors: initiator},
+		&ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSr, Selectors: responder}
+}
+
+func anyIPv4Selector() *ikev2.TrafficSelector {
+	return ikev2.NewTrafficSelectorIPV4Range(net.IPv4zero, net.IPv4bcast, 0, 0, 0xffff)
+}
+
+func anyIPv6Selector() *ikev2.TrafficSelector {
+	return ikev2.NewTrafficSelectorIPV6Range(net.IPv6unspecified, net.IP{
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	}, 0, 0, 0xffff)
 }
 
 // spoofAppleIMEI returns an IMEI string that passes the Luhn check, derived

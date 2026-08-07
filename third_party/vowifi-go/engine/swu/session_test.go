@@ -126,6 +126,31 @@ func TestMatchSelectors(t *testing.T) {
 	}
 }
 
+func TestTrafficSelectorsUseFullAnyRanges(t *testing.T) {
+	tsi, tsr := buildTrafficSelectorsForIPStack(nil)
+	if len(tsi.Selectors) != 2 || len(tsr.Selectors) != 2 {
+		t.Fatalf("unassigned selector counts = %d/%d, want IPv4 and IPv6", len(tsi.Selectors), len(tsr.Selectors))
+	}
+	if !bytes.Equal(tsi.Selectors[0].StartAddr, net.IPv4zero.To4()) ||
+		!bytes.Equal(tsi.Selectors[0].EndAddr, net.IPv4bcast.To4()) {
+		t.Fatalf("IPv4 any selector = %v..%v", tsi.Selectors[0].StartAddr, tsi.Selectors[0].EndAddr)
+	}
+	if bytes.Equal(tsi.Selectors[1].StartAddr, tsi.Selectors[1].EndAddr) ||
+		!bytes.Equal(tsi.Selectors[1].EndAddr, bytes.Repeat([]byte{0xff}, net.IPv6len)) {
+		t.Fatalf("IPv6 any selector = %x..%x", tsi.Selectors[1].StartAddr, tsi.Selectors[1].EndAddr)
+	}
+
+	innerIP := net.IPv4(10, 0, 0, 2)
+	tsi, tsr = buildTrafficSelectorsForIPStack(innerIP)
+	if !bytes.Equal(tsi.Selectors[0].StartAddr, innerIP.To4()) ||
+		!bytes.Equal(tsi.Selectors[0].EndAddr, innerIP.To4()) {
+		t.Fatalf("assigned TSi = %v..%v", tsi.Selectors[0].StartAddr, tsi.Selectors[0].EndAddr)
+	}
+	if !bytes.Equal(tsr.Selectors[0].EndAddr, net.IPv4bcast.To4()) {
+		t.Fatalf("assigned TSr end = %v, want IPv4 broadcast", tsr.Selectors[0].EndAddr)
+	}
+}
+
 func TestSessionStateTransitions(t *testing.T) {
 	s := NewSession(&Config{IMSI: "310260123456789"})
 	if s.State() != stateIdle {

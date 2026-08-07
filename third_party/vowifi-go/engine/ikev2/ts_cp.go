@@ -41,8 +41,13 @@ type TrafficSelector struct {
 
 // NewTrafficSelectorIPV4 builds a single IPv4 address range selector.
 func NewTrafficSelectorIPV4(ip net.IP, protocolID byte, startPort, endPort uint16) *TrafficSelector {
-	start := ip.To4()
-	end := append([]byte{}, start...)
+	return NewTrafficSelectorIPV4Range(ip, ip, protocolID, startPort, endPort)
+}
+
+// NewTrafficSelectorIPV4Range builds an IPv4 address range selector.
+func NewTrafficSelectorIPV4Range(startIP, endIP net.IP, protocolID byte, startPort, endPort uint16) *TrafficSelector {
+	start := append([]byte(nil), startIP.To4()...)
+	end := append([]byte(nil), endIP.To4()...)
 	return &TrafficSelector{
 		Type:       TSIPv4Range,
 		ProtocolID: protocolID,
@@ -55,8 +60,13 @@ func NewTrafficSelectorIPV4(ip net.IP, protocolID byte, startPort, endPort uint1
 
 // NewTrafficSelectorIPV6 builds a single IPv6 address range selector.
 func NewTrafficSelectorIPV6(ip net.IP, protocolID byte, startPort, endPort uint16) *TrafficSelector {
-	start := ip.To16()
-	end := append([]byte{}, start...)
+	return NewTrafficSelectorIPV6Range(ip, ip, protocolID, startPort, endPort)
+}
+
+// NewTrafficSelectorIPV6Range builds an IPv6 address range selector.
+func NewTrafficSelectorIPV6Range(startIP, endIP net.IP, protocolID byte, startPort, endPort uint16) *TrafficSelector {
+	start := append([]byte(nil), startIP.To16()...)
+	end := append([]byte(nil), endIP.To16()...)
 	return &TrafficSelector{
 		Type:       TSIPv6Range,
 		ProtocolID: protocolID,

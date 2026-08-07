@@ -128,12 +128,17 @@ func md5Hex(b []byte) string {
 // ComputeAKAv1MD5DigestResponse computes the Digest-AKA response (RFC 3310):
 //
 //	response = H(H(A1):nonce:nc:cnonce:qop:H(A2))
-//	A1 = username:realm:password   (password = the AKA RES hex)
+//	A1 = username:realm:password   (password = the raw AKA RES octets)
 //	A2 = method:uri
 func ComputeAKAv1MD5DigestResponse(username, realm string, res []byte, method, uri, nonce, nc, cnonce, qop string) (string, error) {
-	a1 := fmt.Sprintf("%s:%s:%s", username, realm, hex.EncodeToString(res))
+	a1 := make([]byte, 0, len(username)+len(realm)+len(res)+2)
+	a1 = append(a1, username...)
+	a1 = append(a1, ':')
+	a1 = append(a1, realm...)
+	a1 = append(a1, ':')
+	a1 = append(a1, res...)
 	a2 := fmt.Sprintf("%s:%s", method, uri)
-	ha1 := md5Hex([]byte(a1))
+	ha1 := md5Hex(a1)
 	ha2 := md5Hex([]byte(a2))
 	response := md5Hex([]byte(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2)))
 	return response, nil
