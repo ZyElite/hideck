@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/ussi"
 )
 
 // New creates an IMS service from the configuration.
@@ -36,7 +37,7 @@ func New(cfg *IMSConfig) (*Service, error) {
 		registerErrors:   make(chan error, 1),
 		protectedConns:   make(map[net.Conn]struct{}),
 		transport:        newSIPTransport(),
-		ussd:             newUSSDService(),
+		ussd:             ussi.NewService(),
 		smsReassembler:   smscodec.NewReassembler(),
 		smsReportTimeout: defaultSMSDeliveryReportTimeout,
 	}
@@ -220,7 +221,15 @@ func (s *Service) GetRealm() string {
 
 // GetServiceRoute returns the service route.
 func (s *Service) GetServiceRoute() []string {
-	return nil
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.regSession == nil || strings.TrimSpace(s.regSession.serviceRoute) == "" {
+		return nil
+	}
+	return splitSIPHeaderValues(s.regSession.serviceRoute)
 }
 
 // GetSpiPairs returns the IPsec SPI pairs.
@@ -267,6 +276,9 @@ func (s *Service) Stop() {
 		return
 	}
 	s.setSMSReceiverReady(false)
+	if s.ussd != nil {
+		s.ussd.Stop()
+	}
 	select {
 	case <-s.stop:
 	default:
@@ -350,65 +362,3 @@ func (s *Service) Unregister(ctx context.Context) error {
 	s.mu.Unlock()
 	return nil
 }
-
-// --- USSD ---
-
-// ussdService is the USSD-over-IMS service.
-type ussdService struct {
-	sessionID string
-}
-
-// newUSSDService creates a USSD service.
-func newUSSDService() *ussdService {
-	return &ussdService{}
-}
-
-// USSDResult is the USSD result.
-type USSDResult struct {
-	SessionID string
-	Code      string
-	Message   string
-}
-
-// SendUSSD sends a USSD command.
-func (s *Service) SendUSSD(ctx context.Context, code string) (*USSDResult, error) {
-	if s == nil || s.ussd == nil {
-		return nil, errors.New("imscore: USSD not available")
-	}
-	sid := "ussi-" + randomHex(6)
-	s.ussd.sessionID = sid
-	// Send the USSD via a SIP MESSAGE.
-	req := s.buildSMSRequest("*100#", code, sid)
-	if err := s.sendSIP(req); err != nil {
-		return nil, err
-	}
-	return &USSDResult{SessionID: sid, Code: "0", Message: code}, nil
-}
-
-// ContinueUSSD continues a USSD session.
-func (s *Service) ContinueUSSD(ctx context.Context, sessionID, input string) (*USSDResult, error) {
-	if s == nil || s.ussd == nil || s.ussd.sessionID != sessionID {
-		return nil, errors.New("imscore: no active USSD session")
-	}
-	return &USSDResult{SessionID: sessionID, Code: "0", Message: input}, nil
-}
-
-// CancelUSSD cancels a USSD session.
-func (s *Service) CancelUSSD(ctx context.Context, sessionID string) error {
-	if s == nil || s.ussd == nil {
-		return errors.New("imscore: USSD not available")
-	}
-	s.ussd.sessionID = ""
-	return nil
-}
-
-// GetActiveUSSDSession returns the active USSD session ID.
-func (s *Service) GetActiveUSSDSession() string {
-	if s == nil || s.ussd == nil {
-		return ""
-	}
-	return s.ussd.sessionID
-}
-
-var _ = strings.TrimSpace
-var _ = time.Now

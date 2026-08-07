@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
+)
+
+const (
+	voiceInviteTimeout = 45 * time.Second
+	voiceHangupTimeout = 10 * time.Second
 )
 
 // NewAgent creates a voice agent for a device.
@@ -64,12 +68,22 @@ func (a *Agent) Stop() error {
 		return nil
 	}
 	a.started = false
+	var activeCall *Call
+	if a.activeCall != nil && !a.activeCall.IsTerminalState() {
+		activeCall = a.activeCall
+	}
 	a.mu.Unlock()
+	var stopErr error
+	if activeCall != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
+		stopErr = errors.Join(stopErr, a.hangupCall(ctx, activeCall))
+		cancel()
+	}
 	if a.bus != nil {
 		a.bus.Unsubscribe(a)
 	}
 	a.actor.Stop()
-	return nil
+	return stopErr
 }
 
 // SetNotifier wires the event notifier callback.
@@ -98,6 +112,13 @@ func (a *Agent) OnIMSEvent(ev events.Event) {
 
 // Dial places an outbound call to the given number.
 func (a *Agent) Dial(number string) (*Call, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), voiceInviteTimeout)
+	defer cancel()
+	return a.DialContext(ctx, number)
+}
+
+// DialContext starts an outbound call and waits for the final INVITE response.
+func (a *Agent) DialContext(ctx context.Context, number string) (*Call, error) {
 	if a == nil {
 		return nil, errors.New("voice: nil agent")
 	}
@@ -117,6 +138,9 @@ func (a *Agent) Dial(number string) (*Call, error) {
 	callID := newVoiceCallID()
 	call := NewCall(a, callstate.DirectionOutbound, callID, number)
 	call.SetStartTime(time.Now())
+	if err := a.prepareVoiceDialog(call, number); err != nil {
+		return nil, err
+	}
 	if err := call.Transition(callstate.StateDialing); err != nil {
 		return nil, err
 	}
@@ -126,12 +150,28 @@ func (a *Agent) Dial(number string) (*Call, error) {
 	a.activeCall = call
 	a.mu.Unlock()
 
-	// Build and send the IMS INVITE.
 	invite := BuildIMSInvite(a, call)
-	if err := a.sendIMSDialogRequest(invite); err != nil {
-		_ = call.Transition(callstate.StateFailed)
-		return nil, err
+	response, err := a.ims.RoundTripSIP(ctx, invite)
+	if err != nil {
+		return nil, a.failOutboundCall(call, fmt.Errorf("voice: INVITE transaction failed: %w", err))
 	}
+	call.MarkInviteFinalSeen()
+	call.learnVoiceDialog(response)
+	if err := a.sendIMSDialogRequest(buildIMSACKForStatus(a, call, response.StatusCode)); err != nil {
+		return nil, a.failOutboundCall(call, fmt.Errorf("voice: send INVITE ACK: %w", err))
+	}
+	call.MarkACKSent()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		reason := fmt.Errorf("voice: INVITE rejected: %d %s", response.StatusCode, response.Reason)
+		return nil, a.failOutboundCall(call, reason)
+	}
+	if err := call.Transition(callstate.StateConnecting); err != nil {
+		return nil, a.failOutboundCall(call, err)
+	}
+	if err := call.Transition(callstate.StateConnected); err != nil {
+		return nil, a.failOutboundCall(call, err)
+	}
+	a.emitCallAnswered(call)
 	return call, nil
 }
 
@@ -161,6 +201,13 @@ func (a *Agent) Answer(callID string) error {
 
 // Hangup ends a call.
 func (a *Agent) Hangup(callID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
+	defer cancel()
+	return a.HangupContext(ctx, callID)
+}
+
+// HangupContext ends a live IMS dialog and waits for the network response.
+func (a *Agent) HangupContext(ctx context.Context, callID string) error {
 	if a == nil {
 		return errors.New("voice: nil agent")
 	}
@@ -170,7 +217,57 @@ func (a *Agent) Hangup(callID string) error {
 	if call == nil {
 		return errors.New("voice: call not found")
 	}
-	return call.Hangup()
+	return a.hangupCall(ctx, call)
+}
+
+func (a *Agent) hangupCall(ctx context.Context, call *Call) error {
+	if call == nil || call.IsTerminalState() {
+		return nil
+	}
+	if call.GetState() != callstate.StateConnected {
+		if err := a.sendIMSDialogRequest(BuildIMSCancel(a, call)); err != nil {
+			return fmt.Errorf("voice: send CANCEL: %w", err)
+		}
+		call.MarkLocalCancelSent()
+		return a.finishLocalHangup(call)
+	}
+	response, err := a.ims.RoundTripSIP(ctx, BuildIMSBye(a, call))
+	if err != nil {
+		return fmt.Errorf("voice: BYE transaction failed: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("voice: BYE rejected: %d %s", response.StatusCode, response.Reason)
+	}
+	return a.finishLocalHangup(call)
+}
+
+func (a *Agent) finishLocalHangup(call *Call) error {
+	if err := call.Transition(callstate.StateDisconnected); err != nil {
+		return err
+	}
+	_ = call.StopMedia()
+	a.emitCallEnded(call)
+	a.finalizeActiveCall(call)
+	return nil
+}
+
+func (a *Agent) failOutboundCall(call *Call, cause error) error {
+	_ = call.Transition(callstate.StateFailed)
+	_ = call.StopMedia()
+	a.emitCallFailed(call, cause.Error())
+	a.finalizeActiveCall(call)
+	return cause
+}
+
+// Ready reports whether the agent can start an IMS voice transaction.
+func (a *Agent) Ready() bool {
+	if a == nil || a.ims == nil {
+		return false
+	}
+	a.mu.RLock()
+	started := a.started
+	a.mu.RUnlock()
+	return started && a.ims.IsRegistered()
 }
 
 // IsBusy reports whether the agent has an active call.
@@ -345,38 +442,14 @@ func (a *Agent) deviceStatus() map[string]interface{} {
 	}
 }
 
-// SimulateCall places a simulated call without a live network.
+// SimulateCall preserves the public API while using the real IMS transaction.
 func (a *Agent) SimulateCall(number string) (*Call, error) {
-	return a.simulateCall(number)
+	return a.Dial(number)
 }
 
-// simulateCall places a simulated call without a live network: it creates
-// the call and immediately transitions it to Connected.
+// simulateCall preserves the recovered private symbol without bypassing IMS.
 func (a *Agent) simulateCall(number string) (*Call, error) {
-	if a == nil {
-		return nil, errors.New("voice: nil agent")
-	}
-	callID := newVoiceCallID()
-	call := NewCall(a, callstate.DirectionOutbound, callID, number)
-	call.SetStartTime(time.Now())
-	if err := call.Transition(callstate.StateDialing); err != nil {
-		return nil, err
-	}
-	if err := call.Transition(callstate.StateAlerting); err != nil {
-		return nil, err
-	}
-	if err := call.Transition(callstate.StateConnecting); err != nil {
-		return nil, err
-	}
-	if err := call.Transition(callstate.StateConnected); err != nil {
-		return nil, err
-	}
-	a.mu.Lock()
-	a.calls[callID] = call
-	a.activeCall = call
-	a.mu.Unlock()
-	a.emitCallAnswered(call)
-	return call, nil
+	return a.Dial(number)
 }
 
 // newVoiceCallID generates a call ID.
@@ -394,5 +467,3 @@ func randomVoiceHex(n int) string {
 	}
 	return string(b)
 }
-
-var _ = sync.Mutex{}

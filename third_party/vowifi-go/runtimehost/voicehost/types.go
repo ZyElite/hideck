@@ -7,6 +7,7 @@ package voicehost
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,8 +15,9 @@ import (
 // voiceAgent is the agent surface the gateway drives. It is implemented by
 // the voice package's Agent; the interface avoids an import cycle.
 type voiceAgent interface {
-	SimulateCall(number string) (interface{}, error)
-	Hangup(callID string) error
+	DialContext(context.Context, string) (interface{}, error)
+	HangupContext(context.Context, string) error
+	Ready() bool
 	Start() error
 	Stop() error
 }
@@ -59,6 +61,7 @@ type Gateway struct {
 	client     ClientAdapter
 	dispatcher interface{ Dispatch(interface{}) }
 	agents     map[string]voiceAgent
+	started    bool
 }
 
 // NewGateway returns a Gateway.
@@ -71,16 +74,29 @@ func (g *Gateway) Start(ctx context.Context) error {
 	if g == nil {
 		return errors.New("voicehost: nil gateway")
 	}
-	g.mu.RLock()
+	g.mu.Lock()
+	if g.started {
+		g.mu.Unlock()
+		return nil
+	}
+	g.started = true
 	agents := make([]voiceAgent, 0, len(g.agents))
 	for _, a := range g.agents {
 		agents = append(agents, a)
 	}
-	g.mu.RUnlock()
+	g.mu.Unlock()
+	startedAgents := make([]voiceAgent, 0, len(agents))
 	for _, a := range agents {
 		if err := a.Start(); err != nil {
+			for _, startedAgent := range startedAgents {
+				_ = startedAgent.Stop()
+			}
+			g.mu.Lock()
+			g.started = false
+			g.mu.Unlock()
 			return err
 		}
+		startedAgents = append(startedAgents, a)
 	}
 	return nil
 }
@@ -90,16 +106,22 @@ func (g *Gateway) Stop() error {
 	if g == nil {
 		return nil
 	}
-	g.mu.RLock()
+	g.mu.Lock()
+	if !g.started {
+		g.mu.Unlock()
+		return nil
+	}
+	g.started = false
 	agents := make([]voiceAgent, 0, len(g.agents))
 	for _, a := range g.agents {
 		agents = append(agents, a)
 	}
-	g.mu.RUnlock()
+	g.mu.Unlock()
+	var stopErr error
 	for _, a := range agents {
-		_ = a.Stop()
+		stopErr = errors.Join(stopErr, a.Stop())
 	}
-	return nil
+	return stopErr
 }
 
 // SetNotifier installs the event notifier.
@@ -113,9 +135,30 @@ func (g *Gateway) SetNotifier(n Notifier) {
 }
 
 // SetAgent registers a voice agent for a device.
-func (g *Gateway) SetAgent(deviceID string, a voiceAgent) {
+func (g *Gateway) SetAgent(deviceID string, a voiceAgent) error {
 	if g == nil {
-		return
+		return errors.New("voicehost: nil gateway")
+	}
+	if strings.TrimSpace(deviceID) == "" || a == nil {
+		return errors.New("voicehost: device and agent are required")
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	g.mu.RLock()
+	started := g.started
+	previous := g.agents[deviceID]
+	g.mu.RUnlock()
+	if started {
+		if err := a.Start(); err != nil {
+			return err
+		}
+	}
+	if previous != nil {
+		if err := previous.Stop(); err != nil {
+			if started {
+				_ = a.Stop()
+			}
+			return err
+		}
 	}
 	g.mu.Lock()
 	if g.agents == nil {
@@ -123,9 +166,26 @@ func (g *Gateway) SetAgent(deviceID string, a voiceAgent) {
 	}
 	g.agents[deviceID] = a
 	g.mu.Unlock()
+	return nil
 }
 
-// SimulateCall drives a simulated VoWiFi call through the device's agent.
+// RemoveAgent detaches and stops a device voice agent.
+func (g *Gateway) RemoveAgent(deviceID string) error {
+	if g == nil {
+		return nil
+	}
+	g.mu.Lock()
+	deviceID = strings.TrimSpace(deviceID)
+	agent := g.agents[deviceID]
+	delete(g.agents, deviceID)
+	g.mu.Unlock()
+	if agent == nil {
+		return nil
+	}
+	return agent.Stop()
+}
+
+// SimulateCall preserves the command API while driving a real IMS call.
 func (g *Gateway) SimulateCall(ctx context.Context, deviceID string, req SimulateCallRequest) (SimulateCallResult, error) {
 	if g == nil {
 		return SimulateCallResult{}, errors.New("voicehost: nil gateway")
@@ -136,7 +196,10 @@ func (g *Gateway) SimulateCall(ctx context.Context, deviceID string, req Simulat
 	if agent == nil {
 		return SimulateCallResult{}, errors.New("voicehost: no agent for device " + deviceID)
 	}
-	call, err := agent.SimulateCall(req.Callee)
+	if strings.TrimSpace(req.Callee) == "" {
+		return SimulateCallResult{}, errors.New("voicehost: callee is empty")
+	}
+	call, err := agent.DialContext(ctx, req.Callee)
 	if err != nil {
 		return SimulateCallResult{Success: false, Reason: err.Error()}, err
 	}
@@ -154,13 +217,21 @@ func (g *Gateway) SimulateCall(ctx context.Context, deviceID string, req Simulat
 	if req.OnConnected != nil {
 		req.OnConnected()
 	}
-	// Hold the simulated call, then hang up.
+	timer := time.NewTimer(time.Duration(hold) * time.Second)
+	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		_ = agent.Hangup(callID)
-		return SimulateCallResult{Success: true, Message: "call ended by context"}, nil
-	case <-time.After(time.Duration(hold) * time.Second):
-		_ = agent.Hangup(callID)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		hangupErr := agent.HangupContext(cleanupCtx, callID)
+		cancel()
+		return SimulateCallResult{Success: false, Reason: errors.Join(ctx.Err(), hangupErr).Error()}, ctx.Err()
+	case <-timer.C:
+		hangupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := agent.HangupContext(hangupCtx, callID)
+		cancel()
+		if err != nil {
+			return SimulateCallResult{Success: false, Reason: err.Error()}, err
+		}
 		return SimulateCallResult{Success: true, Message: "call completed", DurationMs: int64(hold) * 1000}, nil
 	}
 }
@@ -177,9 +248,12 @@ func (g *Gateway) GetAgent(deviceID string) interface{} {
 
 // DeviceStatus returns the voice status for a device.
 func (g *Gateway) DeviceStatus(deviceID string) map[string]interface{} {
+	g.mu.RLock()
+	agent := g.agents[deviceID]
+	g.mu.RUnlock()
 	return map[string]interface{}{
 		"device_id": deviceID,
-		"ready":     true,
+		"ready":     agent != nil && agent.Ready(),
 	}
 }
 

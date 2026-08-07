@@ -225,6 +225,7 @@ type Instance struct {
 	observers   []ObserverFunc
 	notifier    Notifier
 	smsNotifier SMSNotifier
+	voiceDetach func() error
 	stopped     bool
 }
 

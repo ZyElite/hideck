@@ -128,6 +128,9 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 	}
 	inst.markIMSRegistered()
 	syncSMSReadiness(inst, ims)
+	if err := attachVoiceAgent(req, inst, ims); err != nil {
+		return failIMSStart(inst, fmt.Errorf("runtimehost: attach voice agent: %w", err))
+	}
 	go monitorRegistrationFailures(runCtx, inst, ims)
 	go stopRuntimeOnContext(runCtx, inst)
 	return inst, nil

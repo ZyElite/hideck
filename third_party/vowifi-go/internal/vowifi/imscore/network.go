@@ -18,6 +18,7 @@ type sipResponse struct {
 	CallID     string
 	CSeq       string
 	Headers    map[string]string
+	Body       []byte
 }
 
 // Header returns a header value.
@@ -129,7 +130,8 @@ func (t *sipTransport) Close() error {
 
 // parseSIPResponse parses a raw SIP response.
 func parseSIPResponse(raw string) *sipResponse {
-	lines := strings.Split(raw, "\r\n")
+	headerBlock, body, _ := strings.Cut(raw, "\r\n\r\n")
+	lines := strings.Split(headerBlock, "\r\n")
 	if len(lines) == 0 {
 		return nil
 	}
@@ -153,8 +155,14 @@ func parseSIPResponse(raw string) *sipResponse {
 		case "cseq":
 			resp.CSeq = value
 		}
-		resp.Headers[strings.TrimSpace(key)] = value
+		key = strings.TrimSpace(key)
+		if previous := resp.Header(key); previous != "" {
+			resp.Headers[key] = previous + ", " + value
+		} else {
+			resp.Headers[key] = value
+		}
 	}
+	resp.Body = []byte(body)
 	return resp
 }
 

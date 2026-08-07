@@ -71,8 +71,13 @@ type SendOutcome struct {
 
 // USSDResult is the result of a USSD operation.
 type USSDResult struct {
-	Code    string
-	Message string
+	SessionID string `json:"session_id,omitempty"`
+	Status    int    `json:"status"`
+	Text      string `json:"text"`
+	RawText   string `json:"raw_text,omitempty"`
+	DCS       int    `json:"dcs,omitempty"`
+	Code      string `json:"code,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
 // WithSuppressSendTGSuccess returns a context carrying the suppress-success

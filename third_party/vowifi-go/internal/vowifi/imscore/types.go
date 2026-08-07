@@ -15,6 +15,7 @@ import (
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/ussi"
 )
 
 // IMS registration states (recovered from the decompiled registration_state.go).
@@ -214,7 +215,7 @@ type Service struct {
 	bus *imsEventBus
 
 	// USSD.
-	ussd *ussdService
+	ussd *ussi.Service
 
 	// Delivery store.
 	delivery DeliveryStore

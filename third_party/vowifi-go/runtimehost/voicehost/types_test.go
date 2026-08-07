@@ -8,17 +8,21 @@ import (
 
 // fakeAgent drives a simulated call without the voice engine.
 type fakeAgent struct {
-	simulated string
-	hungup    string
+	dialed string
+	hungup string
 }
 
-func (f *fakeAgent) SimulateCall(number string) (interface{}, error) {
-	f.simulated = number
+func (f *fakeAgent) DialContext(_ context.Context, number string) (interface{}, error) {
+	f.dialed = number
 	return fakeCall{id: "call-1"}, nil
 }
-func (f *fakeAgent) Hangup(callID string) error { f.hungup = callID; return nil }
-func (f *fakeAgent) Start() error               { return nil }
-func (f *fakeAgent) Stop() error                { return nil }
+func (f *fakeAgent) HangupContext(_ context.Context, callID string) error {
+	f.hungup = callID
+	return nil
+}
+func (f *fakeAgent) Ready() bool  { return true }
+func (f *fakeAgent) Start() error { return nil }
+func (f *fakeAgent) Stop() error  { return nil }
 
 type fakeCall struct{ id string }
 
@@ -37,8 +41,8 @@ func TestGatewaySimulateCall(t *testing.T) {
 	if !res.Success {
 		t.Errorf("result = %+v", res)
 	}
-	if agent.simulated != "+8613800000000" {
-		t.Errorf("simulated = %q", agent.simulated)
+	if agent.dialed != "+8613800000000" {
+		t.Errorf("dialed = %q", agent.dialed)
 	}
 	if agent.hungup != "call-1" {
 		t.Errorf("hung up = %q, want call-1", agent.hungup)

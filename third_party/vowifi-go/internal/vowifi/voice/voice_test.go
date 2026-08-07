@@ -39,6 +39,10 @@ func newTestAgent(t *testing.T) *Agent {
 }
 
 func startVoiceTestRegistrar(t *testing.T) *net.UDPConn {
+	return startVoiceTestRegistrarWithInviteStatus(t, 200)
+}
+
+func startVoiceTestRegistrarWithInviteStatus(t *testing.T, inviteStatus int) *net.UDPConn {
 	t.Helper()
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -47,16 +51,49 @@ func startVoiceTestRegistrar(t *testing.T) *net.UDPConn {
 	t.Cleanup(func() { _ = conn.Close() })
 	go func() {
 		buffer := make([]byte, 64*1024)
-		n, remote, readErr := conn.ReadFromUDP(buffer)
-		if readErr != nil {
-			return
+		for {
+			n, remote, readErr := conn.ReadFromUDP(buffer)
+			if readErr != nil {
+				return
+			}
+			request := string(buffer[:n])
+			if strings.HasPrefix(request, "ACK ") {
+				continue
+			}
+			extra := ""
+			status := 200
+			if strings.HasPrefix(request, "INVITE ") {
+				status = inviteStatus
+				extra = "To: <sip:callee@ims.example.com>;tag=remote\r\n" +
+					"Contact: <sip:callee@ims.example.com>\r\n"
+			}
+			response := fmt.Sprintf("SIP/2.0 %d %s\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: 0\r\n\r\n",
+				status, imscore.SIPStatusText(status), voiceTestHeader(request, "Via"),
+				voiceTestHeader(request, "Call-ID"), voiceTestHeader(request, "CSeq"), extra)
+			_, _ = conn.WriteToUDP([]byte(response), remote)
 		}
-		request := string(buffer[:n])
-		response := fmt.Sprintf("SIP/2.0 200 OK\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\nContent-Length: 0\r\n\r\n",
-			voiceTestHeader(request, "Via"), voiceTestHeader(request, "Call-ID"), voiceTestHeader(request, "CSeq"))
-		_, _ = conn.WriteToUDP([]byte(response), remote)
 	}()
 	return conn
+}
+
+func newVoiceTestAgentWithInviteStatus(t *testing.T, status int) *Agent {
+	t.Helper()
+	registrar := startVoiceTestRegistrarWithInviteStatus(t, status)
+	svc, err := imscore.New(&imscore.IMSConfig{
+		DeviceID: "dev-reject", IMSI: "310260123456789",
+		IMPI: "310260123456789@ims.example.com", IMPU: []string{"sip:310260123456789@ims.example.com"},
+		Domain: "ims.example.com", LocalIP: net.IPv4(127, 0, 0, 1),
+		Registrar: registrar.LocalAddr().String(), AKAProvider: stubAKA{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return NewAgent("dev-reject", svc, svc.EventBus())
 }
 
 func voiceTestHeader(message, name string) string {
@@ -137,8 +174,8 @@ func TestAgentDialLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	if call.GetState() != callstate.StateDialing {
-		t.Errorf("state = %s, want Dialing", call.GetState())
+	if call.GetState() != callstate.StateConnected || !call.IsACKSent() {
+		t.Errorf("state = %s ack=%t, want Connected with ACK", call.GetState(), call.IsACKSent())
 	}
 	if !agent.IsBusy() {
 		t.Error("agent should be busy after dial")
@@ -166,6 +203,20 @@ func TestAgentSimulateCall(t *testing.T) {
 	snap := agent.Snapshot()
 	if snap.ActiveCall == nil || snap.ActiveCall.State != "Connected" {
 		t.Errorf("snapshot active = %+v", snap.ActiveCall)
+	}
+}
+
+func TestAgentDialRejectionClearsActiveCall(t *testing.T) {
+	agent := newVoiceTestAgentWithInviteStatus(t, 486)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Stop()
+	if _, err := agent.Dial("+8613800000000"); err == nil || !strings.Contains(err.Error(), "486") {
+		t.Fatalf("Dial error = %v", err)
+	}
+	if agent.IsBusy() || agent.Snapshot().ActiveCall != nil {
+		t.Fatalf("rejected call remained active: %+v", agent.Snapshot())
 	}
 }
 

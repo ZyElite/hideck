@@ -35,9 +35,9 @@ type Agent struct {
 
 // Call is one voice call (inbound or outbound).
 type Call struct {
-	mu       sync.RWMutex
-	agent    *Agent
-	state    callstate.State
+	mu        sync.RWMutex
+	agent     *Agent
+	state     callstate.State
 	direction callstate.Direction
 
 	callID       string
@@ -52,12 +52,13 @@ type Call struct {
 	imsInvite *imscore.InviteHandle
 	routeSet  []string
 	rtpRelay  *media.RTPRelay
+	sipDialog *voiceSIPDialog
 
-	ackSent             bool
-	inviteFinalSeen     bool
-	inviteProvisional   bool
-	localCancelSent     bool
-	reliableProvisional bool
+	ackSent              bool
+	inviteFinalSeen      bool
+	inviteProvisional    bool
+	localCancelSent      bool
+	reliableProvisional  bool
 	outboundCancelReason string
 }
 
@@ -72,19 +73,19 @@ type Gateway struct {
 
 // SDPInfo is a parsed SDP session description (RFC 4566).
 type SDPInfo struct {
-	Origin     string
+	Origin      string
 	SessionName string
-	Connection string
-	Media      []MediaInfo
+	Connection  string
+	Media       []MediaInfo
 }
 
 // MediaInfo is one m= line in an SDP description.
 type MediaInfo struct {
-	Type     string // "audio" / "video"
-	Port     int
-	Protocol string
-	Formats  []int
-	Codecs   []CodecInfo
+	Type       string // "audio" / "video"
+	Port       int
+	Protocol   string
+	Formats    []int
+	Codecs     []CodecInfo
 	Connection string
 }
 
@@ -99,9 +100,9 @@ type CodecInfo struct {
 
 // firePool runs fire-and-forget goroutines with a bounded pool.
 type firePool struct {
-	mu    sync.Mutex
-	sem   chan struct{}
-	done  chan struct{}
+	mu      sync.Mutex
+	sem     chan struct{}
+	done    chan struct{}
 	started bool
 }
 

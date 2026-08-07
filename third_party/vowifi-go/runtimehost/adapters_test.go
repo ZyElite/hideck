@@ -12,6 +12,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
+	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 )
 
 // stubAKA is a deterministic AKA provider.
@@ -66,8 +67,16 @@ func startTestRegistrar(t *testing.T) *net.UDPConn {
 				return
 			}
 			request := string(buffer[:n])
-			response := fmt.Sprintf("SIP/2.0 200 OK\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\nContent-Length: 0\r\n\r\n",
-				testSIPHeader(request, "Via"), testSIPHeader(request, "Call-ID"), testSIPHeader(request, "CSeq"))
+			body := ""
+			extraHeaders := ""
+			if strings.HasPrefix(request, "INVITE ") {
+				body = `<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>Balance: 10</ussd-string><UnstructuredSS-Notify/></ussd-data>`
+				extraHeaders = "To: <sip:ussi@ims.example.com>;tag=test-remote\r\n" +
+					"Contact: <sip:ussi@ims.example.com>\r\n" +
+					"Content-Type: application/vnd.3gpp.ussd+xml\r\n"
+			}
+			response := fmt.Sprintf("SIP/2.0 200 OK\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: %d\r\n\r\n%s",
+				testSIPHeader(request, "Via"), testSIPHeader(request, "Call-ID"), testSIPHeader(request, "CSeq"), extraHeaders, len(body), body)
 			_, _ = conn.WriteToUDP([]byte(response), remote)
 		}
 	}()
@@ -130,6 +139,29 @@ func TestServiceAdapterNoService(t *testing.T) {
 	adapter := newServiceAdapter(nil)
 	if _, err := adapter.SendSMSWithResult(context.Background(), "1", "x"); !errors.Is(err, errNoService) {
 		t.Errorf("err = %v, want errNoService", err)
+	}
+}
+
+func TestVoiceAgentAttachAndStopCleanup(t *testing.T) {
+	svc := newTestService(t)
+	gateway := voicehost.NewGateway()
+	if err := gateway.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	inst := &Instance{}
+	inst.setService(newServiceAdapter(svc))
+	req := StartRequest{DeviceID: "dev-1", VoiceGateway: gateway}
+	if err := attachVoiceAgent(req, inst, newServiceAdapter(svc)); err != nil {
+		t.Fatalf("attachVoiceAgent: %v", err)
+	}
+	if gateway.GetAgent("dev-1") == nil || gateway.DeviceStatus("dev-1")["ready"] != true {
+		t.Fatalf("voice status = %+v", gateway.DeviceStatus("dev-1"))
+	}
+	if err := inst.Stop(context.Background()); err != nil {
+		t.Fatalf("Instance.Stop: %v", err)
+	}
+	if gateway.GetAgent("dev-1") != nil {
+		t.Fatal("voice agent remained attached after runtime stop")
 	}
 }
 

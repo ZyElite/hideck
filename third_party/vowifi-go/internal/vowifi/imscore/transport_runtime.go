@@ -77,6 +77,13 @@ func (s *Service) handleInboundSIP(ctx context.Context, raw string) (inboundSIPR
 		return inboundSIPResult{response: response}, err
 	case "MESSAGE":
 		return s.handleInboundSMS(raw)
+	case "INFO", "BYE":
+		result, handled, err := s.handleInboundUSSI(raw)
+		if handled {
+			return result, err
+		}
+		response, responseErr := buildSIPRequestResponse(raw, 405)
+		return inboundSIPResult{response: response}, responseErr
 	default:
 		response, err := buildSIPRequestResponse(raw, 405)
 		return inboundSIPResult{response: response}, err

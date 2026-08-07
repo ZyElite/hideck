@@ -64,11 +64,17 @@ func (i *Instance) Stop(ctx context.Context) error {
 	svc := i.service
 	tunnel := i.tunnel
 	cancel := i.cancel
+	voiceDetach := i.voiceDetach
 	i.tunnel = nil
 	i.cancel = nil
+	i.voiceDetach = nil
 	i.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	var stopErr error
+	if voiceDetach != nil {
+		stopErr = voiceDetach()
 	}
 	if tunnel != nil {
 		tunnel.Shutdown()
@@ -85,9 +91,9 @@ func (i *Instance) Stop(ctx context.Context) error {
 		state.LastReason = "stopped"
 	})
 	if tunnel == nil {
-		return nil
+		return stopErr
 	}
-	return tunnel.WaitDoneContext(ctx)
+	return errors.Join(stopErr, tunnel.WaitDoneContext(ctx))
 }
 
 // StopShared stops the host without tearing down shared resources.
@@ -258,6 +264,12 @@ func (i *Instance) setTunnelControlFailure(err error) {
 func (i *Instance) setService(s Service) {
 	i.mu.Lock()
 	i.service = s
+	i.mu.Unlock()
+}
+
+func (i *Instance) setVoiceDetach(detach func() error) {
+	i.mu.Lock()
+	i.voiceDetach = detach
 	i.mu.Unlock()
 }
 

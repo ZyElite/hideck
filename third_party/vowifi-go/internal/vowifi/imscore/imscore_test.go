@@ -194,21 +194,61 @@ func TestPAccessNetworkInfo(t *testing.T) {
 }
 
 func TestUSSDLifecycle(t *testing.T) {
-	cfg := &IMSConfig{IMSI: "310260123456789", DeviceID: "dev-1"}
+	cfg := &IMSConfig{
+		IMSI: "310260123456789", DeviceID: "dev-1",
+		IMPI: "310260123456789@ims.example", IMPU: []string{"sip:+15551234567@ims.example"},
+		Domain: "ims.example", LocalIP: net.IPv4(192, 0, 2, 10), LocalPort: 5060,
+		Transport: "udp", UserAgent: "test",
+	}
 	svc, _ := New(cfg)
-	svc.transport.SetSendFn(func(string) error { return nil })
+	svc.mu.Lock()
+	svc.regState = regRegistered
+	svc.regSession = &registerSession{serviceRoute: "<sip:pcscf.ims.example;lr>"}
+	svc.mu.Unlock()
+	requests := make(chan string, 4)
+	svc.transport.SetSendFn(func(request string) error {
+		requests <- request
+		method := sipRequestMethod(request)
+		if method == "ACK" {
+			return nil
+		}
+		response := registerResponseForRequest(request, 200, map[string]string{
+			"To": "<sip:ussi@ims.example>;tag=remote", "Contact": "<sip:ussi@server.example>",
+		})
+		response.Reason = "OK"
+		response.Headers["Content-Type"] = "application/vnd.3gpp.ussd+xml"
+		if method == "INVITE" {
+			response.Body = []byte(`<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>1. Balance</ussd-string><UnstructuredSS-Request/></ussd-data>`)
+		} else {
+			response.Body = []byte(`<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>Balance: 10</ussd-string><UnstructuredSS-Notify/></ussd-data>`)
+		}
+		svc.transport.DeliverResponse(response)
+		return nil
+	})
 	res, err := svc.SendUSSD(context.Background(), "*100#")
 	if err != nil {
 		t.Fatalf("SendUSSD: %v", err)
 	}
-	if svc.GetActiveUSSDSession() != res.SessionID {
-		t.Errorf("active = %q", svc.GetActiveUSSDSession())
+	if res.Done || svc.GetActiveUSSDSession() != res.SessionID {
+		t.Fatalf("initial result = %#v, active = %q", res, svc.GetActiveUSSDSession())
 	}
-	if _, err := svc.ContinueUSSD(context.Background(), res.SessionID, "1"); err != nil {
+	continued, err := svc.ContinueUSSD(context.Background(), res.SessionID, "1")
+	if err != nil {
 		t.Fatalf("ContinueUSSD: %v", err)
 	}
-	if err := svc.CancelUSSD(context.Background(), res.SessionID); err != nil {
-		t.Fatalf("CancelUSSD: %v", err)
+	if !continued.Done || continued.Message != "Balance: 10" || svc.GetActiveUSSDSession() != "" {
+		t.Fatalf("continued result = %#v, active = %q", continued, svc.GetActiveUSSDSession())
+	}
+	wantMethods := []string{"INVITE", "ACK", "INFO"}
+	for _, want := range wantMethods {
+		select {
+		case request := <-requests:
+			if got := sipRequestMethod(request); got != want {
+				t.Fatalf("request method = %q, want %q", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("missing %s request", want)
+		}
 	}
 }
 

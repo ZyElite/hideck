@@ -7,6 +7,7 @@ import (
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
@@ -14,6 +15,62 @@ import (
 // serviceAdapter adapts an imscore.Service to the runtimehost.Service surface.
 type serviceAdapter struct {
 	svc *imscore.Service
+}
+
+type voiceAgentAdapter struct {
+	agent *voice.Agent
+}
+
+func (a *voiceAgentAdapter) DialContext(ctx context.Context, number string) (interface{}, error) {
+	if a == nil || a.agent == nil {
+		return nil, errors.New("runtimehost: voice agent is unavailable")
+	}
+	return a.agent.DialContext(ctx, number)
+}
+
+func (a *voiceAgentAdapter) HangupContext(ctx context.Context, callID string) error {
+	if a == nil || a.agent == nil {
+		return errors.New("runtimehost: voice agent is unavailable")
+	}
+	return a.agent.HangupContext(ctx, callID)
+}
+
+func (a *voiceAgentAdapter) Ready() bool {
+	return a != nil && a.agent != nil && a.agent.Ready()
+}
+
+func (a *voiceAgentAdapter) Start() error {
+	if a == nil || a.agent == nil {
+		return errors.New("runtimehost: voice agent is unavailable")
+	}
+	return a.agent.Start()
+}
+
+func (a *voiceAgentAdapter) Stop() error {
+	if a == nil || a.agent == nil {
+		return nil
+	}
+	return a.agent.Stop()
+}
+
+func attachVoiceAgent(req StartRequest, inst *Instance, lifecycle IMSLifecycle) error {
+	if req.VoiceGateway == nil {
+		return nil
+	}
+	adapter, ok := lifecycle.(*serviceAdapter)
+	if !ok || adapter.svc == nil {
+		return errors.New("runtimehost: voice requires the registered IMS service")
+	}
+	agent := &voiceAgentAdapter{agent: voice.NewAgent(req.DeviceID, adapter.svc, adapter.svc.EventBus())}
+	if err := agent.Start(); err != nil {
+		return err
+	}
+	if err := req.VoiceGateway.SetAgent(req.DeviceID, agent); err != nil {
+		_ = agent.Stop()
+		return err
+	}
+	inst.setVoiceDetach(func() error { return req.VoiceGateway.RemoveAgent(req.DeviceID) })
+	return nil
 }
 
 // newServiceAdapter wraps an imscore service.
@@ -121,7 +178,7 @@ func (a *serviceAdapter) SendUSSD(ctx context.Context, code string) (*messaging.
 	if err != nil {
 		return nil, err
 	}
-	return &messaging.USSDResult{Code: res.Code, Message: res.Message}, nil
+	return messagingUSSDResult(res), nil
 }
 
 // ContinueUSSD continues a USSD session.
@@ -133,7 +190,21 @@ func (a *serviceAdapter) ContinueUSSD(ctx context.Context, sessionID, input stri
 	if err != nil {
 		return nil, err
 	}
-	return &messaging.USSDResult{Code: res.Code, Message: res.Message}, nil
+	return messagingUSSDResult(res), nil
+}
+
+func messagingUSSDResult(result *imscore.USSDResult) *messaging.USSDResult {
+	if result == nil {
+		return nil
+	}
+	status := 0
+	if !result.Done {
+		status = 1
+	}
+	return &messaging.USSDResult{
+		SessionID: result.SessionID, Status: status, Text: result.Message,
+		RawText: result.RawXML, Code: result.Code, Message: result.Message,
+	}
 }
 
 // CancelUSSD cancels a USSD session.

@@ -13,18 +13,10 @@ func (c *Call) Hangup() error {
 	if c == nil {
 		return errors.New("voice: nil call")
 	}
-	if c.IsTerminalState() {
-		return nil
+	if c.agent == nil {
+		return errors.New("voice: call has no agent")
 	}
-	if err := c.Transition(callstate.StateDisconnected); err != nil {
-		// Already terminal or invalid: force to Ended.
-		_ = c.Transition(callstate.StateEnded)
-	}
-	if c.agent != nil {
-		c.agent.emitCallEnded(c)
-		c.agent.finalizeActiveCall(c)
-	}
-	return nil
+	return c.agent.Hangup(c.CallID())
 }
 
 // StartMedia starts the RTP relay for the call.
@@ -56,7 +48,10 @@ func (c *Call) StopMedia() error {
 }
 
 // StartPCAP begins packet capture for the call.
-func (c *Call) StartPCAP(f interface{ Write([]byte) (int, error); Close() error }) error {
+func (c *Call) StartPCAP(f interface {
+	Write([]byte) (int, error)
+	Close() error
+}) error {
 	if c == nil {
 		return errors.New("voice: nil call")
 	}
