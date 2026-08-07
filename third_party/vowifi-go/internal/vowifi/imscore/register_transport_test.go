@@ -1,12 +1,16 @@
 package imscore
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"strings"
 	"testing"
 	"time"
+
+	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 )
 
 func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
@@ -118,6 +122,87 @@ func TestRegistrationExpiresPrefersContactBinding(t *testing.T) {
 	}
 }
 
+type sqnSyncAKAProvider struct {
+	calls int
+	auts  []byte
+}
+
+func (p *sqnSyncAKAProvider) CalculateAKA(_, _ []byte) (AKAResult, error) {
+	p.calls++
+	if p.calls == 1 {
+		return AKAResult{AUTS: append([]byte(nil), p.auts...)}, enginesim.ErrSyncFailure
+	}
+	return AKAResult{
+		RES: bytes.Repeat([]byte{0x33}, 16),
+		CK:  bytes.Repeat([]byte{0x11}, 16),
+		IK:  bytes.Repeat([]byte{0x22}, 16),
+	}, nil
+}
+
+func TestRegisterRecoversFromAKASQNSynchronizationFailure(t *testing.T) {
+	registrar, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("ListenUDP: %v", err)
+	}
+	defer registrar.Close()
+	auts := bytes.Repeat([]byte{0xa5}, akaAUTSLength)
+	serverResult := make(chan error, 1)
+	go serveSQNSyncRegistrar(registrar, auts, serverResult)
+	provider := &sqnSyncAKAProvider{auts: auts}
+	svc, err := New(&IMSConfig{
+		DeviceID: "dev-sync", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
+		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp",
+		Registrar: registrar.LocalAddr().String(), IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)),
+		AKAProvider: provider,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer svc.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if provider.calls != 2 || !svc.IsRegistered() {
+		t.Fatalf("AKA calls=%d registered=%t", provider.calls, svc.IsRegistered())
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessAKAChallengeRejectsInvalidSynchronizationToken(t *testing.T) {
+	challenge := digestChallengeForTest(0x11, 0x22)
+	provider := &sqnSyncAKAProvider{auts: bytes.Repeat([]byte{0xa5}, akaAUTSLength-1)}
+	if _, _, err := ProcessAKAChallengeWithResult(challenge, provider, "user", "REGISTER", "sip:ims.example"); err == nil || !strings.Contains(err.Error(), "AUTS length") {
+		t.Fatalf("ProcessAKAChallengeWithResult error = %v", err)
+	}
+}
+
+func TestRegisterLimitsAKAChallenges(t *testing.T) {
+	svc, err := New(&IMSConfig{
+		DeviceID: "dev-limit", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
+		Domain: "ims.example", AKAProvider: stubAKAProvider{},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer svc.Stop()
+	svc.transport.SetSendFn(func(request string) error {
+		challenge := strings.TrimPrefix(strings.TrimSpace(digestChallengeHeader(0x11, 0x22)), "WWW-Authenticate: ")
+		svc.transport.DeliverResponse(registerResponseForRequest(request, 401, map[string]string{
+			"WWW-Authenticate": challenge,
+		}))
+		return nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err == nil || !strings.Contains(err.Error(), "AKA challenge limit 2 exceeded") {
+		t.Fatalf("Register error = %v, want challenge limit", err)
+	}
+}
+
 func TestReceiveResponseMatchesFullRegisterTransaction(t *testing.T) {
 	transport := newSIPTransport()
 	svc := &Service{transport: transport}
@@ -219,6 +304,63 @@ func registerWireResponse(request string, status int, extraHeaders string) strin
 		sipHeaderValue(request, "CSeq"),
 		extraHeaders,
 	)
+}
+
+func serveSQNSyncRegistrar(conn *net.UDPConn, auts []byte, result chan<- error) {
+	buffer := make([]byte, 64*1024)
+	for attempt := 0; attempt < 3; attempt++ {
+		n, remote, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			result <- err
+			return
+		}
+		request := string(buffer[:n])
+		authorization := sipHeaderValue(request, "Authorization")
+		if err := validateSQNSyncAuthorization(attempt, authorization, auts); err != nil {
+			result <- err
+			return
+		}
+		status, headers := 401, digestChallengeHeader(byte(0x11+attempt), byte(0x22+attempt))
+		if attempt == 2 {
+			status, headers = 200, ""
+		}
+		response := registerWireResponse(request, status, headers)
+		if _, err := conn.WriteToUDP([]byte(response), remote); err != nil {
+			result <- err
+			return
+		}
+	}
+	result <- nil
+}
+
+func validateSQNSyncAuthorization(attempt int, authorization string, auts []byte) error {
+	switch attempt {
+	case 0:
+		if authorization != "" {
+			return fmt.Errorf("initial REGISTER unexpectedly authorized: %q", authorization)
+		}
+	case 1:
+		want := `auts="` + base64.StdEncoding.EncodeToString(auts) + `"`
+		if !strings.Contains(authorization, want) {
+			return fmt.Errorf("synchronization REGISTER Authorization = %q, missing %s", authorization, want)
+		}
+	case 2:
+		if authorization == "" || strings.Contains(authorization, "auts=") {
+			return fmt.Errorf("fresh challenge Authorization = %q", authorization)
+		}
+	}
+	return nil
+}
+
+func digestChallengeHeader(randByte, autnByte byte) string {
+	nonce := base64.StdEncoding.EncodeToString(append(bytes.Repeat([]byte{randByte}, 16), bytes.Repeat([]byte{autnByte}, 16)...))
+	return fmt.Sprintf("WWW-Authenticate: Digest realm=\"ims.example\", nonce=\"%s\", algorithm=AKAv1-MD5, qop=\"auth\"\r\n", nonce)
+}
+
+func digestChallengeForTest(randByte, autnByte byte) *DigestChallenge {
+	nonce := base64.StdEncoding.EncodeToString(append(bytes.Repeat([]byte{randByte}, 16), bytes.Repeat([]byte{autnByte}, 16)...))
+	challenge, _ := ParseDigestChallenge(fmt.Sprintf(`Digest realm="ims.example", nonce="%s", algorithm=AKAv1-MD5, qop="auth"`, nonce))
+	return challenge
 }
 
 func sipHeaderValue(message, name string) string {

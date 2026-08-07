@@ -8,7 +8,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 )
+
+const maxAKAChallenges = 2
 
 // registerSession tracks one registration attempt.
 type registerSession struct {
@@ -68,44 +72,25 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	s.regSession = session
 	s.mu.Unlock()
 
-	// Initial REGISTER.
-	req := s.buildRegister(session, "")
-	if err := s.sendSIP(req); err != nil {
-		return 0, fmt.Errorf("imscore: send initial REGISTER: %w", err)
-	}
-
-	// Wait for the challenge response.
-	resp, err := s.receiveResponse(ctx, session)
+	resp, err := s.exchangeRegister(ctx, session, "")
 	if err != nil {
 		return 0, err
 	}
-	if resp.StatusCode == 401 || resp.StatusCode == 407 {
-		challenge, err := s.extractChallenge(resp, resp.StatusCode)
+	for challengeCount := 0; isDigestChallengeResponse(resp); challengeCount++ {
+		if challengeCount >= maxAKAChallenges {
+			return 0, fmt.Errorf("imscore: AKA challenge limit %d exceeded", maxAKAChallenges)
+		}
+		auth, syncFailure, err := s.answerDigestChallenge(session, resp)
 		if err != nil {
 			return 0, err
-		}
-		session.challenge = challenge
-
-		// Build the authenticated REGISTER.
-		auth, aka, err := s.buildAuthorizationWithResult(session)
-		if err != nil {
-			return 0, err
-		}
-		if session.security != nil {
-			if err := s.installNegotiatedIPSec(session, resp, aka); err != nil {
-				return 0, err
-			}
 		}
 		session.cseq++
-		req = s.buildRegister(session, auth)
-		if err := s.sendSIP(req); err != nil {
-			return 0, fmt.Errorf("imscore: send authenticated REGISTER: %w", err)
-		}
-
-		// Wait for the final response.
-		resp, err = s.receiveResponse(ctx, session)
+		resp, err = s.exchangeRegister(ctx, session, auth)
 		if err != nil {
 			return 0, err
+		}
+		if syncFailure && !isDigestChallengeResponse(resp) {
+			return 0, fmt.Errorf("imscore: AKA synchronization response status %d did not provide a fresh challenge", resp.StatusCode)
 		}
 	}
 	if session.security != nil && session.security.server == nil {
@@ -118,6 +103,37 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 		return expires, nil
 	}
 	return 0, fmt.Errorf("imscore: registration failed with status %d", resp.StatusCode)
+}
+
+func (s *Service) exchangeRegister(ctx context.Context, session *registerSession, authorization string) (*sipResponse, error) {
+	request := s.buildRegister(session, authorization)
+	if err := s.sendSIP(request); err != nil {
+		return nil, fmt.Errorf("imscore: send REGISTER CSeq %d: %w", session.cseq, err)
+	}
+	return s.receiveResponse(ctx, session)
+}
+
+func isDigestChallengeResponse(response *sipResponse) bool {
+	return response != nil && (response.StatusCode == 401 || response.StatusCode == 407)
+}
+
+func (s *Service) answerDigestChallenge(session *registerSession, response *sipResponse) (string, bool, error) {
+	challenge, err := s.extractChallenge(response, response.StatusCode)
+	if err != nil {
+		return "", false, err
+	}
+	session.challenge = challenge
+	authorization, aka, authErr := s.buildAuthorizationWithResult(session)
+	syncFailure := errors.Is(authErr, enginesim.ErrSyncFailure)
+	if authErr != nil && !syncFailure {
+		return "", false, authErr
+	}
+	if session.security != nil && !syncFailure {
+		if err := s.installNegotiatedIPSec(session, response, aka); err != nil {
+			return "", false, err
+		}
+	}
+	return authorization, syncFailure, nil
 }
 
 func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {

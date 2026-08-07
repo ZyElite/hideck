@@ -8,7 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 )
+
+const akaAUTSLength = 14
 
 // DigestChallenge is a parsed WWW-Authenticate / Proxy-Authenticate challenge
 // (RFC 2617).
@@ -183,17 +187,32 @@ func ProcessAKAChallengeWithResult(challenge *DigestChallenge, aka AKAProvider, 
 	}
 	result, err := aka.CalculateAKA(challenge.RAND, challenge.AUTN)
 	if err != nil {
-		return "", AKAResult{}, err
+		if !errors.Is(err, enginesim.ErrSyncFailure) {
+			return "", AKAResult{}, err
+		}
+		if len(result.AUTS) != akaAUTSLength {
+			return "", AKAResult{}, fmt.Errorf("imscore: AKA synchronization AUTS length %d, want %d", len(result.AUTS), akaAUTSLength)
+		}
+		authorization, buildErr := buildDigestAuthorization(challenge, username, method, uri, nil, result.AUTS)
+		if buildErr != nil {
+			return "", AKAResult{}, buildErr
+		}
+		return authorization, result, fmt.Errorf("imscore: AKA SQN synchronization required: %w", err)
 	}
+	authorization, err := buildDigestAuthorization(challenge, username, method, uri, result.RES, nil)
+	return authorization, result, err
+}
+
+func buildDigestAuthorization(challenge *DigestChallenge, username, method, uri string, password, auts []byte) (string, error) {
 	nc := "00000001"
 	cnonce := randomDigestCNonce()
 	qop := normalizeDigestQOP(challenge.QOP)
 	response, err := ComputeAKAv1MD5DigestResponse(
-		username, challenge.Realm, result.RES,
+		username, challenge.Realm, password,
 		method, uri, challenge.Nonce, nc, cnonce, qop,
 	)
 	if err != nil {
-		return "", AKAResult{}, err
+		return "", err
 	}
 	var b strings.Builder
 	b.WriteString("Digest ")
@@ -205,5 +224,8 @@ func ProcessAKAChallengeWithResult(challenge *DigestChallenge, aka AKAProvider, 
 	if challenge.Opaque != "" {
 		b.WriteString(fmt.Sprintf(", opaque=\"%s\"", challenge.Opaque))
 	}
-	return b.String(), result, nil
+	if len(auts) > 0 {
+		b.WriteString(fmt.Sprintf(", auts=\"%s\"", base64.StdEncoding.EncodeToString(auts)))
+	}
+	return b.String(), nil
 }
