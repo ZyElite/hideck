@@ -18,6 +18,11 @@ type SMSReceiverStatus struct {
 	LocalAddress string
 }
 
+type inboundSIPResult struct {
+	response   string
+	afterReply func()
+}
+
 func (s *Service) receiverStarted() {
 	s.receiverMu.Lock()
 	s.activeReceivers++
@@ -49,27 +54,32 @@ func (s *Service) receiverStatus() SMSReceiverStatus {
 	}
 }
 
-func (s *Service) handleInboundSIP(ctx context.Context, raw string) (string, error) {
+func (s *Service) handleInboundSIP(ctx context.Context, raw string) (inboundSIPResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return inboundSIPResult{}, ctx.Err()
 	default:
 	}
 	method := strings.ToUpper(sipRequestMethod(raw))
 	if method == "" {
-		return "", errors.New("imscore: invalid inbound SIP message")
+		return inboundSIPResult{}, errors.New("imscore: invalid inbound SIP message")
 	}
 	switch method {
 	case "NOTIFY":
 		logging.Info("IMS NOTIFY(reg) 已确认", "event", rawSIPHeaderValue(raw, "Event"))
-		return buildSIPRequestResponse(raw, 200)
+		response, err := buildSIPRequestResponse(raw, 200)
+		return inboundSIPResult{response: response}, err
 	case "OPTIONS":
-		return buildSIPRequestResponse(raw, 200)
+		response, err := buildSIPRequestResponse(raw, 200)
+		return inboundSIPResult{response: response}, err
+	case "MESSAGE":
+		return s.handleInboundSMS(raw)
 	default:
-		return buildSIPRequestResponse(raw, 405)
+		response, err := buildSIPRequestResponse(raw, 405)
+		return inboundSIPResult{response: response}, err
 	}
 }
 
@@ -80,14 +90,24 @@ func (s *Service) dispatchInboundSIP(raw string, reply func(string) error) error
 		return nil
 	}
 	s.transport.DeliverRequest(raw)
-	wireResponse, err := s.handleInboundSIP(context.Background(), raw)
-	if err != nil {
+	result, err := s.handleInboundSIP(context.Background(), raw)
+	if result.response == "" {
 		return err
 	}
 	if reply == nil {
 		return errors.New("imscore: inbound SIP reply path is unavailable")
 	}
-	return reply(wireResponse)
+	if err := reply(result.response); err != nil {
+		return err
+	}
+	if result.afterReply != nil {
+		s.networkDone.Add(1)
+		go func() {
+			defer s.networkDone.Done()
+			result.afterReply()
+		}()
+	}
+	return err
 }
 
 func (s *Service) writeSIPStream(conn net.Conn, response string) error {

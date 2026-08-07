@@ -340,6 +340,11 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		PAccessNetworkCountry: imscore.CountryISO2FromMCC(req.Prepared.Profile.MCC),
 		RegisterTemplate:      registerTemplate,
 	}
+	eventBus := imscore.NewEventBus()
+	cfg.EventBus = eventBus
+	if req.Dispatch != nil {
+		eventBus.Subscribe(&imsEventBridge{dispatcher: req.Dispatch})
+	}
 	if req.DeliveryStore != nil {
 		cfg.DeliveryStore = newDeliveryStoreAdapter(req.DeliveryStore)
 	}

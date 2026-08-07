@@ -81,17 +81,6 @@ func ParseRPDataWithAddresses(body []byte) (byte, string, string, []byte, error)
 	i++
 
 	if i >= len(body) {
-		return 0, "", "", nil, errors.New("smscodec: missing RP-DA")
-	}
-	daLen := int(body[i])
-	i++
-	if i+daLen > len(body) {
-		return 0, "", "", nil, errors.New("smscodec: RP-DA out of bounds")
-	}
-	da := decodeAddressValue(body[i : i+daLen])
-	i += daLen
-
-	if i >= len(body) {
 		return 0, "", "", nil, errors.New("smscodec: missing RP-OA")
 	}
 	oaLen := int(body[i])
@@ -101,6 +90,17 @@ func ParseRPDataWithAddresses(body []byte) (byte, string, string, []byte, error)
 	}
 	oa := decodeAddressValue(body[i : i+oaLen])
 	i += oaLen
+
+	if i >= len(body) {
+		return 0, "", "", nil, errors.New("smscodec: missing RP-DA")
+	}
+	daLen := int(body[i])
+	i++
+	if i+daLen > len(body) {
+		return 0, "", "", nil, errors.New("smscodec: RP-DA out of bounds")
+	}
+	da := decodeAddressValue(body[i : i+daLen])
+	i += daLen
 
 	if i >= len(body) {
 		return 0, "", "", nil, errors.New("smscodec: missing RP-UD")
@@ -117,28 +117,40 @@ func ParseRPDataWithAddresses(body []byte) (byte, string, string, []byte, error)
 func BuildRPData(mr byte, oa, da string, tpdu []byte) []byte {
 	oaEnc, _ := EncodeAddress(oa)
 	daEnc, _ := EncodeAddress(da)
-	out := make([]byte, 0, 5+len(oaEnc)+len(daEnc)+len(tpdu))
-	out = append(out, 0x01) // RP-DATA MTI, direction mobile-originated
+	out := make([]byte, 0, 3+len(oaEnc)+len(daEnc)+len(tpdu))
+	out = append(out, 0x00) // RP-DATA MTI, direction mobile-originated
 	out = append(out, mr)
-	out = append(out, byte(len(daEnc)))
-	out = append(out, daEnc...)
-	out = append(out, byte(len(oaEnc)))
 	out = append(out, oaEnc...)
+	out = append(out, daEnc...)
 	out = append(out, byte(len(tpdu)))
 	out = append(out, tpdu...)
 	return out
+}
+
+// BuildRPAck builds an RP-ACK in the mobile-to-network direction.
+func BuildRPAck(mr byte) []byte {
+	return []byte{0x02, mr}
+}
+
+// BuildRPError builds an RP-ERROR in the mobile-to-network direction.
+func BuildRPError(mr, cause byte) []byte {
+	return []byte{0x04, mr, 0x01, cause, 0x00}
 }
 
 // EncodeAddress encodes a phone number as a TS 24.011 address field.
 func EncodeAddress(number string) ([]byte, error) {
 	digits := onlyDigits(number)
 	if len(digits) == 0 {
-		return nil, errors.New("smscodec: empty address")
+		return []byte{0x00}, nil
 	}
-	// Address: [1 byte length][1 byte TON/NPI][semi-octet digits]
+	ton := byte(0x81)
+	if strings.HasPrefix(strings.TrimSpace(number), "+") {
+		ton = 0x91
+	}
+	// Address: [Value length][TON/NPI][semi-octet digits].
 	addr := make([]byte, 0, 2+(len(digits)+1)/2)
-	addr = append(addr, byte((len(digits)+1)/2+1)) // length incl TON/NPI
-	addr = append(addr, 0x91)                     // TON=international, NPI=ISDN
+	addr = append(addr, byte((len(digits)+1)/2+1))
+	addr = append(addr, ton)
 	for i := 0; i+1 < len(digits); i += 2 {
 		addr = append(addr, (digits[i+1]-'0')<<4|(digits[i]-'0'))
 	}
@@ -161,6 +173,9 @@ func decodeAddressValue(addr []byte) string {
 	}
 	// First byte is TON/NPI.
 	var b strings.Builder
+	if addr[0]&0x70 == 0x10 {
+		b.WriteByte('+')
+	}
 	for _, octet := range addr[1:] {
 		lo := octet & 0x0F
 		if lo <= 9 {
