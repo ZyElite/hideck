@@ -176,7 +176,10 @@ func TestServiceMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	svc.Transport().SetSendFn(func(string) error { return nil })
+	svc.Transport().SetSendFn(func(request string) error {
+		svc.transport.DeliverResponse(registerResponseForRequest(request, 200, nil))
+		return nil
+	})
 	if err := svc.Subscribe("reg.example.com"); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
@@ -191,7 +194,9 @@ func TestServiceMethods(t *testing.T) {
 	if err := svc.RejectServerInvite(inv); err != nil {
 		t.Fatalf("RejectServerInvite: %v", err)
 	}
-	svc.TriggerFastReconnect()
+	if err := svc.TriggerFastReconnect(); err != nil {
+		t.Fatalf("TriggerFastReconnect: %v", err)
+	}
 	svc.UpdateLastPingAt(time.Now())
 }
 

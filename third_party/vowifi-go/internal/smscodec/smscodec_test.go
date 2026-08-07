@@ -21,7 +21,7 @@ func TestNormalizeSMSEncoding(t *testing.T) {
 		{"ucs2", "ucs2", false},
 		{"UCS2", "ucs2", false},
 		{"gsm7", "", true},
-		{"", "", true},
+		{"", "auto", false},
 	}
 	for _, c := range cases {
 		got, err := NormalizeSMSEncoding(c.in)

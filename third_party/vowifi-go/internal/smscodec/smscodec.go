@@ -33,6 +33,8 @@ import (
 func NormalizeSMSEncoding(enc string) (string, error) {
 	enc = strings.TrimSpace(strings.ToLower(enc))
 	switch enc {
+	case "":
+		return "auto", nil
 	case "auto", "ucs2":
 		return enc, nil
 	default:

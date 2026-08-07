@@ -1,10 +1,12 @@
 package smscodec
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/warthog618/sms"
 	"github.com/warthog618/sms/encoding/tpdu"
+	"github.com/warthog618/sms/encoding/ucs2"
 )
 
 // SubmitOptions controls how BuildSubmitTPDUsWithOptions encodes a message.
@@ -26,19 +28,29 @@ func BuildSubmitTPDUsWithOptions(dest, text string, opts SubmitOptions) ([]tpdu.
 	if err != nil {
 		return nil, err
 	}
-	text = strings.TrimSpace(text)
+	dest = strings.TrimSpace(dest)
 
 	options := []sms.EncoderOption{sms.To(dest)}
+	message := []byte(text)
 	if enc == "ucs2" {
-		options = append(options, sms.WithCharset(0)) // UCS-2 charset
+		message = ucs2.Encode([]rune(text))
+		options = append(options, sms.AsUCS2)
 	}
 
-	parts, err := sms.Encode([]byte(text), options...)
+	parts, err := sms.Encode(message, options...)
 	if err != nil {
 		return nil, err
 	}
 	if len(parts) == 0 {
-		return nil, sms.ErrClosed // placeholder: empty message
+		return nil, errors.New("smscodec: TPDU encoding returned no parts")
+	}
+	if IsShortCode(dest) {
+		for index := range parts {
+			address := parts[index].DA
+			address.SetTypeOfNumber(tpdu.TonUnknown)
+			address.SetNumberingPlan(tpdu.NpISDN)
+			parts[index].DA = address
+		}
 	}
 	return parts, nil
 }

@@ -60,14 +60,16 @@ func startTestRegistrar(t *testing.T) *net.UDPConn {
 	t.Cleanup(func() { _ = conn.Close() })
 	go func() {
 		buffer := make([]byte, 64*1024)
-		n, remote, readErr := conn.ReadFromUDP(buffer)
-		if readErr != nil {
-			return
+		for {
+			n, remote, readErr := conn.ReadFromUDP(buffer)
+			if readErr != nil {
+				return
+			}
+			request := string(buffer[:n])
+			response := fmt.Sprintf("SIP/2.0 200 OK\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\nContent-Length: 0\r\n\r\n",
+				testSIPHeader(request, "Via"), testSIPHeader(request, "Call-ID"), testSIPHeader(request, "CSeq"))
+			_, _ = conn.WriteToUDP([]byte(response), remote)
 		}
-		request := string(buffer[:n])
-		response := fmt.Sprintf("SIP/2.0 200 OK\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\nContent-Length: 0\r\n\r\n",
-			testSIPHeader(request, "Via"), testSIPHeader(request, "Call-ID"), testSIPHeader(request, "CSeq"))
-		_, _ = conn.WriteToUDP([]byte(response), remote)
 	}()
 	return conn
 }

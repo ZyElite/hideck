@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 )
 
 // SMSSendOptions carries optional SMS delivery parameters.
@@ -32,30 +30,7 @@ func (s *Service) SendSMSWithResult(ctx context.Context, to, text string) (*SMSS
 
 // SendSMSWithOptions sends an SMS with options.
 func (s *Service) SendSMSWithOptions(ctx context.Context, to, text string, opts SMSSendOptions) (*SMSSendOutcome, error) {
-	if s == nil || s.cfg == nil {
-		return nil, errors.New("imscore: service not configured")
-	}
-	if !s.IsRegistered() {
-		return nil, errors.New("imscore: not registered")
-	}
-	ref := newMessageID()
-	outcome := &SMSSendOutcome{Ref: ref, MessageID: ref, PartsTotal: 1, State: "accepted"}
-
-	// Build the SIP MESSAGE request.
-	req := s.buildSMSRequest(to, text, ref)
-	if err := s.sendSIP(req); err != nil {
-		return nil, fmt.Errorf("imscore: send SMS: %w", err)
-	}
-
-	// Record the delivery in the store.
-	if s.delivery != nil {
-		imsi := s.cfg.IMSI
-		if err := s.delivery.CreateSMSDelivery(ref, imsi, s.cfg.DeviceID, to, text, 1, time.Now()); err != nil {
-			return nil, err
-		}
-	}
-	s.emitSMS(outcome)
-	return outcome, nil
+	return s.sendOutboundSMS(ctx, to, text, opts)
 }
 
 // buildSMSRequest builds a SIP MESSAGE request for an SMS.
@@ -96,18 +71,6 @@ func (s *Service) GetSMSDeliveryStatus(ctx context.Context, ref string) (*Delive
 		return nil, errors.New("imscore: no delivery store")
 	}
 	return s.delivery.GetSMSDeliveryStatus(ref)
-}
-
-// emitSMS publishes SMS events.
-func (s *Service) emitSMS(outcome *SMSSendOutcome) {
-	if s == nil || s.bus == nil || outcome == nil {
-		return
-	}
-	s.bus.Publish(&events.EventSMSSent{
-		DevID:   s.cfg.DeviceID,
-		Content: "sms",
-		Time:    time.Now(),
-	})
 }
 
 // newMessageID generates an SMS message ID.

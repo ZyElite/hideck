@@ -222,6 +222,7 @@ type Service struct {
 	onRegistered     func()
 	onSMSReadiness   func(SMSReadiness)
 	smsReceiverReady bool
+	nextSMSRPMR      byte
 
 	lastPingAt     time.Time
 	securityVerify string
