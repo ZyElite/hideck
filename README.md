@@ -55,6 +55,77 @@ services:
 Default login: `admin` / `admin`. Change the password after first login. Set
 `VOHIVE_TAG` before running Compose when you want a specific image tag.
 
+## EC25 SIM 热插拔设置
+
+EC25 的 USB/QMI 设备热插拔与实体 SIM 卡热插拔是两个独立功能。若模组已被
+VoHive 识别，但运行中插入 SIM 后没有状态变化，请先通过模组的 AT 端口查询：
+
+```text
+AT+QSIMDET?
+AT+QSIMSTAT?
+```
+
+`QSIMDET: 0,0` 表示实体 SIM 热插拔检测未启用。对于“SIM 插入时检测引脚为低电平”
+的卡座，可执行：
+
+```text
+AT+QSIMDET=1,0
+AT+QSIMSTAT=1
+AT&W
+AT+CFUN=1,1
+```
+
+如果卡座在 SIM 插入时检测引脚为高电平，应使用 `AT+QSIMDET=1,1`。检测电平必须
+与硬件设计一致，否则热插拔功能无效。`QSIMDET` 需要重启模组后生效，`QSIMSTAT=1`
+用于启用 SIM 插入/移除状态上报，`AT&W` 用于保存该上报设置。
+
+重启后可再次执行 `AT+QSIMSTAT?` 验证。`+QSIMSTAT: 1,1` 表示已检测到 SIM，
+`+QSIMSTAT: 1,0` 表示模组仍判断 SIM 已移除。还可通过 `AT+CPIN?` 和 `AT+QCCID`
+确认 SIM 是否完成初始化以及能否读取 ICCID。具体参数含义参见
+[Quectel EC25 & EC21 AT Commands Manual](https://quectel.com/content/uploads/2021/03/Quectel_EC25EC21_AT_Commands_Manual_V1.3.pdf)。
+
+### 大疆定制模块恢复为移远 EC25 USB 身份
+
+以下步骤适用于 USB 当前识别为 `2ca3:4006`、且已确认底层为移远 EC25 的大疆定制
+模块。该操作只修改 USB VID/PID 与接口组合，不会修改 IMEI。`AT+QCFG="usbcfg"`
+会自动保存配置，并在模组重启后生效；错误的接口参数可能导致 AT 口或网络接口消失，
+不要用于其他型号的模组。
+
+在虚拟机中依次执行：
+
+```bash
+# 0. 安装 socat（用于发送 AT 指令）
+sudo apt-get update && sudo apt-get install socat -y
+
+# 1. 临时加载 option 串口驱动
+sudo modprobe option
+
+# 2. 将大疆当前 USB ID 注册到 option 驱动，生成 /dev/ttyUSB* 串口
+echo 2ca3 4006 | sudo tee /sys/bus/usb-serial/drivers/option1/new_id
+
+# 3. 确认 /dev/ttyUSB2 是 AT 口后，将 USB 身份永久改为移远 2c7c:0125
+echo 'AT+QCFG="usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,0' | socat - /dev/ttyUSB2,crnl
+
+# 4. 软重启模组，使新 USB 配置生效
+echo 'AT+CFUN=1,1' | socat - /dev/ttyUSB2,crnl
+```
+
+软重启会让 `/dev/ttyUSB*` 和网络接口暂时消失。等待模组重新枚举后检查：
+
+```bash
+lsusb
+```
+
+预期结果包含：
+
+```text
+2c7c:0125 Quectel Wireless Solutions Co., Ltd. EC25 LTE modem
+```
+
+若 `/dev/ttyUSB2` 不存在或不是 AT 口，应先根据实际枚举结果确认端口，不能直接发送
+持久化配置。当前用户也必须拥有该串口的读写权限。`usbcfg` 参数含义参见
+[Quectel EC2x/EG2x/EG9x/EM05 QCFG AT Commands Manual](https://quectel.com/content/uploads/2024/02/Quectel_EC2xEG2xEG9xEM05_Series_QCFG_AT_Commands_Manual_V1.0.pdf)。
+
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm--Noncommercial--1.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](go.mod)
 [![Vue 3](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js)](web/package.json)
