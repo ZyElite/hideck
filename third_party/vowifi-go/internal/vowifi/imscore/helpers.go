@@ -2,6 +2,7 @@ package imscore
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
@@ -234,34 +235,51 @@ func IsFatalNetworkError(err error) bool {
 	}
 }
 
-// GenerateStablePAccessNetworkInfo builds the P-Access-Network-Info header
-// value for a stable WLAN access (3GPP TS 24.229 §7.2A). The MNC is padded
-// to three digits.
-func GenerateStablePAccessNetworkInfo(mcc, mnc string, wlanNodeID string) string {
-	if len(mnc) == 2 {
-		mnc = "0" + mnc
-	}
-	return fmt.Sprintf("IEEE-802.11;network-id=%s%s;PANID=%s;TOD=1", mcc, mnc, wlanNodeID)
+// GenerateStablePAccessNetworkInfo builds the WLAN P-Access-Network-Info
+// value used by the recovered implementation.
+func GenerateStablePAccessNetworkInfo(seed string) string {
+	return fmt.Sprintf(`IEEE-802.11; i-wlan-node-id="%s"`, GenerateStableWlanNodeID(seed))
 }
 
 // GenerateStablePAccessNetworkInfoByIdentity builds PANI from an identity.
 func GenerateStablePAccessNetworkInfoByIdentity(ident identity.IMSIdentity) string {
-	mcc, mnc := mccMncFromIdentity(ident)
-	return GenerateStablePAccessNetworkInfo(mcc, mnc, GenerateStableWlanNodeID(ident.IMPI))
+	seed := stablePANIGenerationSeed([]string{
+		ident.IMPI,
+		ident.IMPU,
+		ident.Domain,
+		string(ident.ActualSource),
+	})
+	return GenerateStablePAccessNetworkInfo(seed)
 }
 
 // AppendPAccessNetworkCountry appends a country to the PANI value.
 func AppendPAccessNetworkCountry(pani, iso2 string) string {
+	iso2 = strings.ToUpper(strings.TrimSpace(iso2))
 	if iso2 == "" || strings.Contains(strings.ToLower(pani), "country=") {
 		return pani
 	}
-	return pani + ";country=" + strings.ToUpper(strings.TrimSpace(iso2))
+	return pani + ";country=" + iso2
 }
 
 // GenerateStableWlanNodeID derives a stable WLAN node ID from an identity.
-func GenerateStableWlanNodeID(impi string) string {
-	h := md5Hex([]byte(impi))
-	return strings.ToUpper(h[:8])
+func GenerateStableWlanNodeID(seed string) string {
+	seed = strings.TrimSpace(seed)
+	if seed == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(seed))
+	// Present the stable value as a locally administered unicast MAC address.
+	digest[0] = digest[0]&^byte(1) | byte(2)
+	return fmt.Sprintf("%x", digest[:6])
+}
+
+func stablePANIGenerationSeed(candidates []string) string {
+	for _, candidate := range candidates {
+		if seed := strings.TrimSpace(candidate); seed != "" {
+			return seed
+		}
+	}
+	return ""
 }
 
 // GenerateRandomIMEIForModel generates a random IMEI for a device model.

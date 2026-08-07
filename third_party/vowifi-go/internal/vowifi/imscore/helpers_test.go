@@ -55,8 +55,8 @@ func TestIsFatalNetworkError(t *testing.T) {
 }
 
 func TestGenerateStablePAccessNetworkInfo(t *testing.T) {
-	pani := GenerateStablePAccessNetworkInfo("310", "26", "ABCDEF01")
-	if pani != "IEEE-802.11;network-id=310026;PANID=ABCDEF01;TOD=1" {
+	pani := GenerateStablePAccessNetworkInfo("user@example.com")
+	if pani != `IEEE-802.11; i-wlan-node-id="b6c9a289323b"` {
 		t.Errorf("pani = %q", pani)
 	}
 	withCountry := AppendPAccessNetworkCountry(pani, "US")
@@ -70,12 +70,26 @@ func TestGenerateStablePAccessNetworkInfo(t *testing.T) {
 
 func TestGenerateStableWlanNodeID(t *testing.T) {
 	id := GenerateStableWlanNodeID("user@example.com")
-	if len(id) != 8 {
-		t.Errorf("node id len = %d, want 8", len(id))
+	if id != "b6c9a289323b" {
+		t.Errorf("node id = %q", id)
 	}
-	// Stable: same input -> same output.
 	if GenerateStableWlanNodeID("user@example.com") != id {
 		t.Error("node id should be stable")
+	}
+	if GenerateStableWlanNodeID("   ") != "" {
+		t.Error("blank seed should not create a node id")
+	}
+}
+
+func TestGenerateStablePAccessNetworkInfoByIdentity(t *testing.T) {
+	ident := identity.IMSIdentity{
+		IMPI:   "310260123456789@ims.example",
+		IMPU:   "sip:310260123456789@ims.example",
+		Domain: "ims.example",
+	}
+	want := `IEEE-802.11; i-wlan-node-id="ba25793d37ec"`
+	if got := GenerateStablePAccessNetworkInfoByIdentity(ident); got != want {
+		t.Fatalf("identity PANI = %q, want %q", got, want)
 	}
 }
 

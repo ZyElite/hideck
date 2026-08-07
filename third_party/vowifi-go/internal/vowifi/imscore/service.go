@@ -176,15 +176,16 @@ func (s *Service) GetPAccessNetworkInfo() string {
 	if cfg == nil {
 		return ""
 	}
-	mcc, mnc := "000", "00"
-	if len(cfg.IMSI) >= 5 {
+	mcc := "000"
+	if len(cfg.IMSI) >= 3 {
 		mcc = cfg.IMSI[:3]
-		mnc = cfg.IMSI[3:5]
 	}
-	if len(mnc) == 2 {
-		mnc = "0" + mnc
+	impu := ""
+	if len(cfg.IMPU) > 0 {
+		impu = cfg.IMPU[0]
 	}
-	pani := "IEEE-802.11;network-id=" + mcc + mnc + ";PANID=0x0000;TOD=1"
+	seed := stablePANIGenerationSeed([]string{cfg.IMPI, impu, cfg.Domain, cfg.DeviceID})
+	pani := GenerateStablePAccessNetworkInfo(seed)
 	return AppendPAccessNetworkCountry(pani, CountryISO2FromMCC(mcc))
 }
 

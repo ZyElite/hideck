@@ -163,11 +163,14 @@ func TestSendSMSNotRegistered(t *testing.T) {
 }
 
 func TestPAccessNetworkInfo(t *testing.T) {
-	cfg := &IMSConfig{IMSI: "310260123456789"}
+	cfg := &IMSConfig{
+		IMSI: "310260123456789",
+		IMPI: "310260123456789@ims.example",
+	}
 	svc, _ := New(cfg)
-	pani := svc.GetPAccessNetworkInfo()
-	if !strings.Contains(pani, "310026") {
-		t.Errorf("pani = %q", pani)
+	want := `IEEE-802.11; i-wlan-node-id="ba25793d37ec";country=US`
+	if pani := svc.GetPAccessNetworkInfo(); pani != want {
+		t.Errorf("pani = %q, want %q", pani, want)
 	}
 }
 
