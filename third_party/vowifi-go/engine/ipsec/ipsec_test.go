@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"crypto/aes"
 	"encoding/binary"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -104,7 +106,7 @@ func TestESPEncapsulateDecapsulateCBC(t *testing.T) {
 		t.Errorf("frame length = %d, want %d", len(enc), total)
 	}
 	// The CBC ciphertext portion must be block aligned (header/ICV are not).
-	if (len(enc) - 8 - 16 - 12)%aes.BlockSize != 0 {
+	if (len(enc)-8-16-12)%aes.BlockSize != 0 {
 		t.Errorf("CBC ciphertext not block aligned: %d", len(enc))
 	}
 
@@ -124,6 +126,107 @@ func TestESPEncapsulateDecapsulateCBC(t *testing.T) {
 	bad[len(bad)-1] ^= 0x01
 	if _, err := Decapsulate(bad, nil, sa); err == nil {
 		t.Error("Decapsulate accepted a frame with a bad ICV")
+	}
+}
+
+func TestESPReplayWindowAcceptsOutOfOrderAndRejectsDuplicates(t *testing.T) {
+	key := bytes.Repeat([]byte{0x33}, 20)
+	outbound := NewSecurityAssociation(0x10203040, crypto.EncrAESGCM16, key, 0)
+	inbound := NewSecurityAssociation(0x10203040, crypto.EncrAESGCM16, key, 0)
+	frames := make([][]byte, 70)
+	for index := range frames {
+		frame, err := Encapsulate(fakeIPPacket(index), nil, outbound)
+		if err != nil {
+			t.Fatalf("Encapsulate sequence %d: %v", index+1, err)
+		}
+		frames[index] = frame
+	}
+	if _, err := Decapsulate(frames[69], nil, inbound); err != nil {
+		t.Fatalf("Decapsulate newest: %v", err)
+	}
+	if _, err := Decapsulate(frames[68], nil, inbound); err != nil {
+		t.Fatalf("Decapsulate out of order: %v", err)
+	}
+	if _, err := Decapsulate(frames[68], nil, inbound); !errors.Is(err, errSequenceReplay) {
+		t.Fatalf("duplicate error = %v, want replay", err)
+	}
+	if _, err := Decapsulate(frames[0], nil, inbound); !errors.Is(err, errSequenceTooOld) {
+		t.Fatalf("old sequence error = %v, want outside window", err)
+	}
+}
+
+func TestESPFailedAuthenticationDoesNotAdvanceReplayWindow(t *testing.T) {
+	key := bytes.Repeat([]byte{0x33}, 20)
+	outbound := NewSecurityAssociation(0x10203040, crypto.EncrAESGCM16, key, 0)
+	inbound := NewSecurityAssociation(0x10203040, crypto.EncrAESGCM16, key, 0)
+	frame, err := Encapsulate(fakeIPPacket(20), nil, outbound)
+	if err != nil {
+		t.Fatalf("Encapsulate: %v", err)
+	}
+	tampered := append([]byte(nil), frame...)
+	tampered[len(tampered)-1] ^= 0xff
+	if _, err := Decapsulate(tampered, nil, inbound); err == nil {
+		t.Fatal("tampered frame was accepted")
+	}
+	if _, err := Decapsulate(frame, nil, inbound); err != nil {
+		t.Fatalf("authenticated frame after tamper: %v", err)
+	}
+	zero := append([]byte(nil), frame...)
+	binary.BigEndian.PutUint32(zero[4:8], 0)
+	if _, err := Decapsulate(zero, nil, NewSecurityAssociation(0x10203040, crypto.EncrAESGCM16, key, 0)); !errors.Is(err, errInvalidSequence) {
+		t.Fatalf("zero sequence error = %v", err)
+	}
+}
+
+func TestESPConcurrentDuplicateIsDeliveredOnce(t *testing.T) {
+	key := bytes.Repeat([]byte{0x33}, 20)
+	outbound := NewSecurityAssociation(0x10203040, crypto.EncrAESGCM16, key, 0)
+	inbound := NewSecurityAssociation(0x10203040, crypto.EncrAESGCM16, key, 0)
+	frame, err := Encapsulate(fakeIPPacket(20), nil, outbound)
+	if err != nil {
+		t.Fatalf("Encapsulate: %v", err)
+	}
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	for attempt := 0; attempt < 2; attempt++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, err := Decapsulate(frame, nil, inbound)
+			results <- err
+		}()
+	}
+	wait.Wait()
+	close(results)
+	successes, replays := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, errSequenceReplay):
+			replays++
+		default:
+			t.Fatalf("unexpected Decapsulate error: %v", err)
+		}
+	}
+	if successes != 1 || replays != 1 {
+		t.Fatalf("concurrent results success=%d replay=%d", successes, replays)
+	}
+}
+
+func TestESPSequenceExhaustionFailsBeforeWrap(t *testing.T) {
+	key := bytes.Repeat([]byte{0x33}, 20)
+	sa := NewSecurityAssociation(0x10203040, crypto.EncrAESGCM16, key, 0)
+	sa.seqNo = ^uint32(0) - 1
+	last, err := Encapsulate(fakeIPPacket(1), nil, sa)
+	if err != nil {
+		t.Fatalf("last valid Encapsulate: %v", err)
+	}
+	if sequence := binary.BigEndian.Uint32(last[4:8]); sequence != ^uint32(0) {
+		t.Fatalf("last sequence = %d", sequence)
+	}
+	if _, err := Encapsulate(fakeIPPacket(1), nil, sa); !errors.Is(err, errSequenceExhausted) {
+		t.Fatalf("exhaustion error = %v", err)
 	}
 }
 

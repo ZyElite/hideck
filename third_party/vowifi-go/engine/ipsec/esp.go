@@ -61,7 +61,10 @@ func EncapsulateWithNextHeaderInto(dst []byte, plaintext []byte, nextHeader byte
 	}
 
 	// Sequence numbers start at 1 (field initialised to 0).
-	seq := sa.NextSequenceNumber()
+	seq, err := sa.reserveSequenceNumber()
+	if err != nil {
+		return nil, err
+	}
 
 	// Grow dst to fit the whole frame.
 	if cap(dst) < total {
@@ -163,6 +166,10 @@ func DecapsulateWithNextHeaderInto(dst []byte, packet []byte, sa *SecurityAssoci
 	if sa.spi != 0 && sa.spi != spi {
 		return nil, 0, errSPIMismatch
 	}
+	sequence := binary.BigEndian.Uint32(packet[4:8])
+	if sequence == 0 {
+		return nil, 0, errInvalidSequence
+	}
 
 	ivSize := c.IVSize()
 	if len(packet) < 8+ivSize {
@@ -198,6 +205,9 @@ func DecapsulateWithNextHeaderInto(dst []byte, packet []byte, sa *SecurityAssoci
 	nextHeader := plaintext[len(plaintext)-1]
 	if padLen+2 > len(plaintext) {
 		return nil, 0, errBadPaddingLength
+	}
+	if err := sa.acceptInboundSequence(sequence); err != nil {
+		return nil, 0, err
 	}
 	inner := plaintext[:len(plaintext)-padLen-2]
 	return append(dst, inner...), nextHeader, nil

@@ -19,17 +19,21 @@ import (
 //     separate integrity transform (e.g. HMAC-SHA1-96) covering the whole ESP
 //     packet, whose output is appended as the ICV.
 type SecurityAssociation struct {
-	mu         sync.Mutex
-	seqNo      uint32 // outbound ESP sequence number (first packet uses 1)
-	spi        uint32 // local SPI, written into outbound ESP headers
-	remoteSPI  uint32 // peer SPI, verified on inbound packets
-	cipherName uint16 // ENCR transform ID
-	key        []byte // encryption key material (AES-GCM: K|salt)
-	aead       bool   // true = AES-GCM (no separate integrity)
-	integ      crypto.Integrity
-	integKey   []byte
-	prepared   crypto.PreparedCipher // lazily built by cipher()
+	mu             sync.Mutex
+	seqNo          uint32 // outbound ESP sequence number (first packet uses 1)
+	inboundHighest uint32
+	inboundBitmap  uint64
+	spi            uint32 // local SPI, written into outbound ESP headers
+	remoteSPI      uint32 // peer SPI, verified on inbound packets
+	cipherName     uint16 // ENCR transform ID
+	key            []byte // encryption key material (AES-GCM: K|salt)
+	aead           bool   // true = AES-GCM (no separate integrity)
+	integ          crypto.Integrity
+	integKey       []byte
+	prepared       crypto.PreparedCipher // lazily built by cipher()
 }
+
+const replayWindowSize = 64
 
 // NewSecurityAssociation creates an AEAD-mode ESP SA. key is K|salt per
 // RFC 4106 (the last 4 bytes are the GCM salt).
@@ -58,14 +62,56 @@ func NewSecurityAssociationCBC(spi uint32, cipherName uint16, key []byte, integ 
 
 // NextSequenceNumber returns the next outbound ESP sequence number.
 func (sa *SecurityAssociation) NextSequenceNumber() uint32 {
+	sequence, _ := sa.reserveSequenceNumber()
+	return sequence
+}
+
+func (sa *SecurityAssociation) reserveSequenceNumber() (uint32, error) {
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
+	if sa.seqNo == ^uint32(0) {
+		return 0, errSequenceExhausted
+	}
 	sa.seqNo++
-	return sa.seqNo
+	return sa.seqNo, nil
+}
+
+func (sa *SecurityAssociation) acceptInboundSequence(sequence uint32) error {
+	if sequence == 0 {
+		return errInvalidSequence
+	}
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	if sa.inboundHighest == 0 {
+		sa.inboundHighest, sa.inboundBitmap = sequence, 1
+		return nil
+	}
+	if sequence > sa.inboundHighest {
+		shift := sequence - sa.inboundHighest
+		if shift >= replayWindowSize {
+			sa.inboundBitmap = 1
+		} else {
+			sa.inboundBitmap = (sa.inboundBitmap << shift) | 1
+		}
+		sa.inboundHighest = sequence
+		return nil
+	}
+	distance := sa.inboundHighest - sequence
+	if distance >= replayWindowSize {
+		return errSequenceTooOld
+	}
+	mask := uint64(1) << distance
+	if sa.inboundBitmap&mask != 0 {
+		return errSequenceReplay
+	}
+	sa.inboundBitmap |= mask
+	return nil
 }
 
 // cipher returns the lazily-prepared encryption transform.
 func (sa *SecurityAssociation) cipher() (crypto.PreparedCipher, error) {
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
 	if sa.prepared != nil {
 		return sa.prepared, nil
 	}
@@ -103,6 +149,10 @@ var (
 	errPayloadTooShort   = errors.New("payload too short")
 	errBadPaddingLength  = errors.New("bad padding length")
 	errInvalidBlockSize  = errors.New("invalid block size")
+	errSequenceExhausted = errors.New("ESP sequence number exhausted")
+	errInvalidSequence   = errors.New("invalid ESP sequence number zero")
+	errSequenceReplay    = errors.New("replayed ESP sequence number")
+	errSequenceTooOld    = errors.New("ESP sequence number outside replay window")
 )
 
 // marshalESPHeader writes SPI and sequence number in network byte order.
