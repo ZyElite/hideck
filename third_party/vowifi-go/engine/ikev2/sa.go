@@ -12,6 +12,15 @@ const (
 	ProtoAH  byte = 2
 )
 
+const (
+	transformAttrKeyLength uint16 = 14
+	aesKeyLengthBits       uint16 = 128
+	encrAESCBC             uint16 = 12
+	encrAESGCM8            uint16 = 18
+	encrAESGCM12           uint16 = 19
+	encrAESGCM16           uint16 = 20
+)
+
 // Transform types (RFC 7296 §3.3.2).
 const (
 	TypeEncryption byte = 1
@@ -53,7 +62,7 @@ func (p *Proposal) AddTransformWithKeyLen(transformType byte, transformID uint16
 	p.Transforms = append(p.Transforms, &Transform{
 		TransformType: transformType,
 		TransformID:   transformID,
-		Attributes:    []*TransformAttribute{{Type: 14, Value: uint16(keyLen)}}, // KEY_LENGTH = 14
+		Attributes:    []*TransformAttribute{{Type: transformAttrKeyLength, Value: keyLen}},
 	})
 	p.NumTransforms = byte(len(p.Transforms))
 }
@@ -209,7 +218,7 @@ func DecodeTransform(b []byte) (*Transform, int, error) {
 // encryption, PRF, integrity and DH transform IDs.
 func CreateMultiProposalIKE(encr, prf, integ, dh uint16) []*Proposal {
 	p := &Proposal{ProposalNum: 1, ProtocolID: ProtoIKE}
-	p.AddTransform(TypeEncryption, encr)
+	addEncryptionTransform(p, encr)
 	p.AddTransform(TypePRF, prf)
 	p.AddTransform(TypeIntegrity, integ)
 	p.AddTransform(TypeDHGroup, dh)
@@ -219,7 +228,7 @@ func CreateMultiProposalIKE(encr, prf, integ, dh uint16) []*Proposal {
 // CreateMultiProposalESP builds a proposal list for a Child SA (ESP).
 func CreateMultiProposalESP(encr, integ, dh, esn uint16) []*Proposal {
 	p := &Proposal{ProposalNum: 1, ProtocolID: ProtoESP}
-	p.AddTransform(TypeEncryption, encr)
+	addEncryptionTransform(p, encr)
 	if integ != 0 {
 		p.AddTransform(TypeIntegrity, integ)
 	}
@@ -228,4 +237,13 @@ func CreateMultiProposalESP(encr, integ, dh, esn uint16) []*Proposal {
 	}
 	p.AddTransform(TypeESN, esn)
 	return []*Proposal{p}
+}
+
+func addEncryptionTransform(proposal *Proposal, transformID uint16) {
+	switch transformID {
+	case encrAESCBC, encrAESGCM8, encrAESGCM12, encrAESGCM16:
+		proposal.AddTransformWithKeyLen(TypeEncryption, transformID, aesKeyLengthBits)
+	default:
+		proposal.AddTransform(TypeEncryption, transformID)
+	}
 }

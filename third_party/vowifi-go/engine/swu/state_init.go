@@ -1,7 +1,9 @@
 package swu
 
 import (
+	"bytes"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -69,25 +71,26 @@ func (s *Session) buildIKESAInitPacket() (*ikev2.IKEPacket, error) {
 	if s.dh == nil {
 		return nil, errors.New("no Diffie-Hellman instance configured")
 	}
-	if err := s.dh.GenerateKey(); err != nil {
-		return nil, fmt.Errorf("generate DH key: %w", err)
+	if len(s.cookie) == 0 {
+		if err := s.generateIKEInitMaterial(); err != nil {
+			return nil, err
+		}
+	} else if s.SPIi == ([8]byte{}) || len(s.Ni) == 0 || len(s.dh.PublicKeyBytes()) == 0 {
+		return nil, errors.New("cannot retry COOKIE without original IKE_SA_INIT material")
 	}
 
-	// Initiator SPI (random 8 bytes).
-	if _, err := rand.Read(s.SPIi[:]); err != nil {
-		return nil, fmt.Errorf("generate SPIi: %w", err)
+	payloads := make([]ikev2.Payload, 0, 6)
+	if len(s.cookie) > 0 {
+		payloads = append(payloads, &ikev2.EncryptedPayloadNotify{
+			NotifyType: notifyCookie,
+			NotifyData: append([]byte(nil), s.cookie...),
+		})
 	}
-
-	// Initiator nonce.
-	nonceLen := s.nonceLen
-	if nonceLen <= 0 {
-		nonceLen = 32
-	}
-	ni := make([]byte, nonceLen)
-	if _, err := rand.Read(ni); err != nil {
-		return nil, fmt.Errorf("generate nonce: %w", err)
-	}
-	s.Ni = ni
+	payloads = append(payloads,
+		&ikev2.EncryptedPayloadSA{Proposals: buildIKEProposals(s.encrAlg, s.prfAlg, s.integAlg, s.dhGroup)},
+		&ikev2.EncryptedPayloadKE{DHGroupNum: s.dhGroup, KeyData: s.dh.PublicKeyBytes()},
+		&ikev2.EncryptedPayloadNonce{Data: append([]byte(nil), s.Ni...)},
+	)
 
 	pkt := &ikev2.IKEPacket{
 		InitiatorSPI: s.SPIi,
@@ -96,22 +99,35 @@ func (s *Session) buildIKESAInitPacket() (*ikev2.IKEPacket, error) {
 		ExchangeType: ikev2.ExchangeIKEInit,
 		Flags:        0x08, // Initiator
 		MessageID:    0,
-		Payloads: []ikev2.Payload{
-			&ikev2.EncryptedPayloadSA{Proposals: buildIKEProposals(s.encrAlg, s.prfAlg, s.integAlg, s.dhGroup)},
-			&ikev2.EncryptedPayloadKE{DHGroupNum: s.dhGroup, KeyData: s.dh.PublicKeyBytes()},
-			&ikev2.EncryptedPayloadNonce{Data: ni},
-		},
+		Payloads:     payloads,
 	}
-	// Retransmit the COOKIE notify if the responder previously demanded one.
-	if len(s.cookie) > 0 {
-		pkt.Payloads = append(pkt.Payloads, &ikev2.EncryptedPayloadNotify{
-			ProtocolID: ikev2.ProtoIKE,
-			NotifyType: notifyCookie,
-			NotifyData: append([]byte{}, s.cookie...),
-		})
+	if s.socket != nil {
+		pkt.Payloads = append(pkt.Payloads,
+			natDetectionNotify(notifyNATSource, s.SPIi, [8]byte{}, s.socket.LocalIP(), s.socket.LocalPort()),
+			natDetectionNotify(notifyNATDestination, s.SPIi, [8]byte{}, s.socket.RemoteIP(), s.socket.RemotePort()),
+		)
 	}
 	return pkt, nil
 }
+
+func (s *Session) generateIKEInitMaterial() error {
+	if err := s.dh.GenerateKey(); err != nil {
+		return fmt.Errorf("generate DH key: %w", err)
+	}
+	if _, err := rand.Read(s.SPIi[:]); err != nil {
+		return fmt.Errorf("generate SPIi: %w", err)
+	}
+	nonceLen := s.nonceLen
+	if nonceLen <= 0 {
+		nonceLen = 32
+	}
+	s.Ni = make([]byte, nonceLen)
+	if _, err := rand.Read(s.Ni); err != nil {
+		return fmt.Errorf("generate nonce: %w", err)
+	}
+	return nil
+}
+
 // handleIKESAInitResp processes an IKE_SA_INIT response. On a normal response
 // it records the responder SPI/nonce, computes the DH shared secret and derives
 // the IKE SA keys. Special responses (COOKIE, INVALID_KE_PAYLOAD, REDIRECT) are
@@ -194,7 +210,41 @@ func (s *Session) handleIKESAInitResp(resp *ikev2.IKEPacket) error {
 	// the local/remote transport addresses, wired up with the data plane).
 	s.natSourceHash = nATSource
 	s.natDestHash = nATDest
+	s.applyNATTraversal(nATSource, nATDest)
 	return nil
+}
+
+func natDetectionNotify(notifyType uint16, spiI, spiR [8]byte, ip net.IP, port uint16) *ikev2.EncryptedPayloadNotify {
+	return &ikev2.EncryptedPayloadNotify{
+		NotifyType: notifyType,
+		NotifyData: natDetectionHash(spiI, spiR, ip, port),
+	}
+}
+
+func natDetectionHash(spiI, spiR [8]byte, ip net.IP, port uint16) []byte {
+	data := make([]byte, 0, 16+net.IPv6len+2)
+	data = append(data, spiI[:]...)
+	data = append(data, spiR[:]...)
+	if ipv4 := ip.To4(); ipv4 != nil {
+		data = append(data, ipv4...)
+	} else if ipv6 := ip.To16(); ipv6 != nil {
+		data = append(data, ipv6...)
+	}
+	data = binary.BigEndian.AppendUint16(data, port)
+	sum := sha1.Sum(data)
+	return sum[:]
+}
+
+func (s *Session) applyNATTraversal(sourceHash, destinationHash []byte) {
+	if s.socket == nil || len(sourceHash) == 0 || len(destinationHash) == 0 {
+		return
+	}
+	expectedSource := natDetectionHash(s.SPIi, s.SPIr, s.socket.RemoteIP(), s.socket.RemotePort())
+	expectedDestination := natDetectionHash(s.SPIi, s.SPIr, s.socket.LocalIP(), s.socket.LocalPort())
+	if !bytes.Equal(sourceHash, expectedSource) || !bytes.Equal(destinationHash, expectedDestination) {
+		s.socket.SetRemotePort(4500)
+		s.remotePort = 4500
+	}
 }
 
 // parseKERaw extracts the DH group and key bytes from a raw KE payload body

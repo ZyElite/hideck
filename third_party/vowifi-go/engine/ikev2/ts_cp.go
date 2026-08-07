@@ -22,10 +22,10 @@ const (
 
 // Configuration payload attribute types (RFC 7296 §3.15.1).
 const (
-	CPAttrIP4Address uint16 = 1 // INTERNAL_IP4_ADDRESS
-	CPAttrIP4Netmask uint16 = 2 // INTERNAL_IP4_NETMASK
-	CPAttrIP4DNS     uint16 = 3 // INTERNAL_IP4_DNS
-	CPAttrIP6Address uint16 = 8 // INTERNAL_IP6_ADDRESS
+	CPAttrIP4Address uint16 = 1  // INTERNAL_IP4_ADDRESS
+	CPAttrIP4Netmask uint16 = 2  // INTERNAL_IP4_NETMASK
+	CPAttrIP4DNS     uint16 = 3  // INTERNAL_IP4_DNS
+	CPAttrIP6Address uint16 = 8  // INTERNAL_IP6_ADDRESS
 	CPAttrIP6DNS     uint16 = 10 // INTERNAL_IP6_DNS
 )
 
@@ -70,6 +70,8 @@ func NewTrafficSelectorIPV6(ip net.IP, protocolID byte, startPort, endPort uint1
 // Encode serialises the traffic selector.
 func (t *TrafficSelector) Encode(b []byte) []byte {
 	body := []byte{t.Type, t.ProtocolID}
+	selectorLength := 8 + len(t.StartAddr) + len(t.EndAddr)
+	body = binary.BigEndian.AppendUint16(body, uint16(selectorLength))
 	body = binary.BigEndian.AppendUint16(body, t.StartPort)
 	body = binary.BigEndian.AppendUint16(body, t.EndPort)
 	body = append(body, t.StartAddr...)

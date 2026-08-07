@@ -219,14 +219,24 @@ func DecodePayloadDelete(body []byte) (*EncryptedPayloadDelete, error) {
 // EncryptedPayloadTS is a Traffic Selector payload.
 type EncryptedPayloadTS struct {
 	payload
-	TSNumber  byte
-	Selectors []*TrafficSelector
+	PayloadType byte
+	TSNumber    byte
+	Selectors   []*TrafficSelector
 }
 
-func (p *EncryptedPayloadTS) Type() byte { return PayloadTS }
+func (p *EncryptedPayloadTS) Type() byte {
+	if p.PayloadType == PayloadTSr {
+		return PayloadTSr
+	}
+	return PayloadTSi
+}
 
 func (p *EncryptedPayloadTS) Encode(b []byte) []byte {
-	body := []byte{p.TSNumber, 0, 0, 0}
+	count := p.TSNumber
+	if count == 0 {
+		count = byte(len(p.Selectors))
+	}
+	body := []byte{count, 0, 0, 0}
 	for _, ts := range p.Selectors {
 		body = ts.Encode(body)
 	}
@@ -234,18 +244,24 @@ func (p *EncryptedPayloadTS) Encode(b []byte) []byte {
 }
 
 // DecodePayloadTS parses a Traffic Selector payload body.
-func DecodePayloadTS(body []byte) (*EncryptedPayloadTS, error) {
+func DecodePayloadTS(body []byte, payloadType byte) (*EncryptedPayloadTS, error) {
 	if len(body) < 4 {
 		return nil, errPayloadTooShort("ts")
 	}
-	ts := &EncryptedPayloadTS{TSNumber: body[0]}
+	ts := &EncryptedPayloadTS{PayloadType: payloadType, TSNumber: body[0]}
 	pos := 4
-	for pos+8 <= len(body) {
+	for len(ts.Selectors) < int(ts.TSNumber) {
+		if pos >= len(body) {
+			return nil, errPayloadTooShort("ts selector")
+		}
 		n, err := ts.decodeSelector(body[pos:])
 		if err != nil {
 			return nil, err
 		}
 		pos += n
+	}
+	if pos != len(body) {
+		return nil, fmt.Errorf("ikev2: traffic selectors have %d trailing bytes", len(body)-pos)
 	}
 	return ts, nil
 }
@@ -256,18 +272,23 @@ func (p *EncryptedPayloadTS) decodeSelector(b []byte) (int, error) {
 	}
 	tsType := b[0]
 	addrLen := 4
-	if tsType == 8 { // IPv6
+	switch tsType {
+	case TSIPv4Range:
+	case TSIPv6Range:
 		addrLen = 16
+	default:
+		return 0, fmt.Errorf("ikev2: unsupported traffic selector type %d", tsType)
 	}
 	total := 8 + addrLen*2
-	if len(b) < total {
+	encodedLength := int(binary.BigEndian.Uint16(b[2:4]))
+	if encodedLength != total || len(b) < total {
 		return 0, errPayloadTooShort("ts selector")
 	}
 	sel := &TrafficSelector{
 		Type:       b[0],
 		ProtocolID: b[1],
-		StartPort:  binary.BigEndian.Uint16(b[2:4]),
-		EndPort:    binary.BigEndian.Uint16(b[4:6]),
+		StartPort:  binary.BigEndian.Uint16(b[4:6]),
+		EndPort:    binary.BigEndian.Uint16(b[6:8]),
 	}
 	sel.StartAddr = append([]byte{}, b[8:8+addrLen]...)
 	sel.EndAddr = append([]byte{}, b[8+addrLen:8+addrLen*2]...)
@@ -331,8 +352,8 @@ func decodePayload(b []byte, typ byte) (Payload, int, error) {
 		pl = &EncryptedPayloadSK{NextPayload: hdr.NextPayload, Data: append([]byte{}, body...)}
 	case PayloadSA:
 		pl, err = DecodePayloadSA(body)
-	case PayloadTS:
-		pl, err = DecodePayloadTS(body)
+	case PayloadTSi, PayloadTSr:
+		pl, err = DecodePayloadTS(body, typ)
 	case PayloadCP:
 		pl, err = DecodePayloadCP(body)
 	case PayloadDelete:

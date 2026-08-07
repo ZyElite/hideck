@@ -30,14 +30,14 @@ func (s *Session) sendIKE(raw []byte) error {
 // receiveIKE waits for the response matching the most recent request and
 // retransmits that exact request according to the recovered RFC 7296 policy.
 func (s *Session) receiveIKE(ctx context.Context) (*ikev2.IKEPacket, error) {
-	request, messageID, err := s.pendingIKERequest()
+	request, expected, err := s.pendingIKERequest()
 	if err != nil {
 		return nil, err
 	}
 	policy := normalizedRetransmitConfig(s.cfg)
 	delay := policy.InitialDelay
 	for retries := 0; ; retries++ {
-		packet, timedOut, err := s.waitForIKEResponse(ctx, messageID, delay)
+		packet, timedOut, err := s.waitForIKEResponse(ctx, expected, delay)
 		if err != nil || !timedOut {
 			return packet, err
 		}
@@ -49,19 +49,24 @@ func (s *Session) receiveIKE(ctx context.Context) (*ikev2.IKEPacket, error) {
 	}
 }
 
-func (s *Session) pendingIKERequest() ([]byte, uint32, error) {
+func (s *Session) pendingIKERequest() ([]byte, *ikev2.IKEPacket, error) {
 	if s.socket == nil {
-		return nil, 0, errors.New("swu: no IKE transport")
+		return nil, nil, errors.New("swu: no IKE transport")
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if len(s.lastIKERequest) == 0 {
-		return nil, 0, errors.New("swu: no pending IKE request")
+		return nil, nil, errors.New("swu: no pending IKE request")
 	}
-	return append([]byte(nil), s.lastIKERequest...), s.lastIKEMessageID, nil
+	raw := append([]byte(nil), s.lastIKERequest...)
+	request, err := ikev2.DecodePacket(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("swu: decode pending IKE request: %w", err)
+	}
+	return raw, request, nil
 }
 
-func (s *Session) waitForIKEResponse(ctx context.Context, messageID uint32, delay time.Duration) (*ikev2.IKEPacket, bool, error) {
+func (s *Session) waitForIKEResponse(ctx context.Context, expected *ikev2.IKEPacket, delay time.Duration) (*ikev2.IKEPacket, bool, error) {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	for {
@@ -78,11 +83,27 @@ func (s *Session) waitForIKEResponse(ctx context.Context, messageID uint32, dela
 			if err != nil {
 				return nil, false, err
 			}
-			if packet.MessageID == messageID {
+			if validIKEResponseHeader(packet, expected) {
 				return packet, false, nil
 			}
 		}
 	}
+}
+
+func validIKEResponseHeader(packet, request *ikev2.IKEPacket) bool {
+	if packet == nil || request == nil {
+		return false
+	}
+	if packet.MessageID != request.MessageID || packet.ExchangeType != request.ExchangeType {
+		return false
+	}
+	if packet.Flags&0x20 == 0 || packet.Flags&0x08 != 0 {
+		return false
+	}
+	if packet.InitiatorSPI != request.InitiatorSPI {
+		return false
+	}
+	return request.ResponderSPI == ([8]byte{}) || packet.ResponderSPI == request.ResponderSPI
 }
 
 func normalizedRetransmitConfig(cfg *Config) RetransmitConfig {

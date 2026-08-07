@@ -383,7 +383,7 @@ func (s *Session) runIKESAInit(ctx context.Context) error {
 
 // buildTransport resolves the ePDG and opens the IKE/ESP socket.
 func (s *Session) buildTransport() error {
-	host, port := s.cfg.EPDGAddr, "4500"
+	host, port := s.cfg.EPDGAddr, "500"
 	if h, p, err := net.SplitHostPort(s.cfg.EPDGAddr); err == nil {
 		host, port = h, p
 	}
