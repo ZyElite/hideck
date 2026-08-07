@@ -46,6 +46,19 @@ func TestParseAssignedInnerConfigAcceptsIPv4Reply(t *testing.T) {
 	}
 }
 
+func TestParseAssignedInnerConfigRejectsIPv6OnlyReply(t *testing.T) {
+	cp := &ikev2.EncryptedPayloadCP{
+		ConfigType: ikev2.CPTypeReply,
+		Attrs: []*ikev2.CPAttribute{
+			{Type: ikev2.CPAttrIP6Address, Value: net.ParseIP("2001:db8::8").To16()},
+		},
+	}
+	_, err := parseAssignedInnerConfig([]ikev2.Payload{cp})
+	if err == nil || !strings.Contains(err.Error(), "assigned only IPv6 2001:db8::8") {
+		t.Fatalf("parseAssignedInnerConfig error = %v", err)
+	}
+}
+
 func TestIKEAuthenticationErrorReportsAddressFailure(t *testing.T) {
 	wire := ikev2.EncodePayloadChain([]ikev2.Payload{
 		&ikev2.EncryptedPayloadNotify{NotifyType: 36},
