@@ -147,6 +147,8 @@ type Session struct {
 	espIntegKey   []byte
 	innerIP       net.IP // inner IP assigned by the ePDG (CP payload)
 	innerIPv6     net.IP
+	innerPrefix   int
+	dnsServers    []net.IP
 	remoteIP      net.IP // ePDG outer address
 	remotePort    uint16
 
@@ -533,6 +535,39 @@ func (s *Session) Snapshot() map[string]interface{} {
 		"inner_ip":   s.innerIP.String(),
 		"started_at": s.startedAt,
 	}
+}
+
+// InnerNetworkConfig is the address configuration assigned by the ePDG.
+type InnerNetworkConfig struct {
+	IPv4      net.IP
+	IPv6      net.IP
+	PrefixLen int
+	DNS       []net.IP
+}
+
+// InnerNetwork returns a copy of the negotiated inner network configuration.
+func (s *Session) InnerNetwork() InnerNetworkConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return InnerNetworkConfig{
+		IPv4: append(net.IP(nil), s.innerIP...), IPv6: append(net.IP(nil), s.innerIPv6...),
+		PrefixLen: s.innerPrefix, DNS: cloneIPs(s.dnsServers),
+	}
+}
+
+// InnerPacketIO returns the packet boundary for the user-space IMS stack.
+func (s *Session) InnerPacketIO() InnerPacketIO {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.innerEndpoint
+}
+
+func cloneIPs(in []net.IP) []net.IP {
+	out := make([]net.IP, 0, len(in))
+	for _, ip := range in {
+		out = append(out, append(net.IP(nil), ip...))
+	}
+	return out
 }
 
 // NextSequenceNumber returns the next ESP sequence number for the outbound SA.

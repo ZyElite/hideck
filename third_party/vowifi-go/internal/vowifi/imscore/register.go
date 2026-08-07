@@ -4,18 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // registerSession tracks one registration attempt.
 type registerSession struct {
-	callID    string
-	fromTag   string
-	cseq      int
-	challenge *DigestChallenge
+	callID     string
+	fromTag    string
+	cseq       int
+	challenge  *DigestChallenge
 	authHeader string
-	expires   time.Duration
+	expires    time.Duration
 }
 
 // Register performs the IMS registration flow (RFC 3261 + Digest-AKA).
@@ -43,6 +45,9 @@ func (s *Service) Register(ctx context.Context) error {
 func (s *Service) runRegisterFlow(ctx context.Context) error {
 	if s.cfg == nil {
 		return errors.New("imscore: no configuration")
+	}
+	if err := s.ensureRegistrationTransport(ctx); err != nil {
+		return err
 	}
 	session := &registerSession{
 		callID:  newCallID(),
@@ -104,12 +109,12 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	}
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("REGISTER sip:%s SIP/2.0\r\n", cfg.Domain))
-	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;branch=z9hG4bK%s;rport\r\n", transportUpper(cfg.Transport), formatHostPort(cfg.LocalIP), newBranch()))
+	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;branch=z9hG4bK%s;rport\r\n", transportUpper(cfg.Transport), sipLocalAddress(cfg), newBranch()))
 	b.WriteString(fmt.Sprintf("From: <sip:%s@%s>;tag=%s\r\n", cfg.IMPI, cfg.Domain, session.fromTag))
 	b.WriteString(fmt.Sprintf("To: <sip:%s@%s>\r\n", cfg.IMPI, cfg.Domain))
 	b.WriteString(fmt.Sprintf("Call-ID: %s\r\n", session.callID))
 	b.WriteString(fmt.Sprintf("CSeq: %d REGISTER\r\n", session.cseq))
-	b.WriteString(fmt.Sprintf("Contact: <sip:%s@%s>;+sip.instance=\"urn:uuid:%s\"\r\n", cfg.IMPI, formatHostPort(cfg.LocalIP), cfg.DeviceID))
+	b.WriteString(fmt.Sprintf("Contact: <sip:%s@%s>;+sip.instance=\"urn:uuid:%s\"\r\n", cfg.IMPI, sipLocalAddress(cfg), cfg.DeviceID))
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
 	b.WriteString("Supported: path, outbound\r\n")
@@ -118,6 +123,14 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	}
 	b.WriteString("Content-Length: 0\r\n\r\n")
 	return b.String()
+}
+
+func sipLocalAddress(cfg *IMSConfig) string {
+	port := cfg.LocalPort
+	if port <= 0 {
+		port = 5060
+	}
+	return net.JoinHostPort(cfg.LocalIP.String(), strconv.Itoa(port))
 }
 
 // extractChallenge extracts the digest challenge from a 401/407 response.

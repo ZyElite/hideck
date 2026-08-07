@@ -147,7 +147,18 @@ type Tunnel interface {
 	Shutdown()
 	State() string
 	WaitDoneContext(context.Context) error
+	InnerNetwork() swu.InnerNetworkConfig
+	InnerPacketIO() swu.InnerPacketIO
 }
+
+// IMSLifecycle is the registered IMS service owned by the runtime Instance.
+type IMSLifecycle interface {
+	Service
+	Register(context.Context) error
+}
+
+// IMSFactory builds the IMS lifecycle after SWu has established.
+type IMSFactory func(StartRequest, Tunnel) (IMSLifecycle, error)
 
 // TunnelFactory builds an SWu tunnel from the prepared configuration.
 // Tests and alternate hosts can inject the transport boundary explicitly.

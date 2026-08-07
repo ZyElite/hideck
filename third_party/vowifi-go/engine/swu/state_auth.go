@@ -453,15 +453,41 @@ func (s *Session) handleIKEAuthFinalResp(resp *ikev2.IKEPacket) error {
 				if cfg != nil {
 					if cfg.HasIPv4() {
 						s.innerIP = cfg.IPv4
+						s.innerPrefix = ipv4PrefixFromCP(cfg)
 					}
 					if cfg.HasIPv6() {
 						s.innerIPv6 = cfg.IPv6
 					}
+					s.dnsServers = dnsServersFromCP(cfg)
 				}
 			}
 		}
 	}
 	return nil
+}
+
+func ipv4PrefixFromCP(cfg *ikev2.CPConfig) int {
+	const defaultIPv4Prefix = 32
+	maskBytes := cfg.Attrs[ikev2.CPAttrIP4Netmask]
+	if len(maskBytes) < net.IPv4len {
+		return defaultIPv4Prefix
+	}
+	ones, bits := net.IPMask(maskBytes[:net.IPv4len]).Size()
+	if bits != 32 || ones == 0 {
+		return defaultIPv4Prefix
+	}
+	return ones
+}
+
+func dnsServersFromCP(cfg *ikev2.CPConfig) []net.IP {
+	var servers []net.IP
+	if raw := cfg.Attrs[ikev2.CPAttrIP4DNS]; len(raw) >= net.IPv4len {
+		servers = append(servers, append(net.IP(nil), raw[:net.IPv4len]...))
+	}
+	if raw := cfg.Attrs[ikev2.CPAttrIP6DNS]; len(raw) >= net.IPv6len {
+		servers = append(servers, append(net.IP(nil), raw[:net.IPv6len]...))
+	}
+	return servers
 }
 
 // verifyResponderAuth verifies the responder AUTH payload (RFC 7296 §2.15):

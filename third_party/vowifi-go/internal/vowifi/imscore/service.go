@@ -24,13 +24,13 @@ func New(cfg *IMSConfig) (*Service, error) {
 		bus = newIMSEventBus()
 	}
 	s := &Service{
-		cfg:      cfg,
-		state:    regIdle,
-		regState: regIdle,
-		dialogs:  newDialogRegistry(),
-		bus:      bus,
-		delivery: cfg.DeliveryStore,
-		stop:     make(chan struct{}),
+		cfg:       cfg,
+		state:     regIdle,
+		regState:  regIdle,
+		dialogs:   newDialogRegistry(),
+		bus:       bus,
+		delivery:  cfg.DeliveryStore,
+		stop:      make(chan struct{}),
 		transport: newSIPTransport(),
 		ussd:      newUSSDService(),
 	}
@@ -237,6 +237,13 @@ func (s *Service) Stop() {
 	}
 	if s.transport != nil {
 		_ = s.transport.Close()
+	}
+	if s.registrationIO != nil {
+		_ = s.registrationIO.Close()
+		s.networkDone.Wait()
+	}
+	if closer, ok := s.cfg.IMSNetwork.(interface{ Close() error }); ok {
+		_ = closer.Close()
 	}
 	s.mu.Lock()
 	s.regState = regUnregister

@@ -3,6 +3,7 @@ package runtimehost
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -50,11 +51,58 @@ type lifecycleTunnel struct {
 	connectCalled chan struct{}
 	shutdownOnce  sync.Once
 	onStateChange func(string)
+	packetIO      *lifecyclePacketIO
 }
+
+type lifecycleIMS struct {
+	Service
+	registerErr error
+	deviceID    string
+	registered  bool
+	stopped     bool
+	started     chan struct{}
+	release     chan struct{}
+}
+
+func (s *lifecycleIMS) Register(ctx context.Context) error {
+	if s.started != nil {
+		close(s.started)
+	}
+	if s.release != nil {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if s.registerErr != nil {
+		return s.registerErr
+	}
+	s.registered = true
+	return nil
+}
+
+func (s *lifecycleIMS) Stop() { s.stopped = true }
+
+func (s *lifecycleIMS) Status() Status {
+	return Status{State: State{DeviceID: s.deviceID, IMSReady: s.registered}}
+}
+
+func (s *lifecycleIMS) StatusSnapshot() Status { return s.Status() }
+
+type lifecyclePacketIO struct{}
+
+func (*lifecyclePacketIO) ReadPacketContext(ctx context.Context) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (*lifecyclePacketIO) WritePacketContext(context.Context, []byte) error { return nil }
 
 func newLifecycleTunnel(connectErr error) *lifecycleTunnel {
 	return &lifecycleTunnel{
 		state: "idle", connectErr: connectErr, done: make(chan struct{}), connectCalled: make(chan struct{}),
+		packetIO: &lifecyclePacketIO{},
 	}
 }
 
@@ -91,6 +139,14 @@ func (t *lifecycleTunnel) WaitDoneContext(ctx context.Context) error {
 	}
 }
 
+func (t *lifecycleTunnel) InnerNetwork() swu.InnerNetworkConfig {
+	return swu.InnerNetworkConfig{
+		IPv4: net.IPv4(10, 0, 0, 2), PrefixLen: 32, DNS: []net.IP{net.IPv4(10, 0, 0, 1)},
+	}
+}
+
+func (t *lifecycleTunnel) InnerPacketIO() swu.InnerPacketIO { return t.packetIO }
+
 func (t *lifecycleTunnel) setState(state string) {
 	t.mu.Lock()
 	t.state = state
@@ -107,6 +163,9 @@ func runtimeTestRequest(prepared *identity.PreparedSession, tunnel *lifecycleTun
 		TunnelFactory: func(cfg *swu.Config) (Tunnel, error) {
 			tunnel.onStateChange = cfg.OnStateChange
 			return tunnel, nil
+		},
+		IMSFactory: func(req StartRequest, _ Tunnel) (IMSLifecycle, error) {
+			return &lifecycleIMS{deviceID: req.DeviceID}, nil
 		},
 	}
 }
@@ -168,7 +227,7 @@ func TestNewModemAccessAdapter(t *testing.T) {
 		t.Error("nil modem should produce nil adapter")
 	}
 }
-func TestStartWiresRealIMSService(t *testing.T) {
+func TestStartMarksIMSReadyOnlyAfterRegister(t *testing.T) {
 	prepared := &identity.PreparedSession{
 		Profile: identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},
 		IMSIdentity: identity.IMSIdentity{
@@ -194,11 +253,8 @@ func TestStartWiresRealIMSService(t *testing.T) {
 	if st.State.DeviceID != "dev-1" {
 		t.Errorf("device = %q, want dev-1", st.State.DeviceID)
 	}
-	// SMS should be available (not the placeholder error).
-	if _, err := svc.SendSMSWithResult(context.Background(), "+8613800000000", "hi"); err != nil {
-		if strings.Contains(err.Error(), "not available") {
-			t.Errorf("placeholder service wired: %v", err)
-		}
+	if !inst.State().IMSReady || !inst.State().SMSReady || inst.State().IMSState != "registered" {
+		t.Errorf("IMS state = %+v", inst.State())
 	}
 }
 
@@ -280,5 +336,93 @@ func TestStartPassesSOCKS5ProxyToTunnel(t *testing.T) {
 	}
 	if captured.Proxy.Username != "alice" || captured.Proxy.Password != "secret" {
 		t.Fatalf("captured proxy credentials mismatch")
+	}
+}
+
+func TestStartReturnsFailedInstanceWhenIMSRegisterFails(t *testing.T) {
+	registerErr := errors.New("REGISTER rejected with 403")
+	tunnel := newLifecycleTunnel(nil)
+	prepared := &identity.PreparedSession{
+		Profile:     identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},
+		IMSIdentity: identity.IMSIdentity{IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example", Domain: "ims.example"},
+		EPDGAddr:    "epdg.example.com",
+	}
+	req := runtimeTestRequest(prepared, tunnel)
+	ims := &lifecycleIMS{deviceID: req.DeviceID, registerErr: registerErr}
+	req.IMSFactory = func(StartRequest, Tunnel) (IMSLifecycle, error) { return ims, nil }
+	inst, err := Start(context.Background(), req)
+	if !errors.Is(err, registerErr) {
+		t.Fatalf("Start error = %v, want %v", err, registerErr)
+	}
+	state := inst.State()
+	if state.SessionState != "error" || state.IMSState != "failed" || state.IMSReady || state.TunnelReady {
+		t.Fatalf("failed IMS state = %+v", state)
+	}
+	if !ims.stopped {
+		t.Fatal("failed IMS lifecycle was not stopped")
+	}
+	select {
+	case <-tunnel.done:
+	default:
+		t.Fatal("IMS failure did not close SWu tunnel")
+	}
+}
+
+func TestStartWaitsForIMSRegistrationBeforeSuccess(t *testing.T) {
+	tunnel := newLifecycleTunnel(nil)
+	prepared := &identity.PreparedSession{
+		Profile:     identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},
+		IMSIdentity: identity.IMSIdentity{IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example", Domain: "ims.example"},
+		EPDGAddr:    "epdg.example.com",
+	}
+	req := runtimeTestRequest(prepared, tunnel)
+	ims := &lifecycleIMS{deviceID: req.DeviceID, started: make(chan struct{}), release: make(chan struct{})}
+	req.IMSFactory = func(StartRequest, Tunnel) (IMSLifecycle, error) { return ims, nil }
+	type startResult struct {
+		instance *Instance
+		err      error
+	}
+	result := make(chan startResult, 1)
+	go func() {
+		instance, err := Start(context.Background(), req)
+		result <- startResult{instance: instance, err: err}
+	}()
+	select {
+	case <-ims.started:
+	case <-time.After(time.Second):
+		t.Fatal("IMS registration was not started")
+	}
+	select {
+	case <-result:
+		t.Fatal("Start returned before IMS registration completed")
+	default:
+	}
+	close(ims.release)
+	select {
+	case got := <-result:
+		if got.err != nil || got.instance.State().SessionState != "established" {
+			t.Fatalf("Start result = instance %+v error %v", got.instance.State(), got.err)
+		}
+		_ = got.instance.Stop(context.Background())
+	case <-time.After(time.Second):
+		t.Fatal("Start did not return after IMS registration")
+	}
+}
+
+func TestIMSServiceUsesSWuInnerNetwork(t *testing.T) {
+	tunnel := newLifecycleTunnel(nil)
+	prepared := &identity.PreparedSession{
+		Profile:     identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},
+		IMSIdentity: identity.IMSIdentity{IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example", Domain: "ims.example"},
+		EPDGAddr:    "epdg.example.com",
+	}
+	req := runtimeTestRequest(prepared, tunnel)
+	svc, err := imscoreFromPrepared(req, tunnel)
+	if err != nil {
+		t.Fatalf("imscoreFromPrepared: %v", err)
+	}
+	t.Cleanup(svc.Stop)
+	if got := svc.GetLocalIMSAddr(); got != "10.0.0.2" {
+		t.Fatalf("IMS local address = %q, want SWu inner address", got)
 	}
 }

@@ -21,6 +21,14 @@ func newServiceAdapter(svc *imscore.Service) *serviceAdapter {
 	return &serviceAdapter{svc: svc}
 }
 
+// Register runs the real IMS REGISTER flow.
+func (a *serviceAdapter) Register(ctx context.Context) error {
+	if a == nil || a.svc == nil {
+		return errNoService
+	}
+	return a.svc.Register(ctx)
+}
+
 // SendSMSWithOptions sends an SMS with options.
 func (a *serviceAdapter) SendSMSWithOptions(ctx context.Context, to, text string, opts messaging.SendOptions) (messaging.SendOutcome, error) {
 	if a == nil || a.svc == nil {

@@ -1,6 +1,7 @@
 package swu
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -46,6 +47,12 @@ type userspaceInnerPacketEndpoint struct {
 	stats        dataPlaneRuntimeStats
 }
 
+// InnerPacketIO is the packet boundary consumed by the user-space IMS stack.
+type InnerPacketIO interface {
+	ReadPacketContext(context.Context) ([]byte, error)
+	WritePacketContext(context.Context, []byte) error
+}
+
 // newUserspaceInnerPacketEndpoint creates the endpoint with the given buffer
 // sizes.
 func newUserspaceInnerPacketEndpoint(innerBuf, hostBuf int) *userspaceInnerPacketEndpoint {
@@ -85,7 +92,14 @@ func (e *userspaceInnerPacketEndpoint) Close() error {
 
 // ReadPacket returns the next inner packet from the network.
 func (e *userspaceInnerPacketEndpoint) ReadPacket() ([]byte, error) {
+	return e.ReadPacketContext(context.Background())
+}
+
+// ReadPacketContext returns the next inner packet or the context error.
+func (e *userspaceInnerPacketEndpoint) ReadPacketContext(ctx context.Context) ([]byte, error) {
 	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	case <-e.closed:
 		return nil, errors.New("swu: inner endpoint closed")
 	case pkt := <-e.innerPackets:
@@ -96,7 +110,14 @@ func (e *userspaceInnerPacketEndpoint) ReadPacket() ([]byte, error) {
 
 // WritePacket queues an inner packet from the host stack for ESP encapsulation.
 func (e *userspaceInnerPacketEndpoint) WritePacket(pkt []byte) error {
+	return e.WritePacketContext(context.Background(), pkt)
+}
+
+// WritePacketContext queues an inner packet or returns the context error.
+func (e *userspaceInnerPacketEndpoint) WritePacketContext(ctx context.Context, pkt []byte) error {
 	select {
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-e.closed:
 		return errors.New("swu: inner endpoint closed")
 	case e.hostPackets <- pkt:

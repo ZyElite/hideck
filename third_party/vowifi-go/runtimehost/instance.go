@@ -153,12 +153,25 @@ func (i *Instance) updateTunnelState(sessionState string) {
 	})
 }
 
-func (i *Instance) markTunnelEstablished() {
+func (i *Instance) markTunnelReadyForIMS() {
 	i.updateState(func(state *State) {
-		state.SessionState = "established"
+		state.SessionState = "registering"
+		state.IMSState = "registering"
 		state.TunnelReady = true
 		state.DataPlaneUp = true
-		state.LastReason = "SWu tunnel established"
+		state.LastReason = "SWu tunnel established; registering IMS"
+	})
+}
+
+func (i *Instance) markIMSRegistered() {
+	i.updateState(func(state *State) {
+		state.SessionState = "established"
+		state.IMSState = "registered"
+		state.IMSReady = true
+		state.SMSReady = true
+		state.RegStatus = 1
+		state.RegStatusText = "registered"
+		state.LastReason = "IMS registered"
 	})
 }
 
@@ -171,6 +184,23 @@ func (i *Instance) setStartFailure(err error) {
 		state.LastReason = "SWu tunnel establishment failed"
 		state.TunnelReady = false
 		state.DataPlaneUp = false
+	})
+}
+
+func (i *Instance) setIMSFailure(err error) {
+	i.updateState(func(state *State) {
+		state.SessionState = "error"
+		state.IMSState = "failed"
+		state.Error = err.Error()
+		state.LastError = err.Error()
+		state.LastErrorClass = "ims"
+		state.LastReason = "IMS registration failed"
+		state.TunnelReady = false
+		state.DataPlaneUp = false
+		state.IMSReady = false
+		state.SMSReady = false
+		state.RegStatus = 0
+		state.RegStatusText = "failed"
 	})
 }
 

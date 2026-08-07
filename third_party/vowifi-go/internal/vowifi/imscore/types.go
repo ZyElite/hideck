@@ -7,9 +7,13 @@ package imscore
 
 import (
 	"context"
+	"errors"
 	"net"
+	"strings"
 	"sync"
 	"time"
+
+	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 )
 
 // IMS registration states (recovered from the decompiled registration_state.go).
@@ -43,6 +47,8 @@ type IMSConfig struct {
 	Transport string
 	// Registrar is the registrar host:port.
 	Registrar string
+	// LocalPort is the local SIP port selected on IMSNetwork.
+	LocalPort int
 	// Expires is the registration interval.
 	Expires time.Duration
 	// AKAProvider computes AKA (RAND, AUTN) -> (RES, CK, IK).
@@ -62,17 +68,10 @@ type IMSConfig struct {
 }
 
 // AKAProvider computes AKA from the network challenge.
-type AKAProvider interface {
-	CalculateAKA(rand16, autn16 []byte) (AKAResult, error)
-}
+type AKAProvider = enginesim.AKAProvider
 
 // AKAResult is the outcome of an AKA computation.
-type AKAResult struct {
-	RES  []byte
-	CK   []byte
-	IK   []byte
-	AUTS []byte
-}
+type AKAResult = enginesim.AKAResult
 
 // IMSNetwork is the network surface used by the IMS stack.
 type IMSNetwork interface {
@@ -114,6 +113,18 @@ func (n *SystemIMSNetwork) ResolveIP(ctx context.Context, host string) (net.IP, 
 	return nil, net.ErrClosed
 }
 
+// LookupSRV resolves a SIP service endpoint.
+func (n *SystemIMSNetwork) LookupSRV(ctx context.Context, service, proto, name string) (string, uint16, error) {
+	_, records, err := net.DefaultResolver.LookupSRV(ctx, service, proto, name)
+	if err != nil {
+		return "", 0, err
+	}
+	if len(records) == 0 {
+		return "", 0, errors.New("imscore: no SRV records")
+	}
+	return strings.TrimSuffix(records[0].Target, "."), records[0].Port, nil
+}
+
 // DialContext dials a TCP connection.
 func (n *SystemIMSNetwork) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	var d net.Dialer
@@ -143,7 +154,9 @@ type Service struct {
 	spiPairs   [][2]uint32
 
 	// SIP transport.
-	transport *sipTransport
+	transport      *sipTransport
+	registrationIO net.PacketConn
+	networkDone    sync.WaitGroup
 
 	// Dialogs.
 	dialogs *dialogRegistry

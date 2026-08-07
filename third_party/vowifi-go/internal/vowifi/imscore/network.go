@@ -58,6 +58,12 @@ func (t *sipTransport) SetSendFn(fn func(string) error) {
 	t.mu.Unlock()
 }
 
+func (t *sipTransport) hasSendFn() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.sendFn != nil
+}
+
 // Send delivers a SIP request.
 func (t *sipTransport) Send(req string) error {
 	t.mu.Lock()

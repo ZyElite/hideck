@@ -10,6 +10,7 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
 	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/netstack"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/runtimecore"
 	"github.com/iniwex5/vowifi-go/runtimehost/eventhost"
@@ -17,6 +18,8 @@ import (
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 )
+
+const imsRegistrationTimeout = 30 * time.Second
 
 // StartMode selects the runtime host mode.
 type StartMode string
@@ -54,6 +57,7 @@ type StartRequest struct {
 	DeliveryStore messaging.DeliveryStore
 	Dispatch      eventhost.Dispatcher
 	TunnelFactory TunnelFactory
+	IMSFactory    IMSFactory
 	BeforeStart   func(context.Context, SessionConfig) error
 	ShouldRun     func() bool
 }
@@ -105,10 +109,27 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 		inst.setStartFailure(startErr)
 		return inst, startErr
 	}
-	inst.markTunnelEstablished()
-	inst.setService(buildService(req))
+	inst.markTunnelReadyForIMS()
+	ims, err := newIMS(req, tunnel)
+	if err != nil {
+		return failIMSStart(inst, err)
+	}
+	inst.setService(ims)
+	registrationCtx, registrationCancel := context.WithTimeout(runCtx, imsRegistrationTimeout)
+	err = ims.Register(registrationCtx)
+	registrationCancel()
+	if err != nil {
+		return failIMSStart(inst, fmt.Errorf("runtimehost: IMS registration failed: %w", err))
+	}
+	inst.markIMSRegistered()
 	go stopRuntimeOnContext(runCtx, inst)
 	return inst, nil
+}
+
+func failIMSStart(inst *Instance, err error) (*Instance, error) {
+	_ = inst.Stop(context.Background())
+	inst.setIMSFailure(err)
+	return inst, err
 }
 
 func validateStartRequest(req StartRequest) error {
@@ -187,46 +208,72 @@ func stopRuntimeOnContext(ctx context.Context, inst *Instance) {
 	_ = inst.Stop(context.Background())
 }
 
-// buildService builds the IMS service for the request: a real imscore
-// service when the prepared identity is present, otherwise the placeholder.
-func buildService(req StartRequest) Service {
-	if req.Prepared != nil && req.Prepared.IMSIdentity.IMPI != "" {
-		svc, err := imscoreFromPrepared(req)
-		if err == nil && svc != nil {
-			return newServiceAdapter(svc)
+func newIMS(req StartRequest, tunnel Tunnel) (IMSLifecycle, error) {
+	if req.IMSFactory != nil {
+		ims, err := req.IMSFactory(req, tunnel)
+		if err != nil {
+			return nil, fmt.Errorf("runtimehost: create IMS service: %w", err)
 		}
+		if ims == nil {
+			return nil, errors.New("runtimehost: create IMS service: nil lifecycle")
+		}
+		return ims, nil
 	}
-	return newHostService(req)
+	svc, err := imscoreFromPrepared(req, tunnel)
+	if err != nil {
+		return nil, err
+	}
+	return newServiceAdapter(svc), nil
 }
 
 // imscoreFromPrepared builds an imscore.Service from the prepared session.
-func imscoreFromPrepared(req StartRequest) (*imscore.Service, error) {
+func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, error) {
 	ident := req.Prepared.IMSIdentity
-	domain := ident.Domain
-	if domain == "" {
-		domain = "ims.mnc000.mcc000.3gppnetwork.org"
+	domain := strings.TrimSpace(ident.Domain)
+	if domain == "" || strings.TrimSpace(ident.IMPI) == "" {
+		return nil, errors.New("runtimehost: prepared IMS identity is incomplete")
 	}
 	impi := ident.IMPI
 	impu := []string{ident.IMPU}
-	if len(impu) == 0 || impu[0] == "" {
+	if strings.TrimSpace(impu[0]) == "" {
 		impu = []string{"sip:" + impi}
 	}
+	inner := tunnel.InnerNetwork()
+	if inner.IPv4 == nil || tunnel.InnerPacketIO() == nil {
+		return nil, errors.New("runtimehost: SWu tunnel has no usable inner packet network")
+	}
+	dns := make([]string, 0, len(inner.DNS))
+	for _, server := range inner.DNS {
+		dns = append(dns, server.String())
+	}
+	imsNetwork, err := netstack.NewTunnelNetwork(inner.IPv4, inner.PrefixLen, dns, tunnel.InnerPacketIO())
+	if err != nil {
+		return nil, fmt.Errorf("runtimehost: create IMS tunnel network: %w", err)
+	}
 	cfg := &imscore.IMSConfig{
-		DeviceID:  req.DeviceID,
-		IMSI:      imsiOf(impi),
-		IMPI:      impi,
-		IMPU:      impu,
-		Domain:    domain,
-		Realm:     domain,
-		EPDGAddr:  req.Prepared.EPDGAddr,
-		Transport: "udp",
-		Expires:   3600 * time.Second,
-		TraceID:   req.TraceID,
+		DeviceID:    req.DeviceID,
+		IMSI:        imsiOf(impi),
+		IMPI:        impi,
+		IMPU:        impu,
+		Domain:      domain,
+		Realm:       domain,
+		EPDGAddr:    req.Prepared.EPDGAddr,
+		LocalIP:     inner.IPv4,
+		Transport:   "udp",
+		Expires:     3600 * time.Second,
+		TraceID:     req.TraceID,
+		AKAProvider: req.SIM.AKAProvider(),
+		IMSNetwork:  imsNetwork,
 	}
 	if req.DeliveryStore != nil {
 		cfg.DeliveryStore = newDeliveryStoreAdapter(req.DeliveryStore)
 	}
-	return imscore.New(cfg)
+	svc, err := imscore.New(cfg)
+	if err != nil {
+		_ = imsNetwork.Close()
+		return nil, err
+	}
+	return svc, nil
 }
 
 // imsiOf extracts the IMSI from an IMPI (the part before '@').
@@ -244,41 +291,6 @@ func epdgOf(req StartRequest) string {
 	}
 	return ""
 }
-
-// newHostService builds the IMS service for the request. The full service
-// (SMS/USSD over IMS) is wired once the imscore/voice engine is complete.
-func newHostService(req StartRequest) Service {
-	return &hostService{req: req}
-}
-
-// hostService is a minimal Service implementation that carries the start
-// request until the real IMS service is wired in.
-type hostService struct {
-	req StartRequest
-}
-
-func (s *hostService) SendSMSWithOptions(ctx context.Context, to, text string, opts messaging.SendOptions) (messaging.SendOutcome, error) {
-	return messaging.SendOutcome{}, errors.New("runtimehost: SMS service not available")
-}
-func (s *hostService) SendSMSWithResult(ctx context.Context, to, text string) (messaging.SendOutcome, error) {
-	return messaging.SendOutcome{}, errors.New("runtimehost: SMS service not available")
-}
-func (s *hostService) GetSMSDeliveryStatus(ctx context.Context, ref string) (*messaging.DeliveryStatus, error) {
-	return nil, errors.New("runtimehost: SMS service not available")
-}
-func (s *hostService) SendUSSD(ctx context.Context, code string) (*messaging.USSDResult, error) {
-	return nil, errors.New("runtimehost: USSD service not available")
-}
-func (s *hostService) ContinueUSSD(ctx context.Context, sessionID, input string) (*messaging.USSDResult, error) {
-	return nil, errors.New("runtimehost: USSD service not available")
-}
-func (s *hostService) CancelUSSD(ctx context.Context, sessionID string) error {
-	return errors.New("runtimehost: USSD service not available")
-}
-func (s *hostService) Status() Status            { return Status{} }
-func (s *hostService) StatusSnapshot() Status    { return Status{} }
-func (s *hostService) Stop()                     {}
-func (s *hostService) TriggerRegisterImmediate() {}
 
 // WithTraceID returns a context carrying the given trace id.
 func WithTraceID(ctx context.Context, traceID string) context.Context {
