@@ -86,6 +86,36 @@ func TestProposalEncodeDecode(t *testing.T) {
 	}
 }
 
+func TestProposalUsesRFC7296WireFormat(t *testing.T) {
+	p := &Proposal{ProposalNum: 1, ProtocolID: ProtoESP, SPI: []byte{1, 2, 3, 4}}
+	p.AddTransformWithKeyLen(TypeEncryption, 12, 128)
+	want := []byte{
+		0, 0, 0, 24, 1, ProtoESP, 4, 1, 1, 2, 3, 4,
+		0, 0, 0, 12, TypeEncryption, 0, 0, 12, 0x80, 14, 0, 128,
+	}
+	if got := p.Encode(nil); !bytes.Equal(got, want) {
+		t.Fatalf("proposal wire bytes = %x, want %x", got, want)
+	}
+}
+
+func TestDecodeIdentificationAndAuthenticationPayloads(t *testing.T) {
+	idr := &EncryptedPayloadID{PayloadType: PayloadIDr, IDType: 2, Data: []byte("epdg")}
+	auth := &EncryptedPayloadAuth{AuthMethod: AuthMethodRSA, Data: []byte{1, 2, 3}}
+	raw := EncodePayloadChain([]Payload{idr, auth})
+	payloads, err := DecodePayloadChainWithFirst(PayloadIDr, raw)
+	if err != nil {
+		t.Fatalf("DecodePayloadChainWithFirst: %v", err)
+	}
+	gotID, ok := payloads[0].(*EncryptedPayloadID)
+	if !ok || gotID.Type() != PayloadIDr || gotID.IDType != 2 || string(gotID.Data) != "epdg" {
+		t.Fatalf("decoded IDr = %#v", payloads[0])
+	}
+	gotAuth, ok := payloads[1].(*EncryptedPayloadAuth)
+	if !ok || gotAuth.AuthMethod != AuthMethodRSA || !bytes.Equal(gotAuth.Data, []byte{1, 2, 3}) {
+		t.Fatalf("decoded AUTH = %#v", payloads[1])
+	}
+}
+
 func TestTrafficSelector(t *testing.T) {
 	ts := NewTrafficSelectorIPV4(net.ParseIP("10.0.0.1"), 17, 0, 65535)
 	if ts.Type != TSIPv4Range || ts.StartPort != 0 || ts.EndPort != 65535 {

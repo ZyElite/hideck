@@ -55,8 +55,8 @@ func (p *EncryptedPayloadSA) Type() byte { return PayloadSA }
 
 func (p *EncryptedPayloadSA) Encode(b []byte) []byte {
 	var body []byte
-	for _, pr := range p.Proposals {
-		body = pr.Encode(body)
+	for index, proposal := range p.Proposals {
+		body = proposal.encode(body, index == len(p.Proposals)-1)
 	}
 	return p.encode(b, body)
 }
@@ -111,11 +111,17 @@ func (p *EncryptedPayloadNonce) Encode(b []byte) []byte {
 // EncryptedPayloadID is an Identification payload.
 type EncryptedPayloadID struct {
 	payload
-	IDType byte
-	Data   []byte
+	PayloadType byte
+	IDType      byte
+	Data        []byte
 }
 
-func (p *EncryptedPayloadID) Type() byte { return PayloadIDi }
+func (p *EncryptedPayloadID) Type() byte {
+	if p.PayloadType == PayloadIDr {
+		return PayloadIDr
+	}
+	return PayloadIDi
+}
 
 func (p *EncryptedPayloadID) Encode(b []byte) []byte {
 	body := []byte{p.IDType, 0, 0, 0}
@@ -331,7 +337,19 @@ func decodePayload(b []byte, typ byte) (Payload, int, error) {
 		pl, err = DecodePayloadCP(body)
 	case PayloadDelete:
 		pl, err = DecodePayloadDelete(body)
-	case PayloadKE, PayloadNi, PayloadIDi, PayloadIDr, PayloadAuth, PayloadEAP, PayloadNotify, PayloadVendorID:
+	case PayloadIDi, PayloadIDr:
+		if len(body) < 4 {
+			return nil, 0, errPayloadTooShort("identification")
+		}
+		pl = &EncryptedPayloadID{PayloadType: typ, IDType: body[0], Data: append([]byte{}, body[4:]...)}
+	case PayloadAuth:
+		if len(body) < 4 {
+			return nil, 0, errPayloadTooShort("authentication")
+		}
+		pl = &EncryptedPayloadAuth{AuthMethod: body[0], Data: append([]byte{}, body[4:]...)}
+	case PayloadEAP:
+		pl = &EncryptedPayloadEAP{Data: append([]byte{}, body...)}
+	case PayloadKE, PayloadNi, PayloadNotify, PayloadVendorID:
 		rp := &RawPayload{payloadType: typ, Data: append([]byte{}, body...)}
 		rp.NextPayload = hdr.NextPayload
 		pl = rp

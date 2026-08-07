@@ -31,6 +31,12 @@ type Proposal struct {
 	Transforms    []*Transform
 }
 
+const (
+	lastSubstructure byte = 0
+	moreProposals    byte = 2
+	moreTransforms   byte = 3
+)
+
 // AddTransform appends an encryption/integrity/etc. transform with the given
 // transform ID and no key-length attribute.
 func (p *Proposal) AddTransform(transformType byte, transformID uint16) {
@@ -52,15 +58,23 @@ func (p *Proposal) AddTransformWithKeyLen(transformType byte, transformID uint16
 	p.NumTransforms = byte(len(p.Transforms))
 }
 
-// Encode serialises the proposal. Unlike transforms, a proposal has no
-// length field — it runs until its transforms are exhausted.
+// Encode serialises a final proposal using RFC 7296 section 3.3.1.
 func (p *Proposal) Encode(b []byte) []byte {
-	// header: R(1bit)+ProposalNum(7bits) | ProtocolID | SPISize | NumTransforms
-	body := []byte{p.ProposalNum & 0x7f, p.ProtocolID, p.SPISize, p.NumTransforms}
+	return p.encode(b, true)
+}
+
+func (p *Proposal) encode(b []byte, last bool) []byte {
+	body := []byte{p.ProposalNum, p.ProtocolID, byte(len(p.SPI)), byte(len(p.Transforms))}
 	body = append(body, p.SPI...)
-	for _, t := range p.Transforms {
-		body = t.Encode(body)
+	for index, transform := range p.Transforms {
+		body = transform.encode(body, index == len(p.Transforms)-1)
 	}
+	header := []byte{lastSubstructure, 0, 0, 0}
+	if !last {
+		header[0] = moreProposals
+	}
+	binary.BigEndian.PutUint16(header[2:4], uint16(len(header)+len(body)))
+	b = append(b, header...)
 	return append(b, body...)
 }
 
@@ -71,14 +85,23 @@ type Transform struct {
 	Attributes    []*TransformAttribute
 }
 
-// Encode serialises the transform (2-byte length prefix + body).
+// Encode serialises a final transform using RFC 7296 section 3.3.2.
 func (t *Transform) Encode(b []byte) []byte {
+	return t.encode(b, true)
+}
+
+func (t *Transform) encode(b []byte, last bool) []byte {
 	body := []byte{t.TransformType, 0}
 	body = binary.BigEndian.AppendUint16(body, t.TransformID)
 	for _, a := range t.Attributes {
 		body = a.Encode(body)
 	}
-	b = binary.BigEndian.AppendUint16(b, uint16(len(body)))
+	header := []byte{lastSubstructure, 0, 0, 0}
+	if !last {
+		header[0] = moreTransforms
+	}
+	binary.BigEndian.PutUint16(header[2:4], uint16(len(header)+len(body)))
+	b = append(b, header...)
 	return append(b, body...)
 }
 
@@ -99,72 +122,87 @@ func (a *TransformAttribute) Encode(b []byte) []byte {
 // DecodeProposal parses one proposal from b, consuming header + SPI +
 // NumTransforms transforms. It returns the number of bytes consumed.
 func DecodeProposal(b []byte) (*Proposal, int, error) {
-	if len(b) < 4 {
+	if len(b) < 8 {
 		return nil, 0, errPayloadTooShort("proposal")
 	}
-	p := &Proposal{
-		ProposalNum:   b[0] & 0x7f,
-		ProtocolID:    b[1],
-		SPISize:       b[2],
-		NumTransforms: b[3],
+	length := int(binary.BigEndian.Uint16(b[2:4]))
+	if length < 8 || length > len(b) {
+		return nil, 0, fmt.Errorf("ikev2: bad proposal length %d", length)
 	}
-	pos := 4
-	if int(p.SPISize) > 0 && pos+int(p.SPISize) <= len(b) {
+	p := &Proposal{
+		ProposalNum:   b[4],
+		ProtocolID:    b[5],
+		SPISize:       b[6],
+		NumTransforms: b[7],
+	}
+	pos := 8
+	if pos+int(p.SPISize) > length {
+		return nil, 0, errPayloadTooShort("proposal SPI")
+	}
+	if p.SPISize > 0 {
 		p.SPI = append([]byte{}, b[pos:pos+int(p.SPISize)]...)
 		pos += int(p.SPISize)
 	}
-	for i := 0; i < int(p.NumTransforms) && pos+4 <= len(b); i++ {
-		t, n, err := DecodeTransform(b[pos:])
+	for i := 0; i < int(p.NumTransforms); i++ {
+		if pos >= length {
+			return nil, 0, errPayloadTooShort("proposal transforms")
+		}
+		t, n, err := DecodeTransform(b[pos:length])
 		if err != nil {
 			return nil, 0, err
 		}
 		p.Transforms = append(p.Transforms, t)
 		pos += n
 	}
-	return p, pos, nil
+	if pos != length {
+		return nil, 0, fmt.Errorf("ikev2: proposal length %d has %d trailing bytes", length, length-pos)
+	}
+	return p, length, nil
 }
 
 // DecodeTransform parses one transform from b (b includes the 2-byte length
 // prefix). It returns the transform and the number of bytes consumed.
 func DecodeTransform(b []byte) (*Transform, int, error) {
-	if len(b) < 4 {
+	if len(b) < 8 {
 		return nil, 0, errPayloadTooShort("transform")
 	}
-	length := int(binary.BigEndian.Uint16(b[0:2]))
-	if length < 2 || 2+length > len(b) {
+	length := int(binary.BigEndian.Uint16(b[2:4]))
+	if length < 8 || length > len(b) {
 		return nil, 0, fmt.Errorf("ikev2: bad transform length %d", length)
 	}
-	total := 2 + length
 	t := &Transform{
-		TransformType: b[2],
-		TransformID:   binary.BigEndian.Uint16(b[4:6]),
+		TransformType: b[4],
+		TransformID:   binary.BigEndian.Uint16(b[6:8]),
 	}
-	pos := 6
-	for pos+2 <= total {
+	pos := 8
+	for pos < length {
+		if pos+2 > length {
+			return nil, 0, errPayloadTooShort("transform attribute")
+		}
 		// attribute: 16-bit header (bit15 = value present)
 		hdr := binary.BigEndian.Uint16(b[pos : pos+2])
 		pos += 2
 		typ := hdr & 0x7fff
 		if hdr&0x8000 != 0 {
 			// 2-byte value
-			if pos+2 > total {
+			if pos+2 > length {
 				return nil, 0, errPayloadTooShort("transform attribute")
 			}
 			t.Attributes = append(t.Attributes, &TransformAttribute{Type: typ, Value: binary.BigEndian.Uint16(b[pos : pos+2])})
 			pos += 2
 		} else {
 			// length-prefixed value
-			if pos+2 > total {
+			if pos+2 > length {
 				return nil, 0, errPayloadTooShort("transform attribute")
 			}
 			alen := int(binary.BigEndian.Uint16(b[pos : pos+2]))
-			if pos+2+alen > total {
+			if pos+2+alen > length {
 				return nil, 0, errPayloadTooShort("transform attribute")
 			}
 			pos += 2 + alen
 		}
 	}
-	return t, total, nil
+	return t, length, nil
 }
 
 // CreateMultiProposalIKE builds a proposal list for the IKE SA with the given
