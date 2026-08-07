@@ -253,8 +253,17 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 		t.Fatalf("EAP-only notify = %+v", notify)
 	}
 	cp := payloads[6].(*ikev2.EncryptedPayloadCP)
-	if len(cp.Attrs) != 2 || cp.Attrs[0].Type != ikev2.CPAttrIP4Address || cp.Attrs[1].Type != ikev2.CPAttrIP6Address {
+	wantCPTypes := []uint16{
+		ikev2.CPAttrIP4Address, ikev2.CPAttrIP4DNS, ikev2.CPAttrPCSCFIP4,
+		ikev2.CPAttrIP6Address, ikev2.CPAttrIP6DNS, ikev2.CPAttrPCSCFIP6,
+	}
+	if len(cp.Attrs) != len(wantCPTypes) {
 		t.Fatalf("initial CP request address families: %+v", cp.Attrs)
+	}
+	for index, attribute := range cp.Attrs {
+		if attribute.Type != wantCPTypes[index] || len(attribute.Value) != 0 {
+			t.Fatalf("initial CP attribute[%d] = %+v, want type %d", index, attribute, wantCPTypes[index])
+		}
 	}
 }
 

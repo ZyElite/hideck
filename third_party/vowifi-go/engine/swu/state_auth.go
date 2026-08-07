@@ -52,7 +52,11 @@ func (s *Session) buildCPRequestPayload() *ikev2.EncryptedPayloadCP {
 		ConfigType: ikev2.CPTypeRequest,
 		Attrs: []*ikev2.CPAttribute{
 			{Type: ikev2.CPAttrIP4Address},
+			{Type: ikev2.CPAttrIP4DNS},
+			{Type: ikev2.CPAttrPCSCFIP4},
 			{Type: ikev2.CPAttrIP6Address},
+			{Type: ikev2.CPAttrIP6DNS},
+			{Type: ikev2.CPAttrPCSCFIP6},
 		},
 	}
 }
@@ -378,7 +382,7 @@ func (s *Session) handleIKEAuthFinalResp(resp *ikev2.IKEPacket) error {
 	}
 	s.innerIP, s.innerIPv6 = assigned.ipv4, assigned.ipv6
 	s.innerPrefix, s.innerIPv6Prefix = assigned.ipv4Prefix, assigned.ipv6Prefix
-	s.dnsServers = assigned.dns
+	s.dnsServers, s.pcscfServers = assigned.dns, assigned.pcscf
 	if selection != nil {
 		s.espRemoteSPI = selection.remoteSPI
 		s.espCipher, s.espInteg = selection.encryption, selection.integrity
@@ -394,6 +398,7 @@ type assignedInnerConfig struct {
 	ipv4Prefix int
 	ipv6Prefix int
 	dns        []net.IP
+	pcscf      []net.IP
 }
 
 func (config assignedInnerConfig) ips() []net.IP {
@@ -441,7 +446,15 @@ func parseAssignedInnerConfig(payloads []ikev2.Payload) (assignedInnerConfig, er
 			return result, fmt.Errorf("swu: invalid assigned IPv6 prefix %d", result.ipv6Prefix)
 		}
 	}
-	result.dns = dnsServersFromCP(config)
+	var err error
+	result.dns, err = cpIPAddresses(cp, ikev2.CPAttrIP4DNS, ikev2.CPAttrIP6DNS)
+	if err != nil {
+		return result, err
+	}
+	result.pcscf, err = cpIPAddresses(cp, ikev2.CPAttrPCSCFIP4, ikev2.CPAttrPCSCFIP6)
+	if err != nil {
+		return result, err
+	}
 	if result.ipv4 == nil && result.ipv6 == nil {
 		return result, fmt.Errorf("swu: CFG_REPLY omitted an assigned address (attributes=%s)", cpAttributeSummary(cp))
 	}
@@ -476,15 +489,22 @@ func ipv4PrefixFromCP(cfg *ikev2.CPConfig) int {
 	return ones
 }
 
-func dnsServersFromCP(cfg *ikev2.CPConfig) []net.IP {
-	var servers []net.IP
-	if raw := cfg.Attrs[ikev2.CPAttrIP4DNS]; len(raw) >= net.IPv4len {
-		servers = append(servers, append(net.IP(nil), raw[:net.IPv4len]...))
+func cpIPAddresses(cp *ikev2.EncryptedPayloadCP, ipv4Type, ipv6Type uint16) ([]net.IP, error) {
+	var addresses []net.IP
+	for _, attribute := range cp.Attrs {
+		if attribute == nil || attribute.Type != ipv4Type && attribute.Type != ipv6Type {
+			continue
+		}
+		expectedLength := net.IPv6len
+		if attribute.Type == ipv4Type {
+			expectedLength = net.IPv4len
+		}
+		if len(attribute.Value) != expectedLength {
+			return nil, fmt.Errorf("swu: invalid CP address attribute %d length %d", attribute.Type, len(attribute.Value))
+		}
+		addresses = append(addresses, append(net.IP(nil), attribute.Value...))
 	}
-	if raw := cfg.Attrs[ikev2.CPAttrIP6DNS]; len(raw) >= net.IPv6len {
-		servers = append(servers, append(net.IP(nil), raw[:net.IPv6len]...))
-	}
-	return servers
+	return addresses, nil
 }
 
 // verifyResponderAuth verifies the responder certificate and its signature

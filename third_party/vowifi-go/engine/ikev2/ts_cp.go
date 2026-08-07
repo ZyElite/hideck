@@ -27,6 +27,8 @@ const (
 	CPAttrIP4DNS     uint16 = 3  // INTERNAL_IP4_DNS
 	CPAttrIP6Address uint16 = 8  // INTERNAL_IP6_ADDRESS
 	CPAttrIP6DNS     uint16 = 10 // INTERNAL_IP6_DNS
+	CPAttrPCSCFIP4   uint16 = 20 // P_CSCF_IP4_ADDRESS
+	CPAttrPCSCFIP6   uint16 = 21 // P_CSCF_IP6_ADDRESS
 )
 
 // TrafficSelector is a TS payload traffic selector.

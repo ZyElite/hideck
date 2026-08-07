@@ -175,6 +175,7 @@ type Session struct {
 	innerPrefix     int
 	innerIPv6Prefix int
 	dnsServers      []net.IP
+	pcscfServers    []net.IP
 	remoteIP        net.IP // ePDG outer address
 	remotePort      uint16
 
@@ -561,6 +562,7 @@ type InnerNetworkConfig struct {
 	PrefixLen     int
 	IPv6PrefixLen int
 	DNS           []net.IP
+	PCSCF         []net.IP
 }
 
 // InnerNetwork returns a copy of the negotiated inner network configuration.
@@ -569,7 +571,8 @@ func (s *Session) InnerNetwork() InnerNetworkConfig {
 	defer s.mu.RUnlock()
 	return InnerNetworkConfig{
 		IPv4: append(net.IP(nil), s.innerIP...), IPv6: append(net.IP(nil), s.innerIPv6...),
-		PrefixLen: s.innerPrefix, IPv6PrefixLen: s.innerIPv6Prefix, DNS: cloneIPs(s.dnsServers),
+		PrefixLen: s.innerPrefix, IPv6PrefixLen: s.innerIPv6Prefix,
+		DNS: cloneIPs(s.dnsServers), PCSCF: cloneIPs(s.pcscfServers),
 	}
 }
 

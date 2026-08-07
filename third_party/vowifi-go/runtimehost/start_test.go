@@ -190,6 +190,14 @@ func TestPreferredInnerAddressUsesIPv6WhenIPv4Missing(t *testing.T) {
 	}
 }
 
+func TestPreferredPCSCFMatchesTunnelFamily(t *testing.T) {
+	servers := []net.IP{net.ParseIP("192.0.2.20"), net.ParseIP("2001:db8::20")}
+	got := preferredPCSCF(servers, net.ParseIP("2001:db8::8"))
+	if !got.Equal(net.ParseIP("2001:db8::20")) {
+		t.Fatalf("preferred P-CSCF = %s", got)
+	}
+}
+
 func TestStart(t *testing.T) {
 	prepared, err := identity.PrepareStart(identity.PrepareStartInput{
 		DeviceID: "wwan0",

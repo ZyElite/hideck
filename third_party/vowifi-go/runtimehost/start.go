@@ -20,7 +20,10 @@ import (
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 )
 
-const imsRegistrationTimeout = 30 * time.Second
+const (
+	imsRegistrationTimeout = 30 * time.Second
+	defaultIMSSIPPort      = 5060
+)
 
 // StartMode selects the runtime host mode.
 type StartMode string
@@ -283,6 +286,10 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 	if err != nil {
 		return nil, fmt.Errorf("runtimehost: create IMS tunnel network: %w", err)
 	}
+	registrar := ""
+	if pcscf := preferredPCSCF(inner.PCSCF, innerIP); pcscf != nil {
+		registrar = net.JoinHostPort(pcscf.String(), fmt.Sprint(defaultIMSSIPPort))
+	}
 	cfg := &imscore.IMSConfig{
 		DeviceID:         req.DeviceID,
 		IMSI:             imsiOf(impi),
@@ -292,6 +299,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		Realm:            domain,
 		EPDGAddr:         req.Prepared.EPDGAddr,
 		LocalIP:          innerIP,
+		Registrar:        registrar,
 		Transport:        "udp",
 		Expires:          3600 * time.Second,
 		TraceID:          req.TraceID,
@@ -308,6 +316,16 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		return nil, err
 	}
 	return svc, nil
+}
+
+func preferredPCSCF(servers []net.IP, innerIP net.IP) net.IP {
+	wantIPv4 := innerIP.To4() != nil
+	for _, server := range servers {
+		if (server.To4() != nil) == wantIPv4 {
+			return server
+		}
+	}
+	return nil
 }
 
 func preferredInnerAddress(inner swu.InnerNetworkConfig) (net.IP, int) {
