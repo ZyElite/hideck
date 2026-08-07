@@ -13,9 +13,9 @@ import (
 // don't wait 500 ms.
 func newTestTaskManager(t *testing.T, send func(uint32, []byte) error, config *RetransmitConfig, window int) *TaskManager {
 	t.Helper()
-	tm := NewTaskManager(context.Background(), send, config, window)
-	tm.tickInterval = 10 * time.Millisecond
-	return tm
+	testConfig := *config
+	testConfig.PollInterval = 10 * time.Millisecond
+	return NewTaskManager(context.Background(), send, &testConfig, window)
 }
 
 func TestTaskManagerRequestResponse(t *testing.T) {

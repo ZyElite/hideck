@@ -12,13 +12,17 @@ type RetransmitConfig struct {
 	MaxRetries   int           // retransmissions before giving up
 	InitialDelay time.Duration // delay before the first retransmission
 	Backoff      float64       // multiplier applied each retransmission
+	PollInterval time.Duration // interval between retransmit deadline checks
 }
+
+const defaultTaskManagerPollInterval = 500 * time.Millisecond
 
 // DefaultRetransmitConfig is the configuration used when none is supplied.
 var DefaultRetransmitConfig = RetransmitConfig{
 	MaxRetries:   5,
 	InitialDelay: 4 * time.Second,
 	Backoff:      1.8,
+	PollInterval: defaultTaskManagerPollInterval,
 }
 
 // task is an in-flight (or queued) IKE request.
@@ -65,11 +69,18 @@ func NewTaskManager(parent context.Context, send func(uint32, []byte) error, con
 		active:       make(map[uint32]*task),
 		trigger:      make(chan struct{}, 1),
 		stop:         make(chan struct{}),
-		tickInterval: 500 * time.Millisecond,
+		tickInterval: retransmitPollInterval(config),
 	}
 	tm.wg.Add(1)
 	go tm.windowLoop()
 	return tm
+}
+
+func retransmitPollInterval(config *RetransmitConfig) time.Duration {
+	if config.PollInterval > 0 {
+		return config.PollInterval
+	}
+	return defaultTaskManagerPollInterval
 }
 
 // EnqueueRequest queues an IKE request for transmission and returns a channel
@@ -165,11 +176,7 @@ func (tm *TaskManager) signal() {
 // decompiled windowLoop ticker) and retransmits/expiring timed-out tasks.
 func (tm *TaskManager) windowLoop() {
 	defer tm.wg.Done()
-	interval := tm.tickInterval
-	if interval <= 0 {
-		interval = 500 * time.Millisecond
-	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(tm.tickInterval)
 	defer ticker.Stop()
 	for {
 		select {
