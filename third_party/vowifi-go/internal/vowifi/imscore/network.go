@@ -36,9 +36,11 @@ func (r *sipResponse) Header(name string) string {
 // sipTransport sends SIP requests and receives responses.
 type sipTransport struct {
 	mu        sync.Mutex
+	closeOnce sync.Once
 	sendFn    func(string) error
 	responses chan *sipResponse
 	requests  chan string
+	waiters   map[sipTransactionKey]chan *sipResponse
 	closed    chan struct{}
 }
 
@@ -47,6 +49,7 @@ func newSIPTransport() *sipTransport {
 	return &sipTransport{
 		responses: make(chan *sipResponse, 64),
 		requests:  make(chan string, 64),
+		waiters:   make(map[sipTransactionKey]chan *sipResponse),
 		closed:    make(chan struct{}),
 	}
 }
@@ -92,6 +95,18 @@ func (t *sipTransport) Requests() <-chan string {
 
 // DeliverResponse feeds a parsed response into the transport.
 func (t *sipTransport) DeliverResponse(r *sipResponse) {
+	if key, err := transactionKeyFromResponse(r); err == nil {
+		t.mu.Lock()
+		waiter := t.waiters[key]
+		t.mu.Unlock()
+		if waiter != nil {
+			select {
+			case waiter <- r:
+			case <-t.closed:
+			}
+			return
+		}
+	}
 	select {
 	case t.responses <- r:
 	default:
@@ -108,11 +123,7 @@ func (t *sipTransport) DeliverRequest(raw string) {
 
 // Close shuts the transport down.
 func (t *sipTransport) Close() error {
-	select {
-	case <-t.closed:
-	default:
-		close(t.closed)
-	}
+	t.closeOnce.Do(func() { close(t.closed) })
 	return nil
 }
 

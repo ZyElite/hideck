@@ -66,12 +66,12 @@ func (s *Service) sendSubscribeReg(ctx context.Context) error {
 		return err
 	}
 	logging.RunDebug("IMS SUBSCRIBE(reg) outbound", "sip", logging.RedactSIPRaw(request))
-	if err := s.sendSIP(request); err != nil {
-		return fmt.Errorf("send SUBSCRIBE: %w", err)
-	}
-	response, err := s.receiveSubscriptionResponse(ctx, transaction)
+	response, err := s.transport.RoundTrip(ctx, request)
 	if err != nil {
-		return fmt.Errorf("receive SUBSCRIBE: %w", err)
+		return fmt.Errorf("SUBSCRIBE transaction: %w", err)
+	}
+	if !subscriptionResponseMatches(response, transaction) {
+		return errors.New("SUBSCRIBE received mismatched transaction response")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("SUBSCRIBE rejected with status %d (%s)", response.StatusCode, response.Reason)

@@ -118,12 +118,16 @@ func (s *Service) exchangeRegister(ctx context.Context, session *registerSession
 	request := s.buildRegister(session, authorization)
 	logging.RunDebug("IMS REGISTER outbound", "cseq", session.cseq,
 		"authenticated", strings.TrimSpace(authorization) != "", "sip", logging.RedactSIPRaw(request))
-	if err := s.sendSIP(request); err != nil {
-		return nil, fmt.Errorf("imscore: send REGISTER CSeq %d: %w", session.cseq, err)
-	}
-	response, err := s.receiveResponse(ctx, session)
+	response, err := s.transport.RoundTrip(ctx, request)
 	if err != nil {
-		return nil, fmt.Errorf("imscore: receive REGISTER CSeq %d: %w", session.cseq, err)
+		return nil, fmt.Errorf("imscore: REGISTER CSeq %d transaction: %w", session.cseq, err)
+	}
+	matched, matchErr := matchesRegisterTransaction(response, session)
+	if matchErr != nil {
+		return nil, matchErr
+	}
+	if !matched {
+		return nil, fmt.Errorf("imscore: REGISTER CSeq %d received mismatched transaction response", session.cseq)
 	}
 	logging.RunDebug("IMS REGISTER response", "cseq", session.cseq, "status", response.StatusCode,
 		"security_server", response.Header("Security-Server") != "", "digest_challenge", isDigestChallengeResponse(response))
