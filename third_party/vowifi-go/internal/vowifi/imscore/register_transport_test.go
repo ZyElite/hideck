@@ -118,6 +118,44 @@ func TestRegistrationExpiresPrefersContactBinding(t *testing.T) {
 	}
 }
 
+func TestReceiveResponseMatchesFullRegisterTransaction(t *testing.T) {
+	transport := newSIPTransport()
+	svc := &Service{transport: transport}
+	session := &registerSession{callID: "call-1", cseq: 2, branch: "z9hG4bK-current"}
+	transport.DeliverResponse(&sipResponse{StatusCode: 200, CallID: session.callID, CSeq: "1 REGISTER", Headers: map[string]string{
+		"Via": "SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-old",
+	}})
+	transport.DeliverResponse(&sipResponse{StatusCode: 403, CallID: session.callID, CSeq: "2 REGISTER", Headers: map[string]string{
+		"Via": "SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-wrong",
+	}})
+	transport.DeliverResponse(&sipResponse{StatusCode: 200, CallID: session.callID, CSeq: "2 REGISTER", Headers: map[string]string{
+		"Via": "SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-current",
+	}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	response, err := svc.receiveResponse(ctx, session)
+	if err != nil {
+		t.Fatalf("receiveResponse: %v", err)
+	}
+	if response.StatusCode != 200 {
+		t.Fatalf("matched stale REGISTER response status %d", response.StatusCode)
+	}
+}
+
+func TestReceiveResponseRejectsMalformedCurrentTransaction(t *testing.T) {
+	transport := newSIPTransport()
+	svc := &Service{transport: transport}
+	session := &registerSession{callID: "call-1", cseq: 2, branch: "z9hG4bK-current"}
+	transport.DeliverResponse(&sipResponse{StatusCode: 200, CallID: session.callID})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := svc.receiveResponse(ctx, session); err == nil || !strings.Contains(err.Error(), "invalid REGISTER response CSeq") {
+		t.Fatalf("receiveResponse error = %v, want malformed CSeq", err)
+	}
+}
+
 func TestRegisterPropagatesRegistrarRejection(t *testing.T) {
 	registrar, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
 	if err != nil {
@@ -154,8 +192,7 @@ func serveRegisterStatus(conn *net.UDPConn, status int, seen chan<- string) {
 	if seen != nil {
 		seen <- request
 	}
-	callID := sipHeaderValue(request, "Call-ID")
-	response := fmt.Sprintf("SIP/2.0 %d Test\r\nCall-ID: %s\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n", status, callID)
+	response := registerWireResponse(request, status, "")
 	_, _ = conn.WriteToUDP([]byte(response), remote)
 }
 
@@ -168,10 +205,20 @@ func serveRegistrationSequence(conn *net.UDPConn, seen chan<- string, statuses [
 		}
 		request := string(buffer[:n])
 		seen <- request
-		callID := sipHeaderValue(request, "Call-ID")
-		response := fmt.Sprintf("SIP/2.0 %d Test\r\nCall-ID: %s\r\nCSeq: 1 REGISTER\r\nExpires: 1\r\nContent-Length: 0\r\n\r\n", status, callID)
+		response := registerWireResponse(request, status, "Expires: 1\r\n")
 		_, _ = conn.WriteToUDP([]byte(response), remote)
 	}
+}
+
+func registerWireResponse(request string, status int, extraHeaders string) string {
+	return fmt.Sprintf(
+		"SIP/2.0 %d Test\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: 0\r\n\r\n",
+		status,
+		sipHeaderValue(request, "Via"),
+		sipHeaderValue(request, "Call-ID"),
+		sipHeaderValue(request, "CSeq"),
+		extraHeaders,
+	)
 }
 
 func sipHeaderValue(message, name string) string {

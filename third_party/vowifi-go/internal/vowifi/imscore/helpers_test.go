@@ -98,10 +98,10 @@ func TestBuildIMSConfigFromCarrier(t *testing.T) {
 
 func TestServiceStartAndSnapshot(t *testing.T) {
 	cfg := &IMSConfig{
-		DeviceID: "dev-1",
-		IMSI:     "310260123456789",
-		IMPI:     "310260123456789@ims.example.com",
-		Domain:   "ims.example.com",
+		DeviceID:    "dev-1",
+		IMSI:        "310260123456789",
+		IMPI:        "310260123456789@ims.example.com",
+		Domain:      "ims.example.com",
 		AKAProvider: stubAKAProvider{},
 	}
 	svc, err := New(cfg)
@@ -109,7 +109,9 @@ func TestServiceStartAndSnapshot(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	svc.Transport().SetSendFn(func(string) error { return nil })
-	svc.ForceRegistered()
+	svc.mu.Lock()
+	svc.regState = regRegistered
+	svc.mu.Unlock()
 	if svc.IPSec3GPPEnabled() {
 		t.Error("IPsec should be disabled by default")
 	}
@@ -131,12 +133,26 @@ func TestServiceStartAndSnapshot(t *testing.T) {
 	}
 }
 
+func registerResponseForRequest(request string, status int, headers map[string]string) *sipResponse {
+	responseHeaders := make(map[string]string, len(headers)+1)
+	for name, value := range headers {
+		responseHeaders[name] = value
+	}
+	responseHeaders["Via"] = sipHeaderValue(request, "Via")
+	return &sipResponse{
+		StatusCode: status,
+		CallID:     sipHeaderValue(request, "Call-ID"),
+		CSeq:       sipHeaderValue(request, "CSeq"),
+		Headers:    responseHeaders,
+	}
+}
+
 func TestServiceMethods(t *testing.T) {
 	cfg := &IMSConfig{
-		DeviceID: "dev-1",
-		IMSI:     "310260123456789",
-		IMPI:     "310260123456789@ims.example.com",
-		Domain:   "ims.example.com",
+		DeviceID:    "dev-1",
+		IMSI:        "310260123456789",
+		IMPI:        "310260123456789@ims.example.com",
+		Domain:      "ims.example.com",
 		AKAProvider: stubAKAProvider{},
 	}
 	svc, err := New(cfg)

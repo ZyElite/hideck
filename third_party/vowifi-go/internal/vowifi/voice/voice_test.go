@@ -1,6 +1,9 @@
 package voice
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -13,21 +16,57 @@ import (
 // newTestAgent builds an agent with a fake IMS service.
 func newTestAgent(t *testing.T) *Agent {
 	t.Helper()
+	registrar := startVoiceTestRegistrar(t)
 	cfg := &imscore.IMSConfig{
-		DeviceID: "dev-1",
-		IMSI:     "310260123456789",
-		IMPI:     "310260123456789@ims.example.com",
-		Domain:   "ims.example.com",
+		DeviceID:    "dev-1",
+		IMSI:        "310260123456789",
+		IMPI:        "310260123456789@ims.example.com",
+		Domain:      "ims.example.com",
+		LocalIP:     net.IPv4(127, 0, 0, 1),
+		Registrar:   registrar.LocalAddr().String(),
 		AKAProvider: stubAKA{},
 	}
 	svc, err := imscore.New(cfg)
 	if err != nil {
 		t.Fatalf("imscore.New: %v", err)
 	}
-	svc.Transport().SetSendFn(func(string) error { return nil })
-	// Mark the service registered so Dial passes the registration check.
-	svc.ForceRegistered()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("imscore.Register: %v", err)
+	}
 	return NewAgent("dev-1", svc, nil)
+}
+
+func startVoiceTestRegistrar(t *testing.T) *net.UDPConn {
+	t.Helper()
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("ListenUDP: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	go func() {
+		buffer := make([]byte, 64*1024)
+		n, remote, readErr := conn.ReadFromUDP(buffer)
+		if readErr != nil {
+			return
+		}
+		request := string(buffer[:n])
+		response := fmt.Sprintf("SIP/2.0 200 OK\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\nContent-Length: 0\r\n\r\n",
+			voiceTestHeader(request, "Via"), voiceTestHeader(request, "Call-ID"), voiceTestHeader(request, "CSeq"))
+		_, _ = conn.WriteToUDP([]byte(response), remote)
+	}()
+	return conn
+}
+
+func voiceTestHeader(message, name string) string {
+	for _, line := range strings.Split(message, "\r\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if ok && strings.EqualFold(strings.TrimSpace(key), name) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // stubAKA is a deterministic AKA provider.

@@ -15,6 +15,7 @@ type registerSession struct {
 	callID     string
 	fromTag    string
 	cseq       int
+	branch     string
 	challenge  *DigestChallenge
 	authHeader string
 	expires    time.Duration
@@ -74,7 +75,7 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	}
 
 	// Wait for the challenge response.
-	resp, err := s.receiveResponse(ctx, session.callID)
+	resp, err := s.receiveResponse(ctx, session)
 	if err != nil {
 		return 0, err
 	}
@@ -102,7 +103,7 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 		}
 
 		// Wait for the final response.
-		resp, err = s.receiveResponse(ctx, session.callID)
+		resp, err = s.receiveResponse(ctx, session)
 		if err != nil {
 			return 0, err
 		}
@@ -141,13 +142,16 @@ func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {
 // buildRegister builds a REGISTER request.
 func (s *Service) buildRegister(session *registerSession, authHeader string) string {
 	cfg := s.cfg
+	// Each request starts a distinct SIP transaction even when refresh reuses
+	// the registration Call-ID.
+	session.branch = "z9hG4bK" + newBranch()
 	expires := cfg.Expires
 	if expires <= 0 {
 		expires = 3600 * time.Second
 	}
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("REGISTER sip:%s SIP/2.0\r\n", cfg.Domain))
-	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;branch=z9hG4bK%s;rport\r\n", transportUpper(cfg.Transport), sipLocalAddress(cfg), newBranch()))
+	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;branch=%s;rport\r\n", transportUpper(cfg.Transport), sipLocalAddress(cfg), session.branch))
 	publicIdentity := primaryPublicIdentity(cfg)
 	b.WriteString(fmt.Sprintf("From: <%s>;tag=%s\r\n", publicIdentity, session.fromTag))
 	b.WriteString(fmt.Sprintf("To: <%s>\r\n", publicIdentity))
@@ -299,16 +303,6 @@ func (s *Service) buildAuthorizationWithResult(session *registerSession) (string
 	return ProcessAKAChallengeWithResult(session.challenge, cfg.AKAProvider, cfg.IMPI, "REGISTER", uri)
 }
 
-// ForceRegistered marks the service as registered (for tests).
-func (s *Service) ForceRegistered() {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	s.regState = regRegistered
-	s.mu.Unlock()
-}
-
 // Transport returns the SIP transport (for tests and wiring).
 func (s *Service) Transport() *sipTransport {
 	if s == nil {
@@ -334,20 +328,67 @@ func (s *Service) sendSIP(req string) error {
 	return s.transport.Send(req)
 }
 
-// receiveResponse waits for a response matching the call ID.
-func (s *Service) receiveResponse(ctx context.Context, callID string) (*sipResponse, error) {
+// receiveResponse waits for a response matching the full REGISTER transaction.
+func (s *Service) receiveResponse(ctx context.Context, session *registerSession) (*sipResponse, error) {
 	if s.transport == nil {
 		return nil, errors.New("imscore: no SIP transport")
 	}
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case resp := <-s.transport.Responses():
-		if resp.CallID == callID {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case resp := <-s.transport.Responses():
+			matched, err := matchesRegisterTransaction(resp, session)
+			if err != nil {
+				return nil, err
+			}
+			if !matched || resp.StatusCode < 200 {
+				continue
+			}
 			return resp, nil
 		}
-		return s.receiveResponse(ctx, callID)
 	}
+}
+
+func matchesRegisterTransaction(resp *sipResponse, session *registerSession) (bool, error) {
+	if resp == nil || resp.CallID != session.callID {
+		return false, nil
+	}
+	cseq, method, err := parseSIPCSeq(resp.CSeq)
+	if err != nil {
+		return false, fmt.Errorf("imscore: invalid REGISTER response CSeq: %w", err)
+	}
+	if cseq != session.cseq || !strings.EqualFold(method, "REGISTER") {
+		return false, nil
+	}
+	branch, err := parseTopViaBranch(resp.Header("Via"))
+	if err != nil {
+		return false, fmt.Errorf("imscore: invalid REGISTER response Via: %w", err)
+	}
+	return branch == session.branch, nil
+}
+
+func parseSIPCSeq(value string) (int, string, error) {
+	fields := strings.Fields(value)
+	if len(fields) != 2 {
+		return 0, "", errors.New("expected sequence number and method")
+	}
+	sequence, err := strconv.Atoi(fields[0])
+	if err != nil || sequence < 0 {
+		return 0, "", fmt.Errorf("invalid sequence number %q", fields[0])
+	}
+	return sequence, fields[1], nil
+}
+
+func parseTopViaBranch(value string) (string, error) {
+	topVia, _, _ := strings.Cut(value, ",")
+	for _, parameter := range strings.Split(topVia, ";")[1:] {
+		name, branch, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+		if ok && strings.EqualFold(name, "branch") && strings.TrimSpace(branch) != "" {
+			return strings.TrimSpace(branch), nil
+		}
+	}
+	return "", errors.New("missing branch parameter")
 }
 
 // newCallID generates a call ID.

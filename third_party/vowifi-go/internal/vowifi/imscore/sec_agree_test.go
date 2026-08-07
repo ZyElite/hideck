@@ -38,7 +38,7 @@ func TestRegisterNegotiatesAndInstallsIPSec3GPP(t *testing.T) {
 			initialClient = sipHeaderValue(request, "Security-Client")
 			assertInitialSecurityHeaders(t, request, initialClient)
 			serverHeader = serverOfferForClient(t, initialClient)
-			svc.transport.DeliverResponse(akaChallengeResponse(svc, serverHeader))
+			svc.transport.DeliverResponse(akaChallengeResponse(request, serverHeader))
 			return nil
 		}
 		if !network.installed {
@@ -48,7 +48,7 @@ func TestRegisterNegotiatesAndInstallsIPSec3GPP(t *testing.T) {
 		if got := svc.currentRegistrationRemote().Port; got != 51001 {
 			t.Fatalf("protected registrar port = %d, want 51001", got)
 		}
-		svc.transport.DeliverResponse(&sipResponse{StatusCode: 200, CallID: svc.regSession.callID})
+		svc.transport.DeliverResponse(registerResponseForRequest(request, 200, nil))
 		return nil
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -108,7 +108,7 @@ func serverOfferForClient(t *testing.T, clientHeader string) string {
 	return fmt.Sprintf("ipsec-3gpp;alg=hmac-sha-1-96;ealg=aes-cbc;prot=esp;mod=trans;spi-c=%d;spi-s=%d;port-c=51000;port-s=51001", spiC, spiS)
 }
 
-func akaChallengeResponse(svc *Service, securityServer string) *sipResponse {
+func akaChallengeResponse(request, securityServer string) *sipResponse {
 	randBytes := bytes.Repeat([]byte{0x11}, 16)
 	autnBytes := bytes.Repeat([]byte{0x22}, 16)
 	nonce := base64Std(append(append([]byte{}, randBytes...), autnBytes...))
@@ -118,7 +118,7 @@ func akaChallengeResponse(svc *Service, securityServer string) *sipResponse {
 	if securityServer != "" {
 		headers["Security-Server"] = securityServer
 	}
-	return &sipResponse{StatusCode: 401, CallID: svc.regSession.callID, Headers: headers}
+	return registerResponseForRequest(request, 401, headers)
 }
 
 func assertAuthenticatedSecurityHeaders(t *testing.T, request, client, server string) {
@@ -151,8 +151,8 @@ func assertInstalledPolicy(t *testing.T, policy ipsec3gpp.Policy) {
 func TestRegisterRejectsMissingSecurityServer(t *testing.T) {
 	network := &captureIPSecNetwork{SystemIMSNetwork: NewSystemIMSNetwork(net.IPv4(10, 0, 0, 2))}
 	svc := newSecurityAgreementTestService(t, network)
-	svc.transport.SetSendFn(func(string) error {
-		svc.transport.DeliverResponse(akaChallengeResponse(svc, ""))
+	svc.transport.SetSendFn(func(request string) error {
+		svc.transport.DeliverResponse(akaChallengeResponse(request, ""))
 		return nil
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

@@ -3,6 +3,9 @@ package runtimehost
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,20 +28,57 @@ func (stubAKA) CalculateAKA(rand16, autn16 []byte) (imscore.AKAResult, error) {
 // newTestService builds an imscore service for adapter tests.
 func newTestService(t *testing.T) *imscore.Service {
 	t.Helper()
+	registrar := startTestRegistrar(t)
 	cfg := &imscore.IMSConfig{
 		DeviceID:    "dev-1",
 		IMSI:        "310260123456789",
 		IMPI:        "310260123456789@ims.example.com",
 		Domain:      "ims.example.com",
+		LocalIP:     net.IPv4(127, 0, 0, 1),
+		Registrar:   registrar.LocalAddr().String(),
 		AKAProvider: stubAKA{},
 	}
 	svc, err := imscore.New(cfg)
 	if err != nil {
 		t.Fatalf("imscore.New: %v", err)
 	}
-	svc.Transport().SetSendFn(func(string) error { return nil })
-	svc.ForceRegistered()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("imscore.Register: %v", err)
+	}
 	return svc
+}
+
+func startTestRegistrar(t *testing.T) *net.UDPConn {
+	t.Helper()
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("ListenUDP: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	go func() {
+		buffer := make([]byte, 64*1024)
+		n, remote, readErr := conn.ReadFromUDP(buffer)
+		if readErr != nil {
+			return
+		}
+		request := string(buffer[:n])
+		response := fmt.Sprintf("SIP/2.0 200 OK\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\nContent-Length: 0\r\n\r\n",
+			testSIPHeader(request, "Via"), testSIPHeader(request, "Call-ID"), testSIPHeader(request, "CSeq"))
+		_, _ = conn.WriteToUDP([]byte(response), remote)
+	}()
+	return conn
+}
+
+func testSIPHeader(message, name string) string {
+	for _, line := range strings.Split(message, "\r\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if ok && strings.EqualFold(strings.TrimSpace(key), name) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func TestServiceAdapterStatus(t *testing.T) {

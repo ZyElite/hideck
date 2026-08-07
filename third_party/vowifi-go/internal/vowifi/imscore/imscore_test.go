@@ -135,18 +135,11 @@ func TestNewAndRegister(t *testing.T) {
 	svc.transport.SetSendFn(func(req string) error {
 		// Simulate a 401 challenge, then a 200.
 		if strings.Contains(req, "CSeq: 1 REGISTER") {
-			svc.transport.DeliverResponse(&sipResponse{
-				StatusCode: 401,
-				CallID:     svc.regSession.callID,
-				Headers: map[string]string{
-					"WWW-Authenticate": `Digest realm="ims.example.com", nonce="` + base64Std(append(append([]byte{}, bytes.Repeat([]byte{0x11}, 16)...), bytes.Repeat([]byte{0x22}, 16)...)) + `", algorithm=AKAv1-MD5, qop="auth"`,
-				},
-			})
+			svc.transport.DeliverResponse(registerResponseForRequest(req, 401, map[string]string{
+				"WWW-Authenticate": `Digest realm="ims.example.com", nonce="` + base64Std(append(append([]byte{}, bytes.Repeat([]byte{0x11}, 16)...), bytes.Repeat([]byte{0x22}, 16)...)) + `", algorithm=AKAv1-MD5, qop="auth"`,
+			}))
 		} else {
-			svc.transport.DeliverResponse(&sipResponse{
-				StatusCode: 200,
-				CallID:     svc.regSession.callID,
-			})
+			svc.transport.DeliverResponse(registerResponseForRequest(req, 200, nil))
 		}
 		return nil
 	})
