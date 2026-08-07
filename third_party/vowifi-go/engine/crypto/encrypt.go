@@ -3,6 +3,7 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/des"
 	"crypto/rand"
 	"fmt"
 )
@@ -42,12 +43,53 @@ func PrepareCipher(transformID uint16, key []byte) (PreparedCipher, error) {
 		return &nullEncryption{}, nil
 	case EncrAESCBC:
 		return newAESCBC(key)
+	case Encr3DESCBC:
+		return newPrepared3DESCBC(key)
 	case EncrAESGCM16, EncrAESGCM12, EncrAESGCM8:
 		return newAESGCM(key)
 	default:
 		return nil, fmt.Errorf("crypto: unsupported ENCR transform %d", transformID)
 	}
 }
+
+type prepared3DESCBC struct {
+	block cipher.Block
+}
+
+func newPrepared3DESCBC(key []byte) (PreparedCipher, error) {
+	block, err := des.NewTripleDESCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return &prepared3DESCBC{block: block}, nil
+}
+
+func (c *prepared3DESCBC) Seal(dst, plaintext, iv, aad []byte) []byte {
+	if len(plaintext) == 0 {
+		return append(dst, plaintext...)
+	}
+	if len(plaintext)%des.BlockSize != 0 {
+		return dst
+	}
+	out := append(dst, plaintext...)
+	cipher.NewCBCEncrypter(c.block, iv).CryptBlocks(out[len(dst):], out[len(dst):])
+	return out
+}
+
+func (c *prepared3DESCBC) Open(dst, ciphertext, iv, aad []byte) ([]byte, error) {
+	if len(ciphertext) == 0 {
+		return append(dst, ciphertext...), nil
+	}
+	if len(ciphertext)%des.BlockSize != 0 {
+		return dst, fmt.Errorf("crypto: bad 3DES ciphertext length %d", len(ciphertext))
+	}
+	out := make([]byte, len(ciphertext))
+	cipher.NewCBCDecrypter(c.block, iv).CryptBlocks(out, ciphertext)
+	return append(dst, out...), nil
+}
+
+func (*prepared3DESCBC) IVSize() int    { return des.BlockSize }
+func (*prepared3DESCBC) BlockSize() int { return des.BlockSize }
 
 // GetEncrypterWithKeyLen returns a prepared AES-CBC or AES-GCM transform with
 // the given key.

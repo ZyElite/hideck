@@ -2,14 +2,17 @@ package swu
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/iniwex5/vowifi-go/engine/eap"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/ipsec"
 )
 
 func TestBuildAlgorithmPlan(t *testing.T) {
@@ -226,6 +229,76 @@ func TestSessionStateTransitions(t *testing.T) {
 	default:
 		t.Error("done channel not closed after Shutdown")
 	}
+}
+
+func TestNewSessionInitializesDefaultAlgorithms(t *testing.T) {
+	s := NewSession(&Config{})
+	if s.initErr != nil {
+		t.Fatalf("initErr = %v", s.initErr)
+	}
+	if s.dh == nil || s.prf == nil {
+		t.Fatal("NewSession did not initialize DH and PRF")
+	}
+	if s.encrAlg != 12 || s.prfAlg != 2 || s.integAlg != 2 || s.dhGroup != 14 {
+		t.Fatalf("IKE algorithms = %d/%d/%d/%d", s.encrAlg, s.prfAlg, s.integAlg, s.dhGroup)
+	}
+	if s.encKeyLen != 16 || s.integKeyLen != 20 {
+		t.Fatalf("IKE key lengths = %d/%d", s.encKeyLen, s.integKeyLen)
+	}
+	if s.espCipher != 12 || s.espInteg != 2 || s.espEncKeyLen != 16 || s.espIntegKeyLen != 20 {
+		t.Fatalf("ESP algorithms not initialized: %+v", s)
+	}
+}
+
+func TestNewSessionInitializesStrictAEADAlgorithms(t *testing.T) {
+	s := NewSession(&Config{AlgorithmPolicy: "strict"})
+	if s.initErr != nil {
+		t.Fatalf("initErr = %v", s.initErr)
+	}
+	if !s.aead || !s.espAEAD || s.encKeyLen != 20 || s.espEncKeyLen != 20 {
+		t.Fatalf("strict AEAD parameters = ike(%t,%d) esp(%t,%d)", s.aead, s.encKeyLen, s.espAEAD, s.espEncKeyLen)
+	}
+	if s.integKeyLen != 0 || s.espIntegKeyLen != 0 {
+		t.Fatalf("strict integrity key lengths = %d/%d", s.integKeyLen, s.espIntegKeyLen)
+	}
+}
+
+func TestNewSessionInitializesLegacyAlgorithms(t *testing.T) {
+	s := NewSession(&Config{AlgorithmPolicy: "legacy_prefer"})
+	if s.initErr != nil {
+		t.Fatalf("initErr = %v", s.initErr)
+	}
+	if s.encrAlg != 3 || s.encKeyLen != 24 || s.dhGroup != 2 {
+		t.Fatalf("legacy parameters = encr=%d key=%d dh=%d", s.encrAlg, s.encKeyLen, s.dhGroup)
+	}
+}
+
+func TestConnectReportsAlgorithmInitializationFailure(t *testing.T) {
+	s := NewSession(&Config{EPDGAddr: "127.0.0.1", IKEDH: 999})
+	err := s.Connect(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unsupported DH group 999") {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	if s.socket != nil || s.State() != stateError {
+		t.Fatalf("failed initialization opened transport or missed error state")
+	}
+}
+
+func TestStartEstablishedDataPlaneMarksRunning(t *testing.T) {
+	s := NewSession(&Config{})
+	s.socket = &ipsec.SocketManager{}
+	s.innerEndpoint = newUserspaceInnerPacketEndpoint(1, 1)
+	if err := s.startEstablishedDataPlane(); err != nil {
+		t.Fatalf("startEstablishedDataPlane() error = %v", err)
+	}
+	s.mu.RLock()
+	started := s.dataPlaneStarted
+	s.mu.RUnlock()
+	if !started {
+		t.Fatal("data plane not marked started")
+	}
+	s.cancel()
+	s.stopDataPlane()
 }
 
 func TestSessionManager(t *testing.T) {

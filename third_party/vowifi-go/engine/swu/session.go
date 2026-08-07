@@ -41,11 +41,11 @@ type Config struct {
 	// NonceLen is the initiator nonce length (default 32).
 	NonceLen int
 	// RekeyIKESeconds / RekeyChildSeconds drive the SA rekey timers.
-	RekeyIKESeconds    time.Duration
-	RekeyChildSeconds  time.Duration
-	ReauthSeconds      time.Duration
-	NATKeepaliveEvery  time.Duration
-	DPDProbeEvery      time.Duration
+	RekeyIKESeconds   time.Duration
+	RekeyChildSeconds time.Duration
+	ReauthSeconds     time.Duration
+	NATKeepaliveEvery time.Duration
+	DPDProbeEvery     time.Duration
 	// Wireshark enables the pcap-like traffic logger.
 	Wireshark bool
 	// OnRedirect is invoked when the ePDG redirects the session (RFC 5685).
@@ -69,12 +69,12 @@ type AKAResult struct {
 
 // Session state strings (recovered from the decompiled status.go).
 const (
-	stateIdle         = "idle"
-	stateConnecting   = "connecting"
+	stateIdle           = "idle"
+	stateConnecting     = "connecting"
 	stateAuthenticating = "authenticating"
-	stateEstablished  = "established"
-	stateError        = "error"
-	stateShutdown     = "shutdown"
+	stateEstablished    = "established"
+	stateError          = "error"
+	stateShutdown       = "shutdown"
 )
 
 // DataplaneModeUserspace selects the user-space data plane (recovered from
@@ -85,10 +85,10 @@ const DataplaneModeUserspace = "userspace"
 type ikeAuthStage int
 
 const (
-	stageInit ikeAuthStage = iota // build & send IKE_AUTH request
-	stageEAP                      // EAP exchange in progress
-	stageFinal                    // final IKE_AUTH request (AUTH + EAP success)
-	stageDone                     // IKE_AUTH complete
+	stageInit  ikeAuthStage = iota // build & send IKE_AUTH request
+	stageEAP                       // EAP exchange in progress
+	stageFinal                     // final IKE_AUTH request (AUTH + EAP success)
+	stageDone                      // IKE_AUTH complete
 )
 
 // Session is the SWu IKEv2 + EAP-AKA session. It extends the key-derivation
@@ -104,9 +104,12 @@ type Session struct {
 	prf    crypto.PRF
 	prfKey []byte
 
-	integKeyLen int
-	encKeyLen   int
-	aead        bool
+	integKeyLen    int
+	encKeyLen      int
+	aead           bool
+	espEncKeyLen   int
+	espIntegKeyLen int
+	espAEAD        bool
 
 	dhSharedSecret []byte
 	ikeKeys        *IKEKeys
@@ -131,8 +134,8 @@ type Session struct {
 
 	// --- IKE_AUTH state ---
 	stage       ikeAuthStage
-	eapID       byte // current EAP identifier
-	eapType     byte // negotiated EAP method (AKA / AKA')
+	eapID       byte   // current EAP identifier
+	eapType     byte   // negotiated EAP method (AKA / AKA')
 	authPayload []byte // responder AUTH payload (for verification)
 	skf         []byte // SKF (encrypted IKE_AUTH response) pending decrypt
 
@@ -154,13 +157,15 @@ type Session struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	mu           sync.RWMutex
-	terminalErr  error
-	state        string
-	startedAt    time.Time
-	lastPingAt   time.Time
-	lastDPDAt    time.Time
-	rekeyResetCh chan struct{}
+	mu               sync.RWMutex
+	terminalErr      error
+	initErr          error
+	state            string
+	dataPlaneStarted bool
+	startedAt        time.Time
+	lastPingAt       time.Time
+	lastDPDAt        time.Time
+	rekeyResetCh     chan struct{}
 
 	// --- timers ---
 	ikeReauthTimer  *time.Timer
@@ -192,6 +197,7 @@ func NewSession(cfg *Config) *Session {
 	if s.nonceLen <= 0 {
 		s.nonceLen = 32
 	}
+	s.initErr = initializeSessionAlgorithms(s, cfg)
 	if cfg.Wireshark {
 		s.debug = NewWiresharkDebugger()
 	}
@@ -249,6 +255,11 @@ func (s *Session) Connect(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	s.setState(stateConnecting)
+	if s.initErr != nil {
+		err := fmt.Errorf("swu: initialize session: %w", s.initErr)
+		s.setTerminalError(err)
+		return err
+	}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		err := s.connectOnce(ctx)
@@ -274,20 +285,24 @@ func (s *Session) Connect(ctx context.Context) error {
 }
 
 // connectOnce runs a single IKE_SA_INIT → IKE_AUTH → CREATE_CHILD_SA attempt.
-func (s *Session) connectOnce(ctx context.Context) error {
+func (s *Session) connectOnce(ctx context.Context) (err error) {
 	if s.cfg == nil {
 		return errors.New("swu: no configuration")
 	}
 	if s.cfg.EPDGAddr == "" {
 		return errors.New("swu: no ePDG address configured")
 	}
+	defer func() {
+		if err != nil {
+			s.stopDataPlane()
+			s.stopTransport()
+		}
+	}()
 
 	// Resolve the ePDG and build the IKE/ESP transport.
 	if err := s.buildTransport(); err != nil {
 		return fmt.Errorf("build transport: %w", err)
 	}
-	defer s.stopDataPlane()
-
 	// IKE_SA_INIT.
 	if err := s.runIKESAInit(ctx); err != nil {
 		return err
@@ -307,9 +322,20 @@ func (s *Session) connectOnce(ctx context.Context) error {
 	if err := s.setupDataPlane(); err != nil {
 		return fmt.Errorf("setup data plane: %w", err)
 	}
+	if err := s.startEstablishedDataPlane(); err != nil {
+		return fmt.Errorf("start data plane: %w", err)
+	}
 	s.setState(stateEstablished)
 	s.startTimers()
 	return nil
+}
+
+func (s *Session) stopTransport() {
+	if s.socket == nil {
+		return
+	}
+	s.socket.Stop()
+	s.socket = nil
 }
 
 // runIKESAInit performs the IKE_SA_INIT exchange with COOKIE / INVALID_KE /
@@ -434,9 +460,7 @@ func (s *Session) Shutdown() {
 
 	s.stopTimers()
 	s.stopDataPlane()
-	if s.socket != nil {
-		s.socket.Stop()
-	}
+	s.stopTransport()
 	s.cancel()
 	select {
 	case <-s.done:

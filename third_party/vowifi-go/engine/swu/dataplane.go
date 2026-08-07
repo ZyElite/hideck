@@ -127,19 +127,10 @@ func (s *Session) setupDataPlane() error {
 		return err
 	}
 
-	// Build the ESP SA. The 3GPP secure channel uses AES-CBC + HMAC-SHA1-96
-	// (TS 33.234); the negotiated ESP transforms are used when available.
-	encr := s.espCipher
-	if encr == 0 {
-		encr = 12 // ENCR_AES_CBC
+	sa, err := s.newESPAssociation(childKeys)
+	if err != nil {
+		return err
 	}
-	integ := crypto.NewIntegrity(s.espInteg)
-	if integ == nil {
-		integ = crypto.NewIntegrity(2) // AUTH_HMAC_SHA1_96
-	}
-	sa := ipsec.NewSecurityAssociationCBC(
-		s.espRemoteSPI, encr, childKeys.enc, integ, childKeys.integ, s.espRemoteSPI,
-	)
 	s.espSA = sa
 	s.espKey = childKeys.enc
 	s.espIntegKey = childKeys.integ
@@ -147,6 +138,19 @@ func (s *Session) setupDataPlane() error {
 	// Create the inner packet endpoint.
 	s.innerEndpoint = newUserspaceInnerPacketEndpoint(0, 0)
 	return nil
+}
+
+func (s *Session) newESPAssociation(keys *childSAKeys) (*ipsec.SecurityAssociation, error) {
+	if s.espAEAD {
+		return ipsec.NewSecurityAssociation(s.espRemoteSPI, s.espCipher, keys.enc, s.espRemoteSPI), nil
+	}
+	integ := crypto.NewIntegrity(s.espInteg)
+	if integ == nil {
+		return nil, fmt.Errorf("swu: unsupported ESP integrity transform %d", s.espInteg)
+	}
+	return ipsec.NewSecurityAssociationCBC(
+		s.espRemoteSPI, s.espCipher, keys.enc, integ, keys.integ, s.espRemoteSPI,
+	), nil
 }
 
 // childSAKeys holds the derived CHILD_SA key material.
@@ -162,8 +166,11 @@ func (s *Session) deriveChildSAKeys() (*childSAKeys, error) {
 		return nil, errors.New("swu: no PRF for child SA keys")
 	}
 	seed := append(append([]byte{}, s.Ni...), s.Nr()...)
-	encLen := 16 // AES-CBC key
-	integLen := 20 // HMAC-SHA1 key
+	encLen := s.espEncKeyLen
+	integLen := s.espIntegKeyLen
+	if encLen <= 0 {
+		return nil, errors.New("swu: invalid ESP encryption key length")
+	}
 	km := crypto.PrfPlus(s.prf, s.ikeKeys.SK_d, seed, encLen+integLen)
 	if len(km) < encLen+integLen {
 		return nil, errors.New("swu: prf+ produced insufficient child SA keys")
@@ -179,6 +186,16 @@ func (s *Session) startEstablishedDataPlane() error {
 	if s.socket == nil || s.innerEndpoint == nil {
 		return errors.New("swu: data plane not ready")
 	}
+	if err := s.innerEndpoint.start(); err != nil {
+		return fmt.Errorf("swu: start inner endpoint: %w", err)
+	}
+	s.mu.Lock()
+	if s.dataPlaneStarted {
+		s.mu.Unlock()
+		return nil
+	}
+	s.dataPlaneStarted = true
+	s.mu.Unlock()
 	go s.startDataPlaneLoop()
 	return nil
 }
@@ -273,6 +290,9 @@ func (s *Session) stopDataPlane() {
 		_ = s.innerEndpoint.Close()
 	}
 	s.espSA = nil
+	s.mu.Lock()
+	s.dataPlaneStarted = false
+	s.mu.Unlock()
 }
 
 // packetLease wraps a buffer-pool lease for an outbound packet.

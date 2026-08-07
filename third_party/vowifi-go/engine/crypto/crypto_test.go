@@ -3,6 +3,7 @@ package crypto
 import (
 	"bytes"
 	"crypto/aes"
+	"crypto/des"
 	"crypto/sha1"
 	"encoding/hex"
 	"testing"
@@ -151,6 +152,23 @@ func TestAESCBCRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(back, pt) {
 		t.Errorf("round trip = %q, want %q", back, pt)
+	}
+}
+
+func TestPrepared3DESCipherRoundTrip(t *testing.T) {
+	cipher, err := PrepareCipher(Encr3DESCBC, bytes.Repeat([]byte{0x31}, 24))
+	if err != nil {
+		t.Fatalf("PrepareCipher: %v", err)
+	}
+	plain := bytes.Repeat([]byte{0x42}, 2*des.BlockSize)
+	iv := bytes.Repeat([]byte{0x53}, des.BlockSize)
+	encrypted := cipher.Seal(nil, plain, iv, nil)
+	decrypted, err := cipher.Open(nil, encrypted, iv, nil)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !bytes.Equal(decrypted, plain) {
+		t.Fatalf("3DES round trip = %x, want %x", decrypted, plain)
 	}
 }
 
