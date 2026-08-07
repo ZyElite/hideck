@@ -40,13 +40,15 @@ type Config struct {
 	AlgorithmPolicy string
 	// IKEEncryption / IKEPRF / IKEIntegrity / IKEDH are the IKE algorithm
 	// transform IDs (RFC 7296 §3.3.2). Zero selects the policy default.
-	IKEEncryption uint16
-	IKEPRF        uint16
-	IKEIntegrity  uint16
-	IKEDH         uint16
+	IKEEncryption        uint16
+	IKEEncryptionKeyBits uint16
+	IKEPRF               uint16
+	IKEIntegrity         uint16
+	IKEDH                uint16
 	// ESPEncryption / ESPIntegrity are the ESP transform IDs for the CHILD_SA.
-	ESPEncryption uint16
-	ESPIntegrity  uint16
+	ESPEncryption        uint16
+	ESPEncryptionKeyBits uint16
+	ESPIntegrity         uint16
 	// NonceLen is the initiator nonce length (default 32).
 	NonceLen int
 	// RekeyIKESeconds / RekeyChildSeconds drive the SA rekey timers.
@@ -112,8 +114,10 @@ type Session struct {
 
 	integKeyLen    int
 	encKeyLen      int
+	encKeyBits     uint16
 	aead           bool
 	espEncKeyLen   int
+	espEncKeyBits  uint16
 	espIntegKeyLen int
 	espAEAD        bool
 

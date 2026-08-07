@@ -63,6 +63,13 @@ func buildIKEProposals(encr, prf, integ, dh uint16) []*ikev2.Proposal {
 	return ikev2.CreateMultiProposalIKE(encr, prf, integ, dh)
 }
 
+func buildIKEProposalsForSession(session *Session) []*ikev2.Proposal {
+	return ikev2.CreateIKEProposals(ikev2.IKEProposalAlgorithms{
+		Encryption: session.encrAlg, EncryptionKeyBits: session.encKeyBits,
+		PRF: session.prfAlg, Integrity: session.integAlg, DH: session.dhGroup,
+	})
+}
+
 // buildIKESAInitPacket constructs the IKE_SA_INIT request: SAi | KEi | Ni.
 // The initiator SPI is randomly generated, the DH keypair is generated on the
 // session's Diffie-Hellman instance, and the initiator nonce is stored for
@@ -87,7 +94,7 @@ func (s *Session) buildIKESAInitPacket() (*ikev2.IKEPacket, error) {
 		})
 	}
 	payloads = append(payloads,
-		&ikev2.EncryptedPayloadSA{Proposals: buildIKEProposals(s.encrAlg, s.prfAlg, s.integAlg, s.dhGroup)},
+		&ikev2.EncryptedPayloadSA{Proposals: buildIKEProposalsForSession(s)},
 		&ikev2.EncryptedPayloadKE{DHGroupNum: s.dhGroup, KeyData: s.dh.PublicKeyBytes()},
 		&ikev2.EncryptedPayloadNonce{Data: append([]byte(nil), s.Ni...)},
 	)
@@ -143,10 +150,17 @@ func (s *Session) handleIKESAInitResp(resp *ikev2.IKEPacket) error {
 	// First pass: handle control notifies (COOKIE / INVALID_KE / REDIRECT)
 	// before doing any DH work.
 	var nATSource, nATDest []byte
+	var selectedSA *ikev2.EncryptedPayloadSA
 	var keRaw *ikev2.RawPayload
 	var nr []byte
 	for _, pl := range resp.Payloads {
 		switch pl.Type() {
+		case ikev2.PayloadSA:
+			value, ok := pl.(*ikev2.EncryptedPayloadSA)
+			if !ok || selectedSA != nil {
+				return errors.New("invalid or duplicate IKE_SA_INIT SA payload")
+			}
+			selectedSA = value
 		case ikev2.PayloadNotify:
 			nt, data := parseNotifyRaw(pl.(*ikev2.RawPayload))
 			switch nt {
@@ -174,6 +188,9 @@ func (s *Session) handleIKESAInitResp(resp *ikev2.IKEPacket) error {
 		case ikev2.PayloadNi:
 			nr = append([]byte{}, pl.(*ikev2.RawPayload).Data...)
 		}
+	}
+	if err := s.validateIKESAInitSelection(selectedSA); err != nil {
+		return err
 	}
 
 	if keRaw == nil {
@@ -211,6 +228,43 @@ func (s *Session) handleIKESAInitResp(resp *ikev2.IKEPacket) error {
 	s.natSourceHash = nATSource
 	s.natDestHash = nATDest
 	s.applyNATTraversal(nATSource, nATDest)
+	return nil
+}
+
+func (s *Session) validateIKESAInitSelection(sa *ikev2.EncryptedPayloadSA) error {
+	if sa == nil || len(sa.Proposals) != 1 {
+		return errors.New("IKE_SA_INIT response missing one selected SA proposal")
+	}
+	proposal := sa.Proposals[0]
+	if proposal == nil || proposal.ProposalNum != 1 || proposal.ProtocolID != ikev2.ProtoIKE ||
+		proposal.SPISize != 0 || len(proposal.SPI) != 0 || proposal.NumTransforms != byte(len(proposal.Transforms)) {
+		return errors.New("IKE_SA_INIT response selected an invalid IKE proposal")
+	}
+	want := map[byte]uint16{
+		ikev2.TypeEncryption: s.encrAlg, ikev2.TypePRF: s.prfAlg,
+		ikev2.TypeIntegrity: s.integAlg, ikev2.TypeDHGroup: s.dhGroup,
+	}
+	seen := make(map[byte]bool, len(want))
+	for _, transform := range proposal.Transforms {
+		if transform == nil {
+			return errors.New("IKE_SA_INIT response selected a nil transform")
+		}
+		expected, ok := want[transform.TransformType]
+		if !ok || seen[transform.TransformType] || expected != transform.TransformID {
+			return fmt.Errorf("IKE_SA_INIT response selected unexpected transform")
+		}
+		if transform.TransformType == ikev2.TypeEncryption {
+			if err := validateEncryptionKeyLength(transform, s.encKeyBits); err != nil {
+				return err
+			}
+		} else if len(transform.Attributes) != 0 {
+			return errors.New("IKE_SA_INIT non-encryption transform has attributes")
+		}
+		seen[transform.TransformType] = true
+	}
+	if len(seen) != len(want) {
+		return errors.New("IKE_SA_INIT response selected an incomplete IKE proposal")
+	}
 	return nil
 }
 

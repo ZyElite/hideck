@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
@@ -31,7 +32,7 @@ func buildInitResp(t *testing.T, initiator *Session, responderDH *crypto.DiffieH
 		Flags:        0x20, // Responder
 		MessageID:    0,
 		Payloads: append([]ikev2.Payload{
-			&ikev2.EncryptedPayloadSA{Proposals: buildIKEProposals(initiator.encrAlg, initiator.prfAlg, initiator.integAlg, initiator.dhGroup)},
+			&ikev2.EncryptedPayloadSA{Proposals: buildIKEProposalsForSession(initiator)},
 			&ikev2.EncryptedPayloadKE{DHGroupNum: initiator.dhGroup, KeyData: responderDH.PublicKeyBytes()},
 			&ikev2.EncryptedPayloadNonce{Data: nr},
 		}, extraPayloads...),
@@ -41,6 +42,25 @@ func buildInitResp(t *testing.T, initiator *Session, responderDH *crypto.DiffieH
 		t.Fatalf("DecodePacket(response): %v", err)
 	}
 	return dec
+}
+
+func TestHandleIKESAInitRespRejectsWrongAESKeyLength(t *testing.T) {
+	init := NewSession(&Config{
+		IKEEncryption: crypto.EncrAESCBC, IKEEncryptionKeyBits: 256,
+		IKEPRF: 7, IKEIntegrity: 14, IKEDH: 14,
+		ESPEncryption: crypto.EncrAESCBC, ESPEncryptionKeyBits: 256, ESPIntegrity: 14,
+	})
+	if _, err := init.buildIKESAInitPacket(); err != nil {
+		t.Fatal(err)
+	}
+	respDH, _ := crypto.NewDiffieHellman(14)
+	resp := buildInitResp(t, init, respDH)
+	sa := resp.Payloads[0].(*ikev2.EncryptedPayloadSA)
+	sa.Proposals[0].Transforms[0].Attributes[0].Value = 128
+	err := init.handleIKESAInitResp(resp)
+	if err == nil || !strings.Contains(err.Error(), "256-bit KEY_LENGTH") {
+		t.Fatalf("handleIKESAInitResp() error = %v", err)
+	}
 }
 
 func TestHandleIKESAInitRespDerivesKeys(t *testing.T) {

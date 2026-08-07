@@ -225,7 +225,8 @@ func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.Pre
 		},
 		AuthPlan: profile.AuthPlan{AKAApp: profile.NormalizeAKAApp(string(prepared.IMSIdentity.AKAAppPreference))},
 		EPDGAddr: prepared.EPDGAddr, EPDGSource: prepared.EPDGSource,
-		APN: imsAPNFromDomain(prepared.IMSIdentity.Domain),
+		APN:     imsAPNFromDomain(prepared.IMSIdentity.Domain),
+		Carrier: prepared.CarrierConfig,
 	}
 }
 
@@ -290,7 +291,11 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 	if pcscf := preferredPCSCF(inner.PCSCF, innerIP); pcscf != nil {
 		registrar = net.JoinHostPort(pcscf.String(), fmt.Sprint(defaultIMSSIPPort))
 	}
-	registerTemplate := imsRegisterTemplateForProfile(req.Prepared.Profile)
+	registerTemplate, userAgent, err := imsRegisterConfigForPrepared(req.Prepared)
+	if err != nil {
+		_ = imsNetwork.Close()
+		return nil, err
+	}
 	cfg := &imscore.IMSConfig{
 		DeviceID:         req.DeviceID,
 		IMEI:             req.Prepared.Profile.IMEI,
@@ -308,6 +313,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		AKAProvider:      req.SIM.AKAProvider(),
 		IMSNetwork:       imsNetwork,
 		IPSec3GPPEnabled: true,
+		UserAgent:        userAgent,
 		RegisterTemplate: registerTemplate,
 	}
 	if req.DeliveryStore != nil {

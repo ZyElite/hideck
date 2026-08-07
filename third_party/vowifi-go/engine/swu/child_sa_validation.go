@@ -13,17 +13,17 @@ import (
 
 const (
 	transformAttributeKeyLength uint16 = 14
-	aes128KeyLengthBits         uint16 = 128
 )
 
 type childSAOffer struct {
-	encryption   uint16
-	integrity    uint16
-	tsi          *ikev2.EncryptedPayloadTS
-	tsr          *ikev2.EncryptedPayloadTS
-	localIPs     []net.IP
-	requireSA    bool
-	requireNonce bool
+	encryption        uint16
+	encryptionKeyBits uint16
+	integrity         uint16
+	tsi               *ikev2.EncryptedPayloadTS
+	tsr               *ikev2.EncryptedPayloadTS
+	localIPs          []net.IP
+	requireSA         bool
+	requireNonce      bool
 }
 
 type childSASelection struct {
@@ -151,7 +151,7 @@ func validateESPSelection(proposal *ikev2.Proposal, offer childSAOffer) (uint32,
 	if encryption == nil || encryption.TransformID != offer.encryption {
 		return 0, 0, 0, fmt.Errorf("swu: CHILD_SA encryption selection %v does not match offer %d", transformID(encryption), offer.encryption)
 	}
-	if err := validateEncryptionKeyLength(encryption); err != nil {
+	if err := validateEncryptionKeyLength(encryption, offer.encryptionKeyBits); err != nil {
 		return 0, 0, 0, err
 	}
 	integrity := transforms[ikev2.TypeIntegrity]
@@ -188,7 +188,7 @@ func indexESPTransforms(transforms []*ikev2.Transform) (map[byte]*ikev2.Transfor
 	return indexed, nil
 }
 
-func validateEncryptionKeyLength(transform *ikev2.Transform) error {
+func validateEncryptionKeyLength(transform *ikev2.Transform, expectedBits uint16) error {
 	if transform.TransformID != crypto.EncrAESCBC && transform.TransformID != crypto.EncrAESGCM16 {
 		if len(transform.Attributes) != 0 {
 			return errors.New("swu: non-AES CHILD_SA encryption selected unexpected attributes")
@@ -196,8 +196,8 @@ func validateEncryptionKeyLength(transform *ikev2.Transform) error {
 		return nil
 	}
 	if len(transform.Attributes) != 1 || transform.Attributes[0].Type != transformAttributeKeyLength ||
-		transform.Attributes[0].Value != aes128KeyLengthBits {
-		return errors.New("swu: CHILD_SA AES selection requires a 128-bit KEY_LENGTH")
+		transform.Attributes[0].Value != expectedBits {
+		return fmt.Errorf("swu: AES selection requires a %d-bit KEY_LENGTH", expectedBits)
 	}
 	return nil
 }

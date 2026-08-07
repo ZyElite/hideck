@@ -3,9 +3,11 @@ package runtimecore
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
+	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 )
 
 type recordingAKAProvider struct {
@@ -44,5 +46,35 @@ func TestBuildSWUConfigRejectsMissingAKAProvider(t *testing.T) {
 	}
 	if _, err := BuildSWUConfig(nil, &recordingAKAProvider{}); err == nil {
 		t.Fatal("BuildSWUConfig() error=nil, want nil prepared session")
+	}
+}
+
+func TestBuildSWUConfigAppliesGiffgaffAlgorithms(t *testing.T) {
+	provider := &recordingAKAProvider{}
+	carrierConfig := carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{
+		MCC: "234", MNC: "10",
+	})
+	cfg, err := BuildSWUConfig(&PreparedSessionStart{Carrier: carrierConfig}, provider)
+	if err != nil {
+		t.Fatalf("BuildSWUConfig() error = %v", err)
+	}
+	if cfg.IKEEncryption != 12 || cfg.IKEEncryptionKeyBits != 256 || cfg.IKEPRF != 7 ||
+		cfg.IKEIntegrity != 14 || cfg.IKEDH != 14 {
+		t.Fatalf("IKE config = %+v", cfg)
+	}
+	if cfg.ESPEncryption != 12 || cfg.ESPEncryptionKeyBits != 256 || cfg.ESPIntegrity != 14 {
+		t.Fatalf("ESP config = %+v", cfg)
+	}
+	if cfg.ReauthSeconds != 180*time.Second {
+		t.Fatalf("reauth = %s", cfg.ReauthSeconds)
+	}
+}
+
+func TestBuildSWUConfigRejectsUnknownCarrierProposal(t *testing.T) {
+	prepared := &PreparedSessionStart{Carrier: carrier.EffectiveCarrierConfig{
+		IKEProposals: []string{"unknown"}, ESPProposals: []string{"aes256-sha512"},
+	}}
+	if _, err := BuildSWUConfig(prepared, &recordingAKAProvider{}); err == nil {
+		t.Fatal("BuildSWUConfig() error=nil, want unsupported proposal")
 	}
 }

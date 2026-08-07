@@ -114,6 +114,10 @@ func TestPrepareStartUsesUSIMOnlyWhenISIMUnavailable(t *testing.T) {
 	if prepared.EPDGAddr != "epdg.epc.mnc010.mcc234.pub.3gppnetwork.org" {
 		t.Fatalf("EPDGAddr = %q", prepared.EPDGAddr)
 	}
+	if prepared.EffectiveCarrier.PresetID != "giffgaff_23410" ||
+		prepared.CarrierConfig.DeviceModel != "rmx3366" {
+		t.Fatalf("carrier config = %+v", prepared.CarrierConfig)
+	}
 }
 
 func TestPrepareStartDoesNotHideISIMTransportFailure(t *testing.T) {

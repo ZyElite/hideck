@@ -54,6 +54,27 @@ func newInitSession(t *testing.T) *Session {
 		prf:         crypto.NewPRF(2),
 		integKeyLen: 12,
 		encKeyLen:   16,
+		encKeyBits:  128,
+	}
+}
+
+func TestBuildIKESAInitPacketCarriesAES256KeyLength(t *testing.T) {
+	s := NewSession(&Config{
+		IKEEncryption: crypto.EncrAESCBC, IKEEncryptionKeyBits: 256,
+		IKEPRF: 7, IKEIntegrity: 14, IKEDH: 14,
+		ESPEncryption: crypto.EncrAESCBC, ESPEncryptionKeyBits: 256, ESPIntegrity: 14,
+	})
+	packet, err := s.buildIKESAInitPacket()
+	if err != nil {
+		t.Fatalf("buildIKESAInitPacket() error = %v", err)
+	}
+	sa := packet.Payloads[0].(*ikev2.EncryptedPayloadSA)
+	encryption := sa.Proposals[0].Transforms[0]
+	if len(encryption.Attributes) != 1 || encryption.Attributes[0].Value != 256 {
+		t.Fatalf("IKE AES transform = %+v", encryption)
+	}
+	if s.encKeyLen != 32 || s.integKeyLen != 64 || s.prf.OutputSize() != 64 {
+		t.Fatalf("IKE key sizes = enc:%d integ:%d prf:%d", s.encKeyLen, s.integKeyLen, s.prf.OutputSize())
 	}
 }
 

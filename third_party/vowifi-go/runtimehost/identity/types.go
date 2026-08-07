@@ -5,6 +5,8 @@
 // Reconstructed from the decompiled engine/runtimehost/identity.
 package identity
 
+import "github.com/iniwex5/vowifi-go/runtimehost/carrier"
+
 // Profile is the raw IMS profile of a device.
 type Profile struct {
 	IMSI string
@@ -60,6 +62,7 @@ type PreparedSession struct {
 	Profile            Profile
 	IMSIdentity        IMSIdentity
 	EffectiveCarrier   EffectiveCarrier
+	CarrierConfig      carrier.EffectiveCarrierConfig
 	EPDGSource         string
 	EPDGAddr           string
 	IdentityIMEISource string

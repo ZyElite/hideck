@@ -27,7 +27,7 @@ func (s *Session) performIKESARekey(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	proposals := buildIKEProposals(s.encrAlg, s.prfAlg, s.integAlg, s.dhGroup)
+	proposals := buildIKEProposalsForSession(s)
 	proposals[0].SPI = append([]byte(nil), initiatorSPI[:]...)
 	proposals[0].SPISize = 8
 	request := &ikev2.IKEPacket{
@@ -95,7 +95,7 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 	if err != nil {
 		return fmt.Errorf("swu: derive peer-rekeyed IKE SA keys: %w", err)
 	}
-	proposals := buildIKEProposals(s.encrAlg, s.prfAlg, s.integAlg, s.dhGroup)
+	proposals := buildIKEProposalsForSession(s)
 	proposals[0].SPI = append([]byte(nil), responderSPI[:]...)
 	proposals[0].SPISize = 8
 	responsePayloads := []ikev2.Payload{
@@ -203,7 +203,7 @@ func (s *Session) validateIKERekeyProposal(proposal *ikev2.Proposal) error {
 			return fmt.Errorf("swu: unexpected IKE rekey transform type=%d id=%d", transform.TransformType, transform.TransformID)
 		}
 		if transform.TransformType == ikev2.TypeEncryption {
-			if err := validateEncryptionKeyLength(transform); err != nil {
+			if err := validateEncryptionKeyLength(transform, s.encKeyBits); err != nil {
 				return err
 			}
 		} else if len(transform.Attributes) != 0 {

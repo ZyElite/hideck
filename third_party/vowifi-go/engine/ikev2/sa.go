@@ -13,12 +13,12 @@ const (
 )
 
 const (
-	transformAttrKeyLength uint16 = 14
-	aesKeyLengthBits       uint16 = 128
-	encrAESCBC             uint16 = 12
-	encrAESGCM8            uint16 = 18
-	encrAESGCM12           uint16 = 19
-	encrAESGCM16           uint16 = 20
+	transformAttrKeyLength  uint16 = 14
+	defaultAESKeyLengthBits uint16 = 128
+	encrAESCBC              uint16 = 12
+	encrAESGCM8             uint16 = 18
+	encrAESGCM12            uint16 = 19
+	encrAESGCM16            uint16 = 20
 )
 
 // Transform types (RFC 7296 §3.3.2).
@@ -217,32 +217,69 @@ func DecodeTransform(b []byte) (*Transform, int, error) {
 // CreateMultiProposalIKE builds a proposal list for the IKE SA with the given
 // encryption, PRF, integrity and DH transform IDs.
 func CreateMultiProposalIKE(encr, prf, integ, dh uint16) []*Proposal {
+	return CreateIKEProposals(IKEProposalAlgorithms{
+		Encryption: encr, EncryptionKeyBits: defaultAESKeyLengthBits,
+		PRF: prf, Integrity: integ, DH: dh,
+	})
+}
+
+// IKEProposalAlgorithms describes one IKE SA proposal.
+type IKEProposalAlgorithms struct {
+	Encryption        uint16
+	EncryptionKeyBits uint16
+	PRF               uint16
+	Integrity         uint16
+	DH                uint16
+}
+
+// CreateIKEProposals builds a proposal list with an explicit AES key length.
+func CreateIKEProposals(algorithms IKEProposalAlgorithms) []*Proposal {
 	p := &Proposal{ProposalNum: 1, ProtocolID: ProtoIKE}
-	addEncryptionTransform(p, encr)
-	p.AddTransform(TypePRF, prf)
-	p.AddTransform(TypeIntegrity, integ)
-	p.AddTransform(TypeDHGroup, dh)
+	addEncryptionTransform(p, algorithms.Encryption, algorithms.EncryptionKeyBits)
+	p.AddTransform(TypePRF, algorithms.PRF)
+	p.AddTransform(TypeIntegrity, algorithms.Integrity)
+	p.AddTransform(TypeDHGroup, algorithms.DH)
 	return []*Proposal{p}
 }
 
 // CreateMultiProposalESP builds a proposal list for a Child SA (ESP).
 func CreateMultiProposalESP(encr, integ, dh, esn uint16) []*Proposal {
+	return CreateESPProposals(ESPProposalAlgorithms{
+		Encryption: encr, EncryptionKeyBits: defaultAESKeyLengthBits,
+		Integrity: integ, DH: dh, ESN: esn,
+	})
+}
+
+// ESPProposalAlgorithms describes one ESP CHILD_SA proposal.
+type ESPProposalAlgorithms struct {
+	Encryption        uint16
+	EncryptionKeyBits uint16
+	Integrity         uint16
+	DH                uint16
+	ESN               uint16
+}
+
+// CreateESPProposals builds a proposal list with an explicit AES key length.
+func CreateESPProposals(algorithms ESPProposalAlgorithms) []*Proposal {
 	p := &Proposal{ProposalNum: 1, ProtocolID: ProtoESP}
-	addEncryptionTransform(p, encr)
-	if integ != 0 {
-		p.AddTransform(TypeIntegrity, integ)
+	addEncryptionTransform(p, algorithms.Encryption, algorithms.EncryptionKeyBits)
+	if algorithms.Integrity != 0 {
+		p.AddTransform(TypeIntegrity, algorithms.Integrity)
 	}
-	if dh != 0 {
-		p.AddTransform(TypeDHGroup, dh)
+	if algorithms.DH != 0 {
+		p.AddTransform(TypeDHGroup, algorithms.DH)
 	}
-	p.AddTransform(TypeESN, esn)
+	p.AddTransform(TypeESN, algorithms.ESN)
 	return []*Proposal{p}
 }
 
-func addEncryptionTransform(proposal *Proposal, transformID uint16) {
+func addEncryptionTransform(proposal *Proposal, transformID, keyLengthBits uint16) {
 	switch transformID {
 	case encrAESCBC, encrAESGCM8, encrAESGCM12, encrAESGCM16:
-		proposal.AddTransformWithKeyLen(TypeEncryption, transformID, aesKeyLengthBits)
+		if keyLengthBits == 0 {
+			keyLengthBits = defaultAESKeyLengthBits
+		}
+		proposal.AddTransformWithKeyLen(TypeEncryption, transformID, keyLengthBits)
 	default:
 		proposal.AddTransform(TypeEncryption, transformID)
 	}

@@ -25,24 +25,39 @@ type E911Config struct {
 
 // IMSRegisterTemplate is the IMS registration template for the carrier.
 type IMSRegisterTemplate struct {
-	// (recovered as needed)
+	ExpiresSeconds  int
+	SupportedHeader string
+	AllowHeader     string
+	ContactMode     string
+	AccessType      string
+	ICSIRef         string
+	ContactOrder    []string
 }
 
 // EffectiveCarrierConfig is the resolved carrier configuration.
 type EffectiveCarrierConfig struct {
-	MCC      string
-	MNC      string
-	PresetID string
-	E911     E911Config
-	IMS      IMSRegisterTemplate
+	MCC                   string
+	MNC                   string
+	PresetID              string
+	DeviceModel           string
+	IKEProposals          []string
+	ESPProposals          []string
+	ReauthIntervalSeconds int
+	E911                  E911Config
+	IMS                   IMSRegisterTemplate
 }
 
 // CarrierOverride overrides a carrier's configuration at runtime.
 type CarrierOverride struct {
-	MCC      string
-	MNC      string
-	PresetID string
-	E911     E911Config
+	MCC                   string
+	MNC                   string
+	PresetID              string
+	DeviceModel           string
+	IKEProposals          []string
+	ESPProposals          []string
+	ReauthIntervalSeconds int
+	E911                  E911Config
+	IMS                   IMSRegisterTemplate
 }
 
 // ErrVoWiFiBlockedMCC is returned when the carrier's MCC is blocked for
@@ -104,6 +119,13 @@ func LoadCarrierOverrides(path string) (LoadResult, error) {
 	if err := json.Unmarshal(data, &list); err != nil {
 		return LoadResult{Path: path}, err
 	}
+	for _, item := range list {
+		cfg := defaultCarrierConfig(EffectiveCarrierConfigInput{MCC: item.MCC, MNC: item.MNC})
+		applyCarrierOverride(&cfg, item)
+		if err := ValidateEffectiveCarrierConfig(cfg); err != nil {
+			return LoadResult{Path: path}, err
+		}
+	}
 	overrides = list
 	return LoadResult{Path: path, Count: len(list)}, nil
 }
@@ -116,18 +138,12 @@ func ClearCarrierOverrides() {
 // ResolveEffectiveCarrierConfig resolves the carrier configuration for the
 // given PLMN, applying any runtime overrides.
 func ResolveEffectiveCarrierConfig(input EffectiveCarrierConfigInput) EffectiveCarrierConfig {
-	cfg := EffectiveCarrierConfig{MCC: input.MCC, MNC: input.MNC}
+	cfg := defaultCarrierConfig(input)
 	for _, o := range overrides {
-		if o.MCC == input.MCC && o.MNC == input.MNC {
-			cfg.PresetID = o.PresetID
-			cfg.E911 = o.E911
-			return cfg
+		if samePLMN(o.MCC, o.MNC, input.MCC, input.MNC) {
+			applyCarrierOverride(&cfg, o)
+			break
 		}
 	}
-	// Built-in presets: AT&T (310/280) offers e911.
-	if input.MCC == "310" && input.MNC == "280" {
-		cfg.PresetID = "att"
-		cfg.E911 = E911Config{Enabled: true, Provider: "att"}
-	}
-	return cfg
+	return cloneEffectiveCarrierConfig(cfg)
 }

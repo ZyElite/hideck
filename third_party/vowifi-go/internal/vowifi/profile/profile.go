@@ -433,6 +433,8 @@ func ResolveUserAgentForModel(model string) string {
 		return "Android"
 	case "galaxy":
 		return "Samsung"
+	case "rmx3366":
+		return "realme_RMX3366_0.0.2100"
 	default:
 		return "vowifi"
 	}

@@ -133,11 +133,11 @@ func NewIntegrity(transformID uint16) Integrity {
 		return nil
 	case 5: // INTEG_AES_XCBC_96
 		return newAesXCBC96()
-	case 6: // INTEG_HMAC_SHA2_256_128
+	case 12: // INTEG_HMAC_SHA2_256_128
 		return newHmacSHA256_128()
-	case 7: // INTEG_HMAC_SHA2_384_192
+	case 13: // INTEG_HMAC_SHA2_384_192
 		return newHmacSHA384_192()
-	case 8: // INTEG_HMAC_SHA2_512_256
+	case 14: // INTEG_HMAC_SHA2_512_256
 		return newHmacSHA512_256()
 	case 0: // INTEG_NONE (NULL)
 		return newNullIntegrity()

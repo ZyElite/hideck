@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha512"
 	"hash"
 )
 
@@ -56,6 +57,10 @@ func NewPRF(transformID uint16) PRF {
 		return &xcbcPRF{}
 	case 5: // PRF_HMAC_SHA2_256
 		return &hmacPRF{newHash: sha256.New, keyLen: 32}
+	case 6: // PRF_HMAC_SHA2_384
+		return &hmacPRF{newHash: sha512.New384, keyLen: 48}
+	case 7: // PRF_HMAC_SHA2_512
+		return &hmacPRF{newHash: sha512.New, keyLen: 64}
 	}
 	return nil
 }

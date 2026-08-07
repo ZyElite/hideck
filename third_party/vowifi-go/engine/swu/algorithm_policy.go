@@ -43,13 +43,15 @@ func normalizeLegacyName(name string) string {
 // AlgorithmPlan is the resolved IKE/ESP algorithm offer set for a session.
 type AlgorithmPlan struct {
 	// IKE SA transforms.
-	IKEEncryption uint16
-	IKEPRF        uint16
-	IKEIntegrity  uint16
-	IKEDH         uint16
+	IKEEncryption        uint16
+	IKEEncryptionKeyBits uint16
+	IKEPRF               uint16
+	IKEIntegrity         uint16
+	IKEDH                uint16
 	// ESP transforms.
-	ESPEncryption uint16
-	ESPIntegrity  uint16
+	ESPEncryption        uint16
+	ESPEncryptionKeyBits uint16
+	ESPIntegrity         uint16
 }
 
 // buildAlgorithmPlan resolves the algorithm plan from the configured policy
@@ -102,7 +104,22 @@ func buildAlgorithmPlan(policy string, cfg *Config) *AlgorithmPlan {
 			plan.ESPIntegrity = cfg.ESPIntegrity
 		}
 	}
+	plan.IKEEncryptionKeyBits = defaultEncryptionKeyBits(plan.IKEEncryption)
+	plan.ESPEncryptionKeyBits = defaultEncryptionKeyBits(plan.ESPEncryption)
+	if cfg != nil && cfg.IKEEncryptionKeyBits != 0 {
+		plan.IKEEncryptionKeyBits = cfg.IKEEncryptionKeyBits
+	}
+	if cfg != nil && cfg.ESPEncryptionKeyBits != 0 {
+		plan.ESPEncryptionKeyBits = cfg.ESPEncryptionKeyBits
+	}
 	return plan
+}
+
+func defaultEncryptionKeyBits(transformID uint16) uint16 {
+	if transformID == 12 || transformID == 18 || transformID == 19 || transformID == 20 {
+		return 128
+	}
+	return 0
 }
 
 // buildNAI builds the EAP-AKA Network Access Identifier (3GPP TS 23.003) from

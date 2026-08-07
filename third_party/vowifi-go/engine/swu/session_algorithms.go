@@ -13,11 +13,11 @@ type encryptionParameters struct {
 
 func initializeSessionAlgorithms(s *Session, cfg *Config) error {
 	plan := buildAlgorithmPlan(cfg.AlgorithmPolicy, cfg)
-	ikeEncryption, err := supportedEncryption(plan.IKEEncryption)
+	ikeEncryption, err := supportedEncryption(plan.IKEEncryption, plan.IKEEncryptionKeyBits)
 	if err != nil {
 		return fmt.Errorf("IKE encryption: %w", err)
 	}
-	espEncryption, err := supportedEncryption(plan.ESPEncryption)
+	espEncryption, err := supportedEncryption(plan.ESPEncryption, plan.ESPEncryptionKeyBits)
 	if err != nil {
 		return fmt.Errorf("ESP encryption: %w", err)
 	}
@@ -45,24 +45,35 @@ func initializeSessionAlgorithms(s *Session, cfg *Config) error {
 	}
 
 	s.encrAlg, s.prfAlg = plan.IKEEncryption, plan.IKEPRF
+	s.encKeyBits = plan.IKEEncryptionKeyBits
 	s.integAlg, s.dhGroup = plan.IKEIntegrity, plan.IKEDH
 	s.espCipher, s.espInteg = plan.ESPEncryption, plan.ESPIntegrity
+	s.espEncKeyBits = plan.ESPEncryptionKeyBits
 	s.prf, s.dh = prf, dh
 	s.encKeyLen, s.integKeyLen, s.aead = ikeEncryption.keyLen, ikeIntegrity.KeySize(), ikeEncryption.aead
 	s.espEncKeyLen, s.espIntegKeyLen, s.espAEAD = espEncryption.keyLen, espIntegrity.KeySize(), espEncryption.aead
 	return nil
 }
 
-func supportedEncryption(transformID uint16) (encryptionParameters, error) {
+func supportedEncryption(transformID, keyLengthBits uint16) (encryptionParameters, error) {
 	var params encryptionParameters
 	switch transformID {
 	case crypto.EncrNull:
 	case crypto.EncrAESCBC:
-		params.keyLen = 16
+		if keyLengthBits != 128 && keyLengthBits != 192 && keyLengthBits != 256 {
+			return params, fmt.Errorf("AES-CBC key length must be 128, 192, or 256 bits")
+		}
+		params.keyLen = int(keyLengthBits / 8)
 	case crypto.Encr3DESCBC:
+		if keyLengthBits != 0 {
+			return params, fmt.Errorf("3DES does not accept an AES key length")
+		}
 		params.keyLen = 24
 	case crypto.EncrAESGCM16:
-		params.keyLen = 20
+		if keyLengthBits != 128 {
+			return params, fmt.Errorf("AES-GCM currently supports only 128-bit keys")
+		}
+		params.keyLen = int(keyLengthBits/8) + 4
 		params.aead = true
 	case crypto.EncrAESGCM12, crypto.EncrAESGCM8:
 		return params, fmt.Errorf("transform %d requires an unsupported non-16-byte GCM tag", transformID)

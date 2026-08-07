@@ -64,6 +64,9 @@ func TestResolveUserAgentForModel(t *testing.T) {
 	if got := ResolveUserAgentForModel("unknown"); got != "vowifi" {
 		t.Errorf("ua default = %q", got)
 	}
+	if got := ResolveUserAgentForModel("rmx3366"); got != "realme_RMX3366_0.0.2100" {
+		t.Errorf("RMX3366 ua = %q", got)
+	}
 }
 
 func TestNormalizeProfile(t *testing.T) {

@@ -34,6 +34,18 @@ func buildESPProposals(encr, integ uint16, spi ...uint32) []*ikev2.Proposal {
 	return proposals
 }
 
+func buildESPProposalsForSession(session *Session, spi uint32) []*ikev2.Proposal {
+	proposals := ikev2.CreateESPProposals(ikev2.ESPProposalAlgorithms{
+		Encryption: session.espCipher, EncryptionKeyBits: session.espEncKeyBits,
+		Integrity: session.espInteg, ESN: 0,
+	})
+	if spi != 0 {
+		proposals[0].SPI = spiBytes(spi)
+		proposals[0].SPISize = 4
+	}
+	return proposals
+}
+
 // parseEncr extracts the encryption transform ID from a proposal.
 func parseEncr(p *ikev2.Proposal) (uint16, error) {
 	for _, t := range p.Transforms {

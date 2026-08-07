@@ -36,7 +36,7 @@ func (s *Session) performChildSARekey(ctx context.Context) error {
 		return err
 	}
 	selection, err := validateChildSAResponse(payloads, childSAOffer{
-		encryption: s.espCipher, integrity: s.espInteg,
+		encryption: s.espCipher, encryptionKeyBits: s.espEncKeyBits, integrity: s.espInteg,
 		tsi: tsi, tsr: tsr, localIPs: configuredInnerIPs(s),
 		requireSA: true, requireNonce: true,
 	})
@@ -79,7 +79,7 @@ func (s *Session) buildChildSARekeyRequest(localSPI uint32, nonce []byte, tsi, t
 				ProtocolID: ikev2.ProtoESP, SPISize: 4,
 				NotifyType: ikev2.NotifyTypeRekeySA, SPI: spiBytes(oldLocalSPI),
 			},
-			&ikev2.EncryptedPayloadSA{Proposals: buildESPProposals(s.espCipher, s.espInteg, localSPI)},
+			&ikev2.EncryptedPayloadSA{Proposals: buildESPProposalsForSession(s, localSPI)},
 			&ikev2.EncryptedPayloadNonce{Data: append([]byte(nil), nonce...)},
 			cloneTrafficSelectorPayload(tsi),
 			cloneTrafficSelectorPayload(tsr),
@@ -179,7 +179,7 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 	peerTSi := retypeTrafficSelectorPayload(currentTSr, ikev2.PayloadTSi)
 	peerTSr := retypeTrafficSelectorPayload(currentTSi, ikev2.PayloadTSr)
 	selection, err := validateChildSAResponse(payloads, childSAOffer{
-		encryption: s.espCipher, integrity: s.espInteg,
+		encryption: s.espCipher, encryptionKeyBits: s.espEncKeyBits, integrity: s.espInteg,
 		tsi: peerTSi, tsr: peerTSr,
 		requireSA: true, requireNonce: true,
 	})
@@ -202,7 +202,7 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 		return err
 	}
 	responsePayloads := []ikev2.Payload{
-		&ikev2.EncryptedPayloadSA{Proposals: buildESPProposals(s.espCipher, s.espInteg, localSPI)},
+		&ikev2.EncryptedPayloadSA{Proposals: buildESPProposalsForSession(s, localSPI)},
 		&ikev2.EncryptedPayloadNonce{Data: append([]byte(nil), localNonce...)},
 		cloneTrafficSelectorPayload(selection.tsi),
 		cloneTrafficSelectorPayload(selection.tsr),

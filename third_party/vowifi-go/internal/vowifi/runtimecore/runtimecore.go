@@ -17,6 +17,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/epdg"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/netstack"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
+	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 )
 
 // ErrRedirect is returned when the ePDG redirects the session (RFC 5685).
@@ -77,6 +78,7 @@ type PreparedSessionStart struct {
 	EPDGAddr    string
 	EPDGSource  string
 	APN         string
+	Carrier     carrier.EffectiveCarrierConfig
 }
 
 // PrepareSessionStart prepares a session start from the config.
@@ -133,14 +135,18 @@ func BuildSWUConfig(prepared *PreparedSessionStart, aka AKAProvider) (*swu.Confi
 	if aka == nil {
 		return nil, errors.New("runtimecore: no SWu AKA provider")
 	}
-	return &swu.Config{
+	cfg := &swu.Config{
 		EPDGAddr:    prepared.EPDGAddr,
 		APN:         prepared.APN,
 		IMSI:        prepared.Profile.IMSI,
 		MCC:         prepared.Profile.MCC,
 		MNC:         prepared.Profile.MNC,
 		AKAProvider: aka,
-	}, nil
+	}
+	if err := applyCarrierAlgorithms(cfg, prepared.Carrier); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 // RunLoop runs the runtime loop until the context is cancelled.

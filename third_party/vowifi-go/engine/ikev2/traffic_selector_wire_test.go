@@ -52,3 +52,19 @@ func TestAESProposalCarries128BitKeyLength(t *testing.T) {
 		t.Fatalf("proposal %x does not contain AES KEY_LENGTH transform %x", raw, wantEncryptionTransform)
 	}
 }
+
+func TestAESProposalCarriesExplicit256BitKeyLength(t *testing.T) {
+	proposal := CreateIKEProposals(IKEProposalAlgorithms{
+		Encryption: encrAESCBC, EncryptionKeyBits: 256,
+		PRF: 7, Integrity: 14, DH: 14,
+	})[0]
+	raw := proposal.Encode(nil)
+	wantEncryptionTransform := []byte{
+		0x03, 0x00, 0x00, 0x0c,
+		0x01, 0x00, 0x00, 0x0c,
+		0x80, 0x0e, 0x01, 0x00,
+	}
+	if !bytes.Contains(raw, wantEncryptionTransform) {
+		t.Fatalf("proposal %x does not contain AES-256 KEY_LENGTH transform %x", raw, wantEncryptionTransform)
+	}
+}

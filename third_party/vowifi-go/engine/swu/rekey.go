@@ -86,7 +86,7 @@ func (s *Session) dispatchCreateChildSA(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	espProposals := buildESPProposals(s.espCipher, s.espInteg, localSPI)
+	espProposals := buildESPProposalsForSession(s, localSPI)
 	tsi, tsr := buildTrafficSelectorsForIPStack(s.primaryInnerIP())
 	pkt := &ikev2.IKEPacket{
 		InitiatorSPI: s.SPIi,
@@ -118,7 +118,7 @@ func (s *Session) dispatchCreateChildSA(ctx context.Context) error {
 		return err
 	}
 	offer := childSAOffer{
-		encryption: s.espCipher, integrity: s.espInteg,
+		encryption: s.espCipher, encryptionKeyBits: s.espEncKeyBits, integrity: s.espInteg,
 		tsi: tsi, tsr: tsr, localIPs: configuredInnerIPs(s),
 		requireSA: true, requireNonce: true,
 	}

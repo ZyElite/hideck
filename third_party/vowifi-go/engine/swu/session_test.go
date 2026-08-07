@@ -236,6 +236,20 @@ func TestNewSessionInitializesStrictAEADAlgorithms(t *testing.T) {
 	}
 }
 
+func TestNewSessionInitializesAES256SHA512Algorithms(t *testing.T) {
+	s := NewSession(&Config{
+		IKEEncryption: 12, IKEEncryptionKeyBits: 256, IKEPRF: 7, IKEIntegrity: 14, IKEDH: 14,
+		ESPEncryption: 12, ESPEncryptionKeyBits: 256, ESPIntegrity: 14,
+	})
+	if s.initErr != nil {
+		t.Fatalf("initErr = %v", s.initErr)
+	}
+	if s.encKeyLen != 32 || s.integKeyLen != 64 || s.espEncKeyLen != 32 || s.espIntegKeyLen != 64 {
+		t.Fatalf("AES256/SHA512 key lengths = ike(%d,%d) esp(%d,%d)",
+			s.encKeyLen, s.integKeyLen, s.espEncKeyLen, s.espIntegKeyLen)
+	}
+}
+
 func TestNewSessionRejectsUnsupportedGCMTagLengths(t *testing.T) {
 	for _, transform := range []uint16{19, 20} {
 		s := NewSession(&Config{IKEEncryption: transform, IKEIntegrity: 0})

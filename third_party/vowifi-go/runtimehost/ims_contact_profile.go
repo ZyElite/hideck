@@ -1,52 +1,46 @@
 package runtimehost
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
+	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 
-const (
-	defaultIMSExpires         = 600000 * time.Second
-	defaultIMSSupportedHeader = "path,sec-agree"
-	defaultIMSAllowHeader     = "OPTIONS, REGISTER, SUBSCRIBE, NOTIFY, PUBLISH, INVITE, ACK, BYE, CANCEL, UPDATE, PRACK, REFER, INFO, MESSAGE"
-	defaultIMSContactMode     = "android_default"
-	defaultIMSAccessType      = "wlan1"
-	defaultIMSICSIRef         = "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel," +
-		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.msg," +
-		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.sms"
-)
-
-var (
-	defaultIMSContactParamOrder = []string{
-		"access_type", "sip_instance", "audio", "smsip", "icsi_ref",
+func imsRegisterConfigForPrepared(prepared *identity.PreparedSession) (imscore.IMSRegisterTemplate, string, error) {
+	if prepared == nil {
+		return imscore.IMSRegisterTemplate{}, "", fmt.Errorf("runtimehost: nil prepared session")
 	}
-	giffgaffIMSContactParamOrder = []string{
-		"access_type", "sip_instance", "audio", "smsip", "icsi_ref",
-		"mid_call", "srvcc_alerting", "ps2cs_srvcc_orig_pre_alerting",
+	carrierConfig := prepared.CarrierConfig
+	if carrierConfig.MCC == "" || carrierConfig.MNC == "" {
+		carrierConfig = carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{
+			MCC: prepared.Profile.MCC, MNC: prepared.Profile.MNC,
+		})
 	}
-)
-
-func imsRegisterTemplateForProfile(profile identity.Profile) imscore.IMSRegisterTemplate {
-	order := defaultIMSContactParamOrder
-	if isGiffgaffPLMN(profile.MCC, profile.MNC) {
-		order = giffgaffIMSContactParamOrder
+	if err := carrier.ValidateEffectiveCarrierConfig(carrierConfig); err != nil {
+		return imscore.IMSRegisterTemplate{}, "", fmt.Errorf("runtimehost: invalid carrier IMS template: %w", err)
 	}
-	return imscore.IMSRegisterTemplate{
-		Expires:         defaultIMSExpires,
-		SupportedHeader: defaultIMSSupportedHeader,
-		AllowHeader:     defaultIMSAllowHeader,
-		ContactMode:     defaultIMSContactMode,
-		AccessType:      defaultIMSAccessType,
-		ICSIRef:         defaultIMSICSIRef,
-		ContactOrder:    append([]string(nil), order...),
+	template := carrierConfig.IMS
+	registerTemplate := imscore.IMSRegisterTemplate{
+		Expires:         time.Duration(template.ExpiresSeconds) * time.Second,
+		SupportedHeader: strings.TrimSpace(template.SupportedHeader),
+		AllowHeader:     strings.TrimSpace(template.AllowHeader),
+		ContactMode:     strings.TrimSpace(template.ContactMode),
+		AccessType:      strings.TrimSpace(template.AccessType),
+		ICSIRef:         strings.TrimSpace(template.ICSIRef),
+		ContactOrder:    append([]string(nil), template.ContactOrder...),
 	}
+	return registerTemplate, carrierUserAgent(carrierConfig), nil
 }
 
-func isGiffgaffPLMN(mcc, mnc string) bool {
-	mcc = strings.TrimSpace(mcc)
-	mnc = strings.TrimLeft(strings.TrimSpace(mnc), "0")
-	return mcc == "234" && mnc == "10"
+func carrierUserAgent(carrierConfig carrier.EffectiveCarrierConfig) string {
+	model := strings.TrimSpace(carrierConfig.DeviceModel)
+	if model == "" {
+		return ""
+	}
+	return profile.ResolveUserAgentForModel(model)
 }

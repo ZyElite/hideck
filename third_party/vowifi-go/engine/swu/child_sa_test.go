@@ -172,8 +172,9 @@ func TestNegotiatedSelectorsConstrainDataPlane(t *testing.T) {
 
 func testChildSAOffer(innerIP net.IP) childSAOffer {
 	return childSAOffer{
-		encryption: enginecrypto.EncrAESCBC,
-		integrity:  2,
+		encryption:        enginecrypto.EncrAESCBC,
+		encryptionKeyBits: 128,
+		integrity:         2,
 		tsi: &ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSi, Selectors: []*ikev2.TrafficSelector{
 			ikev2.NewTrafficSelectorIPV4(innerIP, 0, 0, 0xffff),
 		}},

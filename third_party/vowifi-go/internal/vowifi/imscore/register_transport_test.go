@@ -102,6 +102,7 @@ func TestBuildRegisterUsesRecoveredTemplateHeaders(t *testing.T) {
 		IMSI: "234102356143376", IMPI: "234102356143376@ims.example",
 		IMPU: []string{"sip:234102356143376@ims.example"}, Domain: "ims.example",
 		LocalIP: net.IPv4(192, 0, 2, 10), Transport: "udp",
+		UserAgent: "realme_RMX3366_0.0.2100",
 		RegisterTemplate: IMSRegisterTemplate{
 			Expires: 600000 * time.Second, SupportedHeader: "path,sec-agree",
 			AllowHeader: allow, ContactMode: "android_default",
@@ -117,6 +118,9 @@ func TestBuildRegisterUsesRecoveredTemplateHeaders(t *testing.T) {
 	}
 	if got := sipHeaderValue(request, "Allow"); got != allow {
 		t.Fatalf("Allow = %q", got)
+	}
+	if got := sipHeaderValue(request, "User-Agent"); got != "realme_RMX3366_0.0.2100" {
+		t.Fatalf("User-Agent = %q", got)
 	}
 }
 

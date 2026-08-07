@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 )
 
 // ErrISIMUnavailable means the card authoritatively has no ISIM application.
@@ -47,15 +49,24 @@ func PrepareStart(input PrepareStartInput) (PreparedSession, error) {
 		return PreparedSession{}, err
 	}
 
-	carrier := EffectiveCarrier{MCC: profile.MCC, MNC: profile.MNC}
+	carrierConfig := carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{
+		MCC: profile.MCC, MNC: profile.MNC,
+	})
+	if err := carrier.ValidateEffectiveCarrierConfig(carrierConfig); err != nil {
+		return PreparedSession{}, fmt.Errorf("identity: invalid carrier preset: %w", err)
+	}
+	effectiveCarrier := EffectiveCarrier{
+		MCC: carrierConfig.MCC, MNC: carrierConfig.MNC, PresetID: carrierConfig.PresetID,
+	}
 
 	// Resolve the ePDG endpoint.
-	epdgAddr, epdgSource := resolveEPDG(input.RuntimeEPDGOverride, carrier)
+	epdgAddr, epdgSource := resolveEPDG(input.RuntimeEPDGOverride, effectiveCarrier)
 
 	return PreparedSession{
 		Profile:            profile,
 		IMSIdentity:        imsIdentity,
-		EffectiveCarrier:   carrier,
+		EffectiveCarrier:   effectiveCarrier,
+		CarrierConfig:      carrierConfig,
 		EPDGSource:         epdgSource,
 		EPDGAddr:           epdgAddr,
 		IdentityIMEISource: string(imsIdentity.ActualSource),

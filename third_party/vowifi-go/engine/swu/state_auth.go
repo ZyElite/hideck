@@ -259,7 +259,7 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	}
 
 	// SAi2 (ESP proposal) includes the initiator-selected inbound SPI.
-	espProposals := buildESPProposals(s.espCipher, s.espInteg, s.espLocalSPI)
+	espProposals := buildESPProposalsForSession(s, s.espLocalSPI)
 	sa2 := &ikev2.EncryptedPayloadSA{Proposals: espProposals}
 
 	// TSi / TSr.
@@ -374,7 +374,7 @@ func (s *Session) handleIKEAuthFinalResp(resp *ikev2.IKEPacket) error {
 	}
 	offerTSi, offerTSr := buildTrafficSelectorsForIPStack(nil)
 	selection, err := validateChildSAResponse(payloads, childSAOffer{
-		encryption: s.espCipher, integrity: s.espInteg,
+		encryption: s.espCipher, encryptionKeyBits: s.espEncKeyBits, integrity: s.espInteg,
 		tsi: offerTSi, tsr: offerTSr, localIPs: assigned.ips(),
 	})
 	if err != nil {
