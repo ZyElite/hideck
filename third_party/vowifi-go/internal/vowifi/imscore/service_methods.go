@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
 )
 
 // Start launches the IMS core session.
@@ -61,14 +63,17 @@ func (s *Service) SetEnableIPSec3GPP(enabled bool) {
 }
 
 // InstallIPSec3GPP installs the 3GPP IPsec policy on the network surface.
-func (s *Service) InstallIPSec3GPP() error {
+func (s *Service) InstallIPSec3GPP(policy ipsec3gpp.Policy) error {
 	if s == nil || s.cfg == nil || s.cfg.IMSNetwork == nil {
 		return errors.New("imscore: no network for IPsec")
 	}
-	if p, ok := s.cfg.IMSNetwork.(interface{ InstallIPSec3GPP() error }); ok {
-		return p.InstallIPSec3GPP()
+	installer, ok := s.cfg.IMSNetwork.(interface {
+		InstallIPSec3GPP(ipsec3gpp.Policy) error
+	})
+	if !ok {
+		return errors.New("imscore: IMS network does not support 3GPP IPsec")
 	}
-	return nil
+	return installer.InstallIPSec3GPP(policy)
 }
 
 // VoiceProfile is the voice profile of a device (recovered from the binary's

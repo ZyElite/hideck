@@ -3,9 +3,12 @@ package netstack
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"net"
 	"testing"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
 )
 
 type channelPacketIO struct {
@@ -79,6 +82,50 @@ func TestNewNetworkWithoutPacketIOFailsExplicitly(t *testing.T) {
 	network := NewNetwork(net.IPv4(10, 0, 0, 2), 32, nil)
 	if _, err := network.DialContext(context.Background(), "udp", "10.0.0.1:5060"); err == nil {
 		t.Fatal("DialContext error=nil, want missing SWu packet IO")
+	}
+}
+
+func TestTunnelNetworkInstallsIPSec3GPPTransformer(t *testing.T) {
+	packetIO := newChannelPacketIO()
+	network, err := NewTunnelNetwork(net.IPv4(10, 0, 0, 2), 32, nil, packetIO)
+	if err != nil {
+		t.Fatalf("NewTunnelNetwork: %v", err)
+	}
+	defer network.Close()
+	if network.IPSec3GPPPolicyInstalled() {
+		t.Fatal("IPsec policy reported installed before installation")
+	}
+	policy := ipsec3gpp.Policy{
+		LocalIP: net.IPv4(10, 0, 0, 2), RemoteIP: net.IPv4(10, 0, 0, 1),
+		LocalClientPort: 41000, LocalServerPort: 41001,
+		RemoteClientPort: 51000, RemoteServerPort: 51001,
+		LocalClientSPI: 0x11111111, LocalServerSPI: 0x22222222,
+		RemoteClientSPI: 0x33333333, RemoteServerSPI: 0x44444444,
+		Authentication: ipsec3gpp.AuthHMACSHA196, Encryption: ipsec3gpp.EncryptionAES,
+		Protocol: ipsec3gpp.ProtocolESP, Mode: ipsec3gpp.ModeTransport,
+		CK: bytes.Repeat([]byte{0x11}, 16), IK: bytes.Repeat([]byte{0x22}, 16),
+	}
+	if err := network.InstallIPSec3GPP(policy); err != nil {
+		t.Fatalf("InstallIPSec3GPP: %v", err)
+	}
+	if !network.IPSec3GPPPolicyInstalled() {
+		t.Fatal("IPsec policy was not marked installed")
+	}
+	conn, err := network.ListenPacket("udp", &net.UDPAddr{IP: policy.LocalIP, Port: int(policy.LocalClientPort)})
+	if err != nil {
+		t.Fatalf("ListenPacket: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.WriteTo([]byte("REGISTER"), &net.UDPAddr{IP: policy.RemoteIP, Port: int(policy.RemoteServerPort)}); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	select {
+	case packet := <-packetIO.outbound:
+		if len(packet) < 28 || packet[9] != 50 || binary.BigEndian.Uint32(packet[20:24]) != policy.RemoteServerSPI {
+			t.Fatalf("outbound packet was not ESP protected: %x", packet)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("protected packet did not reach SWu packet IO")
 	}
 }
 

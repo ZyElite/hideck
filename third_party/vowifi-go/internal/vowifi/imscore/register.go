@@ -18,6 +18,7 @@ type registerSession struct {
 	challenge  *DigestChallenge
 	authHeader string
 	expires    time.Duration
+	security   *securityAgreement
 }
 
 // Register performs the IMS registration flow (RFC 3261 + Digest-AKA).
@@ -58,10 +59,9 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	if err := s.ensureRegistrationTransport(ctx); err != nil {
 		return 0, err
 	}
-	session := &registerSession{
-		callID:  newCallID(),
-		fromTag: newTag(),
-		cseq:    1,
+	session, err := s.sessionForRegisterAttempt()
+	if err != nil {
+		return 0, err
 	}
 	s.mu.Lock()
 	s.regSession = session
@@ -86,9 +86,14 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 		session.challenge = challenge
 
 		// Build the authenticated REGISTER.
-		auth, err := s.buildAuthorization(session)
+		auth, aka, err := s.buildAuthorizationWithResult(session)
 		if err != nil {
 			return 0, err
+		}
+		if session.security != nil {
+			if err := s.installNegotiatedIPSec(session, resp, aka); err != nil {
+				return 0, err
+			}
 		}
 		session.cseq++
 		req = s.buildRegister(session, auth)
@@ -102,6 +107,9 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 			return 0, err
 		}
 	}
+	if session.security != nil && session.security.server == nil {
+		return 0, errors.New("imscore: registration completed without 3GPP security agreement")
+	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		expires := registrationExpires(resp, s.cfg.Expires)
@@ -109,6 +117,25 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 		return expires, nil
 	}
 	return 0, fmt.Errorf("imscore: registration failed with status %d", resp.StatusCode)
+}
+
+func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {
+	s.mu.RLock()
+	previous := s.regSession
+	if previous != nil && previous.expires > 0 {
+		session := &registerSession{
+			callID: previous.callID, fromTag: previous.fromTag,
+			cseq: previous.cseq + 1, security: previous.security,
+		}
+		s.mu.RUnlock()
+		return session, nil
+	}
+	s.mu.RUnlock()
+	security, err := s.prepareSecurityAgreement()
+	if err != nil {
+		return nil, err
+	}
+	return &registerSession{callID: newCallID(), fromTag: newTag(), cseq: 1, security: security}, nil
 }
 
 // buildRegister builds a REGISTER request.
@@ -126,15 +153,37 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	b.WriteString(fmt.Sprintf("To: <%s>\r\n", publicIdentity))
 	b.WriteString(fmt.Sprintf("Call-ID: %s\r\n", session.callID))
 	b.WriteString(fmt.Sprintf("CSeq: %d REGISTER\r\n", session.cseq))
-	b.WriteString(fmt.Sprintf("Contact: <sip:%s@%s>;+sip.instance=\"urn:uuid:%s\"\r\n", contactUser(cfg), sipLocalAddress(cfg), cfg.DeviceID))
+	b.WriteString(fmt.Sprintf("Contact: <sip:%s@%s>;+sip.instance=\"urn:uuid:%s\";expires=%d\r\n", contactUser(cfg), s.contactAddress(session), cfg.DeviceID, int(expires.Seconds())))
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
 	b.WriteString("Supported: path, outbound\r\n")
+	b.WriteString(registerSecurityHeaders(session))
 	if authHeader != "" {
 		b.WriteString("Authorization: " + authHeader + "\r\n")
 	}
 	b.WriteString("Content-Length: 0\r\n\r\n")
 	return b.String()
+}
+
+func registerSecurityHeaders(session *registerSession) string {
+	if session == nil || session.security == nil {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString("Security-Client: " + session.security.clientHeader + "\r\n")
+	builder.WriteString("Require: sec-agree\r\n")
+	builder.WriteString("Proxy-Require: sec-agree\r\n")
+	if session.security.verifyHeader != "" {
+		builder.WriteString("Security-Verify: " + session.security.verifyHeader + "\r\n")
+	}
+	return builder.String()
+}
+
+func (s *Service) contactAddress(session *registerSession) string {
+	if session == nil || session.security == nil {
+		return sipLocalAddress(s.cfg)
+	}
+	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(int(session.security.client.PortS)))
 }
 
 func primaryPublicIdentity(cfg *IMSConfig) string {
@@ -157,6 +206,9 @@ func contactUser(cfg *IMSConfig) string {
 }
 
 func registrationExpires(resp *sipResponse, configured time.Duration) time.Duration {
+	if seconds := contactExpires(resp.Header("Contact")); seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
 	if seconds, err := strconv.Atoi(strings.TrimSpace(resp.Header("Expires"))); err == nil && seconds > 0 {
 		return time.Duration(seconds) * time.Second
 	}
@@ -164,6 +216,21 @@ func registrationExpires(resp *sipResponse, configured time.Duration) time.Durat
 		return configured
 	}
 	return time.Hour
+}
+
+func contactExpires(contact string) int {
+	for _, parameter := range strings.Split(contact, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+		if !ok || !strings.EqualFold(name, "expires") {
+			continue
+		}
+		value, _, _ = strings.Cut(value, ",")
+		seconds, err := strconv.Atoi(strings.TrimSpace(value))
+		if err == nil && seconds > 0 {
+			return seconds
+		}
+	}
+	return 0
 }
 
 func (s *Service) scheduleRegistrationRefresh(expires time.Duration) {
@@ -216,15 +283,20 @@ func (s *Service) extractChallenge(resp *sipResponse, statusCode int) (*DigestCh
 
 // buildAuthorization computes the Authorization header for the session.
 func (s *Service) buildAuthorization(session *registerSession) (string, error) {
+	authorization, _, err := s.buildAuthorizationWithResult(session)
+	return authorization, err
+}
+
+func (s *Service) buildAuthorizationWithResult(session *registerSession) (string, AKAResult, error) {
 	cfg := s.cfg
 	if cfg.AKAProvider == nil {
-		return "", errors.New("imscore: no AKA provider for digest")
+		return "", AKAResult{}, errors.New("imscore: no AKA provider for digest")
 	}
 	if session.challenge == nil {
-		return "", errors.New("imscore: no challenge for digest")
+		return "", AKAResult{}, errors.New("imscore: no challenge for digest")
 	}
 	uri := "sip:" + cfg.Domain
-	return ProcessAKAChallenge(session.challenge, cfg.AKAProvider, cfg.IMPI, "REGISTER", uri)
+	return ProcessAKAChallengeWithResult(session.challenge, cfg.AKAProvider, cfg.IMPI, "REGISTER", uri)
 }
 
 // ForceRegistered marks the service as registered (for tests).

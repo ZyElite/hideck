@@ -13,14 +13,14 @@ import (
 // DigestChallenge is a parsed WWW-Authenticate / Proxy-Authenticate challenge
 // (RFC 2617).
 type DigestChallenge struct {
-	Realm      string
-	Nonce      string
-	Opaque     string
-	Algorithm  string
-	QOP        string
-	AKA        bool
-	RAND       []byte // decoded RAND from the AKA nonce
-	AUTN       []byte // decoded AUTN from the AKA nonce
+	Realm     string
+	Nonce     string
+	Opaque    string
+	Algorithm string
+	QOP       string
+	AKA       bool
+	RAND      []byte // decoded RAND from the AKA nonce
+	AUTN      []byte // decoded AUTN from the AKA nonce
 }
 
 // ParseDigestChallenge parses a WWW-Authenticate header value.
@@ -161,18 +161,24 @@ func randomDigestCNonce() string {
 // ProcessAKAChallenge handles a full AKA challenge: it computes the AKA
 // (RES, CK, IK) and builds the Authorization response.
 func ProcessAKAChallenge(challenge *DigestChallenge, aka AKAProvider, username, method, uri string) (string, error) {
+	authorization, _, err := ProcessAKAChallengeWithResult(challenge, aka, username, method, uri)
+	return authorization, err
+}
+
+// ProcessAKAChallengeWithResult also returns CK/IK for IMS IPsec setup.
+func ProcessAKAChallengeWithResult(challenge *DigestChallenge, aka AKAProvider, username, method, uri string) (string, AKAResult, error) {
 	if challenge == nil {
-		return "", errors.New("imscore: nil challenge")
+		return "", AKAResult{}, errors.New("imscore: nil challenge")
 	}
 	if !challenge.AKA {
-		return "", errors.New("imscore: challenge is not AKA")
+		return "", AKAResult{}, errors.New("imscore: challenge is not AKA")
 	}
 	if aka == nil {
-		return "", errors.New("imscore: no AKA provider")
+		return "", AKAResult{}, errors.New("imscore: no AKA provider")
 	}
 	result, err := aka.CalculateAKA(challenge.RAND, challenge.AUTN)
 	if err != nil {
-		return "", err
+		return "", AKAResult{}, err
 	}
 	nc := "00000001"
 	cnonce := randomDigestCNonce()
@@ -182,7 +188,7 @@ func ProcessAKAChallenge(challenge *DigestChallenge, aka AKAProvider, username, 
 		method, uri, challenge.Nonce, nc, cnonce, qop,
 	)
 	if err != nil {
-		return "", err
+		return "", AKAResult{}, err
 	}
 	var b strings.Builder
 	b.WriteString("Digest ")
@@ -194,5 +200,5 @@ func ProcessAKAChallenge(challenge *DigestChallenge, aka AKAProvider, username, 
 	if challenge.Opaque != "" {
 		b.WriteString(fmt.Sprintf(", opaque=\"%s\"", challenge.Opaque))
 	}
-	return b.String(), nil
+	return b.String(), result, nil
 }

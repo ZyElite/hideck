@@ -29,15 +29,17 @@ const (
 )
 
 type gvisorNetwork struct {
-	stack    *stack.Stack
-	link     *channel.Endpoint
-	packetIO PacketIO
-	dns      []string
-	stats    *networkStats
-	cancel   context.CancelFunc
-	done     sync.WaitGroup
-	mu       sync.RWMutex
-	closed   bool
+	stack       *stack.Stack
+	link        *channel.Endpoint
+	packetIO    PacketIO
+	dns         []string
+	stats       *networkStats
+	cancel      context.CancelFunc
+	done        sync.WaitGroup
+	mu          sync.RWMutex
+	closed      bool
+	transformer PacketTransformer
+	terminalErr error
 }
 
 func newGVisorNetwork(innerIP net.IP, prefixLen int, dns []string, packetIO PacketIO, stats *networkStats) (*gvisorNetwork, error) {
@@ -82,10 +84,48 @@ func newGVisorNetwork(innerIP net.IP, prefixLen int, dns []string, packetIO Pack
 func (g *gvisorNetwork) ready() error {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	if g.terminalErr != nil {
+		return g.terminalErr
+	}
 	if g.closed {
 		return errors.New("netstack: network closed")
 	}
 	return nil
+}
+
+func (g *gvisorNetwork) setTransformer(transformer PacketTransformer) {
+	g.mu.Lock()
+	g.transformer = transformer
+	g.mu.Unlock()
+}
+
+func (g *gvisorNetwork) transformOutbound(packet []byte) ([]byte, error) {
+	g.mu.RLock()
+	transformer := g.transformer
+	g.mu.RUnlock()
+	if transformer == nil {
+		return packet, nil
+	}
+	return transformer.TransformOutbound(packet)
+}
+
+func (g *gvisorNetwork) transformInbound(packet []byte) ([]byte, error) {
+	g.mu.RLock()
+	transformer := g.transformer
+	g.mu.RUnlock()
+	if transformer == nil {
+		return packet, nil
+	}
+	return transformer.TransformInbound(packet)
+}
+
+func (g *gvisorNetwork) fail(operation string, err error) {
+	g.mu.Lock()
+	if g.terminalErr == nil {
+		g.terminalErr = fmt.Errorf("netstack: %s: %w", operation, err)
+	}
+	g.mu.Unlock()
+	g.cancel()
 }
 
 func (g *gvisorNetwork) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -256,7 +296,15 @@ func (g *gvisorNetwork) outboundLoop(ctx context.Context) {
 		data := append([]byte(nil), view.AsSlice()...)
 		view.Release()
 		packet.DecRef()
+		data, err := g.transformOutbound(data)
+		if err != nil {
+			g.fail("transform outbound IPsec packet", err)
+			return
+		}
 		if err := g.packetIO.WritePacketContext(ctx, data); err != nil {
+			if ctx.Err() == nil {
+				g.fail("write SWu packet", err)
+			}
 			return
 		}
 		g.stats.PacketsOut.Add(1)
@@ -269,6 +317,14 @@ func (g *gvisorNetwork) inboundLoop(ctx context.Context) {
 	for {
 		data, err := g.packetIO.ReadPacketContext(ctx)
 		if err != nil {
+			if ctx.Err() == nil {
+				g.fail("read SWu packet", err)
+			}
+			return
+		}
+		data, err = g.transformInbound(data)
+		if err != nil {
+			g.fail("transform inbound IPsec packet", err)
 			return
 		}
 		protocol, err := networkProtocol(data)

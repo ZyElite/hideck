@@ -30,11 +30,29 @@ func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("imscore: listen on IMS network: %w", err)
 	}
-	s.registrationIO = conn
 	if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
 		s.cfg.LocalPort = addr.Port
 	}
+	serverConn, err := s.listenSecurityServerPort()
+	if err != nil {
+		_ = conn.Close()
+		return err
+	}
+	s.mu.Lock()
+	s.registrationIO = conn
+	s.securityServerIO = serverConn
+	s.registrationRemote = cloneUDPAddr(remote)
+	if serverConn != nil {
+		if addr, ok := serverConn.LocalAddr().(*net.UDPAddr); ok {
+			s.protectedServerPort = addr.Port
+		}
+	}
+	s.mu.Unlock()
 	s.transport.SetSendFn(func(request string) error {
+		remote := s.currentRegistrationRemote()
+		if remote == nil {
+			return errors.New("imscore: registrar address is unavailable")
+		}
 		if _, err := conn.WriteTo([]byte(request), remote); err != nil {
 			return fmt.Errorf("imscore: send REGISTER datagram: %w", err)
 		}
@@ -42,6 +60,45 @@ func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 	})
 	s.networkDone.Add(1)
 	go s.readRegistrationResponses(conn)
+	if serverConn != nil {
+		s.networkDone.Add(1)
+		go s.readRegistrationResponses(serverConn)
+	}
+	return nil
+}
+
+func (s *Service) listenSecurityServerPort() (net.PacketConn, error) {
+	if !s.cfg.IPSec3GPPEnabled {
+		return nil, nil
+	}
+	address := &net.UDPAddr{IP: s.cfg.LocalIP, Port: 0}
+	conn, err := s.cfg.IMSNetwork.ListenPacket("udp", address)
+	if err != nil {
+		return nil, fmt.Errorf("imscore: reserve protected server port: %w", err)
+	}
+	return conn, nil
+}
+
+func cloneUDPAddr(address *net.UDPAddr) *net.UDPAddr {
+	if address == nil {
+		return nil
+	}
+	return &net.UDPAddr{IP: append(net.IP(nil), address.IP...), Port: address.Port, Zone: address.Zone}
+}
+
+func (s *Service) currentRegistrationRemote() *net.UDPAddr {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneUDPAddr(s.registrationRemote)
+}
+
+func (s *Service) setProtectedRegistrarPort(port uint16) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.registrationRemote == nil {
+		return errors.New("imscore: registrar address is unavailable")
+	}
+	s.registrationRemote.Port = int(port)
 	return nil
 }
 
@@ -87,9 +144,12 @@ func (s *Service) readRegistrationResponses(conn net.PacketConn) {
 		if err != nil {
 			return
 		}
-		response := parseSIPResponse(string(buffer[:n]))
+		raw := string(buffer[:n])
+		response := parseSIPResponse(raw)
 		if response != nil && response.StatusCode != 0 {
 			s.transport.DeliverResponse(response)
+		} else {
+			s.transport.DeliverRequest(raw)
 		}
 	}
 }

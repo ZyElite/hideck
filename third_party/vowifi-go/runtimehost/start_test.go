@@ -459,4 +459,7 @@ func TestIMSServiceUsesSWuInnerNetwork(t *testing.T) {
 	if got := svc.GetLocalIMSAddr(); got != "10.0.0.2" {
 		t.Fatalf("IMS local address = %q, want SWu inner address", got)
 	}
+	if !svc.IPSec3GPPEnabled() {
+		t.Fatal("runtime IMS service did not enable 3GPP IPsec")
+	}
 }

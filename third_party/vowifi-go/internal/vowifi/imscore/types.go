@@ -155,11 +155,14 @@ type Service struct {
 	spiPairs   [][2]uint32
 
 	// SIP transport.
-	transport      *sipTransport
-	registrationIO net.PacketConn
-	networkDone    sync.WaitGroup
-	refreshTimer   *time.Timer
-	registerErrors chan error
+	transport           *sipTransport
+	registrationIO      net.PacketConn
+	securityServerIO    net.PacketConn
+	registrationRemote  *net.UDPAddr
+	protectedServerPort int
+	networkDone         sync.WaitGroup
+	refreshTimer        *time.Timer
+	registerErrors      chan error
 
 	// Dialogs.
 	dialogs *dialogRegistry
@@ -176,7 +179,8 @@ type Service struct {
 	// Callbacks.
 	onRegistered func()
 
-	lastPingAt time.Time
+	lastPingAt     time.Time
+	securityVerify string
 
 	stop chan struct{}
 }

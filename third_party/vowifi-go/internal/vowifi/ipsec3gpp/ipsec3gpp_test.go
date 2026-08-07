@@ -2,160 +2,202 @@ package ipsec3gpp
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha1"
 	"encoding/binary"
 	"net"
 	"testing"
 )
 
-// netIP builds a 4-byte net.IP from 4 bytes.
-func netIP(a, b, c, d byte) net.IP {
-	return net.IPv4(a, b, c, d).To4()
-}
-
 func TestDerive3DESKeyFromCK(t *testing.T) {
-	ck := bytes.Repeat([]byte{0x11}, 16)
-	key, err := Derive3DESKeyFromCK(ck)
+	key, err := Derive3DESKeyFromCK(bytes.Repeat([]byte{0x11}, 16))
 	if err != nil {
 		t.Fatalf("Derive3DESKeyFromCK: %v", err)
 	}
-	if len(key) != 24 {
-		t.Fatalf("key len = %d, want 24", len(key))
+	if len(key) != 24 || !bytes.Equal(key[16:], key[:8]) {
+		t.Fatalf("invalid 3DES key: %x", key)
 	}
-	// The last 8 bytes repeat the first 8 (with parity adjustment).
-	if !bytes.Equal(key[16:], key[:8]) {
-		t.Error("key[16:] should repeat key[:8]")
-	}
-	// The whole byte should have odd parity (DES key convention).
-	for i, b := range key {
-		ones := 0
-		for j := 0; j < 8; j++ {
-			if b&(1<<j) != 0 {
-				ones++
-			}
-		}
-		if ones%2 == 0 {
-			t.Errorf("byte %d has even parity", i)
+	for index, value := range key {
+		if bitsSet(value)%2 == 0 {
+			t.Fatalf("key byte %d does not have odd parity", index)
 		}
 	}
 }
 
-func TestDeriveSecureChannelKeys(t *testing.T) {
-	ck := bytes.Repeat([]byte{0x11}, 16)
-	ik := bytes.Repeat([]byte{0x22}, 16)
-	keys, err := DeriveSecureChannelKeys(ck, ik)
-	if err != nil {
-		t.Fatalf("DeriveSecureChannelKeys: %v", err)
+func bitsSet(value byte) int {
+	count := 0
+	for bit := 0; bit < 8; bit++ {
+		if value&(1<<bit) != 0 {
+			count++
+		}
 	}
-	if len(keys.EncKey) != 24 {
-		t.Errorf("enc key len = %d", len(keys.EncKey))
-	}
-	if len(keys.AuthKey) != 16 {
-		t.Errorf("auth key len = %d", len(keys.AuthKey))
-	}
+	return count
 }
 
 func TestReplayWindow(t *testing.T) {
-	w := NewReplayWindow(32)
-	if !w.Accept(1) {
-		t.Error("first packet should be accepted")
+	window := NewReplayWindow(32)
+	for _, sequence := range []uint32{1, 2, 100, 99} {
+		if !window.Accept(sequence) {
+			t.Fatalf("sequence %d was unexpectedly rejected", sequence)
+		}
 	}
-	if w.Accept(1) {
-		t.Error("duplicate should be rejected")
-	}
-	if !w.Accept(2) {
-		t.Error("next sequence should be accepted")
-	}
-	if !w.Accept(100) {
-		t.Error("jump ahead should be accepted")
-	}
-	if w.Accept(1) {
-		t.Error("old sequence should be rejected")
-	}
-	// Within the window.
-	if !w.Accept(99) {
-		t.Error("recent old sequence should be accepted once")
-	}
-	if w.Accept(99) {
-		t.Error("duplicate recent should be rejected")
+	for _, sequence := range []uint32{0, 1, 99} {
+		if window.Accept(sequence) {
+			t.Fatalf("sequence %d was unexpectedly accepted", sequence)
+		}
 	}
 }
 
-func TestTransportRoundTrip(t *testing.T) {
+func TestESPTransportProtectsBothDirections(t *testing.T) {
+	ue, server := newTransportPair(t, EncryptionAES)
+	request := udpPacket(t, "10.0.0.2", 41000, "10.0.0.1", 51001, []byte("REGISTER"))
+	protected, err := ue.TransformOutbound(request)
+	if err != nil {
+		t.Fatalf("protect request: %v", err)
+	}
+	assertESP(t, protected, 0x44444444)
+	decoded, err := server.TransformInbound(protected)
+	if err != nil {
+		t.Fatalf("unprotect request: %v", err)
+	}
+	if !bytes.Equal(decoded, request) {
+		t.Fatalf("request round trip mismatch\n got %x\nwant %x", decoded, request)
+	}
+	if _, err := server.TransformInbound(protected); err == nil {
+		t.Fatal("replayed ESP packet was accepted")
+	}
+
+	response := udpPacket(t, "10.0.0.1", 51001, "10.0.0.2", 41000, []byte("200 OK"))
+	protected, err = server.TransformOutbound(response)
+	if err != nil {
+		t.Fatalf("protect response: %v", err)
+	}
+	assertESP(t, protected, 0x11111111)
+	decoded, err = ue.TransformInbound(protected)
+	if err != nil {
+		t.Fatalf("unprotect response: %v", err)
+	}
+	if !bytes.Equal(decoded, response) {
+		t.Fatal("response round trip mismatch")
+	}
+}
+
+func TestESPTransportRejectsTamperedIntegrity(t *testing.T) {
+	ue, server := newTransportPair(t, EncryptionNull)
+	request := udpPacket(t, "10.0.0.2", 41000, "10.0.0.1", 51001, []byte("REGISTER"))
+	protected, err := ue.TransformOutbound(request)
+	if err != nil {
+		t.Fatalf("protect request: %v", err)
+	}
+	protected[len(protected)-1] ^= 0xff
+	if _, err := server.TransformInbound(protected); err == nil {
+		t.Fatal("tampered ESP packet was accepted")
+	}
+}
+
+func TestESPOutputMatchesRFC4303WireFormat(t *testing.T) {
+	ue, _ := newTransportPair(t, EncryptionAES)
+	request := udpPacket(t, "10.0.0.2", 41000, "10.0.0.1", 51001, []byte("REGISTER"))
+	protected, err := ue.TransformOutbound(request)
+	if err != nil {
+		t.Fatalf("protect request: %v", err)
+	}
+	esp := protected[20:]
+	content, receivedICV := esp[:len(esp)-espICVLength], esp[len(esp)-espICVLength:]
+	integrityKey := append(bytes.Repeat([]byte{0x22}, 16), make([]byte, 4)...)
+	mac := hmac.New(sha1.New, integrityKey)
+	_, _ = mac.Write(content)
+	if !hmac.Equal(receivedICV, mac.Sum(nil)[:espICVLength]) {
+		t.Fatal("ESP ICV does not match HMAC-SHA1-96")
+	}
+	block, err := aes.NewCipher(bytes.Repeat([]byte{0x11}, 16))
+	if err != nil {
+		t.Fatalf("AES cipher: %v", err)
+	}
+	iv, ciphertext := content[8:24], content[24:]
+	plaintext := make([]byte, len(ciphertext))
+	cipher.NewCBCDecrypter(block, iv).CryptBlocks(plaintext, ciphertext)
+	decoded, nextHeader, err := removeESPTrailer(plaintext)
+	if err != nil {
+		t.Fatalf("decode ESP trailer: %v", err)
+	}
+	if nextHeader != protocolUDP || !bytes.Equal(decoded, request[20:]) {
+		t.Fatalf("ESP plaintext is not the original UDP segment: %x", decoded)
+	}
+}
+
+func TestESPTransportPassesUnmatchedTrafficAndRejectsUnprotectedSelector(t *testing.T) {
+	ue, _ := newTransportPair(t, EncryptionAES)
+	dns := udpPacket(t, "10.0.0.2", 42000, "10.0.0.1", 53, []byte("dns"))
+	got, err := ue.TransformOutbound(dns)
+	if err != nil || !bytes.Equal(got, dns) {
+		t.Fatalf("unmatched packet = %x, %v", got, err)
+	}
+	unprotected := udpPacket(t, "10.0.0.1", 51001, "10.0.0.2", 41000, []byte("200 OK"))
+	if _, err := ue.TransformInbound(unprotected); err == nil {
+		t.Fatal("unprotected packet on protected selector was accepted")
+	}
+}
+
+func newTransportPair(t *testing.T, encryption string) (*Transport, *Transport) {
+	t.Helper()
 	ck := bytes.Repeat([]byte{0x11}, 16)
 	ik := bytes.Repeat([]byte{0x22}, 16)
-	keys, err := DeriveSecureChannelKeys(ck, ik)
+	uePolicy := Policy{
+		LocalIP: net.ParseIP("10.0.0.2"), RemoteIP: net.ParseIP("10.0.0.1"),
+		LocalClientPort: 41000, LocalServerPort: 41001,
+		RemoteClientPort: 51000, RemoteServerPort: 51001,
+		LocalClientSPI: 0x11111111, LocalServerSPI: 0x22222222,
+		RemoteClientSPI: 0x33333333, RemoteServerSPI: 0x44444444,
+		Authentication: AuthHMACSHA196, Encryption: encryption, Protocol: ProtocolESP, Mode: ModeTransport,
+		CK: ck, IK: ik,
+	}
+	serverPolicy := Policy{
+		LocalIP: uePolicy.RemoteIP, RemoteIP: uePolicy.LocalIP,
+		LocalClientPort: uePolicy.RemoteClientPort, LocalServerPort: uePolicy.RemoteServerPort,
+		RemoteClientPort: uePolicy.LocalClientPort, RemoteServerPort: uePolicy.LocalServerPort,
+		LocalClientSPI: uePolicy.RemoteClientSPI, LocalServerSPI: uePolicy.RemoteServerSPI,
+		RemoteClientSPI: uePolicy.LocalClientSPI, RemoteServerSPI: uePolicy.LocalServerSPI,
+		Authentication: uePolicy.Authentication, Encryption: encryption, Protocol: ProtocolESP, Mode: ModeTransport,
+		CK: ck, IK: ik,
+	}
+	ue, err := NewTransport(uePolicy)
 	if err != nil {
-		t.Fatalf("keys: %v", err)
+		t.Fatalf("new UE transport: %v", err)
 	}
-	tr := NewTransport()
-	tr.AddFlow(netIP(10, 0, 0, 1), netIP(10, 0, 0, 2), 0x12345678, keys)
-
-	inner := make([]byte, 20)
-	inner[0] = 0x45
-	copy(inner[12:16], netIP(10, 0, 0, 1))
-	copy(inner[16:20], netIP(10, 0, 0, 2))
-
-	out, err := tr.TransformOutbound(inner)
+	server, err := NewTransport(serverPolicy)
 	if err != nil {
-		t.Fatalf("TransformOutbound: %v", err)
+		t.Fatalf("new server transport: %v", err)
 	}
-	// The outbound transform encrypts the payload; the SPI is prepended for
-	// inbound matching.
-	encrypted := append([]byte{0x12, 0x34, 0x56, 0x78}, out...)
-	back, err := tr.TransformInbound(encrypted)
-	if err != nil {
-		t.Fatalf("TransformInbound: %v", err)
-	}
-	if !bytes.Equal(back, inner) {
-		t.Errorf("round trip mismatch: %x vs %x", back, inner)
-	}
+	return ue, server
 }
 
-func TestParseIPPacket(t *testing.T) {
-	pkt := make([]byte, 20)
-	pkt[0] = 0x45
-	copy(pkt[12:16], netIP(10, 0, 0, 1))
-	copy(pkt[16:20], netIP(10, 0, 0, 2))
-	ip, err := parseIPPacket(pkt)
-	if err != nil {
-		t.Fatalf("parseIPPacket: %v", err)
-	}
-	if ip.version != 4 || !ip.src.Equal(netIP(10, 0, 0, 1)) || !ip.dst.Equal(netIP(10, 0, 0, 2)) {
-		t.Errorf("parsed = %+v", ip)
-	}
+func udpPacket(t *testing.T, source string, sourcePort uint16, destination string, destinationPort uint16, payload []byte) []byte {
+	t.Helper()
+	packet := make([]byte, 20+8+len(payload))
+	packet[0] = 0x45
+	packet[8] = 64
+	packet[9] = protocolUDP
+	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
+	copy(packet[12:16], net.ParseIP(source).To4())
+	copy(packet[16:20], net.ParseIP(destination).To4())
+	binary.BigEndian.PutUint16(packet[20:22], sourcePort)
+	binary.BigEndian.PutUint16(packet[22:24], destinationPort)
+	binary.BigEndian.PutUint16(packet[24:26], uint16(8+len(payload)))
+	copy(packet[28:], payload)
+	updateIPv4HeaderChecksum(packet[:20])
+	return packet
 }
 
-func TestUpdateIPv4HeaderChecksum(t *testing.T) {
-	pkt := make([]byte, 20)
-	pkt[0] = 0x45
-	binary.BigEndian.PutUint16(pkt[2:4], 20)
-	updateIPv4HeaderChecksum(pkt)
-	// Verify the checksum.
-	sum := uint32(0)
-	for i := 0; i < 20; i += 2 {
-		sum += uint32(pkt[i])<<8 | uint32(pkt[i+1])
-	}
-	for sum>>16 != 0 {
-		sum = (sum & 0xffff) + (sum >> 16)
-	}
-	if ^uint16(sum) != 0 {
-		t.Error("checksum invalid")
-	}
-}
-
-func TestReplaceIPPayload(t *testing.T) {
-	pkt := make([]byte, 20)
-	pkt[0] = 0x45
-	copy(pkt[12:16], netIP(10, 0, 0, 1))
-	copy(pkt[16:20], netIP(10, 0, 0, 2))
-	out, err := replaceIPPayload(pkt, []byte("hello"))
+func assertESP(t *testing.T, packet []byte, spi uint32) {
+	t.Helper()
+	parsed, err := parseIPv4Packet(packet)
 	if err != nil {
-		t.Fatalf("replaceIPPayload: %v", err)
+		t.Fatalf("parse protected packet: %v", err)
 	}
-	if len(out) != 25 {
-		t.Errorf("len = %d, want 25", len(out))
-	}
-	if string(out[20:]) != "hello" {
-		t.Error("payload not replaced")
+	if parsed.protocol != protocolESP || len(parsed.payload) < 8 || binary.BigEndian.Uint32(parsed.payload[:4]) != spi {
+		t.Fatalf("invalid ESP packet: %x", packet)
 	}
 }

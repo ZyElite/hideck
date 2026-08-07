@@ -78,12 +78,23 @@ func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
+	seen := make([]string, 0, 2)
 	for attempt := 0; attempt < 2; attempt++ {
 		select {
-		case <-requests:
+		case request := <-requests:
+			seen = append(seen, request)
 		case <-ctx.Done():
 			t.Fatalf("received only %d REGISTER requests before timeout", attempt)
 		}
+	}
+	if sipHeaderValue(seen[0], "Call-ID") != sipHeaderValue(seen[1], "Call-ID") {
+		t.Fatal("registration refresh changed Call-ID")
+	}
+	if sipHeaderValue(seen[0], "CSeq") != "1 REGISTER" || sipHeaderValue(seen[1], "CSeq") != "2 REGISTER" {
+		t.Fatalf("refresh CSeq values = %q, %q", sipHeaderValue(seen[0], "CSeq"), sipHeaderValue(seen[1], "CSeq"))
+	}
+	if !strings.Contains(sipHeaderValue(seen[1], "Contact"), ";expires=3600") {
+		t.Fatalf("refresh Contact omitted expires: %q", sipHeaderValue(seen[1], "Contact"))
 	}
 	select {
 	case err := <-svc.RegistrationErrors():
@@ -95,6 +106,15 @@ func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 	}
 	if svc.IsRegistered() || svc.RegState() != regFailed {
 		t.Fatalf("registration state after refresh failure = %q", svc.RegState())
+	}
+}
+
+func TestRegistrationExpiresPrefersContactBinding(t *testing.T) {
+	response := &sipResponse{Headers: map[string]string{
+		"Contact": "<sip:user@10.0.0.2>;expires=120", "Expires": "3600",
+	}}
+	if got := registrationExpires(response, time.Hour); got != 120*time.Second {
+		t.Fatalf("registrationExpires = %s, want 2m", got)
 	}
 }
 

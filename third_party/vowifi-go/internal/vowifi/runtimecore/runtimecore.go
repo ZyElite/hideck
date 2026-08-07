@@ -371,11 +371,6 @@ func (unsupportedSWUAKAProvider) CalculateAKA(rand16, autn16 []byte) (AKAResult,
 	return AKAResult{}, errors.New("runtimecore: SWU AKA unsupported")
 }
 
-// resolveIPSec3GPPInstaller resolves the IPsec3GPP installer.
-func resolveIPSec3GPPInstaller() interface{} {
-	return nil
-}
-
 // --- voice lifecycle ---
 
 // voiceLifecycleBinding binds the voice gateway to the IMS registration state.

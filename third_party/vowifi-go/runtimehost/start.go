@@ -267,19 +267,20 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		return nil, fmt.Errorf("runtimehost: create IMS tunnel network: %w", err)
 	}
 	cfg := &imscore.IMSConfig{
-		DeviceID:    req.DeviceID,
-		IMSI:        imsiOf(impi),
-		IMPI:        impi,
-		IMPU:        impu,
-		Domain:      domain,
-		Realm:       domain,
-		EPDGAddr:    req.Prepared.EPDGAddr,
-		LocalIP:     inner.IPv4,
-		Transport:   "udp",
-		Expires:     3600 * time.Second,
-		TraceID:     req.TraceID,
-		AKAProvider: req.SIM.AKAProvider(),
-		IMSNetwork:  imsNetwork,
+		DeviceID:         req.DeviceID,
+		IMSI:             imsiOf(impi),
+		IMPI:             impi,
+		IMPU:             impu,
+		Domain:           domain,
+		Realm:            domain,
+		EPDGAddr:         req.Prepared.EPDGAddr,
+		LocalIP:          inner.IPv4,
+		Transport:        "udp",
+		Expires:          3600 * time.Second,
+		TraceID:          req.TraceID,
+		AKAProvider:      req.SIM.AKAProvider(),
+		IMSNetwork:       imsNetwork,
+		IPSec3GPPEnabled: true,
 	}
 	if req.DeliveryStore != nil {
 		cfg.DeliveryStore = newDeliveryStoreAdapter(req.DeliveryStore)

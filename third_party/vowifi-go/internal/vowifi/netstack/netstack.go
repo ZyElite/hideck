@@ -7,6 +7,8 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
 )
 
 // Network owns a gVisor stack connected to the SWu inner-packet path.
@@ -19,6 +21,7 @@ type Network struct {
 	backend   *gvisorNetwork
 	initErr   error
 	stats     networkStats
+	ipsec3GPP atomic.Bool
 }
 
 // PacketIO carries raw inner IP packets between gVisor and SWu.
@@ -114,9 +117,22 @@ func (n *Network) ListenPacket(network string, address *net.UDPAddr) (net.Packet
 	return n.backend.ListenPacket(network, address)
 }
 
-func (n *Network) InstallIPSec3GPP() error { return nil }
+func (n *Network) InstallIPSec3GPP(policy ipsec3gpp.Policy) error {
+	if err := n.ready(); err != nil {
+		return err
+	}
+	transformer, err := ipsec3gpp.NewTransport(policy)
+	if err != nil {
+		return err
+	}
+	n.backend.setTransformer(transformer)
+	n.ipsec3GPP.Store(true)
+	return nil
+}
 
-func (n *Network) IPSec3GPPPolicyInstalled() bool { return true }
+func (n *Network) IPSec3GPPPolicyInstalled() bool {
+	return n != nil && n.ipsec3GPP.Load()
+}
 
 func (n *Network) Stats() NetworkStats {
 	return NetworkStats{

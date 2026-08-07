@@ -139,12 +139,32 @@ func (s *Service) GetLocalIMSAddr() string {
 
 // GetLocalPorts returns the local SIP ports.
 func (s *Service) GetLocalPorts() []int {
-	return []int{5060}
+	if s == nil || s.cfg == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ports := []int{s.cfg.LocalPort}
+	if s.protectedServerPort > 0 && s.protectedServerPort != s.cfg.LocalPort {
+		ports = append(ports, s.protectedServerPort)
+	}
+	return ports
 }
 
 // GetRemotePorts returns the remote SIP ports.
 func (s *Service) GetRemotePorts() []int {
-	return []int{5060}
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.regSession != nil && s.regSession.security != nil && s.regSession.security.server != nil {
+		return []int{int(s.regSession.security.server.PortC), int(s.regSession.security.server.PortS)}
+	}
+	if s.registrationRemote != nil {
+		return []int{s.registrationRemote.Port}
+	}
+	return nil
 }
 
 // GetPAccessNetworkInfo returns the P-Access-Network-Info header value.
@@ -205,7 +225,12 @@ func (s *Service) GetSpiPairs() [][2]uint32 {
 
 // GetSecurityVerify returns the Security-Verify header value.
 func (s *Service) GetSecurityVerify() string {
-	return ""
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.securityVerify
 }
 
 // GetIMSContextSnapshot returns a context snapshot.
@@ -247,8 +272,11 @@ func (s *Service) Stop() {
 	}
 	if s.registrationIO != nil {
 		_ = s.registrationIO.Close()
-		s.networkDone.Wait()
 	}
+	if s.securityServerIO != nil {
+		_ = s.securityServerIO.Close()
+	}
+	s.networkDone.Wait()
 	if closer, ok := s.cfg.IMSNetwork.(interface{ Close() error }); ok {
 		_ = closer.Close()
 	}
