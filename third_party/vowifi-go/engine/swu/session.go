@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,9 @@ type Config struct {
 	EPDGAddr string
 	// LocalIP is the local address to bind the IKE/ESP socket to.
 	LocalIP net.IP
+	// ProxyAddr and Proxy route IKE/ESP through a SOCKS5 UDP associate.
+	ProxyAddr string
+	Proxy     *ipsec.Socks5Config
 	// IMSI is the subscriber IMSI used for the EAP-AKA identity.
 	IMSI string
 	// MCC/MNC override the MCC/MNC derived from the IMSI in the NAI.
@@ -124,7 +128,7 @@ type Session struct {
 	cfg *Config
 
 	// --- transport ---
-	socket *ipsec.SocketManager
+	socket ipsec.Transport
 
 	// --- IKE_AUTH state ---
 	stage       ikeAuthStage
@@ -391,15 +395,19 @@ func (s *Session) buildTransport() error {
 	if h, p, err := net.SplitHostPort(s.cfg.EPDGAddr); err == nil {
 		host, port = h, p
 	}
+	if strings.TrimSpace(s.cfg.ProxyAddr) != "" {
+		return s.buildProxyTransport(host, port)
+	}
 	localIP := s.cfg.LocalIP
 	if localIP == nil {
-		ip, err := detectOutboundIPv4()
+		ip, err := detectOutboundIPv4(host, port)
 		if err != nil {
 			return fmt.Errorf("detect outbound IP: %w", err)
 		}
 		localIP = ip
 	}
-	sm, err := ipsec.NewSocketManager(localIP.String(), localIP.String(), host, port)
+	localAddr := net.JoinHostPort(localIP.String(), "0")
+	sm, err := ipsec.NewSocketManager(localIP.String(), localAddr, host, port)
 	if err != nil {
 		return fmt.Errorf("open IKE socket: %w", err)
 	}
@@ -410,9 +418,31 @@ func (s *Session) buildTransport() error {
 	return nil
 }
 
+func (s *Session) buildProxyTransport(host, port string) error {
+	proxyCfg := ipsec.Socks5Config{}
+	if s.cfg.Proxy != nil {
+		proxyCfg = *s.cfg.Proxy
+	}
+	targetAddr := net.JoinHostPort(host, port)
+	transport, err := ipsec.NewSocks5Transport(proxyCfg, s.cfg.ProxyAddr, targetAddr, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("open SOCKS5 IKE transport: %w", err)
+	}
+	s.socket = transport
+	s.remoteIP = transport.RemoteIP()
+	s.remotePort = transport.RemotePort()
+	transport.Start()
+	return nil
+}
+
 // detectOutboundIPv4 finds the local IPv4 address used to reach the ePDG.
-func detectOutboundIPv4() (net.IP, error) {
-	conn, err := net.Dial("udp4", "8.8.8.8:53")
+func detectOutboundIPv4(host, port string) (net.IP, error) {
+	remoteIP, err := detectOutboundRoute(host)
+	if err != nil {
+		return nil, err
+	}
+	remote := net.JoinHostPort(remoteIP.String(), port)
+	conn, err := net.Dial("udp", remote)
 	if err != nil {
 		return nil, err
 	}

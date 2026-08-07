@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
 
@@ -25,10 +26,10 @@ func (stubAKA) CalculateAKA(rand16, autn16 []byte) (imscore.AKAResult, error) {
 func newTestService(t *testing.T) *imscore.Service {
 	t.Helper()
 	cfg := &imscore.IMSConfig{
-		DeviceID:   "dev-1",
-		IMSI:       "310260123456789",
-		IMPI:       "310260123456789@ims.example.com",
-		Domain:     "ims.example.com",
+		DeviceID:    "dev-1",
+		IMSI:        "310260123456789",
+		IMPI:        "310260123456789@ims.example.com",
+		Domain:      "ims.example.com",
 		AKAProvider: stubAKA{},
 	}
 	svc, err := imscore.New(cfg)
@@ -153,7 +154,14 @@ func TestDeliveryStatusConversion(t *testing.T) {
 }
 
 func TestStartInstanceAsync(t *testing.T) {
-	req := StartRequest{Mode: StartModeReader, DeviceID: "dev-1"}
+	prepared := &identity.PreparedSession{
+		Profile:     identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},
+		IMSIdentity: identity.IMSIdentity{IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example", Domain: "ims.example"},
+		EPDGAddr:    "epdg.example.com",
+	}
+	req := runtimeTestRequest(prepared, newLifecycleTunnel(nil))
+	req.Mode = StartModeReader
+	req.DeviceID = "dev-1"
 	instCh, errCh := startInstanceAsync(context.Background(), req)
 	select {
 	case inst := <-instCh:

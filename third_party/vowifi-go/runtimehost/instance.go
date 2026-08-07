@@ -46,6 +46,12 @@ func (i *Instance) SetSMSNotifier(n SMSNotifier) {
 
 // Stop shuts the runtime host down.
 func (i *Instance) Stop(ctx context.Context) error {
+	if i == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	i.mu.Lock()
 	if i.stopped {
 		i.mu.Unlock()
@@ -53,11 +59,32 @@ func (i *Instance) Stop(ctx context.Context) error {
 	}
 	i.stopped = true
 	svc := i.service
+	tunnel := i.tunnel
+	cancel := i.cancel
+	i.tunnel = nil
+	i.cancel = nil
 	i.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if tunnel != nil {
+		tunnel.Shutdown()
+	}
 	if svc != nil {
 		svc.Stop()
 	}
-	return nil
+	i.updateState(func(state *State) {
+		state.SessionState = "stopped"
+		state.DataPlaneUp = false
+		state.TunnelReady = false
+		state.IMSReady = false
+		state.SMSReady = false
+		state.LastReason = "stopped"
+	})
+	if tunnel == nil {
+		return nil
+	}
+	return tunnel.WaitDoneContext(ctx)
 }
 
 // StopShared stops the host without tearing down shared resources.
@@ -95,10 +122,56 @@ func (i *Instance) Obs() map[string]interface{} {
 
 // setState updates the runtime state and publishes the change.
 func (i *Instance) setState(s State) {
+	s.UpdatedAt = time.Now()
 	i.mu.Lock()
 	i.state = s
 	i.mu.Unlock()
-	i.publish(Event{Type: "state", Detail: s.SessionState, Session: i})
+	i.publish(Event{Type: "state", Detail: s.SessionState, State: s, Session: i})
+}
+
+func (i *Instance) updateState(update func(*State)) {
+	i.mu.Lock()
+	update(&i.state)
+	i.state.UpdatedAt = time.Now()
+	state := i.state
+	i.mu.Unlock()
+	i.publish(Event{Type: "state", Detail: state.SessionState, State: state, Session: i})
+}
+
+func (i *Instance) attachTunnel(tunnel Tunnel, cancel context.CancelFunc) {
+	i.mu.Lock()
+	i.tunnel = tunnel
+	i.cancel = cancel
+	i.mu.Unlock()
+}
+
+func (i *Instance) updateTunnelState(sessionState string) {
+	i.updateState(func(state *State) {
+		state.SessionState = sessionState
+		state.TunnelReady = sessionState == "established"
+		state.DataPlaneUp = state.TunnelReady
+	})
+}
+
+func (i *Instance) markTunnelEstablished() {
+	i.updateState(func(state *State) {
+		state.SessionState = "established"
+		state.TunnelReady = true
+		state.DataPlaneUp = true
+		state.LastReason = "SWu tunnel established"
+	})
+}
+
+func (i *Instance) setStartFailure(err error) {
+	i.updateState(func(state *State) {
+		state.SessionState = "error"
+		state.Error = err.Error()
+		state.LastError = err.Error()
+		state.LastErrorClass = "network"
+		state.LastReason = "SWu tunnel establishment failed"
+		state.TunnelReady = false
+		state.DataPlaneUp = false
+	})
 }
 
 // setService installs the IMS service.

@@ -17,6 +17,7 @@ type AKAAppPreference string
 const (
 	AKAAppPreferenceISIMStrict AKAAppPreference = "isim_strict"
 	AKAAppPreferenceISIM       AKAAppPreference = "isim"
+	AKAAppPreferenceUSIMStrict AKAAppPreference = "usim_strict"
 	AKAAppPreferenceUSIM       AKAAppPreference = "usim"
 )
 
@@ -29,6 +30,8 @@ func NormalizeAKAApp(s string) AKAAppPreference {
 		return AKAAppPreferenceISIM
 	case "usim":
 		return AKAAppPreferenceUSIM
+	case "usim_strict":
+		return AKAAppPreferenceUSIMStrict
 	default:
 		return AKAAppPreferenceISIM
 	}

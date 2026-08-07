@@ -3,10 +3,15 @@ package runtimehost
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/engine/ipsec"
+	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/runtimecore"
 	"github.com/iniwex5/vowifi-go/runtimehost/eventhost"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
@@ -48,6 +53,7 @@ type StartRequest struct {
 	Proxy         *ProxyConfig
 	DeliveryStore messaging.DeliveryStore
 	Dispatch      eventhost.Dispatcher
+	TunnelFactory TunnelFactory
 	BeforeStart   func(context.Context, SessionConfig) error
 	ShouldRun     func() bool
 }
@@ -68,24 +74,117 @@ func NewModemAccessAdapter(m Modem) ModemAccessAdapter {
 
 // Start launches a runtime host for the given request and returns the Instance.
 func Start(ctx context.Context, req StartRequest) (*Instance, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if req.ShouldRun != nil && !req.ShouldRun() {
 		return nil, errors.New("runtimehost: start cancelled by ShouldRun")
 	}
+	if err := validateStartRequest(req); err != nil {
+		return nil, err
+	}
 	if req.BeforeStart != nil {
-		if err := req.BeforeStart(ctx, SessionConfig{}); err != nil {
+		if err := req.BeforeStart(ctx, SessionConfig{DataplaneMode: req.Dataplane.Mode}); err != nil {
 			return nil, err
 		}
 	}
 
 	inst := &Instance{}
-	inst.setState(State{SessionState: "starting"})
-
-	// Wire the IMS service: build a real imscore service from the prepared
-	// identity when available, otherwise fall back to the placeholder.
+	inst.setState(initialState(req))
+	runCtx, cancel := context.WithCancel(ctx)
+	tunnel, err := newTunnel(req, inst)
+	if err != nil {
+		cancel()
+		inst.setStartFailure(err)
+		return inst, err
+	}
+	inst.attachTunnel(tunnel, cancel)
+	if err := tunnel.Connect(runCtx); err != nil {
+		startErr := fmt.Errorf("runtimehost: SWu tunnel establishment failed: %w", err)
+		_ = inst.Stop(context.Background())
+		inst.setStartFailure(startErr)
+		return inst, startErr
+	}
+	inst.markTunnelEstablished()
 	inst.setService(buildService(req))
-
-	inst.setState(State{SessionState: "established", EPDGAddress: epdgOf(req)})
+	go stopRuntimeOnContext(runCtx, inst)
 	return inst, nil
+}
+
+func validateStartRequest(req StartRequest) error {
+	if strings.TrimSpace(req.DeviceID) == "" {
+		return errors.New("runtimehost: device_id is empty")
+	}
+	if req.Prepared == nil {
+		return errors.New("runtimehost: prepared session is required")
+	}
+	if strings.TrimSpace(req.Prepared.EPDGAddr) == "" {
+		return errors.New("runtimehost: prepared session has no ePDG address")
+	}
+	if req.SIM == nil || req.SIM.AKAProvider() == nil {
+		return errors.New("runtimehost: SIM AKA provider is required")
+	}
+	mode := strings.TrimSpace(req.Dataplane.Mode)
+	if mode != "" && mode != swu.DataplaneModeUserspace {
+		return fmt.Errorf("runtimehost: unsupported dataplane mode %q", mode)
+	}
+	if req.Proxy != nil && req.Proxy.Enabled && strings.TrimSpace(req.Proxy.Addr) == "" {
+		return errors.New("runtimehost: enabled SOCKS5 proxy has no address")
+	}
+	return nil
+}
+
+func initialState(req StartRequest) State {
+	return State{
+		SessionState: "starting",
+		DeviceID:     req.DeviceID, EPDGAddress: epdgOf(req), NetworkMode: req.NetworkMode,
+		DataplaneMode: req.Dataplane.Mode, SIMReady: true, AccessReady: req.Access != nil,
+	}
+}
+
+func newTunnel(req StartRequest, inst *Instance) (Tunnel, error) {
+	prepared := preparedForRuntimeCore(req.Prepared)
+	cfg, err := runtimecore.BuildSWUConfig(prepared, req.SIM.AKAProvider())
+	if err != nil {
+		return nil, err
+	}
+	cfg.OnStateChange = inst.updateTunnelState
+	if req.Proxy != nil && req.Proxy.Enabled {
+		cfg.ProxyAddr = strings.TrimSpace(req.Proxy.Addr)
+		cfg.Proxy = &ipsec.Socks5Config{Username: req.Proxy.Username, Password: req.Proxy.Password}
+	}
+	factory := req.TunnelFactory
+	if factory == nil {
+		factory = func(cfg *swu.Config) (Tunnel, error) { return swu.NewSession(cfg), nil }
+	}
+	tunnel, err := factory(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("runtimehost: create SWu tunnel: %w", err)
+	}
+	if tunnel == nil {
+		return nil, errors.New("runtimehost: create SWu tunnel: nil session")
+	}
+	return tunnel, nil
+}
+
+func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.PreparedSessionStart {
+	return &runtimecore.PreparedSessionStart{
+		Profile: profile.Profile{
+			IMSI: prepared.Profile.IMSI, MCC: prepared.Profile.MCC, MNC: prepared.Profile.MNC,
+			IMEI: prepared.Profile.IMEI, SMSC: prepared.Profile.SMSC,
+		},
+		IMSIdentity: profile.IMSIdentity{
+			IMPI: prepared.IMSIdentity.IMPI, IMPU: []string{prepared.IMSIdentity.IMPU},
+			Domain: prepared.IMSIdentity.Domain,
+		},
+		AuthPlan: profile.AuthPlan{AKAApp: profile.NormalizeAKAApp(string(prepared.IMSIdentity.AKAAppPreference))},
+		EPDGAddr: prepared.EPDGAddr, EPDGSource: prepared.EPDGSource,
+	}
+}
+
+func stopRuntimeOnContext(ctx context.Context, inst *Instance) {
+	<-ctx.Done()
+	_ = inst.Stop(context.Background())
 }
 
 // buildService builds the IMS service for the request: a real imscore
@@ -173,10 +272,12 @@ func (s *hostService) SendUSSD(ctx context.Context, code string) (*messaging.USS
 func (s *hostService) ContinueUSSD(ctx context.Context, sessionID, input string) (*messaging.USSDResult, error) {
 	return nil, errors.New("runtimehost: USSD service not available")
 }
-func (s *hostService) CancelUSSD(ctx context.Context, sessionID string) error { return errors.New("runtimehost: USSD service not available") }
-func (s *hostService) Status() Status    { return Status{} }
-func (s *hostService) StatusSnapshot() Status { return Status{} }
-func (s *hostService) Stop()              {}
+func (s *hostService) CancelUSSD(ctx context.Context, sessionID string) error {
+	return errors.New("runtimehost: USSD service not available")
+}
+func (s *hostService) Status() Status            { return Status{} }
+func (s *hostService) StatusSnapshot() Status    { return Status{} }
+func (s *hostService) Stop()                     {}
 func (s *hostService) TriggerRegisterImmediate() {}
 
 // WithTraceID returns a context carrying the given trace id.

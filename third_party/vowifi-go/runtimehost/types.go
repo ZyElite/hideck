@@ -12,6 +12,7 @@ import (
 	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
+	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
@@ -140,6 +141,18 @@ type SIMAdapter interface {
 	AKAProvider() enginesim.AKAProvider
 }
 
+// Tunnel is the SWu session lifecycle owned by a runtime Instance.
+type Tunnel interface {
+	Connect(context.Context) error
+	Shutdown()
+	State() string
+	WaitDoneContext(context.Context) error
+}
+
+// TunnelFactory builds an SWu tunnel from the prepared configuration.
+// Tests and alternate hosts can inject the transport boundary explicitly.
+type TunnelFactory func(*swu.Config) (Tunnel, error)
+
 // ProxyConfig configures the ePDG proxy path.
 type ProxyConfig struct {
 	ID       string
@@ -174,6 +187,8 @@ type Instance struct {
 	mu          sync.RWMutex
 	state       State
 	service     Service
+	tunnel      Tunnel
+	cancel      context.CancelFunc
 	observers   []ObserverFunc
 	notifier    Notifier
 	smsNotifier SMSNotifier

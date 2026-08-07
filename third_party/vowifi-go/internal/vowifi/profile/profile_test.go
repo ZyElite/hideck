@@ -12,6 +12,9 @@ func TestNormalizeAKAApp(t *testing.T) {
 	if got := NormalizeAKAApp("USIM"); got != AKAAppPreferenceUSIM {
 		t.Errorf("USIM = %q", got)
 	}
+	if got := NormalizeAKAApp("usim_strict"); got != AKAAppPreferenceUSIMStrict {
+		t.Errorf("usim_strict = %q", got)
+	}
 	if got := NormalizeAKAApp(""); got != AKAAppPreferenceISIM {
 		t.Errorf("default = %q", got)
 	}
