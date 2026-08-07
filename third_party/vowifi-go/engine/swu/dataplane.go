@@ -126,6 +126,17 @@ func (e *userspaceInnerPacketEndpoint) WritePacketContext(ctx context.Context, p
 	}
 }
 
+func (e *userspaceInnerPacketEndpoint) deliverNetworkPacket(ctx context.Context, pkt []byte) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.closed:
+		return errors.New("swu: inner endpoint closed")
+	case e.innerPackets <- pkt:
+		return nil
+	}
+}
+
 // Snapshot returns the endpoint counters.
 func (e *userspaceInnerPacketEndpoint) Snapshot() string {
 	return e.stats.innerPacketSnapshot()
@@ -276,7 +287,9 @@ func (s *Session) loopESPToInner(transport ipsec.Transport, endpoint *userspaceI
 				continue
 			}
 			if endpoint != nil {
-				_ = endpoint.WritePacket(inner)
+				if err := endpoint.deliverNetworkPacket(s.ctx, inner); err != nil {
+					return
+				}
 			}
 		}
 	}

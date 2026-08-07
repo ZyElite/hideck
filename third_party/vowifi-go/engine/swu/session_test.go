@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
@@ -112,6 +113,34 @@ func TestExtractDstTuple(t *testing.T) {
 	}
 	if !dst.Equal(net.IPv4(10, 0, 0, 1)) {
 		t.Errorf("dst = %v", dst)
+	}
+}
+
+func TestInnerEndpointKeepsNetworkAndHostDirectionsSeparate(t *testing.T) {
+	endpoint := newUserspaceInnerPacketEndpoint(1, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	networkPacket := []byte("from-network")
+	if err := endpoint.deliverNetworkPacket(ctx, networkPacket); err != nil {
+		t.Fatalf("deliverNetworkPacket: %v", err)
+	}
+	got, err := endpoint.ReadPacketContext(ctx)
+	if err != nil || !bytes.Equal(got, networkPacket) {
+		t.Fatalf("network packet = %q, %v", got, err)
+	}
+
+	hostPacket := []byte("from-host")
+	if err := endpoint.WritePacketContext(ctx, hostPacket); err != nil {
+		t.Fatalf("WritePacketContext: %v", err)
+	}
+	select {
+	case got = <-endpoint.hostPackets:
+		if !bytes.Equal(got, hostPacket) {
+			t.Fatalf("host packet = %q", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("host packet did not reach outbound queue")
 	}
 }
 
