@@ -119,6 +119,7 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 		return failIMSStart(inst, err)
 	}
 	inst.setService(ims)
+	wireSMSReadiness(inst, ims)
 	registrationCtx, registrationCancel := context.WithTimeout(runCtx, imsRegistrationTimeout)
 	err = ims.Register(registrationCtx)
 	registrationCancel()
@@ -126,9 +127,26 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 		return failIMSStart(inst, fmt.Errorf("runtimehost: IMS registration failed: %w", err))
 	}
 	inst.markIMSRegistered()
+	syncSMSReadiness(inst, ims)
 	go monitorRegistrationFailures(runCtx, inst, ims)
 	go stopRuntimeOnContext(runCtx, inst)
 	return inst, nil
+}
+
+func wireSMSReadiness(inst *Instance, ims IMSLifecycle) {
+	source, ok := ims.(smsReadinessSource)
+	if !ok {
+		return
+	}
+	source.SetOnSMSReadinessChanged(func(readiness SMSReadiness) {
+		inst.updateSMSReadiness(readiness)
+	})
+}
+
+func syncSMSReadiness(inst *Instance, ims IMSLifecycle) {
+	if source, ok := ims.(smsReadinessSource); ok {
+		inst.updateSMSReadiness(source.SMSReadiness())
+	}
 }
 
 func monitorRegistrationFailures(ctx context.Context, inst *Instance, ims IMSLifecycle) {
@@ -303,6 +321,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		IMPI:             impi,
 		IMPU:             impu,
 		Domain:           domain,
+		SMSC:             strings.TrimSpace(req.Prepared.Profile.SMSC),
 		Realm:            domain,
 		EPDGAddr:         req.Prepared.EPDGAddr,
 		LocalIP:          innerIP,

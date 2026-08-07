@@ -262,6 +262,7 @@ func (s *Service) Stop() {
 	if s == nil {
 		return
 	}
+	s.setSMSReceiverReady(false)
 	select {
 	case <-s.stop:
 	default:
@@ -300,6 +301,7 @@ func (s *Service) Stop() {
 	s.mu.Lock()
 	s.regState = regUnregister
 	s.mu.Unlock()
+	s.notifySMSReadiness()
 }
 
 // RegistrationErrors reports background refresh failures.

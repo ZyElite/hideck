@@ -75,6 +75,7 @@ func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 		s.networkDone.Add(1)
 		go s.acceptProtectedSIP(serverListener)
 	}
+	s.setSMSReceiverReady(true)
 	return nil
 }
 

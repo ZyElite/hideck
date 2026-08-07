@@ -62,6 +62,8 @@ type State struct {
 	IMSReady bool
 	// Whether SMS is ready.
 	SMSReady bool
+	// SMSReadyReason explains which real SMS prerequisite is missing.
+	SMSReadyReason string
 }
 
 // Event is a runtime event published to observers.
@@ -161,6 +163,20 @@ type IMSLifecycle interface {
 
 type registrationFailureSource interface {
 	RegistrationErrors() <-chan error
+}
+
+// SMSReadiness describes the independently verifiable IMS SMS prerequisites.
+type SMSReadiness struct {
+	Registered    bool
+	ReceiverReady bool
+	SMSCPresent   bool
+	Ready         bool
+	Reason        string
+}
+
+type smsReadinessSource interface {
+	SMSReadiness() SMSReadiness
+	SetOnSMSReadinessChanged(func(SMSReadiness))
 }
 
 // IMSFactory builds the IMS lifecycle after SWu has established.

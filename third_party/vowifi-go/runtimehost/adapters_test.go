@@ -34,6 +34,7 @@ func newTestService(t *testing.T) *imscore.Service {
 		IMSI:        "310260123456789",
 		IMPI:        "310260123456789@ims.example.com",
 		Domain:      "ims.example.com",
+		SMSC:        "+123",
 		LocalIP:     net.IPv4(127, 0, 0, 1),
 		Registrar:   registrar.LocalAddr().String(),
 		AKAProvider: stubAKA{},
@@ -90,6 +91,9 @@ func TestServiceAdapterStatus(t *testing.T) {
 	}
 	if !st.State.IMSReady {
 		t.Error("IMSReady should be true")
+	}
+	if !st.State.SMSReady {
+		t.Errorf("SMSReady should be true: %s", st.State.SMSReadyReason)
 	}
 	if st.State.DeviceID != "dev-1" {
 		t.Errorf("device = %q", st.State.DeviceID)

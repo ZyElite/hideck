@@ -117,6 +117,7 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 		m.ClearStartupStateAndBroadcast(deviceID)
 		return RuntimeStartResult{Instance: inst, Stale: true}, nil
 	}
+	m.BroadcastState(deviceID)
 
 	return RuntimeStartResult{Instance: inst}, nil
 }

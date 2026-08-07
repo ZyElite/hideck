@@ -90,6 +90,34 @@ func TestManagerStartRuntimeBuildsRequestAndClaimsInstance(t *testing.T) {
 	}
 }
 
+func TestManagerStartRuntimeBroadcastsClaimedState(t *testing.T) {
+	manager := NewManager()
+	deviceID := "dev-broadcast"
+	claim := manager.BeginStart(deviceID)
+	notifications, unsubscribe := manager.SubscribeState(deviceID)
+	defer unsubscribe()
+	manager.SetRuntimeStartForTest(func(context.Context, runtimehost.StartRequest) (*runtimehost.Instance, error) {
+		return &runtimehost.Instance{}, nil
+	})
+	_, err := manager.StartRuntime(context.Background(), RuntimeStartRequest{
+		DeviceID: deviceID,
+		Epoch:    claim.Epoch,
+		Prepared: PreparedStart{
+			SIM:      runtimehost.NewReaderSIMAdapter(simProviderStub{}),
+			Prepared: identity.PreparedSession{Profile: identity.Profile{IMSI: "001010000000001"}},
+		},
+		Modem: runtimeStartTestModem{},
+	})
+	if err != nil {
+		t.Fatalf("StartRuntime: %v", err)
+	}
+	select {
+	case <-notifications:
+	case <-time.After(time.Second):
+		t.Fatal("claimed runtime state was not broadcast")
+	}
+}
+
 func TestManagerStartRuntimeStopsStaleStartedInstance(t *testing.T) {
 	manager := NewManager()
 	deviceID := "dev-stale"

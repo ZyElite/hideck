@@ -39,6 +39,8 @@ type IMSConfig struct {
 	IMPU []string
 	// Domain is the IMS domain.
 	Domain string
+	// SMSC is the service-centre address used for RP-DATA messages.
+	SMSC string
 	// Realm is the digest realm.
 	Realm string
 	// EPDGAddr is the ePDG address.
@@ -213,13 +215,24 @@ type Service struct {
 	// Delivery store.
 	delivery DeliveryStore
 
-	// Callbacks.
-	onRegistered func()
+	// Callbacks and SMS capability state.
+	onRegistered     func()
+	onSMSReadiness   func(SMSReadiness)
+	smsReceiverReady bool
 
 	lastPingAt     time.Time
 	securityVerify string
 
 	stop chan struct{}
+}
+
+// SMSReadiness describes the independently verifiable IMS SMS prerequisites.
+type SMSReadiness struct {
+	Registered    bool
+	ReceiverReady bool
+	SMSCPresent   bool
+	Ready         bool
+	Reason        string
 }
 
 // ServiceStatus is a snapshot of the IMS service state.

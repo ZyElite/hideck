@@ -49,6 +49,7 @@ func (s *Service) Register(ctx context.Context) error {
 		s.mu.Lock()
 		s.regState = regFailed
 		s.mu.Unlock()
+		s.notifySMSReadiness()
 		return err
 	}
 	s.mu.Lock()
@@ -57,6 +58,7 @@ func (s *Service) Register(ctx context.Context) error {
 	if s.onRegistered != nil {
 		s.onRegistered()
 	}
+	s.notifySMSReadiness()
 	s.scheduleRegistrationRefresh(expires)
 	s.startRegistrationSubscription()
 	return nil

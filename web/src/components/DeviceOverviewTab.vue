@@ -75,6 +75,14 @@ const notReadyNames = computed(() =>
   readinessItems.value.filter(i => !i.ready).map(i => i.key)
 )
 
+const readinessReason = computed(() => {
+  const runtime = props.device?.vowifi_runtime
+  if (runtime?.sms_ready === false && runtime.sms_ready_reason) {
+    return runtime.sms_ready_reason
+  }
+  return runtime?.last_reason || ''
+})
+
 // 有错误时自动展开
 const hasError = computed(() =>
   !!(props.device?.vowifi_runtime?.last_error_class || props.device?.vowifi_runtime?.last_reason)
@@ -195,9 +203,9 @@ const networkPanelMessage = computed(() => {
               <template v-else-if="vowifiStatus === 'partial'">{{ notReadyNames.join(' · ') }} 未就绪</template>
               <template v-else>VoWiFi 未连接</template>
             </div>
-            <div v-if="vowifiStatus === 'partial' && device?.vowifi_runtime?.last_reason"
+            <div v-if="vowifiStatus === 'partial' && readinessReason"
               class="text-xs text-amber-600 dark:text-amber-400 mt-0.5 truncate">
-              {{ device.vowifi_runtime.last_reason }}
+              {{ readinessReason }}
             </div>
           </div>
         </div>

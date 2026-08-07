@@ -178,10 +178,18 @@ func (i *Instance) markIMSRegistered() {
 		state.SessionState = "established"
 		state.IMSState = "registered"
 		state.IMSReady = true
-		state.SMSReady = true
+		state.SMSReady = false
+		state.SMSReadyReason = "IMS SMS readiness has not been reported"
 		state.RegStatus = 1
 		state.RegStatusText = "registered"
 		state.LastReason = "IMS registered"
+	})
+}
+
+func (i *Instance) updateSMSReadiness(readiness SMSReadiness) {
+	i.updateState(func(state *State) {
+		state.SMSReady = state.IMSReady && readiness.Ready
+		state.SMSReadyReason = readiness.Reason
 	})
 }
 

@@ -66,6 +66,8 @@ type lifecycleIMS struct {
 	started     chan struct{}
 	release     chan struct{}
 	refreshErrs chan error
+	sms         SMSReadiness
+	smsObserver func(SMSReadiness)
 }
 
 func (s *lifecycleIMS) Register(ctx context.Context) error {
@@ -95,6 +97,22 @@ func (s *lifecycleIMS) Status() Status {
 func (s *lifecycleIMS) StatusSnapshot() Status { return s.Status() }
 
 func (s *lifecycleIMS) RegistrationErrors() <-chan error { return s.refreshErrs }
+
+func (s *lifecycleIMS) SMSReadiness() SMSReadiness { return s.sms }
+
+func (s *lifecycleIMS) SetOnSMSReadinessChanged(fn func(SMSReadiness)) {
+	s.smsObserver = fn
+	if fn != nil {
+		fn(s.sms)
+	}
+}
+
+func (s *lifecycleIMS) setSMSReadiness(readiness SMSReadiness) {
+	s.sms = readiness
+	if s.smsObserver != nil {
+		s.smsObserver(readiness)
+	}
+}
 
 type lifecyclePacketIO struct{}
 
@@ -177,8 +195,38 @@ func runtimeTestRequest(prepared *identity.PreparedSession, tunnel *lifecycleTun
 			return tunnel, nil
 		},
 		IMSFactory: func(req StartRequest, _ Tunnel) (IMSLifecycle, error) {
-			return &lifecycleIMS{deviceID: req.DeviceID}, nil
+			return &lifecycleIMS{deviceID: req.DeviceID, sms: SMSReadiness{
+				Registered: true, ReceiverReady: true, SMSCPresent: true,
+				Ready: true, Reason: "IMS SMS receiver ready",
+			}}, nil
 		},
+	}
+}
+
+func TestStartSMSReadyTracksReportedPrerequisites(t *testing.T) {
+	prepared := &identity.PreparedSession{
+		Profile:     identity.Profile{IMSI: "310260123456789", SMSC: "+123"},
+		IMSIdentity: identity.IMSIdentity{IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example", Domain: "ims.example"},
+		EPDGAddr:    "epdg.example.com",
+	}
+	ims := &lifecycleIMS{deviceID: "dev-1", sms: SMSReadiness{
+		Registered: true, SMSCPresent: true, Reason: "IMS SMS receiver is not ready",
+	}}
+	req := runtimeTestRequest(prepared, newLifecycleTunnel(nil))
+	req.IMSFactory = func(StartRequest, Tunnel) (IMSLifecycle, error) { return ims, nil }
+	inst, err := Start(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if state := inst.State(); state.SMSReady || state.SMSReadyReason != "IMS SMS receiver is not ready" {
+		t.Fatalf("initial SMS state = %+v", state)
+	}
+	ims.setSMSReadiness(SMSReadiness{
+		Registered: true, ReceiverReady: true, SMSCPresent: true,
+		Ready: true, Reason: "IMS SMS receiver ready",
+	})
+	if state := inst.State(); !state.SMSReady || state.SMSReadyReason != "IMS SMS receiver ready" {
+		t.Fatalf("updated SMS state = %+v", state)
 	}
 }
 

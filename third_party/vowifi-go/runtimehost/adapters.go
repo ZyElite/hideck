@@ -36,6 +36,31 @@ func (a *serviceAdapter) RegistrationErrors() <-chan error {
 	return a.svc.RegistrationErrors()
 }
 
+func (a *serviceAdapter) SMSReadiness() SMSReadiness {
+	if a == nil || a.svc == nil {
+		return SMSReadiness{Reason: "IMS service is unavailable"}
+	}
+	return adaptSMSReadiness(a.svc.SMSReadiness())
+}
+
+func (a *serviceAdapter) SetOnSMSReadinessChanged(fn func(SMSReadiness)) {
+	if a == nil || a.svc == nil {
+		return
+	}
+	a.svc.SetOnSMSReadinessChanged(func(readiness imscore.SMSReadiness) {
+		if fn != nil {
+			fn(adaptSMSReadiness(readiness))
+		}
+	})
+}
+
+func adaptSMSReadiness(readiness imscore.SMSReadiness) SMSReadiness {
+	return SMSReadiness{
+		Registered: readiness.Registered, ReceiverReady: readiness.ReceiverReady,
+		SMSCPresent: readiness.SMSCPresent, Ready: readiness.Ready, Reason: readiness.Reason,
+	}
+}
+
 // SendSMSWithOptions sends an SMS with options.
 func (a *serviceAdapter) SendSMSWithOptions(ctx context.Context, to, text string, opts messaging.SendOptions) (messaging.SendOutcome, error) {
 	if a == nil || a.svc == nil {
@@ -124,12 +149,15 @@ func (a *serviceAdapter) Status() Status {
 	if a == nil || a.svc == nil {
 		return Status{}
 	}
+	sms := a.svc.SMSReadiness()
 	return Status{State: State{
-		SessionState: "established",
-		IMSState:     a.svc.RegState(),
-		RegStatus:    regStatusOf(a.svc),
-		DeviceID:     a.svc.DeviceID(),
-		IMSReady:     a.svc.IsRegistered(),
+		SessionState:   "established",
+		IMSState:       a.svc.RegState(),
+		RegStatus:      regStatusOf(a.svc),
+		DeviceID:       a.svc.DeviceID(),
+		IMSReady:       a.svc.IsRegistered(),
+		SMSReady:       sms.Ready,
+		SMSReadyReason: sms.Reason,
 	}}
 }
 
