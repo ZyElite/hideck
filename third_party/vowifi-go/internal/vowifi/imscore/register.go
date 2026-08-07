@@ -80,7 +80,7 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	s.regSession = session
 	s.mu.Unlock()
 
-	resp, err := s.exchangeRegister(ctx, session, "")
+	resp, err := s.exchangeRegister(ctx, session, session.authHeader)
 	if err != nil {
 		return 0, err
 	}
@@ -93,6 +93,7 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 			return 0, err
 		}
 		session.cseq++
+		session.authHeader = auth
 		resp, err = s.exchangeRegister(ctx, session, auth)
 		if err != nil {
 			return 0, err
@@ -109,8 +110,12 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	}
 	expires := registrationExpires(resp, s.cfg.Expires)
 	session.expires = expires
-	session.publicID = firstSIPHeaderURI(resp.Header("P-Associated-URI"))
-	session.serviceRoute = strings.TrimSpace(resp.Header("Service-Route"))
+	if publicID := firstSIPHeaderURI(resp.Header("P-Associated-URI")); publicID != "" {
+		session.publicID = publicID
+	}
+	if serviceRoute := strings.TrimSpace(resp.Header("Service-Route")); serviceRoute != "" {
+		session.serviceRoute = serviceRoute
+	}
 	return expires, nil
 }
 
@@ -166,7 +171,10 @@ func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {
 		session := &registerSession{
 			callID: previous.callID, fromTag: previous.fromTag,
 			contactUser: previous.contactUser,
-			cseq:        previous.cseq + 1, security: previous.security,
+			cseq:        previous.cseq + 1, challenge: previous.challenge,
+			authHeader: previous.authHeader, expires: previous.expires,
+			security: previous.security, publicID: previous.publicID,
+			serviceRoute: previous.serviceRoute,
 		}
 		s.mu.RUnlock()
 		return session, nil

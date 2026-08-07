@@ -273,21 +273,29 @@ func (s *Service) Stop() {
 		s.refreshTimer.Stop()
 		s.refreshTimer = nil
 	}
+	registrationIO := s.registrationIO
+	registrationTCP := s.registrationTCP
+	securityServerIO := s.securityServerIO
+	clientPortReserve := s.clientPortReserve
+	s.registrationIO = nil
+	s.registrationTCP = nil
+	s.securityServerIO = nil
+	s.clientPortReserve = nil
 	s.mu.Unlock()
 	if s.transport != nil {
 		_ = s.transport.Close()
 	}
-	if s.registrationIO != nil {
-		_ = s.registrationIO.Close()
+	if registrationIO != nil {
+		_ = registrationIO.Close()
 	}
-	if s.registrationTCP != nil {
-		_ = s.registrationTCP.Close()
+	if registrationTCP != nil {
+		_ = registrationTCP.Close()
 	}
-	if s.securityServerIO != nil {
-		_ = s.securityServerIO.Close()
+	if securityServerIO != nil {
+		_ = securityServerIO.Close()
 	}
-	if s.clientPortReserve != nil {
-		_ = s.clientPortReserve.Close()
+	if clientPortReserve != nil {
+		_ = clientPortReserve.Close()
 	}
 	s.protectedConnMu.Lock()
 	for conn := range s.protectedConns {

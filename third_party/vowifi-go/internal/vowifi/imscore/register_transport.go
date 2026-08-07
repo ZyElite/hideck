@@ -19,6 +19,9 @@ func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 	if s.transport == nil {
 		return errors.New("imscore: no SIP transport")
 	}
+	if reconnect, client, server := s.protectedReconnectParameters(); reconnect {
+		return s.dialProtectedRegistrationTCP(ctx, client, server)
+	}
 	if s.transport.hasSendFn() {
 		s.mu.Lock()
 		if s.registrationIO == nil && s.registrationTCP == nil {
@@ -135,6 +138,10 @@ func (s *Service) connectProtectedRegistrationTCP(ctx context.Context, client, s
 	if err := reservation.Close(); err != nil {
 		return fmt.Errorf("imscore: release protected client port: %w", err)
 	}
+	return s.dialProtectedRegistrationTCP(ctx, client, server)
+}
+
+func (s *Service) dialProtectedRegistrationTCP(ctx context.Context, client, server securityMechanism) error {
 	registrationRemote := s.currentRegistrationRemote()
 	if registrationRemote == nil || registrationRemote.IP == nil {
 		return errors.New("imscore: registrar IP unavailable for protected TCP")
@@ -147,6 +154,21 @@ func (s *Service) connectProtectedRegistrationTCP(ctx context.Context, client, s
 	}
 	s.activateProtectedRegistrationTCP(conn)
 	return nil
+}
+
+func (s *Service) protectedReconnectParameters() (bool, securityMechanism, securityMechanism) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.externalTransport || s.registrationTCP != nil || s.regSession == nil || s.regSession.security == nil || s.regSession.security.server == nil {
+		return false, securityMechanism{}, securityMechanism{}
+	}
+	return true, s.regSession.security.client, *s.regSession.security.server
+}
+
+func (s *Service) protectedTransportState() (external, connected bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.externalTransport, s.registrationTCP != nil
 }
 
 func (s *Service) activateProtectedRegistrationTCP(conn net.Conn) {
@@ -261,9 +283,19 @@ func (s *Service) untrackProtectedConnection(conn net.Conn) {
 
 func (s *Service) readRegistrationStream(conn net.Conn) {
 	defer s.networkDone.Done()
+	defer s.clearClosedRegistrationTCP(conn)
 	s.receiverStarted()
 	defer s.receiverStopped()
 	s.readRegistrationStreamSync(conn)
+}
+
+func (s *Service) clearClosedRegistrationTCP(conn net.Conn) {
+	_ = conn.Close()
+	s.mu.Lock()
+	if s.registrationTCP == conn {
+		s.registrationTCP = nil
+	}
+	s.mu.Unlock()
 }
 
 func (s *Service) readRegistrationStreamSync(conn net.Conn) {

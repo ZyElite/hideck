@@ -105,6 +105,9 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 	inst.AddObserver(runtimehost.ObserverFunc(func(_ context.Context, ev runtimehost.Event) {
 		if m.IsCurrentInstance(deviceID, inst) {
 			m.BroadcastState(deviceID)
+			if isTerminalRuntimeFailure(ev.State) {
+				go m.releaseFailedRuntime(deviceID, inst, ev.State)
+			}
 			return
 		}
 		m.RecordStartupState(deviceID, ev.State)

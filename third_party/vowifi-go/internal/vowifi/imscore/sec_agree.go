@@ -246,10 +246,8 @@ func (s *Service) installNegotiatedIPSec(ctx context.Context, session *registerS
 	if err := s.setProtectedRegistrarPort(server.PortS); err != nil {
 		return err
 	}
-	s.mu.RLock()
-	externalTransport := s.externalTransport
-	s.mu.RUnlock()
-	if !externalTransport {
+	externalTransport, connected := s.protectedTransportState()
+	if !externalTransport && !connected {
 		if err := s.connectProtectedRegistrationTCP(ctx, client, *server); err != nil {
 			return err
 		}

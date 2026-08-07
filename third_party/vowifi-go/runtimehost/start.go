@@ -163,6 +163,7 @@ func monitorRegistrationFailures(ctx context.Context, inst *Instance, ims IMSLif
 				return
 			}
 			if err != nil {
+				logger.Error("IMS registration refresh failed", "device", inst.State().DeviceID, "err", err)
 				inst.setIMSRefreshFailure(err)
 			}
 		}
