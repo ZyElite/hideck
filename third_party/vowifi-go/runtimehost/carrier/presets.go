@@ -3,6 +3,7 @@ package carrier
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -17,6 +18,7 @@ const (
 	defaultIMSICSIRef         = "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel," +
 		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.msg," +
 		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.sms"
+	maxIMSExpiresSeconds = int64(1<<63-1) / int64(time.Second)
 )
 
 const (
@@ -119,6 +121,12 @@ func ValidateEffectiveCarrierConfig(cfg EffectiveCarrierConfig) error {
 }
 
 func validateIMSRegisterTemplate(template IMSRegisterTemplate) error {
+	if template.ExpiresSeconds <= 0 {
+		return fmt.Errorf("carrier: IMS registration expiry must be positive")
+	}
+	if int64(template.ExpiresSeconds) > maxIMSExpiresSeconds {
+		return fmt.Errorf("carrier: IMS registration expiry %d seconds overflows duration", template.ExpiresSeconds)
+	}
 	if strings.TrimSpace(template.ContactMode) != defaultIMSContactMode {
 		return fmt.Errorf("carrier: unsupported IMS Contact mode %q", template.ContactMode)
 	}

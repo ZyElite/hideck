@@ -42,3 +42,27 @@ func TestValidateEffectiveCarrierRejectsUnknownContact(t *testing.T) {
 		t.Fatalf("ValidateEffectiveCarrierConfig() error = %v", err)
 	}
 }
+
+func TestValidateEffectiveCarrierRejectsInvalidIMSExpiry(t *testing.T) {
+	for _, expires := range []int{0, -1} {
+		cfg := ResolveEffectiveCarrierConfig(EffectiveCarrierConfigInput{MCC: "234", MNC: "10"})
+		cfg.IMS.ExpiresSeconds = expires
+		err := ValidateEffectiveCarrierConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "expiry must be positive") {
+			t.Fatalf("ExpiresSeconds=%d error = %v", expires, err)
+		}
+	}
+}
+
+func TestValidateEffectiveCarrierRejectsIMSExpiryOverflow(t *testing.T) {
+	maxExpires := int64(maxIMSExpiresSeconds)
+	if int64(int(maxExpires)) != maxExpires {
+		t.Skip("int is too small to represent an overflowing duration")
+	}
+	cfg := ResolveEffectiveCarrierConfig(EffectiveCarrierConfigInput{MCC: "234", MNC: "10"})
+	cfg.IMS.ExpiresSeconds = int(maxExpires) + 1
+	err := ValidateEffectiveCarrierConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "overflows duration") {
+		t.Fatalf("ValidateEffectiveCarrierConfig() error = %v", err)
+	}
+}
