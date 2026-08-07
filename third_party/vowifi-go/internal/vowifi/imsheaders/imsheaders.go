@@ -44,26 +44,53 @@ func sipInstanceIMEIDigits(imei string) string {
 	for _, c := range imei {
 		if c >= '0' && c <= '9' {
 			digits = append(digits, byte(c))
+			continue
 		}
-		if len(digits) == 15 {
-			break
+		if c != '-' {
+			return ""
 		}
 	}
 	return string(digits)
 }
 
-// NormalizeSipInstance normalizes a +sip.instance value to the canonical
-// "urn:uuid:<uuid>" form.
+// NormalizeSipInstance normalizes an IMEI into the GSMA URN used by 3GPP IMS.
+// Other URNs are only enclosed in angle brackets; their namespace is retained.
 func NormalizeSipInstance(instance string) string {
 	instance = strings.TrimSpace(instance)
-	instance = strings.Trim(instance, "\"")
 	if instance == "" {
 		return ""
 	}
-	if strings.HasPrefix(instance, "urn:uuid:") {
+	if strings.HasPrefix(instance, "<") && strings.HasSuffix(instance, ">") {
 		return instance
 	}
-	return "urn:uuid:" + instance
+	if strings.HasPrefix(instance, "urn:gsma:imei:") {
+		return "<" + instance + ">"
+	}
+	digits := sipInstanceIMEIDigits(instance)
+	if len(digits) != 14 && len(digits) != 15 {
+		return "<" + instance + ">"
+	}
+	if len(digits) == 14 {
+		digits += string(rune('0' + imeiCheckDigit(digits)))
+	}
+	return fmt.Sprintf("<urn:gsma:imei:%s-%s-%s>", digits[:8], digits[8:14], digits[14:])
+}
+
+func imeiCheckDigit(digits string) rune {
+	sum := 0
+	double := true
+	for i := len(digits) - 1; i >= 0; i-- {
+		value := int(digits[i] - '0')
+		if double {
+			value *= 2
+			if value > 9 {
+				value -= 9
+			}
+		}
+		sum += value
+		double = !double
+	}
+	return rune((10 - sum%10) % 10)
 }
 
 // ContactParams builds the Contact header parameters for a registration.

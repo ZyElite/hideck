@@ -113,12 +113,15 @@ func (s *Service) GetIMPU() []string {
 	return append([]string{}, s.cfg.IMPU...)
 }
 
-// GetIMEI returns the IMEI (derived from the device ID).
+// GetIMEI returns the configured mobile equipment identity.
 func (s *Service) GetIMEI() string {
 	if s == nil || s.cfg == nil {
 		return ""
 	}
-	return s.cfg.DeviceID
+	if strings.TrimSpace(s.cfg.IMEI) == "" {
+		return s.cfg.DeviceID
+	}
+	return s.cfg.IMEI
 }
 
 // GetIMSServerAddr returns the IMS server address.

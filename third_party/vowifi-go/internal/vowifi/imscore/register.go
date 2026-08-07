@@ -10,6 +10,7 @@ import (
 	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
 )
 
 const maxAKAChallenges = 2
@@ -94,7 +95,7 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("imscore: registration failed with status %d", resp.StatusCode)
+		return 0, registrationResponseError(resp)
 	}
 	if session.security != nil && session.security.server == nil {
 		return 0, errors.New("imscore: registration completed without 3GPP security agreement")
@@ -166,22 +167,50 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	}
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("REGISTER sip:%s SIP/2.0\r\n", cfg.Domain))
-	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;branch=%s;rport\r\n", transportUpper(cfg.Transport), sipLocalAddress(cfg), session.branch))
+	localAddress := s.registerLocalAddress(session)
+	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;branch=%s;rport\r\n", transportUpper(cfg.Transport), localAddress, session.branch))
 	publicIdentity := primaryPublicIdentity(cfg)
 	b.WriteString(fmt.Sprintf("From: <%s>;tag=%s\r\n", publicIdentity, session.fromTag))
 	b.WriteString(fmt.Sprintf("To: <%s>\r\n", publicIdentity))
 	b.WriteString(fmt.Sprintf("Call-ID: %s\r\n", session.callID))
 	b.WriteString(fmt.Sprintf("CSeq: %d REGISTER\r\n", session.cseq))
-	b.WriteString(fmt.Sprintf("Contact: <sip:%s@%s>;+sip.instance=\"urn:uuid:%s\";expires=%d\r\n", contactUser(cfg), s.contactAddress(session), cfg.DeviceID, int(expires.Seconds())))
+	b.WriteString("Contact: " + registerContact(cfg, localAddress, int(expires.Seconds())) + "\r\n")
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
 	b.WriteString("Supported: path, outbound\r\n")
+	b.WriteString("P-Access-Network-Info: " + s.GetPAccessNetworkInfo() + "\r\n")
 	b.WriteString(registerSecurityHeaders(session))
-	if authHeader != "" {
-		b.WriteString("Authorization: " + authHeader + "\r\n")
+	if authHeader == "" {
+		authHeader = initialIMSAuthorization(cfg)
+	}
+	b.WriteString("Authorization: " + authHeader + "\r\n")
+	if strings.TrimSpace(cfg.UserAgent) != "" {
+		b.WriteString("User-Agent: " + strings.TrimSpace(cfg.UserAgent) + "\r\n")
 	}
 	b.WriteString("Content-Length: 0\r\n\r\n")
 	return b.String()
+}
+
+func registerContact(cfg *IMSConfig, localAddress string, expires int) string {
+	instance := strings.TrimSpace(cfg.IMEI)
+	if instance == "" {
+		instance = strings.TrimSpace(cfg.DeviceID)
+	}
+	uri := fmt.Sprintf("sip:%s@%s", contactUser(cfg), localAddress)
+	return imsheaders.ContactURIWithOptions(uri, instance, expires, 0)
+}
+
+func initialIMSAuthorization(cfg *IMSConfig) string {
+	realm := strings.TrimSpace(cfg.Realm)
+	if realm == "" {
+		realm = strings.TrimSpace(cfg.Domain)
+	}
+	return fmt.Sprintf(`Digest username="%s", realm="%s", nonce="", uri="sip:%s", response=""`,
+		digestQuotedValue(cfg.IMPI), digestQuotedValue(realm), digestQuotedValue(cfg.Domain))
+}
+
+func digestQuotedValue(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(strings.TrimSpace(value))
 }
 
 func registerSecurityHeaders(session *registerSession) string {
@@ -198,11 +227,25 @@ func registerSecurityHeaders(session *registerSession) string {
 	return builder.String()
 }
 
-func (s *Service) contactAddress(session *registerSession) string {
-	if session == nil || session.security == nil {
+func (s *Service) registerLocalAddress(session *registerSession) string {
+	if session == nil || session.security == nil || session.security.verifyHeader == "" {
 		return sipLocalAddress(s.cfg)
 	}
 	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(int(session.security.client.PortS)))
+}
+
+func registrationResponseError(response *sipResponse) error {
+	detail := strings.TrimSpace(response.Reason)
+	if warning := strings.TrimSpace(response.Header("Warning")); warning != "" {
+		if detail != "" {
+			detail += "; "
+		}
+		detail += "warning=" + warning
+	}
+	if detail == "" {
+		return fmt.Errorf("imscore: registration failed with status %d", response.StatusCode)
+	}
+	return fmt.Errorf("imscore: registration failed with status %d (%s)", response.StatusCode, detail)
 }
 
 func primaryPublicIdentity(cfg *IMSConfig) string {

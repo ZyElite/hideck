@@ -65,7 +65,7 @@ func TestRegisterNegotiatesAndInstallsIPSec3GPP(t *testing.T) {
 func newSecurityAgreementTestService(t *testing.T, network IMSNetwork) *Service {
 	t.Helper()
 	svc, err := New(&IMSConfig{
-		DeviceID: "dev-sec", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
+		DeviceID: "dev-sec", IMEI: "356938035643809", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
 		IMPU: []string{"sip:310260123456789@ims.example"}, Domain: "ims.example",
 		LocalIP: net.IPv4(10, 0, 0, 2), LocalPort: 41000, Transport: "udp", Expires: time.Hour,
 		AKAProvider: stubAKAProvider{}, IMSNetwork: network, IPSec3GPPEnabled: true,
@@ -89,6 +89,13 @@ func assertInitialSecurityHeaders(t *testing.T, request, securityClient string) 
 	}
 	if sipHeaderValue(request, "Security-Verify") != "" {
 		t.Fatal("initial REGISTER unexpectedly contained Security-Verify")
+	}
+	if !strings.Contains(sipHeaderValue(request, "Via"), "10.0.0.2:41000;") ||
+		!strings.Contains(sipHeaderValue(request, "Contact"), "@10.0.0.2:41000>") {
+		t.Fatal("initial REGISTER did not use the unprotected client port")
+	}
+	if !strings.Contains(sipHeaderValue(request, "Authorization"), `nonce=""`) {
+		t.Fatal("initial REGISTER omitted the empty IMS AKA authorization")
 	}
 }
 
@@ -131,6 +138,10 @@ func assertAuthenticatedSecurityHeaders(t *testing.T, request, client, server st
 	}
 	if sipHeaderValue(request, "Authorization") == "" {
 		t.Fatal("authenticated REGISTER omitted Digest-AKA authorization")
+	}
+	if !strings.Contains(sipHeaderValue(request, "Via"), "10.0.0.2:41001;") ||
+		!strings.Contains(sipHeaderValue(request, "Contact"), "@10.0.0.2:41001>") {
+		t.Fatal("authenticated REGISTER did not advertise the protected server port")
 	}
 }
 

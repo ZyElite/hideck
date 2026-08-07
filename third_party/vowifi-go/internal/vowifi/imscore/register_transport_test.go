@@ -23,7 +23,7 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 	go serveRegisterStatus(registrar, 200, requestSeen)
 
 	svc, err := New(&IMSConfig{
-		DeviceID: "dev-1", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
+		DeviceID: "dev-1", IMEI: "356938035643809", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
 		IMPU: []string{"sip:310260123456789@ims.example"}, Domain: "ims.example",
 		LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp", Registrar: registrar.LocalAddr().String(),
 		IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)), AKAProvider: stubAKAProvider{},
@@ -51,6 +51,18 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 		if !strings.Contains(request, "From: <sip:310260123456789@ims.example>") ||
 			!strings.Contains(request, "Contact: <sip:310260123456789@127.0.0.1:") {
 			t.Fatalf("REGISTER identity URIs are invalid: %q", request)
+		}
+		if !strings.Contains(sipHeaderValue(request, "Contact"), `+sip.instance="<urn:gsma:imei:35693803-564380-9>"`) {
+			t.Fatalf("REGISTER Contact omitted the IMEI instance URN: %q", sipHeaderValue(request, "Contact"))
+		}
+		authorization := sipHeaderValue(request, "Authorization")
+		for _, field := range []string{`username="310260123456789@ims.example"`, `realm="ims.example"`, `nonce=""`, `uri="sip:ims.example"`, `response=""`} {
+			if !strings.Contains(authorization, field) {
+				t.Fatalf("initial Authorization omitted %s: %q", field, authorization)
+			}
+		}
+		if got := sipHeaderValue(request, "P-Access-Network-Info"); !strings.Contains(got, "network-id=310026") {
+			t.Fatalf("REGISTER P-Access-Network-Info = %q", got)
 		}
 	case <-ctx.Done():
 		t.Fatal("registrar did not receive REGISTER")
@@ -268,6 +280,17 @@ func TestRegisterPropagatesRegistrarRejection(t *testing.T) {
 	}
 }
 
+func TestRegistrationResponseErrorIncludesRegistrarDiagnostic(t *testing.T) {
+	err := registrationResponseError(&sipResponse{
+		StatusCode: 400,
+		Reason:     "Bad Request",
+		Headers:    map[string]string{"Warning": `399 pcscf.example "Malformed Contact"`},
+	})
+	if got := err.Error(); !strings.Contains(got, "400 (Bad Request") || !strings.Contains(got, "Malformed Contact") {
+		t.Fatalf("registrationResponseError = %q", got)
+	}
+}
+
 func serveRegisterStatus(conn *net.UDPConn, status int, seen chan<- string) {
 	buffer := make([]byte, 64*1024)
 	n, remote, err := conn.ReadFromUDP(buffer)
@@ -337,8 +360,10 @@ func serveSQNSyncRegistrar(conn *net.UDPConn, auts []byte, result chan<- error) 
 func validateSQNSyncAuthorization(attempt int, authorization string, auts []byte) error {
 	switch attempt {
 	case 0:
-		if authorization != "" {
-			return fmt.Errorf("initial REGISTER unexpectedly authorized: %q", authorization)
+		for _, field := range []string{`username="310260123456789@ims.example"`, `nonce=""`, `response=""`} {
+			if !strings.Contains(authorization, field) {
+				return fmt.Errorf("initial REGISTER Authorization = %q, missing %s", authorization, field)
+			}
 		}
 	case 1:
 		want := `auts="` + base64.StdEncoding.EncodeToString(auts) + `"`

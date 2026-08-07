@@ -30,6 +30,8 @@ const (
 type IMSConfig struct {
 	// DeviceID identifies the device.
 	DeviceID string
+	// IMEI identifies the mobile equipment used for the IMS instance URN.
+	IMEI string
 	// IMSI is the subscriber IMSI.
 	IMSI string
 	// IMPI / IMPU are the IMS identities.

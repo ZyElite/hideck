@@ -292,6 +292,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 	}
 	cfg := &imscore.IMSConfig{
 		DeviceID:         req.DeviceID,
+		IMEI:             req.Prepared.Profile.IMEI,
 		IMSI:             imsiOf(impi),
 		IMPI:             impi,
 		IMPU:             impu,

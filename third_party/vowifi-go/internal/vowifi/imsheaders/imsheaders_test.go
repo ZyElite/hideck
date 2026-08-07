@@ -24,24 +24,33 @@ func TestFormatHostForSIP(t *testing.T) {
 }
 
 func TestSipInstanceIMEIDigits(t *testing.T) {
-	if got := sipInstanceIMEIDigits("356938035643809"); got != "356938035643809" {
+	if got := sipInstanceIMEIDigits("35-693803-564380-9"); got != "356938035643809" {
 		t.Errorf("imei = %q", got)
+	}
+	if got := sipInstanceIMEIDigits("not-an-imei"); got != "" {
+		t.Errorf("invalid IMEI = %q", got)
 	}
 }
 
 func TestNormalizeSipInstance(t *testing.T) {
-	if got := NormalizeSipInstance("urn:uuid:abc"); got != "urn:uuid:abc" {
-		t.Errorf("normalize = %q", got)
+	if got := NormalizeSipInstance("356938035643809"); got != "<urn:gsma:imei:35693803-564380-9>" {
+		t.Errorf("15-digit IMEI = %q", got)
 	}
-	if got := NormalizeSipInstance("abc"); got != "urn:uuid:abc" {
-		t.Errorf("normalize bare = %q", got)
+	if got := NormalizeSipInstance("35693803564380"); got != "<urn:gsma:imei:35693803-564380-9>" {
+		t.Errorf("14-digit IMEI = %q", got)
+	}
+	if got := NormalizeSipInstance("urn:uuid:abc"); got != "<urn:uuid:abc>" {
+		t.Errorf("UUID URN = %q", got)
 	}
 }
 
 func TestContactURIWithOptions(t *testing.T) {
-	got := ContactURIWithOptions("sip:user@example.com", "urn:uuid:abc", 3600, 1)
+	got := ContactURIWithOptions("sip:user@example.com", "356938035643809", 3600, 1)
 	if !strings.Contains(got, "expires=3600") || !strings.Contains(got, "reg-id=1") {
 		t.Errorf("contact = %q", got)
+	}
+	if !strings.Contains(got, `+sip.instance="<urn:gsma:imei:35693803-564380-9>"`) {
+		t.Errorf("contact instance = %q", got)
 	}
 }
 
