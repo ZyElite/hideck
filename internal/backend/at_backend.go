@@ -2,10 +2,12 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/iniwex5/vohive/internal/modem"
+	"github.com/iniwex5/vohive/internal/simaid"
 	"github.com/iniwex5/vohive/pkg/smscodec"
 )
 
@@ -271,7 +273,11 @@ func (a *ATBackend) OpenLogicalChannel(ctx context.Context, aid string) (int, er
 }
 
 func (a *ATBackend) ResolveSIMAuthAID(ctx context.Context, app string, fallbackAID string) (string, string, error) {
-	return a.modem.ResolveSIMAuthAID(app, fallbackAID)
+	aid, source, err := a.modem.ResolveSIMAuthAID(app, fallbackAID)
+	if errors.Is(err, simaid.ErrApplicationNotFound) {
+		return "", "sim_auth_application_unavailable", errors.Join(ErrSIMAuthAIDNotReady, ErrSIMAuthApplicationUnavailable, err)
+	}
+	return aid, source, err
 }
 
 func (a *ATBackend) CloseLogicalChannel(ctx context.Context, channelID int) error {

@@ -3,7 +3,10 @@ package backend
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
+
+	"github.com/iniwex5/vohive/internal/simaid"
 )
 
 func (b *MBIMBackend) OpenLogicalChannel(ctx context.Context, aid string) (int, error) {
@@ -41,6 +44,9 @@ func (b *MBIMBackend) TransmitAPDU(ctx context.Context, channelID int, command s
 func (b *MBIMBackend) ResolveSIMAuthAID(ctx context.Context, app string, fallbackAID string) (string, string, error) {
 	aid, source, err := b.source.ResolveLogicalChannelAID(app, fallbackAID)
 	if err != nil {
+		if errors.Is(err, simaid.ErrApplicationNotFound) {
+			return "", "sim_auth_application_unavailable", errors.Join(ErrSIMAuthAIDNotReady, ErrSIMAuthApplicationUnavailable, err)
+		}
 		return fallbackAID, "fallback_on_error", fmt.Errorf("%w: mbim qmi tunnel resolve %s AID: %v", ErrSIMAuthAIDNotReady, app, err)
 	}
 	return aid, source, nil

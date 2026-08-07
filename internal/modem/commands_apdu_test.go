@@ -10,6 +10,7 @@ import (
 
 	"github.com/iniwex5/vohive/internal/apduarbiter"
 	"github.com/iniwex5/vohive/internal/config"
+	"github.com/iniwex5/vohive/internal/simaid"
 )
 
 func newRunningTestManager(t *testing.T) *Manager {
@@ -445,7 +446,7 @@ func TestManagerResolveSIMAuthAIDReturnsNotReadyOnEFDirError(t *testing.T) {
 	}
 }
 
-func TestManagerResolveSIMAuthAIDReturnsNotReadyWhenEFDirHasNoMatch(t *testing.T) {
+func TestManagerResolveSIMAuthAIDReportsApplicationUnavailableWhenEFDirHasNoMatch(t *testing.T) {
 	m := newRunningTestManager(t)
 	commands := make(chan string, 3)
 	go func() {
@@ -462,10 +463,13 @@ func TestManagerResolveSIMAuthAIDReturnsNotReadyWhenEFDirHasNoMatch(t *testing.T
 
 	aid, source, err := m.ResolveSIMAuthAID("usim", "A0000000871002")
 	if err == nil {
-		t.Fatal("ResolveSIMAuthAID() err=nil, want not-ready")
+		t.Fatal("ResolveSIMAuthAID() err=nil, want unavailable")
 	}
-	if aid != "" || !strings.Contains(source, "not_ready") {
-		t.Fatalf("aid=%q source=%q, want empty not-ready result", aid, source)
+	if !errors.Is(err, simaid.ErrApplicationNotFound) {
+		t.Fatalf("ResolveSIMAuthAID() error = %v, want ErrApplicationNotFound", err)
+	}
+	if aid != "" || source != "sim_auth_application_unavailable" {
+		t.Fatalf("aid=%q source=%q, want empty unavailable result", aid, source)
 	}
 
 	got := []string{<-commands, <-commands, <-commands}

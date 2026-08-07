@@ -289,7 +289,7 @@ func (m *Manager) ResolveSIMAuthAID(app string, fallbackAID string) (string, str
 			return aidHex, "at_ef_dir", nil
 		}
 	}
-	return "", "sim_auth_aid_not_ready", fmt.Errorf("sim_auth_aid_not_ready: no %s full AID in EF_DIR", app)
+	return "", "sim_auth_application_unavailable", fmt.Errorf("%w: no %s full AID in EF_DIR", simaid.ErrApplicationNotFound, app)
 }
 
 func (m *Manager) openLogicalChannel(aid, leaseOwner, sessionOwner string, class apduarbiter.APDUClass) (int, error) {

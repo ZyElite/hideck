@@ -2,11 +2,13 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
+	"github.com/iniwex5/vohive/internal/simaid"
 	"github.com/iniwex5/vohive/pkg/mbim"
 	"github.com/iniwex5/vohive/pkg/smscodec"
 	"github.com/warthog618/sms/encoding/tpdu"
@@ -672,6 +674,20 @@ func TestMBIMBackendResolveSIMAuthAIDFailsWhenUnresolved(t *testing.T) {
 	b := NewMBIMBackend("", src)
 	if _, _, err := b.ResolveSIMAuthAID(context.Background(), "usim", "A0000000871002"); err == nil {
 		t.Fatalf("expected error when AID cannot be resolved")
+	}
+}
+
+func TestMBIMBackendResolveSIMAuthAIDReportsMissingApplication(t *testing.T) {
+	src := &fakeMBIMSource{aidFn: func([]byte) ([]byte, error) {
+		return nil, simaid.ErrApplicationNotFound
+	}}
+	b := NewMBIMBackend("", src)
+	aid, source, err := b.ResolveSIMAuthAID(context.Background(), "isim", "A0000000871004")
+	if !errors.Is(err, ErrSIMAuthApplicationUnavailable) {
+		t.Fatalf("ResolveSIMAuthAID() error = %v, want unavailable", err)
+	}
+	if aid != "" || source != "sim_auth_application_unavailable" {
+		t.Fatalf("aid=%q source=%q, want unavailable result", aid, source)
 	}
 }
 

@@ -61,15 +61,37 @@ type channelOrAuthAKAProvider struct {
 }
 
 func (p *channelOrAuthAKAProvider) CalculateAKA(rand16, autn16 []byte) (swusim.AKAResult, error) {
-	res, err := p.channel.CalculateAKA(rand16, autn16)
+	return p.calculate(rand16, autn16, "", false)
+}
+
+func (p *channelOrAuthAKAProvider) CalculateAKAWithPreference(rand16, autn16 []byte, preference string) (swusim.AKAResult, error) {
+	return p.calculate(rand16, autn16, preference, true)
+}
+
+func (p *channelOrAuthAKAProvider) calculate(rand16, autn16 []byte, preference string, explicit bool) (swusim.AKAResult, error) {
+	var res swusim.AKAResult
+	var err error
+	if explicit {
+		preferred, ok := p.channel.(AKAWithPreferenceProvider)
+		if !ok {
+			return swusim.AKAResult{}, errors.New("sim: logical-channel AKA provider does not support application preference")
+		}
+		res, err = preferred.CalculateAKAWithPreference(rand16, autn16, preference)
+	} else {
+		res, err = p.channel.CalculateAKA(rand16, autn16)
+	}
 	if err == nil {
 		return res, nil
 	}
-	if isUICCChannelOpenError(err) {
+	if isUICCChannelOpenError(err) && allowsMBIMAuthFallback(preference) {
 		logger.Warn("[sim] 逻辑通道开通道失败，降级到 MBIM Auth AKA", "err", err)
 		return p.auth.CalculateAKA(rand16, autn16)
 	}
 	return swusim.AKAResult{}, err
+}
+
+func allowsMBIMAuthFallback(preference string) bool {
+	return !strings.EqualFold(strings.TrimSpace(preference), AKAAppPreferenceISIMStrict)
 }
 
 // isUICCChannelOpenError reports whether err indicates the UICC channel could
@@ -96,7 +118,7 @@ func BuildAKAProvider(w AKAProviderWorker) swusim.AKAProvider {
 	}
 	if strings.EqualFold(strings.TrimSpace(w.BackendMode()), backend.BackendMBIM) {
 		caps, _ := w.MBIMCapability()
-		
+
 		var mbimAuth swusim.AKAProvider
 		if caps != nil && caps.AuthAKAUsable() {
 			if provider, ok := w.MBIMAKAProvider(); ok && provider != nil {

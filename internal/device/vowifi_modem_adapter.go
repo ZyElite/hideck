@@ -9,6 +9,7 @@ import (
 	"github.com/iniwex5/vohive/internal/apduarbiter"
 	"github.com/iniwex5/vohive/internal/backend"
 	"github.com/iniwex5/vohive/internal/modem"
+	"github.com/iniwex5/vohive/internal/simaid"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
@@ -57,7 +58,11 @@ func (a *modemAdapter) OpenLogicalChannel(aid string) (int, error) {
 	return ch, normalizeVoWiFiAPDUError(err)
 }
 func (a *modemAdapter) ResolveLogicalChannelAID(app string, fallbackAID string) (string, string, error) {
-	return a.m.ResolveSIMAuthAID(app, fallbackAID)
+	aid, source, err := a.m.ResolveSIMAuthAID(app, fallbackAID)
+	if errors.Is(err, simaid.ErrApplicationNotFound) {
+		return "", "sim_auth_application_unavailable", errors.Join(backend.ErrSIMAuthAIDNotReady, backend.ErrSIMAuthApplicationUnavailable, err)
+	}
+	return aid, source, err
 }
 func (a *modemAdapter) CloseLogicalChannel(channel int) error {
 	return normalizeVoWiFiAPDUError(a.m.CloseSIMAuthLogicalChannel(channel))
@@ -67,7 +72,11 @@ func (a *modemAdapter) TransmitAPDU(channel int, hexAPDU string) (string, error)
 	return resp, normalizeVoWiFiAPDUError(err)
 }
 func (a *modemAdapter) GetISIMIdentity() (identity.Identity, error) {
-	return identity.ReadISIMIdentityFromLogicalChannel(a)
+	result, err := identity.ReadISIMIdentityFromLogicalChannel(a)
+	if errors.Is(err, backend.ErrSIMAuthApplicationUnavailable) {
+		return identity.Identity{}, fmt.Errorf("%w: %v", identity.ErrISIMUnavailable, err)
+	}
+	return result, err
 }
 func (a *modemAdapter) GetNetworkMode() string {
 	mode := a.m.GetFullStatus().NetworkMode

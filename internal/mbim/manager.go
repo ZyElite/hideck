@@ -913,7 +913,7 @@ func (m *Manager) resolveAppAIDViaEFDIR(ctx context.Context, prefix []byte) ([]b
 			}
 		}
 	}
-	return nil, fmt.Errorf("EF_DIR 未发现匹配前缀 %X 的应用", prefix)
+	return nil, fmt.Errorf("%w: EF_DIR 未发现匹配前缀 %X 的应用", simaid.ErrApplicationNotFound, prefix)
 }
 
 // ProbeUICCSupport reports whether the modem supports MS UICC Low Level Access.
@@ -997,7 +997,7 @@ func (m *Manager) ResolveLogicalChannelAID(app string, fallback string) (string,
 		}
 	}
 
-	return "", "", fmt.Errorf("app type %s (type=%d) not found on card", app, targetType)
+	return "", "sim_auth_application_unavailable", fmt.Errorf("%w: app type %s (type=%d)", simaid.ErrApplicationNotFound, app, targetType)
 }
 
 // QMIUIMApplicationList 透传调用底层的 QMI over MBIM 应用查询。

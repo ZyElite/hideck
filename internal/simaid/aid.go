@@ -3,8 +3,13 @@ package simaid
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"strings"
 )
+
+// ErrApplicationNotFound is returned only after a card application directory
+// was read successfully and the requested application was absent.
+var ErrApplicationNotFound = errors.New("SIM application not found")
 
 var (
 	usimPrefix = []byte{0xA0, 0x00, 0x00, 0x00, 0x87, 0x10, 0x02}

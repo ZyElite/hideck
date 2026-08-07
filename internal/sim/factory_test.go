@@ -147,6 +147,33 @@ func TestBuildAKAProviderUsesRuntimeModemAKAWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestBuildAKAProviderMBIMForwardsISIMStrictPreference(t *testing.T) {
+	isimAID := "A0000000871004FF44FF128900000100"
+	modem := &akaProviderModemFake{
+		resolvedAIDByApp: map[string]string{"isim": isimAID},
+		resolveSource:    "factory_test",
+		logicalResponses: []string{
+			"DB02112210000102030405060708090A0B0C0D0E0F1000101112131415161718191A1B1C1D1E1F9000",
+		},
+	}
+	provider := BuildAKAProvider(factoryWorkerStub{
+		mode:  backend.BackendMBIM,
+		caps:  &mbim.Capabilities{UICCChannelOK: true, Services: mbim.DeviceServices{Elements: []mbim.DeviceServiceElement{{Service: mbim.UUIDAuth, CIDs: []uint32{1}}}}},
+		modem: modem,
+		mbim:  factoryMBIMBackendStub{res: []byte{0xff}},
+	})
+	preferred, ok := provider.(AKAWithPreferenceProvider)
+	if !ok {
+		t.Fatal("combined MBIM provider does not forward AKA application preference")
+	}
+	if _, err := preferred.CalculateAKAWithPreference(bytes16(0x10), bytes16(0x20), AKAAppPreferenceISIMStrict); err != nil {
+		t.Fatalf("CalculateAKAWithPreference() error = %v", err)
+	}
+	if !reflect.DeepEqual(modem.logicalAIDs, []string{isimAID}) {
+		t.Fatalf("logical AIDs = %#v, want strict ISIM %s", modem.logicalAIDs, isimAID)
+	}
+}
+
 // MBIM Auth service 返回 AUTH_SYNC_FAILURE (status=35) 并附带 AUTS 时，
 // backendAKAProvider 应将其转换为 (AKAResult{AUTS:...}, ErrSyncFailure)，
 // 使 EAP-AKA 引擎能发出 AT_AUTS 重同步消息。
