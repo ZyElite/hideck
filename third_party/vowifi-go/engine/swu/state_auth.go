@@ -2,7 +2,6 @@ package swu
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -340,33 +339,79 @@ func (s *Session) handleIKEAuthFinalResp(resp *ikev2.IKEPacket) error {
 	if !s.responderAuthenticated {
 		return errors.New("swu: responder was not authenticated before EAP completion")
 	}
-	// Extract the inner address from the CP payload.
-	for _, pl := range payloads {
-		switch pl.Type() {
-		case ikev2.PayloadSA:
-			sa, ok := pl.(*ikev2.EncryptedPayloadSA)
-			if ok && len(sa.Proposals) > 0 && len(sa.Proposals[0].SPI) == 4 {
-				s.espRemoteSPI = binary.BigEndian.Uint32(sa.Proposals[0].SPI)
-				s.childNi = append([]byte{}, s.Ni...)
-				s.childNr = s.Nr()
-			}
-		case ikev2.PayloadCP:
-			if cp, ok := pl.(*ikev2.EncryptedPayloadCP); ok {
-				cfg := ikev2.ParseCPConfig(cp)
-				if cfg != nil {
-					if cfg.HasIPv4() {
-						s.innerIP = cfg.IPv4
-						s.innerPrefix = ipv4PrefixFromCP(cfg)
-					}
-					if cfg.HasIPv6() {
-						s.innerIPv6 = cfg.IPv6
-					}
-					s.dnsServers = dnsServersFromCP(cfg)
-				}
-			}
-		}
+	assigned, err := parseAssignedInnerConfig(payloads)
+	if err != nil {
+		return err
+	}
+	offerTSi, offerTSr := buildTrafficSelectorsForIPStack(nil)
+	selection, err := validateChildSAResponse(payloads, childSAOffer{
+		encryption: s.espCipher, integrity: s.espInteg,
+		tsi: offerTSi, tsr: offerTSr, localIPs: assigned.ips(),
+	})
+	if err != nil {
+		return err
+	}
+	s.innerIP, s.innerIPv6 = assigned.ipv4, assigned.ipv6
+	s.innerPrefix, s.dnsServers = assigned.ipv4Prefix, assigned.dns
+	if selection != nil {
+		s.espRemoteSPI = selection.remoteSPI
+		s.espCipher, s.espInteg = selection.encryption, selection.integrity
+		s.childNi, s.childNr = append([]byte(nil), s.Ni...), s.Nr()
+		s.childTSi, s.childTSr = selection.tsi, selection.tsr
 	}
 	return nil
+}
+
+type assignedInnerConfig struct {
+	ipv4       net.IP
+	ipv6       net.IP
+	ipv4Prefix int
+	dns        []net.IP
+}
+
+func (config assignedInnerConfig) ips() []net.IP {
+	var ips []net.IP
+	if config.ipv4 != nil {
+		ips = append(ips, config.ipv4)
+	}
+	if config.ipv6 != nil {
+		ips = append(ips, config.ipv6)
+	}
+	return ips
+}
+
+func parseAssignedInnerConfig(payloads []ikev2.Payload) (assignedInnerConfig, error) {
+	var result assignedInnerConfig
+	var cp *ikev2.EncryptedPayloadCP
+	for _, payload := range payloads {
+		if payload.Type() != ikev2.PayloadCP {
+			continue
+		}
+		value, ok := payload.(*ikev2.EncryptedPayloadCP)
+		if !ok || cp != nil || value.ConfigType != ikev2.CPTypeReply {
+			return result, errors.New("swu: invalid, duplicate, or non-reply CP payload")
+		}
+		cp = value
+	}
+	if cp == nil {
+		return result, nil
+	}
+	config := ikev2.ParseCPConfig(cp)
+	if raw, ok := config.Attrs[ikev2.CPAttrIP4Address]; ok {
+		if len(raw) != net.IPv4len {
+			return result, fmt.Errorf("swu: invalid assigned IPv4 length %d", len(raw))
+		}
+		result.ipv4 = append(net.IP(nil), raw...)
+		result.ipv4Prefix = ipv4PrefixFromCP(config)
+	}
+	if raw, ok := config.Attrs[ikev2.CPAttrIP6Address]; ok {
+		if len(raw) < net.IPv6len {
+			return result, fmt.Errorf("swu: invalid assigned IPv6 length %d", len(raw))
+		}
+		result.ipv6 = append(net.IP(nil), raw[:net.IPv6len]...)
+	}
+	result.dns = dnsServersFromCP(config)
+	return result, nil
 }
 
 func ipv4PrefixFromCP(cfg *ikev2.CPConfig) int {

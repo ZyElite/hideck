@@ -156,6 +156,8 @@ type Session struct {
 	espRemoteSPI  uint32
 	childNi       []byte
 	childNr       []byte
+	childTSi      *ikev2.EncryptedPayloadTS
+	childTSr      *ikev2.EncryptedPayloadTS
 	espCipher     uint16
 	espInteg      uint16
 	espKey        []byte

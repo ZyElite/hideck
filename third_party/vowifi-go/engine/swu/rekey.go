@@ -1,6 +1,7 @@
 package swu
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -140,15 +141,33 @@ func (s *Session) dispatchCreateChildSA(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	remoteSPI, nr, err := childSAResponseParameters(payloads)
+	offer := childSAOffer{
+		encryption: s.espCipher, integrity: s.espInteg,
+		tsi: tsi, tsr: tsr, localIPs: configuredInnerIPs(s),
+		requireSA: true, requireNonce: true,
+	}
+	selection, err := validateChildSAResponse(payloads, offer)
 	if err != nil {
 		return err
 	}
 	s.espLocalSPI = localSPI
-	s.espRemoteSPI = remoteSPI
+	s.espRemoteSPI = selection.remoteSPI
+	s.espCipher, s.espInteg = selection.encryption, selection.integrity
 	s.childNi = append([]byte{}, ni...)
-	s.childNr = nr
+	s.childNr = append([]byte(nil), selection.nonce...)
+	s.childTSi, s.childTSr = selection.tsi, selection.tsr
 	return nil
+}
+
+func configuredInnerIPs(session *Session) []net.IP {
+	var ips []net.IP
+	if session.innerIP != nil {
+		ips = append(ips, append(net.IP(nil), session.innerIP...))
+	}
+	if session.innerIPv6 != nil {
+		ips = append(ips, append(net.IP(nil), session.innerIPv6...))
+	}
+	return ips
 }
 
 func randomChildSPI() (uint32, error) {
@@ -162,31 +181,6 @@ func randomChildSPI() (uint32, error) {
 		}
 	}
 	return 0, errors.New("generate CHILD_SA SPI: random source returned zero")
-}
-
-func childSAResponseParameters(payloads []ikev2.Payload) (uint32, []byte, error) {
-	var remoteSPI uint32
-	var nonce []byte
-	for _, payload := range payloads {
-		switch payload.Type() {
-		case ikev2.PayloadSA:
-			sa, ok := payload.(*ikev2.EncryptedPayloadSA)
-			if ok && len(sa.Proposals) > 0 && len(sa.Proposals[0].SPI) == 4 {
-				remoteSPI = binary.BigEndian.Uint32(sa.Proposals[0].SPI)
-			}
-		case ikev2.PayloadNi:
-			if raw, ok := payload.(*ikev2.RawPayload); ok {
-				nonce = append([]byte{}, raw.Data...)
-			}
-		}
-	}
-	if remoteSPI == 0 {
-		return 0, nil, errors.New("swu: CREATE_CHILD_SA response missing responder SPI")
-	}
-	if len(nonce) == 0 {
-		return 0, nil, errors.New("swu: CREATE_CHILD_SA response missing nonce")
-	}
-	return remoteSPI, nonce, nil
 }
 
 // UpdateAddresses handles a MOBIKE address update (RFC 4555): it records the
@@ -492,20 +486,82 @@ func extractDstTuple(inner []byte) (net.IP, uint16, error) {
 	}
 }
 
-// matchSelectors reports whether an inner packet matches the traffic selectors.
+// matchSelectors reports whether an outbound inner packet matches the
+// negotiated initiator/responder traffic selectors.
 func matchSelectors(inner []byte, tsi, tsr *ikev2.EncryptedPayloadTS) bool {
-	dst, _, err := extractDstTuple(inner)
+	flow, err := parseInnerPacketFlow(inner)
 	if err != nil {
 		return false
 	}
-	if tsr == nil || len(tsr.Selectors) == 0 {
+	return selectorPayloadMatches(tsi, flow.sourceIP, flow.protocol, flow.sourcePort) &&
+		selectorPayloadMatches(tsr, flow.destinationIP, flow.protocol, flow.destinationPort)
+}
+
+func matchInboundSelectors(inner []byte, tsi, tsr *ikev2.EncryptedPayloadTS) bool {
+	flow, err := parseInnerPacketFlow(inner)
+	if err != nil {
+		return false
+	}
+	return selectorPayloadMatches(tsr, flow.sourceIP, flow.protocol, flow.sourcePort) &&
+		selectorPayloadMatches(tsi, flow.destinationIP, flow.protocol, flow.destinationPort)
+}
+
+type innerPacketFlow struct {
+	sourceIP, destinationIP     net.IP
+	protocol                    byte
+	sourcePort, destinationPort uint16
+}
+
+func parseInnerPacketFlow(inner []byte) (innerPacketFlow, error) {
+	var flow innerPacketFlow
+	if len(inner) < 1 {
+		return flow, errors.New("swu: empty inner packet")
+	}
+	headerLength := 0
+	switch inner[0] >> 4 {
+	case 4:
+		if len(inner) < 20 {
+			return flow, errors.New("swu: inner IPv4 packet too short")
+		}
+		headerLength = int(inner[0]&0x0f) * 4
+		if headerLength < 20 || len(inner) < headerLength {
+			return flow, errors.New("swu: invalid inner IPv4 header length")
+		}
+		flow.sourceIP, flow.destinationIP = net.IP(inner[12:16]), net.IP(inner[16:20])
+		flow.protocol = inner[9]
+	case 6:
+		if len(inner) < 40 {
+			return flow, errors.New("swu: inner IPv6 packet too short")
+		}
+		headerLength = 40
+		flow.sourceIP, flow.destinationIP = net.IP(inner[8:24]), net.IP(inner[24:40])
+		flow.protocol = inner[6]
+	default:
+		return flow, fmt.Errorf("swu: unsupported inner IP version %d", inner[0]>>4)
+	}
+	if (flow.protocol == 6 || flow.protocol == 17) && len(inner) >= headerLength+4 {
+		flow.sourcePort = binary.BigEndian.Uint16(inner[headerLength : headerLength+2])
+		flow.destinationPort = binary.BigEndian.Uint16(inner[headerLength+2 : headerLength+4])
+	}
+	return flow, nil
+}
+
+func selectorPayloadMatches(payload *ikev2.EncryptedPayloadTS, ip net.IP, protocol byte, port uint16) bool {
+	if payload == nil {
 		return true
 	}
-	for _, sel := range tsr.Selectors {
-		if sel.Type == ikev2.TSIPv4Range && dst.To4() != nil {
-			return true
+	for _, selector := range payload.Selectors {
+		address := ip.To16()
+		if selector.Type == ikev2.TSIPv4Range {
+			address = ip.To4()
 		}
-		if sel.Type == ikev2.TSIPv6Range && dst.To4() == nil {
+		if len(address) != len(selector.StartAddr) || (selector.ProtocolID != 0 && selector.ProtocolID != protocol) {
+			continue
+		}
+		if port < selector.StartPort || port > selector.EndPort {
+			continue
+		}
+		if bytes.Compare(address, selector.StartAddr) >= 0 && bytes.Compare(address, selector.EndAddr) <= 0 {
 			return true
 		}
 	}

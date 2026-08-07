@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"net"
+	"strings"
 	"testing"
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
@@ -80,4 +81,139 @@ func TestDataPlaneUsesIndependentInboundAndOutboundSPI(t *testing.T) {
 	if !bytes.Equal(decoded, inner) {
 		t.Fatal("inbound ESP plaintext mismatch")
 	}
+}
+
+func TestValidateChildSAResponseAcceptsExactProposalAndNarrowing(t *testing.T) {
+	innerIP := net.IPv4(10, 0, 0, 2)
+	offer := testChildSAOffer(innerIP)
+	payloads := validChildSAResponsePayloads(innerIP)
+	selection, err := validateChildSAResponse(payloads, offer)
+	if err != nil {
+		t.Fatalf("validateChildSAResponse: %v", err)
+	}
+	if selection.remoteSPI != 0x55667788 || selection.encryption != enginecrypto.EncrAESCBC || selection.integrity != 2 ||
+		len(selection.nonce) != 32 {
+		t.Fatalf("selection = %+v", selection)
+	}
+	selectedTSr := payloads[3].(*ikev2.EncryptedPayloadTS)
+	selectedTSr.Selectors[0].StartAddr[3] = 99
+	if selection.tsr.Selectors[0].StartAddr[3] != 1 {
+		t.Fatal("selection retained mutable response selector storage")
+	}
+}
+
+func TestValidateChildSAResponseRejectsInvalidSelections(t *testing.T) {
+	innerIP := net.IPv4(10, 0, 0, 2)
+	tests := map[string]struct {
+		mutate func([]ikev2.Payload)
+		want   string
+	}{
+		"protocol": {
+			mutate: func(payloads []ikev2.Payload) { childProposal(payloads).ProtocolID = ikev2.ProtoIKE },
+			want:   "invalid ESP proposal",
+		},
+		"algorithm": {
+			mutate: func(payloads []ikev2.Payload) {
+				childProposal(payloads).Transforms[0].TransformID = enginecrypto.EncrAESGCM16
+			},
+			want: "encryption selection",
+		},
+		"key length": {
+			mutate: func(payloads []ikev2.Payload) { childProposal(payloads).Transforms[0].Attributes[0].Value = 256 },
+			want:   "128-bit KEY_LENGTH",
+		},
+		"TSi excludes local": {
+			mutate: func(payloads []ikev2.Payload) {
+				payloads[2].(*ikev2.EncryptedPayloadTS).Selectors[0] = ikev2.NewTrafficSelectorIPV4(net.IPv4(10, 0, 0, 3), 0, 0, 0xffff)
+			},
+			want: "TSi is not a legal narrowing",
+		},
+		"TSr outside offer": {
+			mutate: func(payloads []ikev2.Payload) {
+				payloads[3].(*ikev2.EncryptedPayloadTS).Selectors[0] = ikev2.NewTrafficSelectorIPV4(net.IPv4(198, 51, 100, 1), 0, 0, 0xffff)
+			},
+			want: "TSr is not a legal narrowing",
+		},
+		"nonce missing": {
+			mutate: func(payloads []ikev2.Payload) { payloads[1] = &ikev2.EncryptedPayloadNonce{} },
+			want:   "missing nonce",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			payloads := validChildSAResponsePayloads(innerIP)
+			test.mutate(payloads)
+			_, err := validateChildSAResponse(payloads, testChildSAOffer(innerIP))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestNegotiatedSelectorsConstrainDataPlane(t *testing.T) {
+	innerIP := net.IPv4(10, 0, 0, 2)
+	selection, err := validateChildSAResponse(validChildSAResponsePayloads(innerIP), testChildSAOffer(innerIP))
+	if err != nil {
+		t.Fatalf("validateChildSAResponse: %v", err)
+	}
+	session := NewSession(&Config{})
+	session.espOutboundSA = ipsec.NewSecurityAssociation(0x55667788, enginecrypto.EncrAESGCM16, bytes.Repeat([]byte{0x33}, 20), 0)
+	session.childTSi, session.childTSr = selection.tsi, selection.tsr
+	allowed := testIPv4Flow(innerIP, net.IPv4(192, 0, 2, 1))
+	if _, err := session.encapsulateInnerPacket(allowed); err != nil {
+		t.Fatalf("allowed packet: %v", err)
+	}
+	denied := testIPv4Flow(innerIP, net.IPv4(192, 0, 2, 2))
+	if _, err := session.encapsulateInnerPacket(denied); err == nil || !strings.Contains(err.Error(), "outside negotiated") {
+		t.Fatalf("denied packet error = %v", err)
+	}
+}
+
+func testChildSAOffer(innerIP net.IP) childSAOffer {
+	return childSAOffer{
+		encryption: enginecrypto.EncrAESCBC,
+		integrity:  2,
+		tsi: &ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSi, Selectors: []*ikev2.TrafficSelector{
+			ikev2.NewTrafficSelectorIPV4(innerIP, 0, 0, 0xffff),
+		}},
+		tsr: &ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSr, Selectors: []*ikev2.TrafficSelector{
+			ikev2.NewTrafficSelectorIPV4Range(net.IPv4(192, 0, 2, 0), net.IPv4(192, 0, 2, 255), 0, 0, 0xffff),
+		}},
+		localIPs: []net.IP{innerIP}, requireSA: true, requireNonce: true,
+	}
+}
+
+func validChildSAResponsePayloads(innerIP net.IP) []ikev2.Payload {
+	proposal := &ikev2.Proposal{
+		ProposalNum: 1, ProtocolID: ikev2.ProtoESP, SPISize: 4, NumTransforms: 3,
+		SPI: []byte{0x55, 0x66, 0x77, 0x88},
+		Transforms: []*ikev2.Transform{
+			{TransformType: ikev2.TypeEncryption, TransformID: enginecrypto.EncrAESCBC, Attributes: []*ikev2.TransformAttribute{{Type: 14, Value: 128}}},
+			{TransformType: ikev2.TypeIntegrity, TransformID: 2},
+			{TransformType: ikev2.TypeESN, TransformID: 0},
+		},
+	}
+	return []ikev2.Payload{
+		&ikev2.EncryptedPayloadSA{Proposals: []*ikev2.Proposal{proposal}},
+		&ikev2.EncryptedPayloadNonce{Data: bytes.Repeat([]byte{0x44}, 32)},
+		&ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSi, Selectors: []*ikev2.TrafficSelector{
+			ikev2.NewTrafficSelectorIPV4(innerIP, 0, 0, 0xffff),
+		}},
+		&ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSr, Selectors: []*ikev2.TrafficSelector{
+			ikev2.NewTrafficSelectorIPV4(net.IPv4(192, 0, 2, 1), 0, 0, 0xffff),
+		}},
+	}
+}
+
+func childProposal(payloads []ikev2.Payload) *ikev2.Proposal {
+	return payloads[0].(*ikev2.EncryptedPayloadSA).Proposals[0]
+}
+
+func testIPv4Flow(source, destination net.IP) []byte {
+	packet := make([]byte, 20)
+	packet[0], packet[9] = 0x45, 1
+	copy(packet[12:16], source.To4())
+	copy(packet[16:20], destination.To4())
+	return packet
 }

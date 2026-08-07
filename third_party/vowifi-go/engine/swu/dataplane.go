@@ -301,6 +301,9 @@ func (s *Session) encapsulateInnerPacket(inner []byte) ([]byte, error) {
 	if s.espOutboundSA == nil {
 		return nil, errors.New("swu: no ESP SA")
 	}
+	if !matchSelectors(inner, s.childTSi, s.childTSr) {
+		return nil, errors.New("swu: outbound inner packet is outside negotiated traffic selectors")
+	}
 	return ipsec.Encapsulate(inner, nil, s.espOutboundSA)
 }
 
@@ -318,7 +321,14 @@ func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, error) {
 	if s.espInboundSA == nil {
 		return nil, errors.New("swu: no ESP SA")
 	}
-	return ipsec.Decapsulate(esp, nil, s.espInboundSA)
+	inner, err := ipsec.Decapsulate(esp, nil, s.espInboundSA)
+	if err != nil {
+		return nil, err
+	}
+	if !matchInboundSelectors(inner, s.childTSi, s.childTSr) {
+		return nil, errors.New("swu: inbound inner packet is outside negotiated traffic selectors")
+	}
+	return inner, nil
 }
 
 // handleOuterESP processes an inbound ESP packet (alias for decapsulateOuterESP).
