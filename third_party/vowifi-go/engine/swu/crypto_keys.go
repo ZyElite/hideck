@@ -23,53 +23,34 @@ func (s *Session) encryptAndWrapWithMsgID(pkt *ikev2.IKEPacket, msgID uint32) ([
 	if s.ikeKeys == nil {
 		return nil, errors.New("swu: no IKE SA keys")
 	}
-	plain := ikev2.EncodePayloadChain(pkt.Payloads)
-
-	encKey := s.ikeKeys.SK_ei
-	integKey := s.ikeKeys.SK_ai
-	if pkt.Flags&0x20 != 0 { // responder
-		encKey = s.ikeKeys.SK_er
-		integKey = s.ikeKeys.SK_ar
-	}
-
+	encKey, integKey := s.ikeProtectionKeys(pkt.Flags&ikeResponseFlag != 0)
 	cipher, err := crypto.PrepareCipher(s.encrAlg, encKey)
 	if err != nil {
 		return nil, fmt.Errorf("prepare cipher: %w", err)
 	}
-
-	// Encrypt: for CBC a random IV is prepended; for AEAD the salt is part of
-	// the key and the IV is carried in the packet.
+	plain := padIKEPlaintext(ikev2.EncodePayloadChain(pkt.Payloads), cipher.BlockSize())
 	iv := make([]byte, cipher.IVSize())
 	if _, err := rand.Read(iv); err != nil {
 		return nil, fmt.Errorf("generate IV: %w", err)
 	}
+	firstPayload := firstIKEPayloadType(pkt.Payloads)
+	if s.aead {
+		return s.encryptAEADIKE(pkt, msgID, firstPayload, plain, iv, cipher)
+	}
 	encrypted := cipher.Seal(nil, plain, iv, nil)
-
-	// Integrity over the encrypted payload (RFC 7296 §3.2: the checksum covers
-	// the Encrypted payload header + encrypted data).
+	if len(encrypted) == 0 && len(plain) > 0 {
+		return nil, errors.New("encrypt IKE message: cipher returned no data")
+	}
 	integ := crypto.NewIntegrity(s.integAlg)
 	if integ == nil {
 		return nil, errors.New("swu: no integrity algorithm")
 	}
-	checksum := integ.Compute(integKey, encrypted)
-
-	// The Encrypted payload body is: IV | encrypted | checksum.
 	body := append(append([]byte{}, iv...), encrypted...)
-	body = append(body, checksum...)
-
-	// Rebuild the packet with the Encrypted payload and encode.
-	out := &ikev2.IKEPacket{
-		InitiatorSPI: pkt.InitiatorSPI,
-		ResponderSPI: pkt.ResponderSPI,
-		Version:      pkt.Version,
-		ExchangeType: pkt.ExchangeType,
-		Flags:        pkt.Flags,
-		MessageID:    msgID,
-		Payloads: []ikev2.Payload{
-			ikev2.NewRawPayload(ikev2.PayloadEncrypted, body),
-		},
-	}
-	return out.Encode(), nil
+	body = append(body, make([]byte, integ.OutputSize())...)
+	raw := protectedIKEPacket(pkt, msgID, firstPayload, body).Encode()
+	checksum := integ.Compute(integKey, raw[:len(raw)-integ.OutputSize()])
+	copy(raw[len(raw)-len(checksum):], checksum)
+	return raw, nil
 }
 
 // decryptAndParse decrypts and parses an incoming IKE message. The packet must
@@ -81,21 +62,17 @@ func (s *Session) decryptAndParse(pkt *ikev2.IKEPacket) ([]ikev2.Payload, error)
 	if len(pkt.Payloads) != 1 {
 		return nil, errors.New("swu: expected a single Encrypted payload")
 	}
-	enc, ok := pkt.Payloads[0].(*ikev2.RawPayload)
-	if !ok || enc.Type() != ikev2.PayloadEncrypted {
+	enc, ok := pkt.Payloads[0].(*ikev2.EncryptedPayloadSK)
+	if !ok {
 		return nil, errors.New("swu: payload is not Encrypted")
 	}
-
-	encKey := s.ikeKeys.SK_er
-	integKey := s.ikeKeys.SK_ar
-	if pkt.Flags&0x20 != 0 { // responder
-		encKey = s.ikeKeys.SK_ei
-		integKey = s.ikeKeys.SK_ai
-	}
-
+	encKey, integKey := s.ikeProtectionKeys(pkt.Flags&ikeResponseFlag != 0)
 	cipher, err := crypto.PrepareCipher(s.encrAlg, encKey)
 	if err != nil {
 		return nil, fmt.Errorf("prepare cipher: %w", err)
+	}
+	if s.aead {
+		return s.decryptAEADIKE(pkt, enc, cipher)
 	}
 	integ := crypto.NewIntegrity(s.integAlg)
 	if integ == nil {
@@ -112,15 +89,20 @@ func (s *Session) decryptAndParse(pkt *ikev2.IKEPacket) ([]ikev2.Payload, error)
 	checksum := enc.Data[len(enc.Data)-integSize:]
 
 	// Verify integrity.
-	if !integ.Verify(integKey, enc.Data[:len(enc.Data)-integSize], checksum) {
+	raw := pkt.Encode()
+	if !integ.Verify(integKey, raw[:len(raw)-integSize], checksum) {
 		return nil, errors.New("swu: IKE message integrity check failed")
 	}
 
-	plain, err := cipher.Open(nil, ct, iv, nil)
+	padded, err := cipher.Open(nil, ct, iv, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt IKE message: %w", err)
 	}
-	return ikev2.DecodePayloadChain(plain)
+	plain, err := unpadIKEPlaintext(padded)
+	if err != nil {
+		return nil, err
+	}
+	return ikev2.DecodePayloadChainWithFirst(enc.NextPayload, plain)
 }
 
 // decryptSKF decrypts a stored SKF (encrypted IKE_AUTH response) body.
@@ -164,7 +146,7 @@ func (s *Session) buildSKFPacket(pkt *ikev2.IKEPacket, body []byte) *ikev2.IKEPa
 		Flags:        pkt.Flags,
 		MessageID:    pkt.MessageID,
 		Payloads: []ikev2.Payload{
-			ikev2.NewRawPayload(ikev2.PayloadEncrypted, body),
+			ikev2.NewEncryptedPayloadSK(ikev2.PayloadNoNext, body),
 		},
 	}
 }

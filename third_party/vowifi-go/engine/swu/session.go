@@ -51,6 +51,9 @@ type Config struct {
 	ReauthSeconds     time.Duration
 	NATKeepaliveEvery time.Duration
 	DPDProbeEvery     time.Duration
+	// Retransmit controls IKE request retries. Nil selects the recovered
+	// RFC 7296 policy used by TaskManager.
+	Retransmit *RetransmitConfig
 	// Wireshark enables the pcap-like traffic logger.
 	Wireshark bool
 	// OnRedirect is invoked when the ePDG redirects the session (RFC 5685).
@@ -166,6 +169,9 @@ type Session struct {
 	lastPingAt       time.Time
 	lastDPDAt        time.Time
 	rekeyResetCh     chan struct{}
+	lastIKERequest   []byte
+	lastIKEMessageID uint32
+	nextOutboundID   uint32
 
 	// --- timers ---
 	ikeReauthTimer  *time.Timer
@@ -185,14 +191,15 @@ func NewSession(cfg *Config) *Session {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		cfg:          cfg,
-		ctx:          ctx,
-		cancel:       cancel,
-		done:         make(chan struct{}),
-		state:        stateIdle,
-		startedAt:    time.Now(),
-		rekeyResetCh: make(chan struct{}, 1),
-		nonceLen:     cfg.NonceLen,
+		cfg:            cfg,
+		ctx:            ctx,
+		cancel:         cancel,
+		done:           make(chan struct{}),
+		state:          stateIdle,
+		startedAt:      time.Now(),
+		rekeyResetCh:   make(chan struct{}, 1),
+		nonceLen:       cfg.NonceLen,
+		nextOutboundID: 1,
 	}
 	if s.nonceLen <= 0 {
 		s.nonceLen = 32
@@ -364,31 +371,6 @@ func (s *Session) runIKESAInit(ctx context.Context) error {
 		return err
 	}
 	return errors.New("swu: IKE_SA_INIT failed after retries")
-}
-
-// sendIKE writes an IKE packet to the transport.
-func (s *Session) sendIKE(raw []byte) error {
-	if s.socket == nil {
-		return errors.New("swu: no IKE transport")
-	}
-	s.socket.SendIKE(raw)
-	return nil
-}
-
-// receiveIKE reads the next IKE packet from the transport.
-func (s *Session) receiveIKE(ctx context.Context) (*ikev2.IKEPacket, error) {
-	if s.socket == nil {
-		return nil, errors.New("swu: no IKE transport")
-	}
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case raw, ok := <-s.socket.IKEPackets():
-		if !ok {
-			return nil, errors.New("swu: IKE transport closed")
-		}
-		return ikev2.DecodePacket(raw)
-	}
 }
 
 // buildTransport resolves the ePDG and opens the IKE/ESP socket.
@@ -698,13 +680,14 @@ func (s *Session) DPDProbe() error {
 	return s.sendIKE(raw)
 }
 
-// nextMessageID returns the next IKE message ID (monotonic).
+// nextMessageID returns the next initiator request ID. IKE_SA_INIT uses zero;
+// subsequent exchanges start at one and increase monotonically (RFC 7296).
 func (s *Session) nextMessageID() uint32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// The TaskManager owns message IDs in production; a simple counter is used
-	// for the standalone DPD / rekey paths.
-	return uint32(time.Now().UnixNano() & 0xffffffff)
+	id := s.nextOutboundID
+	s.nextOutboundID++
+	return id
 }
 
 // logSessionStats logs data-plane counters (no-op without a debugger).

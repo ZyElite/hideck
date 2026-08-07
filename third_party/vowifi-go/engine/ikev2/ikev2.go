@@ -40,8 +40,8 @@ const (
 	PayloadTS        byte = 44
 	PayloadTSi       byte = 44
 	PayloadTSr       byte = 45
-	PayloadCP        byte = 46
 	PayloadEncrypted byte = 46
+	PayloadCP        byte = 47
 	PayloadEAP       byte = 48
 )
 
@@ -163,13 +163,28 @@ func EncodePayloadChain(payloads []Payload) []byte {
 
 // DecodePayloadChain parses a payload chain from an encrypted IKE message body.
 func DecodePayloadChain(b []byte) ([]Payload, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	return DecodePayloadChainWithFirst(b[0], b)
+}
+
+// DecodePayloadChainWithFirst parses an encrypted inner payload chain. The
+// first payload type is carried by the outer SK header, not by the plaintext.
+func DecodePayloadChainWithFirst(first byte, b []byte) ([]Payload, error) {
 	var out []Payload
+	next := first
 	for len(b) > 0 {
-		pl, n, err := decodePayload(b, b[0])
+		pl, n, err := decodePayload(b, next)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, pl)
+		header, err := decodeHeader(b)
+		if err != nil {
+			return nil, err
+		}
+		next = header.NextPayload
 		b = b[n:]
 	}
 	return out, nil

@@ -113,7 +113,7 @@ func (s *Session) dispatchCreateChildSA(ctx context.Context) error {
 		Version:      0x20,
 		ExchangeType: ikev2.ExchangeCreateChildSA,
 		Flags:        0x08,
-		MessageID:    2,
+		MessageID:    s.nextMessageID(),
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadSA{Proposals: espProposals},
 			&ikev2.EncryptedPayloadNonce{Data: ni},

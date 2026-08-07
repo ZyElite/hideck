@@ -25,6 +25,26 @@ func (p *RawPayload) Encode(b []byte) []byte {
 	return p.encode(b, p.Data)
 }
 
+// EncryptedPayloadSK carries the protected payload bytes. Its NextPayload is
+// the type of the first encrypted inner payload (RFC 7296 section 3.14).
+type EncryptedPayloadSK struct {
+	NextPayload byte
+	Data        []byte
+}
+
+// NewEncryptedPayloadSK builds an SK payload without exposing payload header
+// internals to the SWu session package.
+func NewEncryptedPayloadSK(next byte, data []byte) *EncryptedPayloadSK {
+	return &EncryptedPayloadSK{NextPayload: next, Data: data}
+}
+
+func (p *EncryptedPayloadSK) Type() byte { return PayloadEncrypted }
+
+func (p *EncryptedPayloadSK) Encode(b []byte) []byte {
+	b = encodeHeader(b, p.NextPayload, false, len(p.Data)+4)
+	return append(b, p.Data...)
+}
+
 // EncryptedPayloadSA is a Security Association payload containing proposals.
 type EncryptedPayloadSA struct {
 	payload
@@ -105,10 +125,10 @@ func (p *EncryptedPayloadID) Encode(b []byte) []byte {
 
 // Authentication method types (RFC 7296 §3.3.3).
 const (
-	AuthMethodRSA  byte = 1 // RSA digital signature
-	AuthMethodPSK  byte = 2 // pre-shared key
-	AuthMethodDSS  byte = 3 // DSS digital signature
-	AuthMethodEAP  byte = 14 // EAP
+	AuthMethodRSA byte = 1  // RSA digital signature
+	AuthMethodPSK byte = 2  // pre-shared key
+	AuthMethodDSS byte = 3  // DSS digital signature
+	AuthMethodEAP byte = 14 // EAP
 )
 
 // EncryptedPayloadAuth is an Authentication payload.
@@ -301,6 +321,8 @@ func decodePayload(b []byte, typ byte) (Payload, int, error) {
 
 	var pl Payload
 	switch typ {
+	case PayloadEncrypted:
+		pl = &EncryptedPayloadSK{NextPayload: hdr.NextPayload, Data: append([]byte{}, body...)}
 	case PayloadSA:
 		pl, err = DecodePayloadSA(body)
 	case PayloadTS:

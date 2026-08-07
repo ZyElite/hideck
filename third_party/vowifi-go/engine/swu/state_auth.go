@@ -224,7 +224,7 @@ func (s *Session) sendIKEAuthRequest(payloads []ikev2.Payload) error {
 		Version:      0x20,
 		ExchangeType: ikev2.ExchangeIKEAuth,
 		Flags:        0x08,
-		MessageID:    1,
+		MessageID:    s.nextMessageID(),
 		Payloads:     payloads,
 	}
 	raw, err := s.encryptAndWrap(pkt)
@@ -298,21 +298,42 @@ func (s *Session) executeIKEAuthDecision(resp *ikev2.IKEPacket) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	return applyEAPHandlingResult(payloads)
+	return s.applyEAPHandlingResult(payloads)
 }
 
 // applyEAPHandlingResult processes the decrypted IKE_AUTH response payloads and
 // returns the next decision.
-func applyEAPHandlingResult(payloads []ikev2.Payload) (string, error) {
+func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, error) {
 	for _, pl := range payloads {
 		switch pl.Type() {
 		case ikev2.PayloadEAP:
+			eapData, ok := ikeEAPData(pl)
+			if !ok {
+				return "", errors.New("swu: invalid EAP payload")
+			}
+			if err := s.handleEAP(eapData); err != nil {
+				return "", err
+			}
+			if s.stage == stageFinal {
+				return "final", nil
+			}
 			return "eap", nil
 		case ikev2.PayloadAuth:
 			return "done", nil
 		}
 	}
 	return "", errors.New("swu: IKE_AUTH response has no EAP or AUTH payload")
+}
+
+func ikeEAPData(payload ikev2.Payload) ([]byte, bool) {
+	switch value := payload.(type) {
+	case *ikev2.EncryptedPayloadEAP:
+		return value.Data, true
+	case *ikev2.RawPayload:
+		return value.Data, true
+	default:
+		return nil, false
+	}
 }
 
 // handleEAP processes an EAP packet from the IKE_AUTH response and sends the
