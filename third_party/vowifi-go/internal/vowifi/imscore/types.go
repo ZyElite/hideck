@@ -57,6 +57,8 @@ type IMSConfig struct {
 	IPSec3GPPEnabled bool
 	// TraceID is the session trace ID.
 	TraceID string
+	// UserAgent is the SIP User-Agent header value.
+	UserAgent string
 }
 
 // AKAProvider computes AKA from the network challenge.

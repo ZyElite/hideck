@@ -44,5 +44,11 @@
     "unplugin-vue-components": "^31.0.0",
     "vite": "^8.1.3",
     "vue-tsc": "^2.2.12"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "@parcel/watcher@2.5.6": true,
+    "vue-demi@0.14.10": true,
+    "fsevents@2.3.3": true
   }
 }

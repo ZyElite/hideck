@@ -100,3 +100,17 @@ func fixedWidthColorLevelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEnco
 	}
 	enc.AppendString(text)
 }
+
+// AddCallerSkip returns a zap Option that adds the given number of caller
+// frames to skip (recovered from the binary's zap option chain).
+func AddCallerSkip(skip int) zap.Option { return zap.AddCallerSkip(skip) }
+
+// AddStacktrace returns a zap Option that enables stack traces at the given
+// level.
+func AddStacktrace(l zapcore.LevelEnabler) zap.Option { return zap.AddStacktrace(l) }
+
+// TimeEncoderOfLayout returns a zapcore.TimeEncoder using the given layout.
+func TimeEncoderOfLayout(layout string) zapcore.TimeEncoder { return zapcore.TimeEncoderOfLayout(layout) }
+
+// WithCaller returns a zap Option that enables or disables caller capture.
+func WithCaller(enabled bool) zap.Option { return zap.WithCaller(enabled) }

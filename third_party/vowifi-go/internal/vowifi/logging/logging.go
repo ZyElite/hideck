@@ -217,3 +217,9 @@ func dedupeNonEmpty(in []string) []string {
 	}
 	return out
 }
+
+// WithCaller returns a slog HandlerOption that adds the caller to log
+// records.
+func WithCaller(enabled bool) slog.HandlerOptions {
+	return slog.HandlerOptions{AddSource: enabled}
+}
