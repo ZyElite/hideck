@@ -189,8 +189,6 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 	} else {
 		logger.Info("VoWiFi 使用 APDU(AKA) 鉴权", "trace_id", traceID, "device", deviceID)
 	}
-	startCtx.SIM = runtimehost.NewReaderSIMAdapter(akaProvider)
-
 	if carrier.IsVoWiFiBlockedMCC(startProfile.MCC) {
 		err := carrier.NewVoWiFiBlockedMCCError(startProfile.MCC)
 		logger.Warn("VoWiFi 启动被运营商策略拦截",
@@ -219,6 +217,10 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		return startCtx, errPrepare
 	}
 	startCtx.Prepared = prepared
+	if preferred, ok := akaProvider.(innersim.AKAWithPreferenceProvider); ok {
+		akaProvider = innersim.WrapPreferredAKAProvider(preferred, string(prepared.IMSIdentity.AKAAppPreference))
+	}
+	startCtx.SIM = runtimehost.NewReaderSIMAdapter(akaProvider)
 	logger.Info("VoWiFi 启动画像已准备",
 		"trace_id", traceID,
 		"device", deviceID,

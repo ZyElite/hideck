@@ -102,11 +102,11 @@ func (d *ATAKAProvider) CalculateAKAWithPreference(rand16, autn16 []byte, prefer
 		pref = AKAAppPreferenceUSIM
 	}
 
-	if pref != AKAAppPreferenceAuto && pref != AKAAppPreferenceISIM && pref != AKAAppPreferenceISIMStrict {
+	if pref != AKAAppPreferenceAuto && pref != AKAAppPreferenceISIM && pref != AKAAppPreferenceISIMStrict && pref != AKAAppPreferenceUSIMStrict {
 		pref = AKAAppPreferenceUSIM
 	}
 
-	if pref == AKAAppPreferenceUSIM {
+	if pref == AKAAppPreferenceUSIM || pref == AKAAppPreferenceUSIMStrict {
 		res, err := d.calculateAKAOnUSIM(rand16, autn16)
 		if err != nil {
 			logger.Error("AKA 计算失败：USIM 模式失败", d.withDevice("err", err)...)

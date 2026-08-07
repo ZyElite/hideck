@@ -11,6 +11,7 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
+	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 )
 
 // Config carries the SWu session configuration recovered from the decompiled
@@ -55,17 +56,10 @@ type Config struct {
 }
 
 // AKAProvider computes AKA from the network challenge (RAND, AUTN).
-type AKAProvider interface {
-	CalculateAKA(rand16, autn16 []byte) (AKAResult, error)
-}
+type AKAProvider = enginesim.AKAProvider
 
 // AKAResult is the outcome of an AKA computation.
-type AKAResult struct {
-	RES  []byte
-	CK   []byte
-	IK   []byte
-	AUTS []byte
-}
+type AKAResult = enginesim.AKAResult
 
 // Session state strings (recovered from the decompiled status.go).
 const (

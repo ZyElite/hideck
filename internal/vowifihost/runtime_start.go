@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	swusim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/eventhost"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
@@ -15,25 +14,11 @@ import (
 
 type runtimeStartFunc func(context.Context, runtimehost.StartRequest) (*runtimehost.Instance, error)
 
-type missingSIMProvider struct{}
-
-func (m missingSIMProvider) GetIMSI() (string, error) {
-	return "", fmt.Errorf("missing SIM provider")
-}
-func (m missingSIMProvider) CalculateAKA(rand, autn []byte) (swusim.AKAResult, error) {
-	return swusim.AKAResult{}, fmt.Errorf("missing SIM provider")
-}
-func (m missingSIMProvider) Close() error { return nil }
-
-// buildVoWiFiSIMAdapter prefers an injected SIM adapter (e.g. MBIM Auth AKA for
-// modems without SIM logical-channel APDU); otherwise derives one from the
-// modem's APDU path (AT/QMI).
-func buildVoWiFiSIMAdapter(override runtimehost.SIMAdapter, modem runtimehost.Modem, imsi string) runtimehost.SIMAdapter {
-	if override != nil {
-		return override
+func buildVoWiFiSIMAdapter(override runtimehost.SIMAdapter) (runtimehost.SIMAdapter, error) {
+	if override == nil || override.AKAProvider() == nil {
+		return nil, fmt.Errorf("vowifi runtime start requires an injected SIM AKA provider")
 	}
-	// 所有后端的 AKA 现由 vohive 注入；缺失说明编排未设置，属调用错误。
-	return runtimehost.NewReaderSIMAdapter(missingSIMProvider{})
+	return override, nil
 }
 
 type RuntimeStartRequest struct {
@@ -90,6 +75,10 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 		networkMode = strings.TrimSpace(req.Prepared.NetworkMode)
 	}
 
+	simAdapter, err := buildVoWiFiSIMAdapter(req.Prepared.SIM)
+	if err != nil {
+		return RuntimeStartResult{}, err
+	}
 	inst, err := m.runtimeStarter()(ctx, runtimehost.StartRequest{
 		Mode:          runtimehost.StartModeMain,
 		DeviceID:      deviceID,
@@ -98,7 +87,7 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 		Prepared:      &prepared,
 		NetworkMode:   networkMode,
 		VoiceGateway:  req.VoiceGateway,
-		SIM:           buildVoWiFiSIMAdapter(req.Prepared.SIM, req.Modem, prepared.Profile.IMSI),
+		SIM:           simAdapter,
 		Access:        runtimehost.NewModemAccessAdapter(req.Modem),
 		Dataplane:     req.Dataplane,
 		Proxy:         req.Prepared.Proxy,

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/epdg"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/netstack"
@@ -32,13 +33,13 @@ func (e *ErrRedirect) Error() string {
 
 // RuntimeConfig is the input to PrepareSessionStart.
 type RuntimeConfig struct {
-	DeviceID       string
-	Profile        profile.Profile
-	EPDGOverride   string
-	IMSIdentity    profile.IMSIdentity
-	AKAApp         profile.AKAAppPreference
-	NetworkMode    string
-	Access         Access
+	DeviceID     string
+	Profile      profile.Profile
+	EPDGOverride string
+	IMSIdentity  profile.IMSIdentity
+	AKAApp       profile.AKAAppPreference
+	NetworkMode  string
+	Access       Access
 }
 
 // Access abstracts the SIM access surface.
@@ -57,17 +58,10 @@ type IdentityProvider interface {
 }
 
 // AKAProvider computes AKA from the network challenge.
-type AKAProvider interface {
-	CalculateAKA(rand16, autn16 []byte) (AKAResult, error)
-}
+type AKAProvider = enginesim.AKAProvider
 
 // AKAResult is the outcome of an AKA computation.
-type AKAResult struct {
-	RES  []byte
-	CK   []byte
-	IK   []byte
-	AUTS []byte
-}
+type AKAResult = enginesim.AKAResult
 
 // AccessCapabilities describes the access capabilities.
 type AccessCapabilities struct {
@@ -131,16 +125,20 @@ func preparedSessionWithRuntimeOverride(prepared *PreparedSessionStart, epdgOver
 }
 
 // BuildSWUConfig builds the SWu session config from the prepared session.
-func BuildSWUConfig(prepared *PreparedSessionStart) *swu.Config {
+func BuildSWUConfig(prepared *PreparedSessionStart, aka AKAProvider) (*swu.Config, error) {
 	if prepared == nil {
-		return &swu.Config{}
+		return nil, errors.New("runtimecore: nil prepared session")
+	}
+	if aka == nil {
+		return nil, errors.New("runtimecore: no SWu AKA provider")
 	}
 	return &swu.Config{
-		EPDGAddr: prepared.EPDGAddr,
-		IMSI:     prepared.Profile.IMSI,
-		MCC:      prepared.Profile.MCC,
-		MNC:      prepared.Profile.MNC,
-	}
+		EPDGAddr:    prepared.EPDGAddr,
+		IMSI:        prepared.Profile.IMSI,
+		MCC:         prepared.Profile.MCC,
+		MNC:         prepared.Profile.MNC,
+		AKAProvider: aka,
+	}, nil
 }
 
 // RunLoop runs the runtime loop until the context is cancelled.
@@ -214,9 +212,12 @@ func applyRedirectOverride(session *swu.Session, target string) {
 }
 
 // defaultSessionStarter returns the default session start function.
-func defaultSessionStarter(prepared *PreparedSessionStart) func(context.Context) (*swu.Session, error) {
+func defaultSessionStarter(prepared *PreparedSessionStart, aka AKAProvider) func(context.Context) (*swu.Session, error) {
 	return func(ctx context.Context) (*swu.Session, error) {
-		cfg := BuildSWUConfig(prepared)
+		cfg, err := BuildSWUConfig(prepared, aka)
+		if err != nil {
+			return nil, err
+		}
 		session := swu.NewSession(cfg)
 		return session, nil
 	}
@@ -285,8 +286,8 @@ func shouldRetryDeviceIdentity(err error) bool {
 
 // readerSIMAdapter adapts a SIM reader to the runtime surfaces.
 type readerSIMAdapter struct {
-	reader      LogicalReader
-	identity    profile.IMSIdentity
+	reader   LogicalReader
+	identity profile.IMSIdentity
 }
 
 // LogicalReader reads the ISIM identity.
@@ -379,10 +380,10 @@ func resolveIPSec3GPPInstaller() interface{} {
 
 // voiceLifecycleBinding binds the voice gateway to the IMS registration state.
 type voiceLifecycleBinding struct {
-	mu        sync.Mutex
-	attached  bool
-	onAttach  func()
-	notifier  *imsRegisteredNotifier
+	mu       sync.Mutex
+	attached bool
+	onAttach func()
+	notifier *imsRegisteredNotifier
 }
 
 // AttachIfReady attaches the voice binding once IMS registration is ready.
@@ -455,10 +456,10 @@ var _ = fmt.Sprintf
 
 // Runtime orchestrates a VoWiFi runtime instance.
 type Runtime struct {
-	cfg     RuntimeConfig
+	cfg      RuntimeConfig
 	prepared *PreparedSessionStart
-	mu      sync.Mutex
-	started bool
+	mu       sync.Mutex
+	started  bool
 }
 
 // NewRuntime creates a runtime from a config.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
@@ -321,10 +322,16 @@ func (a *simAdapter) runtimeSIMAdapter() SIMProvider {
 	return a.provider
 }
 
-// SIMProvider reads SIM identity data.
-type SIMProvider interface {
-	// (recovered as needed)
+// AKAProvider returns the injected production SIM AKA provider.
+func (a *simAdapter) AKAProvider() enginesim.AKAProvider {
+	if a == nil {
+		return nil
+	}
+	return a.provider
 }
+
+// SIMProvider computes AKA through the injected SIM implementation.
+type SIMProvider = enginesim.AKAProvider
 
 // apiErrorToInternal converts an API error to an internal error.
 func apiErrorToInternal(err error) error {

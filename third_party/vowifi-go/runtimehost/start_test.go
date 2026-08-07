@@ -19,7 +19,12 @@ func (stubAccess) IMSIdentityProvider() identity.IMSIdentityProvider {
 type stubProvider struct{}
 
 func (stubProvider) GetISIMIdentity() (identity.Identity, error) {
-	return identity.Identity{IMSI: "310260123456789"}, nil
+	return identity.Identity{
+		IMSI:   "310260123456789",
+		IMPI:   "310260123456789@ims.mnc026.mcc310.3gppnetwork.org",
+		IMPU:   []string{"sip:310260123456789@ims.mnc026.mcc310.3gppnetwork.org"},
+		Domain: "ims.mnc026.mcc310.3gppnetwork.org",
+	}, nil
 }
 
 func TestStart(t *testing.T) {

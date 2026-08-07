@@ -14,7 +14,7 @@ type PreparedStart struct {
 	Profile      identity.Profile
 	Prepared     identity.PreparedSession
 	Modem        runtimehost.Modem
-	SIM          runtimehost.SIMAdapter // optional override; when nil, derived from Modem APDU
+	SIM          runtimehost.SIMAdapter // required production AKA provider
 	Proxy        *runtimehost.ProxyConfig
 	NetworkMode  string
 	StartupState runtimehost.State

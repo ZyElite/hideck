@@ -1,22 +1,26 @@
 package vowifihost
 
 import (
+	"errors"
 	"testing"
 
 	swusim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 )
 
-var _ swusim.AKAProvider = missingSIMProvider{}
+type simProviderStub struct{}
+
+func (simProviderStub) CalculateAKA(rand16, autn16 []byte) (swusim.AKAResult, error) {
+	return swusim.AKAResult{}, errors.New("test challenge")
+}
 
 func TestBuildVoWiFiSIMAdapterPrefersOverride(t *testing.T) {
-	override := runtimehost.NewReaderSIMAdapter(missingSIMProvider{})
-	got := buildVoWiFiSIMAdapter(override, nil, "222")
-	if got == nil {
+	override := runtimehost.NewReaderSIMAdapter(simProviderStub{})
+	got, err := buildVoWiFiSIMAdapter(override)
+	if err != nil || got != override {
 		t.Fatal("override 应被返回")
 	}
-	fallback := buildVoWiFiSIMAdapter(nil, nil, "333")
-	if fallback == nil {
-		t.Fatal("回退适配器不应为 nil")
+	if _, err := buildVoWiFiSIMAdapter(nil); err == nil {
+		t.Fatal("缺失 AKA provider 应在启动边界返回错误")
 	}
 }

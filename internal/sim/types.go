@@ -8,6 +8,7 @@ import (
 
 const (
 	AKAAppPreferenceUSIM       = "usim"        // 优先使用 USIM 卡进行认证
+	AKAAppPreferenceUSIMStrict = "usim_strict" // 强制且仅能使用 USIM 卡进行认证
 	AKAAppPreferenceAuto       = "auto"        // 自动选择（ISIM 优先，回退 USIM）
 	AKAAppPreferenceISIM       = "isim"        // 优先使用 ISIM 卡进行认证
 	AKAAppPreferenceISIMStrict = "isim_strict" // 强制且仅能使用 ISIM 卡进行认证

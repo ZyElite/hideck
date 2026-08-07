@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
@@ -136,7 +137,7 @@ type Identity struct {
 
 // SIMAdapter is the SIM access surface.
 type SIMAdapter interface {
-	// (recovered as needed)
+	AKAProvider() enginesim.AKAProvider
 }
 
 // ProxyConfig configures the ePDG proxy path.

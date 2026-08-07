@@ -140,6 +140,25 @@ func TestATAKAProviderUSIMUsesResolvedFullAID(t *testing.T) {
 	}
 }
 
+func TestATAKAProviderUSIMStrictUsesOnlyUSIM(t *testing.T) {
+	modem := &akaProviderModemFake{
+		resolvedAID:   "A0000000871002FF49FF0189",
+		resolveSource: "qmi_card_status",
+		logicalResponses: []string{
+			"DB02112210000102030405060708090A0B0C0D0E0F1000101112131415161718191A1B1C1D1E1F9000",
+		},
+	}
+	provider := NewATAKAProvider(modem)
+
+	if _, err := provider.CalculateAKAWithPreference(bytes16(0x10), bytes16(0x20), AKAAppPreferenceUSIMStrict); err != nil {
+		t.Fatalf("CalculateAKAWithPreference() error = %v", err)
+	}
+	profile := provider.LastAKAProfile()
+	if profile.SelectedApp != "USIM" || profile.Preference != AKAAppPreferenceUSIMStrict || profile.Fallback {
+		t.Fatalf("AKA profile = %+v, want strict USIM", profile)
+	}
+}
+
 func TestATAKAProviderUSIMOpenFailureDoesNotTryStaticFallbackAID(t *testing.T) {
 	modem := &akaProviderModemFake{
 		resolvedAID:   "A0000000871002FF44FF128900000100",
