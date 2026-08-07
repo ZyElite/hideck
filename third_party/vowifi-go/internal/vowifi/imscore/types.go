@@ -199,6 +199,9 @@ type Service struct {
 	externalTransport   bool
 	protectedConnMu     sync.Mutex
 	protectedConns      map[net.Conn]struct{}
+	sipWriteMu          sync.Mutex
+	receiverMu          sync.Mutex
+	activeReceivers     int
 	networkDone         sync.WaitGroup
 	refreshTimer        *time.Timer
 	registerErrors      chan error

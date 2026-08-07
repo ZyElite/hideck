@@ -157,9 +157,9 @@ func (s *Service) Subscribe(uri string) error {
 	return s.sendSIP(req)
 }
 
-// SMSReceiverTransport returns the SMS receiver transport (nil for UDP).
+// SMSReceiverTransport returns a snapshot of the real SIP receiver.
 func (s *Service) SMSReceiverTransport() interface{} {
-	return nil
+	return s.receiverStatus()
 }
 
 // TriggerFastReconnect triggers an immediate re-registration.

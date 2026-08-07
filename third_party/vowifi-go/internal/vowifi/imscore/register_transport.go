@@ -75,7 +75,6 @@ func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 		s.networkDone.Add(1)
 		go s.acceptProtectedSIP(serverListener)
 	}
-	s.setSMSReceiverReady(true)
 	return nil
 }
 
@@ -155,10 +154,7 @@ func (s *Service) activateProtectedRegistrationTCP(conn net.Conn) {
 	s.registrationTCP = conn
 	s.mu.Unlock()
 	s.transport.SetSendFn(func(request string) error {
-		if _, err := io.Copy(conn, strings.NewReader(request)); err != nil {
-			return fmt.Errorf("imscore: send protected REGISTER stream: %w", err)
-		}
-		return nil
+		return s.writeSIPStream(conn, request)
 	})
 	s.networkDone.Add(1)
 	go s.readRegistrationStream(conn)
@@ -200,18 +196,30 @@ func (s *Service) discoverRegistrar(ctx context.Context) string {
 
 func (s *Service) readRegistrationResponses(conn net.PacketConn) {
 	defer s.networkDone.Done()
+	s.receiverStarted()
+	defer s.receiverStopped()
 	buffer := make([]byte, 64*1024)
 	for {
-		n, _, err := conn.ReadFrom(buffer)
+		n, remote, err := conn.ReadFrom(buffer)
 		if err != nil {
 			return
 		}
-		s.deliverSIPMessage(string(buffer[:n]))
+		err = s.dispatchInboundSIP(string(buffer[:n]), func(response string) error {
+			if _, writeErr := conn.WriteTo([]byte(response), remote); writeErr != nil {
+				return fmt.Errorf("imscore: write SIP datagram: %w", writeErr)
+			}
+			return nil
+		})
+		if err != nil {
+			logging.WarnRate("ims-udp-inbound", "IMS UDP inbound handling failed", "err", err)
+		}
 	}
 }
 
 func (s *Service) acceptProtectedSIP(listener net.Listener) {
 	defer s.networkDone.Done()
+	s.receiverStarted()
+	defer s.receiverStopped()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -221,10 +229,16 @@ func (s *Service) acceptProtectedSIP(listener net.Listener) {
 			_ = conn.Close()
 			return
 		}
-		s.readRegistrationStreamSync(conn)
-		s.untrackProtectedConnection(conn)
-		_ = conn.Close()
+		s.networkDone.Add(1)
+		go s.serveProtectedSIPConnection(conn)
 	}
+}
+
+func (s *Service) serveProtectedSIPConnection(conn net.Conn) {
+	defer s.networkDone.Done()
+	defer s.untrackProtectedConnection(conn)
+	defer conn.Close()
+	s.readRegistrationStreamSync(conn)
 }
 
 func (s *Service) trackProtectedConnection(conn net.Conn) bool {
@@ -247,6 +261,8 @@ func (s *Service) untrackProtectedConnection(conn net.Conn) {
 
 func (s *Service) readRegistrationStream(conn net.Conn) {
 	defer s.networkDone.Done()
+	s.receiverStarted()
+	defer s.receiverStopped()
 	s.readRegistrationStreamSync(conn)
 }
 
@@ -257,10 +273,11 @@ func (s *Service) readRegistrationStreamSync(conn net.Conn) {
 		if err != nil {
 			return
 		}
-		if err := s.respondToInboundNotification(conn, raw); err != nil {
-			logging.WarnRate("ims-notify-response", "IMS NOTIFY response failed", "err", err)
+		if err := s.dispatchInboundSIP(raw, func(response string) error {
+			return s.writeSIPStream(conn, response)
+		}); err != nil {
+			logging.WarnRate("ims-tcp-inbound", "IMS TCP inbound handling failed", "err", err)
 		}
-		s.deliverSIPMessage(raw)
 	}
 }
 
@@ -292,13 +309,4 @@ func readSIPStreamMessage(reader *bufio.Reader) (string, error) {
 	}
 	message.Write(body)
 	return message.String(), nil
-}
-
-func (s *Service) deliverSIPMessage(raw string) {
-	response := parseSIPResponse(raw)
-	if response != nil && response.StatusCode != 0 {
-		s.transport.DeliverResponse(response)
-		return
-	}
-	s.transport.DeliverRequest(raw)
 }
