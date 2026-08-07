@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -270,14 +271,15 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		impu = []string{"sip:" + impi}
 	}
 	inner := tunnel.InnerNetwork()
-	if inner.IPv4 == nil || tunnel.InnerPacketIO() == nil {
+	innerIP, prefixLen := preferredInnerAddress(inner)
+	if innerIP == nil || tunnel.InnerPacketIO() == nil {
 		return nil, errors.New("runtimehost: SWu tunnel has no usable inner packet network")
 	}
 	dns := make([]string, 0, len(inner.DNS))
 	for _, server := range inner.DNS {
 		dns = append(dns, server.String())
 	}
-	imsNetwork, err := netstack.NewTunnelNetwork(inner.IPv4, inner.PrefixLen, dns, tunnel.InnerPacketIO())
+	imsNetwork, err := netstack.NewTunnelNetwork(innerIP, prefixLen, dns, tunnel.InnerPacketIO())
 	if err != nil {
 		return nil, fmt.Errorf("runtimehost: create IMS tunnel network: %w", err)
 	}
@@ -289,7 +291,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		Domain:           domain,
 		Realm:            domain,
 		EPDGAddr:         req.Prepared.EPDGAddr,
-		LocalIP:          inner.IPv4,
+		LocalIP:          innerIP,
 		Transport:        "udp",
 		Expires:          3600 * time.Second,
 		TraceID:          req.TraceID,
@@ -306,6 +308,13 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		return nil, err
 	}
 	return svc, nil
+}
+
+func preferredInnerAddress(inner swu.InnerNetworkConfig) (net.IP, int) {
+	if inner.IPv4 != nil {
+		return inner.IPv4, inner.PrefixLen
+	}
+	return inner.IPv6, inner.IPv6PrefixLen
 }
 
 // imsiOf extracts the IMSI from an IMPI (the part before '@').

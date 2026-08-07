@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
+	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
+	"gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
 )
 
 type channelPacketIO struct {
@@ -64,6 +66,34 @@ func TestTunnelNetworkSendsUDPThroughPacketIO(t *testing.T) {
 	}
 }
 
+func TestTunnelNetworkSendsIPv6UDPThroughPacketIO(t *testing.T) {
+	packetIO := newChannelPacketIO()
+	local := net.ParseIP("2001:db8::2")
+	destination := net.ParseIP("2001:db8::1")
+	network, err := NewTunnelNetwork(local, 64, []string{"2001:db8::53"}, packetIO)
+	if err != nil {
+		t.Fatalf("NewTunnelNetwork: %v", err)
+	}
+	defer network.Close()
+
+	conn, err := network.DialContext(context.Background(), "udp", "[2001:db8::1]:5060")
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	defer conn.Close()
+	payload := []byte("REGISTER sip:ims.example SIP/2.0\r\n\r\n")
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	select {
+	case packet := <-packetIO.outbound:
+		assertIPv6UDPPacket(t, packet, destination, payload)
+	case <-time.After(time.Second):
+		t.Fatal("IPv6 UDP packet did not reach SWu packet IO")
+	}
+}
+
 func assertIPv4UDPPacket(t *testing.T, packet []byte, destination net.IP, payload []byte) {
 	t.Helper()
 	if len(packet) < 28 || packet[0]>>4 != 4 {
@@ -74,6 +104,20 @@ func assertIPv4UDPPacket(t *testing.T, packet []byte, destination net.IP, payloa
 	}
 	headerLen := int(packet[0]&0x0f) * 4
 	if len(packet) < headerLen+8 || !bytes.Equal(packet[headerLen+8:], payload) {
+		t.Fatalf("UDP payload mismatch: %x", packet)
+	}
+}
+
+func assertIPv6UDPPacket(t *testing.T, packet []byte, destination net.IP, payload []byte) {
+	t.Helper()
+	const ipv6HeaderLength = 40
+	if len(packet) < ipv6HeaderLength+8 || packet[0]>>4 != 6 {
+		t.Fatalf("invalid IPv6 packet: %x", packet)
+	}
+	if got := net.IP(packet[24:40]); !got.Equal(destination) {
+		t.Fatalf("destination = %s, want %s", got, destination)
+	}
+	if !bytes.Equal(packet[ipv6HeaderLength+8:], payload) {
 		t.Fatalf("UDP payload mismatch: %x", packet)
 	}
 }
@@ -129,9 +173,14 @@ func TestTunnelNetworkInstallsIPSec3GPPTransformer(t *testing.T) {
 	}
 }
 
-func TestPreferIPv4ForIPv4OnlyTunnel(t *testing.T) {
+func TestAddressForTunnelMatchesNegotiatedFamily(t *testing.T) {
 	addresses := []net.IP{net.ParseIP("2001:db8::1"), net.ParseIP("192.0.2.10")}
-	if got := preferIPv4(addresses); !got.Equal(net.ParseIP("192.0.2.10")) {
-		t.Fatalf("preferIPv4() = %v, want IPv4 address", got)
+	ipv4Network := &gvisorNetwork{protocol: ipv4.ProtocolNumber}
+	if got, err := ipv4Network.addressForTunnel(addresses, "pcscf"); err != nil || !got.Equal(net.ParseIP("192.0.2.10")) {
+		t.Fatalf("IPv4 addressForTunnel() = %v, %v", got, err)
+	}
+	ipv6Network := &gvisorNetwork{protocol: ipv6.ProtocolNumber}
+	if got, err := ipv6Network.addressForTunnel(addresses, "pcscf"); err != nil || !got.Equal(net.ParseIP("2001:db8::1")) {
+		t.Fatalf("IPv6 addressForTunnel() = %v, %v", got, err)
 	}
 }

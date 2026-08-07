@@ -137,7 +137,7 @@ func (s *Session) setupDataPlane() error {
 	if s.ikeKeys == nil {
 		return errors.New("swu: no IKE SA keys for child SA derivation")
 	}
-	if s.innerIP == nil {
+	if s.primaryInnerIP() == nil {
 		return errors.New("swu: no inner address assigned by ePDG")
 	}
 

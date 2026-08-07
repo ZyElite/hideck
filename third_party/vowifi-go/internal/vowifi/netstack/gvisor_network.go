@@ -31,6 +31,7 @@ const (
 type gvisorNetwork struct {
 	stack       *stack.Stack
 	link        *channel.Endpoint
+	protocol    tcpip.NetworkProtocolNumber
 	packetIO    PacketIO
 	dns         []string
 	stats       *networkStats
@@ -43,16 +44,14 @@ type gvisorNetwork struct {
 }
 
 func newGVisorNetwork(innerIP net.IP, prefixLen int, dns []string, packetIO PacketIO, stats *networkStats) (*gvisorNetwork, error) {
-	if innerIP == nil || innerIP.To4() == nil {
-		return nil, errors.New("netstack: negotiated IPv4 address is required")
-	}
 	if packetIO == nil {
 		return nil, errors.New("netstack: SWu packet IO is required")
 	}
-	if prefixLen <= 0 || prefixLen > 32 {
-		prefixLen = 32
+	address, protocol, route, prefixLen, err := localNetworkConfig(innerIP, prefixLen)
+	if err != nil {
+		return nil, err
 	}
-	g := &gvisorNetwork{packetIO: packetIO, dns: append([]string(nil), dns...), stats: stats}
+	g := &gvisorNetwork{protocol: protocol, packetIO: packetIO, dns: append([]string(nil), dns...), stats: stats}
 	g.stack = stack.New(stack.Options{
 		NetworkProtocols: []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{
@@ -64,21 +63,36 @@ func newGVisorNetwork(innerIP net.IP, prefixLen int, dns []string, packetIO Pack
 		g.stack.Close()
 		return nil, gvisorError("create IMS NIC", err)
 	}
-	address := tcpip.AddrFrom4Slice(innerIP.To4())
 	protocolAddress := tcpip.ProtocolAddress{
-		Protocol: ipv4.ProtocolNumber, AddressWithPrefix: tcpip.AddressWithPrefix{Address: address, PrefixLen: prefixLen},
+		Protocol: protocol, AddressWithPrefix: tcpip.AddressWithPrefix{Address: address, PrefixLen: prefixLen},
 	}
 	if err := g.stack.AddProtocolAddress(imsNICID, protocolAddress, stack.AddressProperties{}); err != nil {
 		g.stack.Close()
 		return nil, gvisorError("add IMS address", err)
 	}
-	g.stack.SetRouteTable([]tcpip.Route{{Destination: header.IPv4EmptySubnet, NIC: imsNICID}})
+	g.stack.SetRouteTable([]tcpip.Route{{Destination: route, NIC: imsNICID}})
 	ctx, cancel := context.WithCancel(context.Background())
 	g.cancel = cancel
 	g.done.Add(2)
 	go g.outboundLoop(ctx)
 	go g.inboundLoop(ctx)
 	return g, nil
+}
+
+func localNetworkConfig(innerIP net.IP, prefixLen int) (tcpip.Address, tcpip.NetworkProtocolNumber, tcpip.Subnet, int, error) {
+	if ipv4Address := innerIP.To4(); ipv4Address != nil {
+		if prefixLen <= 0 || prefixLen > net.IPv4len*8 {
+			prefixLen = net.IPv4len * 8
+		}
+		return tcpip.AddrFrom4Slice(ipv4Address), ipv4.ProtocolNumber, header.IPv4EmptySubnet, prefixLen, nil
+	}
+	if ipv6Address := innerIP.To16(); ipv6Address != nil {
+		if prefixLen <= 0 || prefixLen > net.IPv6len*8 {
+			prefixLen = net.IPv6len * 8
+		}
+		return tcpip.AddrFrom16Slice(ipv6Address), ipv6.ProtocolNumber, header.IPv6EmptySubnet, prefixLen, nil
+	}
+	return tcpip.Address{}, 0, tcpip.Subnet{}, 0, errors.New("netstack: negotiated IP address is required")
 }
 
 func (g *gvisorNetwork) ready() error {
@@ -163,7 +177,7 @@ func (g *gvisorNetwork) ListenPacket(network string, addr *net.UDPAddr) (net.Pac
 
 func (g *gvisorNetwork) ResolveIP(ctx context.Context, host string) (net.IP, error) {
 	if ip := net.ParseIP(strings.TrimSpace(host)); ip != nil {
-		return ip, nil
+		return g.addressForTunnel([]net.IP{ip}, host)
 	}
 	return g.resolveViaServers(ctx, host, g.dns)
 }
@@ -176,8 +190,13 @@ func (g *gvisorNetwork) resolveViaServers(ctx context.Context, host string, serv
 	for _, server := range servers {
 		resolver := g.resolver(server)
 		ips, err := resolver.LookupIP(ctx, "ip", host)
-		if err == nil && len(ips) > 0 {
-			return preferIPv4(ips), nil
+		if err == nil {
+			if selected, selectErr := g.addressForTunnel(ips, host); selectErr == nil {
+				return selected, nil
+			} else {
+				lastErr = selectErr
+				continue
+			}
 		}
 		if err != nil {
 			lastErr = err
@@ -188,16 +207,25 @@ func (g *gvisorNetwork) resolveViaServers(ctx context.Context, host string, serv
 	return nil, fmt.Errorf("netstack: resolve %s through SWu DNS: %w", host, lastErr)
 }
 
-func preferIPv4(ips []net.IP) net.IP {
+func (g *gvisorNetwork) addressForTunnel(ips []net.IP, host string) (net.IP, error) {
 	for _, ip := range ips {
-		if ipv4 := ip.To4(); ipv4 != nil {
-			return ipv4
+		if g.protocol == ipv4.ProtocolNumber {
+			if ipv4Address := ip.To4(); ipv4Address != nil {
+				return ipv4Address, nil
+			}
+			continue
+		}
+		if ip.To4() == nil {
+			if ipv6Address := ip.To16(); ipv6Address != nil {
+				return ipv6Address, nil
+			}
 		}
 	}
-	if len(ips) == 0 {
-		return nil
+	family := "IPv6"
+	if g.protocol == ipv4.ProtocolNumber {
+		family = "IPv4"
 	}
-	return ips[0]
+	return nil, fmt.Errorf("netstack: %s has no %s address for the negotiated tunnel", host, family)
 }
 
 func (g *gvisorNetwork) LookupSRV(ctx context.Context, service, proto, name string) (string, uint16, error) {

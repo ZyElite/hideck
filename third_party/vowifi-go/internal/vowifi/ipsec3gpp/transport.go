@@ -60,7 +60,7 @@ func NewTransport(policy Policy) (*Transport, error) {
 }
 
 func (t *Transport) TransformOutbound(packet []byte) ([]byte, error) {
-	parsed, err := parseIPv4Packet(packet)
+	parsed, err := parseIPPacket(packet)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func (t *Transport) TransformOutbound(packet []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := replaceIPv4Payload(packet, protocolESP, espPayload)
+	out, err := replaceIPPayload(packet, protocolESP, espPayload)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (t *Transport) TransformOutbound(packet []byte) ([]byte, error) {
 }
 
 func (t *Transport) TransformInbound(packet []byte) ([]byte, error) {
-	parsed, err := parseIPv4Packet(packet)
+	parsed, err := parseIPPacket(packet)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (t *Transport) TransformInbound(packet []byte) ([]byte, error) {
 	if err := validatePorts(nextHeader, plaintext, flow.remotePort, flow.localPort); err != nil {
 		return nil, err
 	}
-	out, err := replaceIPv4Payload(packet, nextHeader, plaintext)
+	out, err := replaceIPPayload(packet, nextHeader, plaintext)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (t *Transport) TransformInbound(packet []byte) ([]byte, error) {
 	return out, nil
 }
 
-func (t *Transport) matchOutbound(packet ipv4Packet) *outboundSA {
+func (t *Transport) matchOutbound(packet ipPacket) *outboundSA {
 	if !packet.source.Equal(t.policy.LocalIP) || !packet.destination.Equal(t.policy.RemoteIP) {
 		return nil
 	}
@@ -141,7 +141,7 @@ func (t *Transport) matchOutbound(packet ipv4Packet) *outboundSA {
 	return nil
 }
 
-func (t *Transport) passOrRejectOutbound(packet []byte, parsed ipv4Packet) ([]byte, error) {
+func (t *Transport) passOrRejectOutbound(packet []byte, parsed ipPacket) ([]byte, error) {
 	_, destination, ok := transportPorts(parsed.protocol, parsed.payload)
 	if !parsed.destination.Equal(t.policy.RemoteIP) || !ok {
 		return packet, nil
@@ -154,7 +154,7 @@ func (t *Transport) passOrRejectOutbound(packet []byte, parsed ipv4Packet) ([]by
 	return packet, nil
 }
 
-func (t *Transport) passOrRejectInbound(packet []byte, parsed ipv4Packet) ([]byte, error) {
+func (t *Transport) passOrRejectInbound(packet []byte, parsed ipPacket) ([]byte, error) {
 	source, destination, ok := transportPorts(parsed.protocol, parsed.payload)
 	if !parsed.source.Equal(t.policy.RemoteIP) || !parsed.destination.Equal(t.policy.LocalIP) || !ok {
 		return packet, nil

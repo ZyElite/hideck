@@ -45,22 +45,16 @@ func (s *Session) currentEAPIdentity() string {
 	return buildNAI(imsi, s.cfg.MCC, s.cfg.MNC)
 }
 
-// buildCPRequestPayload builds the Configuration payload requesting the inner
-// IPv4 address supported by the IMS user-space network (RFC 7296 section 3.15).
+// buildCPRequestPayload builds the Configuration payload requesting an inner
+// IPv4 or IPv6 address (RFC 7296 section 3.15).
 func (s *Session) buildCPRequestPayload() *ikev2.EncryptedPayloadCP {
 	return &ikev2.EncryptedPayloadCP{
 		ConfigType: ikev2.CPTypeRequest,
 		Attrs: []*ikev2.CPAttribute{
 			{Type: ikev2.CPAttrIP4Address},
+			{Type: ikev2.CPAttrIP6Address},
 		},
 	}
-}
-
-func buildInitialTrafficSelectors() (*ikev2.EncryptedPayloadTS, *ikev2.EncryptedPayloadTS) {
-	return trafficSelectorPayloads(
-		[]*ikev2.TrafficSelector{anyIPv4Selector()},
-		[]*ikev2.TrafficSelector{anyIPv4Selector()},
-	)
 }
 
 // buildTrafficSelectorsForIPStack builds the TSi/TSr traffic selectors for the
@@ -265,7 +259,7 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	sa2 := &ikev2.EncryptedPayloadSA{Proposals: espProposals}
 
 	// TSi / TSr.
-	tsi, tsr := buildInitialTrafficSelectors()
+	tsi, tsr := buildTrafficSelectorsForIPStack(nil)
 
 	// CP (request inner address) and RFC 5998 EAP-only authentication. EAP-AKA
 	// and EAP-AKA' are mutually authenticating, key-generating methods; the
@@ -383,7 +377,8 @@ func (s *Session) handleIKEAuthFinalResp(resp *ikev2.IKEPacket) error {
 		return err
 	}
 	s.innerIP, s.innerIPv6 = assigned.ipv4, assigned.ipv6
-	s.innerPrefix, s.dnsServers = assigned.ipv4Prefix, assigned.dns
+	s.innerPrefix, s.innerIPv6Prefix = assigned.ipv4Prefix, assigned.ipv6Prefix
+	s.dnsServers = assigned.dns
 	if selection != nil {
 		s.espRemoteSPI = selection.remoteSPI
 		s.espCipher, s.espInteg = selection.encryption, selection.integrity
@@ -397,6 +392,7 @@ type assignedInnerConfig struct {
 	ipv4       net.IP
 	ipv6       net.IP
 	ipv4Prefix int
+	ipv6Prefix int
 	dns        []net.IP
 }
 
@@ -436,16 +432,17 @@ func parseAssignedInnerConfig(payloads []ikev2.Payload) (assignedInnerConfig, er
 		result.ipv4Prefix = ipv4PrefixFromCP(config)
 	}
 	if raw, ok := config.Attrs[ikev2.CPAttrIP6Address]; ok {
-		if len(raw) < net.IPv6len {
+		if len(raw) != net.IPv6len+1 {
 			return result, fmt.Errorf("swu: invalid assigned IPv6 length %d", len(raw))
 		}
 		result.ipv6 = append(net.IP(nil), raw[:net.IPv6len]...)
+		result.ipv6Prefix = int(raw[net.IPv6len])
+		if result.ipv6Prefix > net.IPv6len*8 {
+			return result, fmt.Errorf("swu: invalid assigned IPv6 prefix %d", result.ipv6Prefix)
+		}
 	}
 	result.dns = dnsServersFromCP(config)
-	if result.ipv4 == nil && result.ipv6 != nil {
-		return result, fmt.Errorf("swu: ePDG assigned only IPv6 %s, but the IMS runtime requires IPv4", result.ipv6)
-	}
-	if result.ipv4 == nil {
+	if result.ipv4 == nil && result.ipv6 == nil {
 		return result, fmt.Errorf("swu: CFG_REPLY omitted an assigned address (attributes=%s)", cpAttributeSummary(cp))
 	}
 	return result, nil

@@ -84,6 +84,28 @@ func TestESPTransportProtectsBothDirections(t *testing.T) {
 	}
 }
 
+func TestESPTransportProtectsIPv6(t *testing.T) {
+	local := net.ParseIP("2001:db8::2")
+	remote := net.ParseIP("2001:db8::1")
+	ue, server := newTransportPairForIPs(t, EncryptionAES, local, remote)
+	request := ipv6UDPPacket(t, local, 41000, remote, 51001, []byte("REGISTER"))
+	protected, err := ue.TransformOutbound(request)
+	if err != nil {
+		t.Fatalf("protect IPv6 request: %v", err)
+	}
+	parsed, err := parseIPPacket(protected)
+	if err != nil || parsed.version != 6 || parsed.protocol != protocolESP {
+		t.Fatalf("protected IPv6 packet = %x, %v", protected, err)
+	}
+	decoded, err := server.TransformInbound(protected)
+	if err != nil {
+		t.Fatalf("unprotect IPv6 request: %v", err)
+	}
+	if !bytes.Equal(decoded, request) {
+		t.Fatalf("IPv6 request round trip mismatch\n got %x\nwant %x", decoded, request)
+	}
+}
+
 func TestESPTransportRejectsTamperedIntegrity(t *testing.T) {
 	ue, server := newTransportPair(t, EncryptionNull)
 	request := udpPacket(t, "10.0.0.2", 41000, "10.0.0.1", 51001, []byte("REGISTER"))
@@ -143,10 +165,15 @@ func TestESPTransportPassesUnmatchedTrafficAndRejectsUnprotectedSelector(t *test
 
 func newTransportPair(t *testing.T, encryption string) (*Transport, *Transport) {
 	t.Helper()
+	return newTransportPairForIPs(t, encryption, net.ParseIP("10.0.0.2"), net.ParseIP("10.0.0.1"))
+}
+
+func newTransportPairForIPs(t *testing.T, encryption string, local, remote net.IP) (*Transport, *Transport) {
+	t.Helper()
 	ck := bytes.Repeat([]byte{0x11}, 16)
 	ik := bytes.Repeat([]byte{0x22}, 16)
 	uePolicy := Policy{
-		LocalIP: net.ParseIP("10.0.0.2"), RemoteIP: net.ParseIP("10.0.0.1"),
+		LocalIP: local, RemoteIP: remote,
 		LocalClientPort: 41000, LocalServerPort: 41001,
 		RemoteClientPort: 51000, RemoteServerPort: 51001,
 		LocalClientSPI: 0x11111111, LocalServerSPI: 0x22222222,
@@ -174,6 +201,23 @@ func newTransportPair(t *testing.T, encryption string) (*Transport, *Transport) 
 	return ue, server
 }
 
+func ipv6UDPPacket(t *testing.T, source net.IP, sourcePort uint16, destination net.IP, destinationPort uint16, payload []byte) []byte {
+	t.Helper()
+	const ipv6HeaderLength = 40
+	packet := make([]byte, ipv6HeaderLength+8+len(payload))
+	packet[0] = 0x60
+	packet[6] = protocolUDP
+	packet[7] = 64
+	binary.BigEndian.PutUint16(packet[4:6], uint16(8+len(payload)))
+	copy(packet[8:24], source.To16())
+	copy(packet[24:40], destination.To16())
+	binary.BigEndian.PutUint16(packet[40:42], sourcePort)
+	binary.BigEndian.PutUint16(packet[42:44], destinationPort)
+	binary.BigEndian.PutUint16(packet[44:46], uint16(8+len(payload)))
+	copy(packet[48:], payload)
+	return packet
+}
+
 func udpPacket(t *testing.T, source string, sourcePort uint16, destination string, destinationPort uint16, payload []byte) []byte {
 	t.Helper()
 	packet := make([]byte, 20+8+len(payload))
@@ -193,7 +237,7 @@ func udpPacket(t *testing.T, source string, sourcePort uint16, destination strin
 
 func assertESP(t *testing.T, packet []byte, spi uint32) {
 	t.Helper()
-	parsed, err := parseIPv4Packet(packet)
+	parsed, err := parseIPPacket(packet)
 	if err != nil {
 		t.Fatalf("parse protected packet: %v", err)
 	}

@@ -252,15 +252,9 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 	if notify.NotifyType != ikev2.NotifyTypeEAPOnlyAuthentication || notify.ProtocolID != 0 || notify.SPISize != 0 || len(notify.NotifyData) != 0 {
 		t.Fatalf("EAP-only notify = %+v", notify)
 	}
-	tsi := payloads[3].(*ikev2.EncryptedPayloadTS)
-	tsr := payloads[4].(*ikev2.EncryptedPayloadTS)
-	if len(tsi.Selectors) != 1 || tsi.Selectors[0].Type != ikev2.TSIPv4Range ||
-		len(tsr.Selectors) != 1 || tsr.Selectors[0].Type != ikev2.TSIPv4Range {
-		t.Fatalf("initial selectors advertise unsupported address families: TSi=%+v TSr=%+v", tsi, tsr)
-	}
 	cp := payloads[6].(*ikev2.EncryptedPayloadCP)
-	if len(cp.Attrs) != 1 || cp.Attrs[0].Type != ikev2.CPAttrIP4Address {
-		t.Fatalf("initial CP request advertises unsupported address families: %+v", cp.Attrs)
+	if len(cp.Attrs) != 2 || cp.Attrs[0].Type != ikev2.CPAttrIP4Address || cp.Attrs[1].Type != ikev2.CPAttrIP6Address {
+		t.Fatalf("initial CP request address families: %+v", cp.Attrs)
 	}
 }
 

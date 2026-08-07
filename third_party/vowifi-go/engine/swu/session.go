@@ -157,25 +157,26 @@ type Session struct {
 	ikeSAInitResponse      []byte
 
 	// --- data plane ---
-	innerEndpoint *userspaceInnerPacketEndpoint
-	espOutboundSA *ipsec.SecurityAssociation
-	espInboundSA  *ipsec.SecurityAssociation
-	espLocalSPI   uint32
-	espRemoteSPI  uint32
-	childNi       []byte
-	childNr       []byte
-	childTSi      *ikev2.EncryptedPayloadTS
-	childTSr      *ikev2.EncryptedPayloadTS
-	espCipher     uint16
-	espInteg      uint16
-	espKey        []byte
-	espIntegKey   []byte
-	innerIP       net.IP // inner IP assigned by the ePDG (CP payload)
-	innerIPv6     net.IP
-	innerPrefix   int
-	dnsServers    []net.IP
-	remoteIP      net.IP // ePDG outer address
-	remotePort    uint16
+	innerEndpoint   *userspaceInnerPacketEndpoint
+	espOutboundSA   *ipsec.SecurityAssociation
+	espInboundSA    *ipsec.SecurityAssociation
+	espLocalSPI     uint32
+	espRemoteSPI    uint32
+	childNi         []byte
+	childNr         []byte
+	childTSi        *ikev2.EncryptedPayloadTS
+	childTSr        *ikev2.EncryptedPayloadTS
+	espCipher       uint16
+	espInteg        uint16
+	espKey          []byte
+	espIntegKey     []byte
+	innerIP         net.IP // inner IP assigned by the ePDG (CP payload)
+	innerIPv6       net.IP
+	innerPrefix     int
+	innerIPv6Prefix int
+	dnsServers      []net.IP
+	remoteIP        net.IP // ePDG outer address
+	remotePort      uint16
 
 	// --- lifecycle ---
 	ctx    context.Context
@@ -548,17 +549,18 @@ func (s *Session) Snapshot() map[string]interface{} {
 		"epdg":       s.cfg.EPDGAddr,
 		"remote_ip":  s.remoteIP.String(),
 		"remote_pt":  s.remotePort,
-		"inner_ip":   s.innerIP.String(),
+		"inner_ip":   s.primaryInnerIP().String(),
 		"started_at": s.startedAt,
 	}
 }
 
 // InnerNetworkConfig is the address configuration assigned by the ePDG.
 type InnerNetworkConfig struct {
-	IPv4      net.IP
-	IPv6      net.IP
-	PrefixLen int
-	DNS       []net.IP
+	IPv4          net.IP
+	IPv6          net.IP
+	PrefixLen     int
+	IPv6PrefixLen int
+	DNS           []net.IP
 }
 
 // InnerNetwork returns a copy of the negotiated inner network configuration.
@@ -567,8 +569,15 @@ func (s *Session) InnerNetwork() InnerNetworkConfig {
 	defer s.mu.RUnlock()
 	return InnerNetworkConfig{
 		IPv4: append(net.IP(nil), s.innerIP...), IPv6: append(net.IP(nil), s.innerIPv6...),
-		PrefixLen: s.innerPrefix, DNS: cloneIPs(s.dnsServers),
+		PrefixLen: s.innerPrefix, IPv6PrefixLen: s.innerIPv6Prefix, DNS: cloneIPs(s.dnsServers),
 	}
+}
+
+func (s *Session) primaryInnerIP() net.IP {
+	if s.innerIP != nil {
+		return s.innerIP
+	}
+	return s.innerIPv6
 }
 
 // InnerPacketIO returns the packet boundary for the user-space IMS stack.

@@ -58,8 +58,8 @@ func normalize(value, defaultValue string) string {
 }
 
 func (p Policy) validate() error {
-	if p.LocalIP.To4() == nil || p.RemoteIP.To4() == nil {
-		return errors.New("ipsec3gpp: transport mode requires IPv4 endpoints")
+	if !sameSupportedIPFamily(p.LocalIP, p.RemoteIP) {
+		return errors.New("ipsec3gpp: transport mode requires matching IPv4 or IPv6 endpoints")
 	}
 	if p.Protocol != ProtocolESP || p.Mode != ModeTransport {
 		return fmt.Errorf("ipsec3gpp: unsupported protocol/mode %s/%s", p.Protocol, p.Mode)
@@ -94,6 +94,13 @@ func (p Policy) validate() error {
 		seen[spi] = struct{}{}
 	}
 	return nil
+}
+
+func sameSupportedIPFamily(local, remote net.IP) bool {
+	if local.To4() != nil {
+		return remote.To4() != nil
+	}
+	return local.To16() != nil && remote.To4() == nil && remote.To16() != nil
 }
 
 func validateEncryption(algorithm string, ck []byte) error {

@@ -46,16 +46,20 @@ func TestParseAssignedInnerConfigAcceptsIPv4Reply(t *testing.T) {
 	}
 }
 
-func TestParseAssignedInnerConfigRejectsIPv6OnlyReply(t *testing.T) {
+func TestParseAssignedInnerConfigAcceptsIPv6OnlyReply(t *testing.T) {
+	ipv6 := append(net.ParseIP("2001:db8::8").To16(), byte(64))
 	cp := &ikev2.EncryptedPayloadCP{
 		ConfigType: ikev2.CPTypeReply,
 		Attrs: []*ikev2.CPAttribute{
-			{Type: ikev2.CPAttrIP6Address, Value: net.ParseIP("2001:db8::8").To16()},
+			{Type: ikev2.CPAttrIP6Address, Value: ipv6},
 		},
 	}
-	_, err := parseAssignedInnerConfig([]ikev2.Payload{cp})
-	if err == nil || !strings.Contains(err.Error(), "assigned only IPv6 2001:db8::8") {
-		t.Fatalf("parseAssignedInnerConfig error = %v", err)
+	config, err := parseAssignedInnerConfig([]ikev2.Payload{cp})
+	if err != nil {
+		t.Fatalf("parseAssignedInnerConfig: %v", err)
+	}
+	if !config.ipv6.Equal(net.ParseIP("2001:db8::8")) || config.ipv6Prefix != 64 {
+		t.Fatalf("assigned IPv6 = %s/%d", config.ipv6, config.ipv6Prefix)
 	}
 }
 

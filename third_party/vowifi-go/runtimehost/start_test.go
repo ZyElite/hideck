@@ -182,6 +182,14 @@ func runtimeTestRequest(prepared *identity.PreparedSession, tunnel *lifecycleTun
 	}
 }
 
+func TestPreferredInnerAddressUsesIPv6WhenIPv4Missing(t *testing.T) {
+	inner := swu.InnerNetworkConfig{IPv6: net.ParseIP("2001:db8::8"), IPv6PrefixLen: 64}
+	address, prefixLen := preferredInnerAddress(inner)
+	if !address.Equal(inner.IPv6) || prefixLen != 64 {
+		t.Fatalf("preferred inner address = %s/%d", address, prefixLen)
+	}
+}
+
 func TestStart(t *testing.T) {
 	prepared, err := identity.PrepareStart(identity.PrepareStartInput{
 		DeviceID: "wwan0",

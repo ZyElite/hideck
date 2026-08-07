@@ -87,7 +87,7 @@ func (s *Session) dispatchCreateChildSA(ctx context.Context) error {
 		return err
 	}
 	espProposals := buildESPProposals(s.espCipher, s.espInteg, localSPI)
-	tsi, tsr := buildTrafficSelectorsForIPStack(s.innerIP)
+	tsi, tsr := buildTrafficSelectorsForIPStack(s.primaryInnerIP())
 	pkt := &ikev2.IKEPacket{
 		InitiatorSPI: s.SPIi,
 		ResponderSPI: s.SPIr,
@@ -456,7 +456,7 @@ func (s *Session) ensureIPv6RuntimeEnabled() error {
 
 // applyNetworkConfigOnTUN applies the inner address/routes to the TUN device.
 func (s *Session) applyNetworkConfigOnTUN() error {
-	if s.innerIP == nil {
+	if s.primaryInnerIP() == nil {
 		return errors.New("swu: no inner address")
 	}
 	return nil

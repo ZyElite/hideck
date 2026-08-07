@@ -12,7 +12,8 @@ const (
 	protocolESP = 50
 )
 
-type ipv4Packet struct {
+type ipPacket struct {
+	version      byte
 	headerLength int
 	protocol     byte
 	source       net.IP
@@ -20,29 +21,73 @@ type ipv4Packet struct {
 	payload      []byte
 }
 
-func parseIPv4Packet(packet []byte) (ipv4Packet, error) {
+func parseIPPacket(packet []byte) (ipPacket, error) {
+	if len(packet) == 0 {
+		return ipPacket{}, errors.New("ipsec3gpp: IP packet is empty")
+	}
+	switch packet[0] >> 4 {
+	case 4:
+		return parseIPv4Packet(packet)
+	case 6:
+		return parseIPv6Packet(packet)
+	default:
+		return ipPacket{}, errors.New("ipsec3gpp: valid IPv4 or IPv6 packet required")
+	}
+}
+
+func parseIPv4Packet(packet []byte) (ipPacket, error) {
 	if len(packet) < 20 || packet[0]>>4 != 4 {
-		return ipv4Packet{}, errors.New("ipsec3gpp: valid IPv4 packet required")
+		return ipPacket{}, errors.New("ipsec3gpp: valid IPv4 packet required")
 	}
 	headerLength := int(packet[0]&0x0f) * 4
 	if headerLength < 20 || headerLength > len(packet) {
-		return ipv4Packet{}, errors.New("ipsec3gpp: invalid IPv4 header length")
+		return ipPacket{}, errors.New("ipsec3gpp: invalid IPv4 header length")
 	}
 	totalLength := int(binary.BigEndian.Uint16(packet[2:4]))
 	if totalLength < headerLength || totalLength > len(packet) {
-		return ipv4Packet{}, errors.New("ipsec3gpp: invalid IPv4 total length")
+		return ipPacket{}, errors.New("ipsec3gpp: invalid IPv4 total length")
 	}
 	fragment := binary.BigEndian.Uint16(packet[6:8])
 	if fragment&0x3fff != 0 {
-		return ipv4Packet{}, errors.New("ipsec3gpp: fragmented packets are unsupported")
+		return ipPacket{}, errors.New("ipsec3gpp: fragmented packets are unsupported")
 	}
-	return ipv4Packet{
+	return ipPacket{
+		version:      4,
 		headerLength: headerLength,
 		protocol:     packet[9],
 		source:       append(net.IP(nil), packet[12:16]...),
 		destination:  append(net.IP(nil), packet[16:20]...),
 		payload:      packet[headerLength:totalLength],
 	}, nil
+}
+
+func parseIPv6Packet(packet []byte) (ipPacket, error) {
+	const headerLength = 40
+	if len(packet) < headerLength || packet[0]>>4 != 6 {
+		return ipPacket{}, errors.New("ipsec3gpp: valid IPv6 packet required")
+	}
+	totalLength := headerLength + int(binary.BigEndian.Uint16(packet[4:6]))
+	if totalLength < headerLength || totalLength > len(packet) {
+		return ipPacket{}, errors.New("ipsec3gpp: invalid IPv6 payload length")
+	}
+	protocol := packet[6]
+	if isIPv6ExtensionHeader(protocol) {
+		return ipPacket{}, errors.New("ipsec3gpp: IPv6 extension headers are unsupported")
+	}
+	return ipPacket{
+		version: 6, headerLength: headerLength, protocol: protocol,
+		source: append(net.IP(nil), packet[8:24]...), destination: append(net.IP(nil), packet[24:40]...),
+		payload: packet[headerLength:totalLength],
+	}, nil
+}
+
+func isIPv6ExtensionHeader(protocol byte) bool {
+	switch protocol {
+	case 0, 43, 44, 51, 60:
+		return true
+	default:
+		return false
+	}
 }
 
 func transportPorts(protocol byte, payload []byte) (uint16, uint16, bool) {
@@ -52,17 +97,22 @@ func transportPorts(protocol byte, payload []byte) (uint16, uint16, bool) {
 	return binary.BigEndian.Uint16(payload[:2]), binary.BigEndian.Uint16(payload[2:4]), true
 }
 
-func replaceIPv4Payload(packet []byte, protocol byte, payload []byte) ([]byte, error) {
-	parsed, err := parseIPv4Packet(packet)
+func replaceIPPayload(packet []byte, protocol byte, payload []byte) ([]byte, error) {
+	parsed, err := parseIPPacket(packet)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]byte, parsed.headerLength+len(payload))
 	copy(out, packet[:parsed.headerLength])
 	copy(out[parsed.headerLength:], payload)
-	out[9] = protocol
-	binary.BigEndian.PutUint16(out[2:4], uint16(len(out)))
-	updateIPv4HeaderChecksum(out[:parsed.headerLength])
+	if parsed.version == 4 {
+		out[9] = protocol
+		binary.BigEndian.PutUint16(out[2:4], uint16(len(out)))
+		updateIPv4HeaderChecksum(out[:parsed.headerLength])
+	} else {
+		out[6] = protocol
+		binary.BigEndian.PutUint16(out[4:6], uint16(len(payload)))
+	}
 	return out, nil
 }
 
