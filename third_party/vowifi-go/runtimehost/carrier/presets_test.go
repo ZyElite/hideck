@@ -1,6 +1,8 @@
 package carrier
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -64,5 +66,19 @@ func TestValidateEffectiveCarrierRejectsIMSExpiryOverflow(t *testing.T) {
 	err := ValidateEffectiveCarrierConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "overflows duration") {
 		t.Fatalf("ValidateEffectiveCarrierConfig() error = %v", err)
+	}
+}
+
+func TestLoadCarrierOverridesRejectsExplicitZeroIMSExpiry(t *testing.T) {
+	ClearCarrierOverrides()
+	t.Cleanup(ClearCarrierOverrides)
+	path := filepath.Join(t.TempDir(), "carrier_overrides.json")
+	data := []byte(`[{"MCC":"234","MNC":"10","IMS":{"ExpiresSeconds":0}}]`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	_, err := LoadCarrierOverrides(path)
+	if err == nil || !strings.Contains(err.Error(), "expiry must be positive") {
+		t.Fatalf("LoadCarrierOverrides() error = %v", err)
 	}
 }

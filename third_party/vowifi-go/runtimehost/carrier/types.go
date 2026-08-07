@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 )
 
 // EffectiveCarrierConfigInput selects the carrier by PLMN.
@@ -32,6 +33,29 @@ type IMSRegisterTemplate struct {
 	AccessType      string
 	ICSIRef         string
 	ContactOrder    []string
+	expiresSet      bool
+}
+
+// UnmarshalJSON records whether expiry was explicitly present so a JSON zero
+// cannot be mistaken for an omitted override value.
+func (t *IMSRegisterTemplate) UnmarshalJSON(data []byte) error {
+	type templateAlias IMSRegisterTemplate
+	var decoded templateAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*t = IMSRegisterTemplate(decoded)
+	for name := range fields {
+		if strings.EqualFold(name, "ExpiresSeconds") {
+			t.expiresSet = true
+			break
+		}
+	}
+	return nil
 }
 
 // EffectiveCarrierConfig is the resolved carrier configuration.

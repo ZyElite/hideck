@@ -93,7 +93,7 @@ func applyCarrierOverride(cfg *EffectiveCarrierConfig, override CarrierOverride)
 }
 
 func mergeIMSRegisterTemplate(target *IMSRegisterTemplate, override IMSRegisterTemplate) {
-	if override.ExpiresSeconds != 0 {
+	if override.expiresSet || override.ExpiresSeconds != 0 {
 		target.ExpiresSeconds = override.ExpiresSeconds
 	}
 	setStringIfPresent(&target.SupportedHeader, override.SupportedHeader)
