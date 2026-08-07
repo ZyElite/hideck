@@ -184,7 +184,8 @@ func (s *Service) GetPAccessNetworkInfo() string {
 	if len(mnc) == 2 {
 		mnc = "0" + mnc
 	}
-	return "IEEE-802.11;network-id=" + mcc + mnc + ";PANID=0x0000;TOD=1"
+	pani := "IEEE-802.11;network-id=" + mcc + mnc + ";PANID=0x0000;TOD=1"
+	return AppendPAccessNetworkCountry(pani, CountryISO2FromMCC(mcc))
 }
 
 // GetPubGRUU returns the public GRUU.

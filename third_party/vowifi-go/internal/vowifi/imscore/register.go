@@ -95,7 +95,7 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, registrationResponseError(resp)
+		return 0, registrationResponseError(resp, session.challenge != nil)
 	}
 	if session.security != nil && session.security.server == nil {
 		return 0, errors.New("imscore: registration completed without 3GPP security agreement")
@@ -234,7 +234,11 @@ func (s *Service) registerLocalAddress(session *registerSession) string {
 	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(int(session.security.client.PortS)))
 }
 
-func registrationResponseError(response *sipResponse) error {
+func registrationResponseError(response *sipResponse, challenged bool) error {
+	phase := "initial REGISTER"
+	if challenged {
+		phase = "authenticated REGISTER"
+	}
 	detail := strings.TrimSpace(response.Reason)
 	if warning := strings.TrimSpace(response.Header("Warning")); warning != "" {
 		if detail != "" {
@@ -243,9 +247,9 @@ func registrationResponseError(response *sipResponse) error {
 		detail += "warning=" + warning
 	}
 	if detail == "" {
-		return fmt.Errorf("imscore: registration failed with status %d", response.StatusCode)
+		return fmt.Errorf("imscore: registration failed during %s with status %d", phase, response.StatusCode)
 	}
-	return fmt.Errorf("imscore: registration failed with status %d (%s)", response.StatusCode, detail)
+	return fmt.Errorf("imscore: registration failed during %s with status %d (%s)", phase, response.StatusCode, detail)
 }
 
 func primaryPublicIdentity(cfg *IMSConfig) string {

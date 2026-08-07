@@ -60,8 +60,11 @@ func TestGenerateStablePAccessNetworkInfo(t *testing.T) {
 		t.Errorf("pani = %q", pani)
 	}
 	withCountry := AppendPAccessNetworkCountry(pani, "US")
-	if withCountry != pani+";network-country=US" {
+	if withCountry != pani+";country=US" {
 		t.Errorf("appended = %q", withCountry)
+	}
+	if got := AppendPAccessNetworkCountry(withCountry, "GB"); got != withCountry {
+		t.Errorf("duplicate country = %q", got)
 	}
 }
 

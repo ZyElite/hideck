@@ -252,10 +252,10 @@ func GenerateStablePAccessNetworkInfoByIdentity(ident identity.IMSIdentity) stri
 
 // AppendPAccessNetworkCountry appends a country to the PANI value.
 func AppendPAccessNetworkCountry(pani, iso2 string) string {
-	if iso2 == "" || strings.Contains(pani, "network-country") {
+	if iso2 == "" || strings.Contains(strings.ToLower(pani), "country=") {
 		return pani
 	}
-	return pani + ";network-country=" + iso2
+	return pani + ";country=" + strings.ToUpper(strings.TrimSpace(iso2))
 }
 
 // GenerateStableWlanNodeID derives a stable WLAN node ID from an identity.

@@ -61,7 +61,7 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 				t.Fatalf("initial Authorization omitted %s: %q", field, authorization)
 			}
 		}
-		if got := sipHeaderValue(request, "P-Access-Network-Info"); !strings.Contains(got, "network-id=310026") {
+		if got := sipHeaderValue(request, "P-Access-Network-Info"); !strings.Contains(got, "network-id=310026") || !strings.Contains(got, "country=US") {
 			t.Fatalf("REGISTER P-Access-Network-Info = %q", got)
 		}
 	case <-ctx.Done():
@@ -285,8 +285,8 @@ func TestRegistrationResponseErrorIncludesRegistrarDiagnostic(t *testing.T) {
 		StatusCode: 400,
 		Reason:     "Bad Request",
 		Headers:    map[string]string{"Warning": `399 pcscf.example "Malformed Contact"`},
-	})
-	if got := err.Error(); !strings.Contains(got, "400 (Bad Request") || !strings.Contains(got, "Malformed Contact") {
+	}, true)
+	if got := err.Error(); !strings.Contains(got, "authenticated REGISTER") || !strings.Contains(got, "400 (Bad Request") || !strings.Contains(got, "Malformed Contact") {
 		t.Fatalf("registrationResponseError = %q", got)
 	}
 }
