@@ -1,9 +1,20 @@
 package logging
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestDetectGoRunModeHonorsForceEnvironment(t *testing.T) {
+	if err := os.Setenv("VOHIVE_FORCE_GO_RUN_LOG", "true"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Unsetenv("VOHIVE_FORCE_GO_RUN_LOG") })
+	if got := detectGoRunMode(); got != modeGoRun {
+		t.Fatalf("detectGoRunMode = %v", got)
+	}
+}
 
 func TestRedactSIPRaw(t *testing.T) {
 	raw := "INVITE sip:1234567890@example.com SIP/2.0\r\nAuthorization: Digest username=\"310260123456789\"\r\n"

@@ -110,6 +110,25 @@ func TestProcessAKAChallenge(t *testing.T) {
 	}
 }
 
+func TestProcessAKAChallengeWithoutQOPUsesLegacyDigest(t *testing.T) {
+	randBytes := bytes.Repeat([]byte{0x11}, 16)
+	autnBytes := bytes.Repeat([]byte{0x22}, 16)
+	challenge := &DigestChallenge{
+		Realm: "ims.example.com", Nonce: base64Std(append(append([]byte{}, randBytes...), autnBytes...)),
+		Algorithm: "AKAv1-MD5", AKA: true, RAND: randBytes, AUTN: autnBytes,
+	}
+	auth, err := ProcessAKAChallenge(challenge, stubAKAProvider{}, "user@example.com", "REGISTER", "sip:ims.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(auth, "qop=") || strings.Contains(auth, "cnonce=") || strings.Contains(auth, "nc=") {
+		t.Fatalf("legacy Digest-AKA unexpectedly included qop fields: %q", auth)
+	}
+	if !strings.Contains(auth, "algorithm=AKAv1-MD5") || !strings.Contains(auth, "response=\"") {
+		t.Fatalf("legacy Digest-AKA is incomplete: %q", auth)
+	}
+}
+
 func TestNewAndRegister(t *testing.T) {
 	cfg := &IMSConfig{
 		DeviceID:    "dev-1",
@@ -168,7 +187,7 @@ func TestPAccessNetworkInfo(t *testing.T) {
 		IMPI: "310260123456789@ims.example",
 	}
 	svc, _ := New(cfg)
-	want := `IEEE-802.11; i-wlan-node-id="ba25793d37ec"`
+	want := `IEEE-802.11; i-wlan-node-id="dec378667018"`
 	if pani := svc.GetPAccessNetworkInfo(); pani != want {
 		t.Errorf("pani = %q, want %q", pani, want)
 	}

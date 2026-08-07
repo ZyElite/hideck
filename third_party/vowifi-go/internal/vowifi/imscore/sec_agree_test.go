@@ -1,8 +1,10 @@
 package imscore
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -34,7 +36,7 @@ func TestRegisterNegotiatesAndInstallsIPSec3GPP(t *testing.T) {
 	var initialClient string
 	serverHeader := ""
 	svc.transport.SetSendFn(func(request string) error {
-		if strings.Contains(request, "CSeq: 1 REGISTER") {
+		if strings.Contains(request, "CSeq: 2 REGISTER") {
 			initialClient = sipHeaderValue(request, "Security-Client")
 			assertInitialSecurityHeaders(t, request, initialClient)
 			serverHeader = serverOfferForClient(t, initialClient)
@@ -62,6 +64,138 @@ func TestRegisterNegotiatesAndInstallsIPSec3GPP(t *testing.T) {
 	}
 }
 
+func TestRegisterSwitchesFromInitialUDPToProtectedTCP(t *testing.T) {
+	udpServer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpServer.Close()
+	tcpServer, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcpServer.Close()
+	result := make(chan error, 1)
+	go serveUDPChallengeThenTCPSuccess(udpServer, tcpServer, result)
+
+	network := &captureIPSecNetwork{SystemIMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1))}
+	svc, err := New(&IMSConfig{
+		DeviceID: "dev-sec-tcp", IMEI: "860349055895064", IMSI: "234102356143376",
+		IMPI: "234102356143376@ims.example", IMPU: []string{"sip:234102356143376@ims.example"},
+		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp",
+		Registrar: udpServer.LocalAddr().String(), IMSNetwork: network,
+		AKAProvider: stubAKAProvider{}, IPSec3GPPEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if !network.installed || !svc.IsRegistered() {
+		t.Fatal("protected TCP registration did not complete")
+	}
+}
+
+func serveUDPChallengeThenTCPSuccess(udpServer *net.UDPConn, tcpServer *net.TCPListener, result chan<- error) {
+	buffer := make([]byte, 64*1024)
+	n, remote, err := udpServer.ReadFromUDP(buffer)
+	if err != nil {
+		result <- err
+		return
+	}
+	initial := string(buffer[:n])
+	client, err := parseSecurityMechanism(splitSecurityMechanisms(sipHeaderValue(initial, "Security-Client"))[0])
+	if err != nil {
+		result <- err
+		return
+	}
+	serverHeader := fmt.Sprintf("ipsec-3gpp;q=0.98;alg=hmac-sha-1-96;mod=trans;ealg=aes-cbc;spi-c=858993459;spi-s=1145324612;port-c=6059;port-s=%d", tcpPort(tcpServer.Addr()))
+	challenge := strings.TrimPrefix(strings.TrimSpace(digestChallengeHeaderNoQOP()), "WWW-Authenticate: ")
+	headers := "WWW-Authenticate: " + challenge + "\r\nSecurity-Server: " + serverHeader + "\r\n"
+	if _, err := udpServer.WriteToUDP([]byte(registerWireResponse(initial, 401, headers)), remote); err != nil {
+		result <- err
+		return
+	}
+	conn, err := tcpServer.AcceptTCP()
+	if err != nil {
+		result <- err
+		return
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		result <- err
+		return
+	}
+	if tcpPort(conn.RemoteAddr()) != int(client.PortC) {
+		result <- fmt.Errorf("protected TCP source port = %d, want %d", tcpPort(conn.RemoteAddr()), client.PortC)
+		return
+	}
+	reader := bufio.NewReader(conn)
+	authenticated, err := readSIPStreamMessage(reader)
+	if err != nil {
+		result <- err
+		return
+	}
+	if sipHeaderValue(authenticated, "Security-Verify") != serverHeader || strings.Contains(sipHeaderValue(authenticated, "Authorization"), "qop=") {
+		result <- errors.New("authenticated REGISTER did not preserve recovered security or Digest shape")
+		return
+	}
+	registerHeaders := "P-Associated-URI: <sip:+447840844894@o2.co.uk>,<tel:+447840844894>\r\n" +
+		"Service-Route: <sip:pcscf.example;lr>\r\n"
+	if _, err = conn.Write([]byte(registerWireResponse(authenticated, 200, registerHeaders))); err != nil {
+		result <- err
+		return
+	}
+	subscribe, err := readSIPStreamMessage(reader)
+	if err != nil {
+		result <- err
+		return
+	}
+	if err := assertRecoveredRegistrationSubscription(subscribe, serverHeader, client); err != nil {
+		result <- err
+		return
+	}
+	_, err = conn.Write([]byte(registerWireResponse(subscribe, 200, "")))
+	result <- err
+}
+
+func assertRecoveredRegistrationSubscription(request, securityVerify string, client securityMechanism) error {
+	if !strings.HasPrefix(request, "SUBSCRIBE sip:+447840844894@o2.co.uk SIP/2.0") {
+		return fmt.Errorf("unexpected SUBSCRIBE request line: %q", strings.SplitN(request, "\r\n", 2)[0])
+	}
+	checks := map[string]string{
+		"Route":                "<sip:pcscf.example;lr>",
+		"Event":                "reg",
+		"Accept":               "application/reginfo+xml",
+		"P-Preferred-Identity": "<sip:+447840844894@o2.co.uk>",
+		"Security-Verify":      securityVerify,
+		"Require":              "sec-agree",
+		"Proxy-Require":        "sec-agree",
+	}
+	for name, want := range checks {
+		if got := sipHeaderValue(request, name); got != want {
+			return fmt.Errorf("SUBSCRIBE %s = %q, want %q", name, got, want)
+		}
+	}
+	if !strings.Contains(sipHeaderValue(request, "Via"), fmt.Sprintf(":%d;", client.PortC)) ||
+		!strings.Contains(sipHeaderValue(request, "Contact"), fmt.Sprintf(":%d>", client.PortS)) {
+		return errors.New("SUBSCRIBE did not advertise the negotiated protected ports")
+	}
+	return nil
+}
+
+func digestChallengeHeaderNoQOP() string {
+	nonce := base64Std(append(bytes.Repeat([]byte{0x11}, 16), bytes.Repeat([]byte{0x22}, 16)...))
+	return fmt.Sprintf("WWW-Authenticate: Digest realm=\"ims.example\", nonce=\"%s\", algorithm=AKAv1-MD5\r\n", nonce)
+}
+
 func newSecurityAgreementTestService(t *testing.T, network IMSNetwork) *Service {
 	t.Helper()
 	svc, err := New(&IMSConfig{
@@ -81,8 +215,12 @@ func newSecurityAgreementTestService(t *testing.T, network IMSNetwork) *Service 
 
 func assertInitialSecurityHeaders(t *testing.T, request, securityClient string) {
 	t.Helper()
-	if securityClient == "" || !strings.Contains(securityClient, "ealg=aes-cbc") || !strings.Contains(securityClient, "ealg=null") {
+	if len(splitSecurityMechanisms(securityClient)) != 6 || !strings.Contains(securityClient, "alg=hmac-md5-96") ||
+		!strings.Contains(securityClient, "ealg=des-ede3-cbc") || !strings.Contains(securityClient, "ealg=null") {
 		t.Fatalf("initial Security-Client is invalid: %q", securityClient)
+	}
+	if strings.Contains(securityClient, "prot=") || strings.Contains(securityClient, "mod=") {
+		t.Fatalf("initial Security-Client has non-original parameters: %q", securityClient)
 	}
 	if sipHeaderValue(request, "Require") != "sec-agree" || sipHeaderValue(request, "Proxy-Require") != "sec-agree" {
 		t.Fatalf("initial REGISTER did not require sec-agree: %q", request)
@@ -91,8 +229,8 @@ func assertInitialSecurityHeaders(t *testing.T, request, securityClient string) 
 		t.Fatal("initial REGISTER unexpectedly contained Security-Verify")
 	}
 	if !strings.Contains(sipHeaderValue(request, "Via"), "10.0.0.2:41000;") ||
-		!strings.Contains(sipHeaderValue(request, "Contact"), "@10.0.0.2:41000>") {
-		t.Fatal("initial REGISTER did not use the unprotected client port")
+		!strings.Contains(sipHeaderValue(request, "Contact"), "@10.0.0.2:41001") {
+		t.Fatal("initial REGISTER did not advertise the recovered Via and Contact ports")
 	}
 	if !strings.Contains(sipHeaderValue(request, "Authorization"), `nonce=""`) {
 		t.Fatal("initial REGISTER omitted the empty IMS AKA authorization")
@@ -139,9 +277,11 @@ func assertAuthenticatedSecurityHeaders(t *testing.T, request, client, server st
 	if sipHeaderValue(request, "Authorization") == "" {
 		t.Fatal("authenticated REGISTER omitted Digest-AKA authorization")
 	}
-	if !strings.Contains(sipHeaderValue(request, "Via"), "10.0.0.2:41001;") ||
-		!strings.Contains(sipHeaderValue(request, "Contact"), "@10.0.0.2:41001>") {
-		t.Fatal("authenticated REGISTER did not advertise the protected server port")
+	via := sipHeaderValue(request, "Via")
+	contact := sipHeaderValue(request, "Contact")
+	if !strings.HasPrefix(via, "SIP/2.0/TCP 10.0.0.2:41000;") || !strings.Contains(via, ";alias") ||
+		!strings.Contains(contact, "@10.0.0.2:41001") {
+		t.Fatalf("authenticated REGISTER did not use the recovered protected TCP shape: Via=%q Contact=%q", via, contact)
 	}
 }
 

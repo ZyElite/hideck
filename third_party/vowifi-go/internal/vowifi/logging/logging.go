@@ -43,6 +43,9 @@ func IsGoRun() bool {
 
 // detectGoRunMode inspects the executable path for the go-build temp dir.
 func detectGoRunMode() runMode {
+	if envEnabled("VOHIVE_FORCE_GO_RUN_LOG") {
+		return modeGoRun
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return modeBinary

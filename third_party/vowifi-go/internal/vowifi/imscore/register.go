@@ -11,20 +11,24 @@ import (
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 const maxAKAChallenges = 2
 
 // registerSession tracks one registration attempt.
 type registerSession struct {
-	callID     string
-	fromTag    string
-	cseq       int
-	branch     string
-	challenge  *DigestChallenge
-	authHeader string
-	expires    time.Duration
-	security   *securityAgreement
+	callID       string
+	fromTag      string
+	contactUser  string
+	cseq         int
+	branch       string
+	challenge    *DigestChallenge
+	authHeader   string
+	expires      time.Duration
+	security     *securityAgreement
+	publicID     string
+	serviceRoute string
 }
 
 // Register performs the IMS registration flow (RFC 3261 + Digest-AKA).
@@ -54,6 +58,7 @@ func (s *Service) Register(ctx context.Context) error {
 		s.onRegistered()
 	}
 	s.scheduleRegistrationRefresh(expires)
+	s.startRegistrationSubscription()
 	return nil
 }
 
@@ -81,7 +86,7 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 		if challengeCount >= maxAKAChallenges {
 			return 0, fmt.Errorf("imscore: AKA challenge limit %d exceeded", maxAKAChallenges)
 		}
-		auth, syncFailure, err := s.answerDigestChallenge(session, resp)
+		auth, syncFailure, err := s.answerDigestChallenge(ctx, session, resp)
 		if err != nil {
 			return 0, err
 		}
@@ -102,34 +107,46 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	}
 	expires := registrationExpires(resp, s.cfg.Expires)
 	session.expires = expires
+	session.publicID = firstSIPHeaderURI(resp.Header("P-Associated-URI"))
+	session.serviceRoute = strings.TrimSpace(resp.Header("Service-Route"))
 	return expires, nil
 }
 
 func (s *Service) exchangeRegister(ctx context.Context, session *registerSession, authorization string) (*sipResponse, error) {
 	request := s.buildRegister(session, authorization)
+	logging.RunDebug("IMS REGISTER outbound", "cseq", session.cseq,
+		"authenticated", strings.TrimSpace(authorization) != "", "sip", logging.RedactSIPRaw(request))
 	if err := s.sendSIP(request); err != nil {
 		return nil, fmt.Errorf("imscore: send REGISTER CSeq %d: %w", session.cseq, err)
 	}
-	return s.receiveResponse(ctx, session)
+	response, err := s.receiveResponse(ctx, session)
+	if err != nil {
+		return nil, fmt.Errorf("imscore: receive REGISTER CSeq %d: %w", session.cseq, err)
+	}
+	logging.RunDebug("IMS REGISTER response", "cseq", session.cseq, "status", response.StatusCode,
+		"security_server", response.Header("Security-Server") != "", "digest_challenge", isDigestChallengeResponse(response))
+	return response, nil
 }
 
 func isDigestChallengeResponse(response *sipResponse) bool {
 	return response != nil && (response.StatusCode == 401 || response.StatusCode == 407)
 }
 
-func (s *Service) answerDigestChallenge(session *registerSession, response *sipResponse) (string, bool, error) {
+func (s *Service) answerDigestChallenge(ctx context.Context, session *registerSession, response *sipResponse) (string, bool, error) {
 	challenge, err := s.extractChallenge(response, response.StatusCode)
 	if err != nil {
 		return "", false, err
 	}
 	session.challenge = challenge
+	logging.RunDebug("IMS Digest-AKA challenge", "cseq", session.cseq,
+		"algorithm", challenge.Algorithm, "qop", challenge.QOP)
 	authorization, aka, authErr := s.buildAuthorizationWithResult(session)
 	syncFailure := errors.Is(authErr, enginesim.ErrSyncFailure)
 	if authErr != nil && !syncFailure {
 		return "", false, authErr
 	}
 	if session.security != nil && !syncFailure {
-		if err := s.installNegotiatedIPSec(session, response, aka); err != nil {
+		if err := s.installNegotiatedIPSec(ctx, session, response, aka); err != nil {
 			return "", false, err
 		}
 	}
@@ -142,7 +159,8 @@ func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {
 	if previous != nil && previous.expires > 0 {
 		session := &registerSession{
 			callID: previous.callID, fromTag: previous.fromTag,
-			cseq: previous.cseq + 1, security: previous.security,
+			contactUser: previous.contactUser,
+			cseq:        previous.cseq + 1, security: previous.security,
 		}
 		s.mu.RUnlock()
 		return session, nil
@@ -152,7 +170,10 @@ func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &registerSession{callID: newCallID(), fromTag: newTag(), cseq: 1, security: security}, nil
+	return &registerSession{
+		callID: newCallID(), fromTag: newTag(), contactUser: newUUID(),
+		cseq: 2, security: security,
+	}, nil
 }
 
 // buildRegister builds a REGISTER request.
@@ -162,23 +183,33 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	// the registration Call-ID.
 	session.branch = "z9hG4bK" + newBranch()
 	expires := registerExpires(cfg)
+	authenticated := strings.TrimSpace(authHeader) != ""
+	protected := registerUsesProtectedTransport(session)
+	transport := registerRequestTransport(cfg, protected)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("REGISTER sip:%s SIP/2.0\r\n", cfg.Domain))
 	localAddress := s.registerLocalAddress(session)
-	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;branch=%s;rport\r\n", transportUpper(cfg.Transport), localAddress, session.branch))
+	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;rport;branch=%s%s\r\n",
+		transportUpper(transport), localAddress, session.branch, registerViaAlias(protected)))
 	publicIdentity := primaryPublicIdentity(cfg)
 	b.WriteString(fmt.Sprintf("From: <%s>;tag=%s\r\n", publicIdentity, session.fromTag))
 	b.WriteString(fmt.Sprintf("To: <%s>\r\n", publicIdentity))
 	b.WriteString(fmt.Sprintf("Call-ID: %s\r\n", session.callID))
 	b.WriteString(fmt.Sprintf("CSeq: %d REGISTER\r\n", session.cseq))
-	b.WriteString("Contact: " + registerContact(cfg, localAddress, int(expires.Seconds())) + "\r\n")
+	contactAddress := s.registerContactAddress(session)
+	b.WriteString("Contact: " + registerContact(cfg, contactAddress, transport, session.contactUser, int(expires.Seconds())) + "\r\n")
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
-	b.WriteString("Supported: " + registerSupportedHeader(cfg) + "\r\n")
+	b.WriteString("Supported: " + formatHeaderList(registerSupportedHeader(cfg)) + "\r\n")
 	if allow := strings.TrimSpace(cfg.RegisterTemplate.AllowHeader); allow != "" {
 		b.WriteString("Allow: " + allow + "\r\n")
 	}
-	b.WriteString("P-Access-Network-Info: " + s.GetPAccessNetworkInfo() + "\r\n")
+	if registerIncludesPANI(cfg.RegisterTemplate, authenticated || protected) {
+		b.WriteString("P-Access-Network-Info: " + s.GetPAccessNetworkInfo() + "\r\n")
+	}
+	if cellular := strings.TrimSpace(cfg.CellularNetworkInfo); cellular != "" {
+		b.WriteString("Cellular-Network-Info: " + cellular + "\r\n")
+	}
 	b.WriteString(registerSecurityHeaders(session))
 	if authHeader == "" {
 		authHeader = initialIMSAuthorization(cfg)
@@ -191,16 +222,19 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	return b.String()
 }
 
-func registerContact(cfg *IMSConfig, localAddress string, expires int) string {
+func registerContact(cfg *IMSConfig, localAddress, transport, user string, expires int) string {
 	instance := strings.TrimSpace(cfg.IMEI)
 	if instance == "" {
 		instance = strings.TrimSpace(cfg.DeviceID)
 	}
-	uri := fmt.Sprintf("sip:%s@%s", contactUser(cfg), localAddress)
+	if strings.TrimSpace(user) == "" {
+		user = contactUser(cfg)
+	}
+	uri := fmt.Sprintf("sip:%s@%s", strings.TrimSpace(user), localAddress)
 	template := cfg.RegisterTemplate
 	if len(template.ContactOrder) > 0 {
 		return imsheaders.IMSContactURI(uri, imsheaders.IMSContactOptions{
-			Transport: cfg.Transport, AccessType: template.AccessType,
+			Transport: transport, AccessType: template.AccessType,
 			Instance: instance, ICSIRef: template.ICSIRef,
 			ParamOrder: template.ContactOrder,
 		})
@@ -230,8 +264,8 @@ func initialIMSAuthorization(cfg *IMSConfig) string {
 	if realm == "" {
 		realm = strings.TrimSpace(cfg.Domain)
 	}
-	return fmt.Sprintf(`Digest username="%s", realm="%s", nonce="", uri="sip:%s", response=""`,
-		digestQuotedValue(cfg.IMPI), digestQuotedValue(realm), digestQuotedValue(cfg.Domain))
+	return fmt.Sprintf(`Digest uri="sip:%s",username="%s",response="",realm="%s",nonce=""`,
+		digestQuotedValue(cfg.Domain), digestQuotedValue(cfg.IMPI), digestQuotedValue(realm))
 }
 
 func digestQuotedValue(value string) string {
@@ -253,10 +287,44 @@ func registerSecurityHeaders(session *registerSession) string {
 }
 
 func (s *Service) registerLocalAddress(session *registerSession) string {
-	if session == nil || session.security == nil || session.security.verifyHeader == "" {
+	return sipLocalAddress(s.cfg)
+}
+
+func (s *Service) registerContactAddress(session *registerSession) string {
+	if session == nil || session.security == nil {
 		return sipLocalAddress(s.cfg)
 	}
 	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(int(session.security.client.PortS)))
+}
+
+func registerRequestTransport(cfg *IMSConfig, protected bool) string {
+	if protected {
+		return "tcp"
+	}
+	return cfg.Transport
+}
+
+func registerViaAlias(protected bool) string {
+	if protected {
+		return ";alias"
+	}
+	return ""
+}
+
+func registerUsesProtectedTransport(session *registerSession) bool {
+	return session != nil && session.security != nil && session.security.verifyHeader != ""
+}
+
+func registerIncludesPANI(template IMSRegisterTemplate, authenticated bool) bool {
+	return !template.IncludePANIAuthenticated || authenticated
+}
+
+func formatHeaderList(value string) string {
+	parts := strings.Split(value, ",")
+	for index := range parts {
+		parts[index] = strings.TrimSpace(parts[index])
+	}
+	return strings.Join(parts, ", ")
 }
 
 func registrationResponseError(response *sipResponse, challenged bool) error {
@@ -480,7 +548,7 @@ func parseTopViaBranch(value string) (string, error) {
 
 // newCallID generates a call ID.
 func newCallID() string {
-	return fmt.Sprintf("%s-%d", randomHex(8), time.Now().UnixNano()%100000)
+	return newUUID()
 }
 
 // newTag generates a tag.
@@ -491,6 +559,15 @@ func newTag() string {
 // newBranch generates a Via branch.
 func newBranch() string {
 	return randomHex(16)
+}
+
+func newUUID() string {
+	raw := make([]byte, 16)
+	_, _ = randRead(raw)
+	raw[6] = raw[6]&0x0f | 0x40
+	raw[8] = raw[8]&0x3f | 0x80
+	encoded := fmt.Sprintf("%x", raw)
+	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:]
 }
 
 // randomHex generates a hex string of n random bytes.

@@ -48,8 +48,9 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 		if strings.Contains(request, "@ims.example@") {
 			t.Fatalf("REGISTER contains a duplicated identity domain: %q", request)
 		}
+		contact := sipHeaderValue(request, "Contact")
 		if !strings.Contains(request, "From: <sip:310260123456789@ims.example>") ||
-			!strings.Contains(request, "Contact: <sip:310260123456789@127.0.0.1:") {
+			!strings.Contains(contact, "@127.0.0.1:") || strings.Contains(contact, "sip:310260123456789@") {
 			t.Fatalf("REGISTER identity URIs are invalid: %q", request)
 		}
 		if !strings.Contains(sipHeaderValue(request, "Contact"), `+sip.instance="<urn:gsma:imei:35693803-564380-9>"`) {
@@ -61,7 +62,7 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 				t.Fatalf("initial Authorization omitted %s: %q", field, authorization)
 			}
 		}
-		if got := sipHeaderValue(request, "P-Access-Network-Info"); got != `IEEE-802.11; i-wlan-node-id="ba25793d37ec"` {
+		if got := sipHeaderValue(request, "P-Access-Network-Info"); got != `IEEE-802.11; i-wlan-node-id="dec378667018"` {
 			t.Fatalf("REGISTER P-Access-Network-Info = %q", got)
 		}
 	case <-ctx.Done():
@@ -83,7 +84,7 @@ func TestRegisterContactUsesRecoveredCarrierTemplate(t *testing.T) {
 			},
 		},
 	}
-	got := registerContact(config, "192.0.2.10:5060", 3600)
+	got := registerContact(config, "192.0.2.10:5060", "udp", "234102356143376", 3600)
 	want := `<sip:234102356143376@192.0.2.10:5060;transport=udp>` +
 		`;+g.3gpp.accesstype="wlan1"` +
 		`;+sip.instance="<urn:gsma:imei:35693803-564380-9>"` +
@@ -102,10 +103,12 @@ func TestBuildRegisterUsesRecoveredTemplateHeaders(t *testing.T) {
 		IMSI: "234102356143376", IMPI: "234102356143376@ims.example",
 		IMPU: []string{"sip:234102356143376@ims.example"}, Domain: "ims.example",
 		LocalIP: net.IPv4(192, 0, 2, 10), Transport: "udp",
-		UserAgent: "realme_RMX3366_0.0.2100",
+		UserAgent:             "iOS/18.2.1 iPhone (iPhone15,4)",
+		CellularNetworkInfo:   "3GPP-E-UTRAN-TDD;utran-cell-id-3gpp=2340100123456789;cell-info-age=1000",
+		PAccessNetworkCountry: "GB",
 		RegisterTemplate: IMSRegisterTemplate{
 			Expires: 600000 * time.Second, SupportedHeader: "path,sec-agree",
-			AllowHeader: allow, ContactMode: "android_default",
+			AllowHeader: allow, ContactMode: "android_default", IncludePANIAuthenticated: true,
 		},
 	}
 	service := &Service{cfg: config}
@@ -113,14 +116,30 @@ func TestBuildRegisterUsesRecoveredTemplateHeaders(t *testing.T) {
 	if got := sipHeaderValue(request, "Expires"); got != "600000" {
 		t.Fatalf("Expires = %q", got)
 	}
-	if got := sipHeaderValue(request, "Supported"); got != "path,sec-agree" {
+	if got := sipHeaderValue(request, "Supported"); got != "path, sec-agree" {
 		t.Fatalf("Supported = %q", got)
 	}
 	if got := sipHeaderValue(request, "Allow"); got != allow {
 		t.Fatalf("Allow = %q", got)
 	}
-	if got := sipHeaderValue(request, "User-Agent"); got != "realme_RMX3366_0.0.2100" {
+	if got := sipHeaderValue(request, "User-Agent"); got != "iOS/18.2.1 iPhone (iPhone15,4)" {
 		t.Fatalf("User-Agent = %q", got)
+	}
+	if got := sipHeaderValue(request, "P-Access-Network-Info"); got != "" {
+		t.Fatalf("initial P-Access-Network-Info = %q", got)
+	}
+	if got := sipHeaderValue(request, "Cellular-Network-Info"); !strings.HasPrefix(got, "3GPP-E-UTRAN-TDD;") {
+		t.Fatalf("Cellular-Network-Info = %q", got)
+	}
+	wantAuthorization := `Digest uri="sip:ims.example",username="234102356143376@ims.example",response="",realm="ims.example",nonce=""`
+	if got := sipHeaderValue(request, "Authorization"); got != wantAuthorization {
+		t.Fatalf("initial Authorization = %q", got)
+	}
+	authenticated := service.buildRegister(
+		&registerSession{callID: "call-1", fromTag: "tag-1", cseq: 2}, "Digest response",
+	)
+	if got := sipHeaderValue(authenticated, "P-Access-Network-Info"); !strings.HasSuffix(got, ";country=GB") {
+		t.Fatalf("authenticated P-Access-Network-Info = %q", got)
 	}
 }
 
@@ -161,7 +180,7 @@ func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 	if sipHeaderValue(seen[0], "Call-ID") != sipHeaderValue(seen[1], "Call-ID") {
 		t.Fatal("registration refresh changed Call-ID")
 	}
-	if sipHeaderValue(seen[0], "CSeq") != "1 REGISTER" || sipHeaderValue(seen[1], "CSeq") != "2 REGISTER" {
+	if sipHeaderValue(seen[0], "CSeq") != "2 REGISTER" || sipHeaderValue(seen[1], "CSeq") != "3 REGISTER" {
 		t.Fatalf("refresh CSeq values = %q, %q", sipHeaderValue(seen[0], "CSeq"), sipHeaderValue(seen[1], "CSeq"))
 	}
 	if !strings.Contains(sipHeaderValue(seen[1], "Contact"), ";expires=3600") {

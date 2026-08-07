@@ -182,10 +182,21 @@ func runtimeTestRequest(prepared *identity.PreparedSession, tunnel *lifecycleTun
 	}
 }
 
-func TestPreferredInnerAddressUsesIPv6WhenIPv4Missing(t *testing.T) {
-	inner := swu.InnerNetworkConfig{IPv6: net.ParseIP("2001:db8::8"), IPv6PrefixLen: 64}
+func TestPreferredInnerAddressUsesIPv6ForDualStack(t *testing.T) {
+	inner := swu.InnerNetworkConfig{
+		IPv4: net.ParseIP("192.0.2.8"), PrefixLen: 32,
+		IPv6: net.ParseIP("2001:db8::8"), IPv6PrefixLen: 64,
+	}
 	address, prefixLen := preferredInnerAddress(inner)
 	if !address.Equal(inner.IPv6) || prefixLen != 64 {
+		t.Fatalf("preferred inner address = %s/%d", address, prefixLen)
+	}
+}
+
+func TestPreferredInnerAddressFallsBackToIPv4(t *testing.T) {
+	inner := swu.InnerNetworkConfig{IPv4: net.ParseIP("192.0.2.8"), PrefixLen: 32}
+	address, prefixLen := preferredInnerAddress(inner)
+	if !address.Equal(inner.IPv4) || prefixLen != 32 {
 		t.Fatalf("preferred inner address = %s/%d", address, prefixLen)
 	}
 }

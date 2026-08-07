@@ -68,6 +68,8 @@ func applyGiffgaffPreset(cfg *EffectiveCarrierConfig) {
 	cfg.ESPProposals = []string{ESPProposalAES256SHA512}
 	cfg.ReauthIntervalSeconds = giffgaffReauthSeconds
 	cfg.IMS.ContactOrder = append([]string(nil), giffgaffContactOrder...)
+	cfg.IMS.IncludePANIAuthenticated = true
+	cfg.IMS.StrictSecurityServerOffer = true
 }
 
 func applyCarrierOverride(cfg *EffectiveCarrierConfig, override CarrierOverride) {
@@ -103,6 +105,12 @@ func mergeIMSRegisterTemplate(target *IMSRegisterTemplate, override IMSRegisterT
 	setStringIfPresent(&target.ICSIRef, override.ICSIRef)
 	if len(override.ContactOrder) > 0 {
 		target.ContactOrder = cloneStrings(override.ContactOrder)
+	}
+	if override.IncludePANIAuthenticated {
+		target.IncludePANIAuthenticated = true
+	}
+	if override.StrictSecurityServerOffer {
+		target.StrictSecurityServerOffer = true
 	}
 }
 

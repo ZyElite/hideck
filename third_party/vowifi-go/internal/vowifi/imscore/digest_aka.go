@@ -144,6 +144,9 @@ func ComputeAKAv1MD5DigestResponse(username, realm string, res []byte, method, u
 	a2 := fmt.Sprintf("%s:%s", method, uri)
 	ha1 := md5Hex(a1)
 	ha2 := md5Hex([]byte(a2))
+	if strings.TrimSpace(qop) == "" {
+		return md5Hex([]byte(fmt.Sprintf("%s:%s:%s", ha1, nonce, ha2))), nil
+	}
 	response := md5Hex([]byte(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2)))
 	return response, nil
 }
@@ -156,7 +159,7 @@ func normalizeDigestQOP(qop string) string {
 	case "auth-int":
 		return "auth-int"
 	default:
-		return "auth"
+		return ""
 	}
 }
 
@@ -216,8 +219,11 @@ func buildDigestAuthorization(challenge *DigestChallenge, username, method, uri 
 	}
 	var b strings.Builder
 	b.WriteString("Digest ")
-	b.WriteString(fmt.Sprintf("username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", ", username, challenge.Realm, challenge.Nonce, uri))
-	b.WriteString(fmt.Sprintf("response=\"%s\", qop=%s, nc=%s, cnonce=\"%s\"", response, qop, nc, cnonce))
+	b.WriteString(fmt.Sprintf("username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", response=\"%s\"",
+		username, challenge.Realm, challenge.Nonce, uri, response))
+	if qop != "" {
+		b.WriteString(fmt.Sprintf(", qop=%s, nc=%s, cnonce=\"%s\"", qop, nc, cnonce))
+	}
 	if challenge.Algorithm != "" {
 		b.WriteString(fmt.Sprintf(", algorithm=%s", challenge.Algorithm))
 	}

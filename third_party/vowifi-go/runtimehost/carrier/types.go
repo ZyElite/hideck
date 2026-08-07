@@ -26,14 +26,16 @@ type E911Config struct {
 
 // IMSRegisterTemplate is the IMS registration template for the carrier.
 type IMSRegisterTemplate struct {
-	ExpiresSeconds  int
-	SupportedHeader string
-	AllowHeader     string
-	ContactMode     string
-	AccessType      string
-	ICSIRef         string
-	ContactOrder    []string
-	expiresSet      bool
+	ExpiresSeconds            int
+	SupportedHeader           string
+	AllowHeader               string
+	ContactMode               string
+	AccessType                string
+	ICSIRef                   string
+	ContactOrder              []string
+	IncludePANIAuthenticated  bool
+	StrictSecurityServerOffer bool
+	expiresSet                bool
 }
 
 // UnmarshalJSON records whether expiry was explicitly present so a JSON zero

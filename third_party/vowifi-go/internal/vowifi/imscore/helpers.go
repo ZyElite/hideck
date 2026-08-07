@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -284,23 +285,48 @@ func stablePANIGenerationSeed(candidates []string) string {
 
 // GenerateRandomIMEIForModel generates a random IMEI for a device model.
 func GenerateRandomIMEIForModel(model string) string {
-	b := make([]byte, 7)
-	_, _ = rand.Read(b)
-	tac := 0
-	for _, x := range []byte(model) {
-		tac = (tac + int(x)) % 1000000
+	tac := "35693803"
+	if strings.EqualFold(strings.TrimSpace(model), "iphone15,4") {
+		tac = "86034905"
 	}
-	sn := 0
-	for _, x := range b {
-		sn = (sn*256 + int(x)) % 1000000
+	random := make([]byte, 6)
+	_, _ = rand.Read(random)
+	serial := make([]byte, len(random))
+	for index, value := range random {
+		serial[index] = '0' + value%10
 	}
-	return fmt.Sprintf("%06d%06d0", tac, sn)
+	prefix := tac + string(serial)
+	return prefix + string(imeiCheckDigit(prefix))
 }
 
 // GenerateDefaultCellularNetworkInfo builds a default cellular network info
 // string from the SIM profile.
 func GenerateDefaultCellularNetworkInfo(mcc, mnc string) string {
-	return fmt.Sprintf("3GPP-UTRAN-TDD;utran-cell-id-3gpp=%s%s", mcc, mnc)
+	mcc = strings.TrimSpace(mcc)
+	mncValue, err := strconv.Atoi(strings.TrimSpace(mnc))
+	if err != nil || len(mcc) != 3 || mncValue < 0 || mncValue > 999 {
+		return ""
+	}
+	cellID := fmt.Sprintf("%s%03d0%s", mcc, mncValue, strings.ToUpper(randomHex(9)))
+	ageBytes := make([]byte, 2)
+	_, _ = rand.Read(ageBytes)
+	age := 1000 + (int(ageBytes[0]) << 8) + int(ageBytes[1])
+	return fmt.Sprintf("3GPP-E-UTRAN-TDD;utran-cell-id-3gpp=%s;cell-info-age=%d", cellID, age)
+}
+
+func imeiCheckDigit(prefix string) byte {
+	sum := 0
+	for index, char := range prefix {
+		digit := int(char - '0')
+		if index%2 == 1 {
+			digit *= 2
+			if digit > 9 {
+				digit -= 9
+			}
+		}
+		sum += digit
+	}
+	return byte('0' + (10-sum%10)%10)
 }
 
 // ResolveIMSIdentitySource resolves the IMS identity source preference.

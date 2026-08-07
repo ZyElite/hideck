@@ -32,8 +32,11 @@ func TestIMSRegisterConfigForGiffgaff(t *testing.T) {
 		template.ContactMode != "android_default" || len(template.ICSIRef) != 137 {
 		t.Fatalf("giffgaff IMS defaults = %+v", template)
 	}
-	if userAgent != "realme_RMX3366_0.0.2100" {
+	if userAgent != "iOS/18.2.1 iPhone (iPhone15,4)" {
 		t.Fatalf("giffgaff User-Agent = %q", userAgent)
+	}
+	if !template.IncludePANIAuthenticated || !template.StrictSecurityServerOffer {
+		t.Fatalf("giffgaff security policy = %+v", template)
 	}
 }
 

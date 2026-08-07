@@ -67,6 +67,11 @@ type IMSConfig struct {
 	TraceID string
 	// UserAgent is the SIP User-Agent header value.
 	UserAgent string
+	// CellularNetworkInfo is the 3GPP cellular network snapshot advertised by
+	// the recovered client on REGISTER requests.
+	CellularNetworkInfo string
+	// PAccessNetworkCountry is appended to authenticated PANI headers.
+	PAccessNetworkCountry string
 	// RegisterTemplate carries the recovered carrier-specific REGISTER wire
 	// policy selected by the runtime host.
 	RegisterTemplate IMSRegisterTemplate
@@ -74,13 +79,15 @@ type IMSConfig struct {
 
 // IMSRegisterTemplate is the carrier-specific REGISTER wire policy.
 type IMSRegisterTemplate struct {
-	Expires         time.Duration
-	SupportedHeader string
-	AllowHeader     string
-	ContactMode     string
-	AccessType      string
-	ICSIRef         string
-	ContactOrder    []string
+	Expires                   time.Duration
+	SupportedHeader           string
+	AllowHeader               string
+	ContactMode               string
+	AccessType                string
+	ICSIRef                   string
+	ContactOrder              []string
+	IncludePANIAuthenticated  bool
+	StrictSecurityServerOffer bool
 }
 
 // AKAProvider computes AKA from the network challenge.
@@ -95,6 +102,7 @@ type IMSNetwork interface {
 	HasLocalIP(ip net.IP) bool
 	ResolveIP(ctx context.Context, host string) (net.IP, error)
 	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+	DialTCPContext(ctx context.Context, local, remote *net.TCPAddr) (net.Conn, error)
 	ListenTCP(addr *net.TCPAddr) (net.Listener, error)
 	ListenPacket(network string, addr *net.UDPAddr) (net.PacketConn, error)
 }
@@ -147,6 +155,12 @@ func (n *SystemIMSNetwork) DialContext(ctx context.Context, network, addr string
 	return d.DialContext(ctx, network, addr)
 }
 
+// DialTCPContext dials TCP from an explicit local IMS address and port.
+func (n *SystemIMSNetwork) DialTCPContext(ctx context.Context, local, remote *net.TCPAddr) (net.Conn, error) {
+	dialer := net.Dialer{LocalAddr: local}
+	return dialer.DialContext(ctx, "tcp", remote.String())
+}
+
 // ListenTCP listens for TCP connections.
 func (n *SystemIMSNetwork) ListenTCP(addr *net.TCPAddr) (net.Listener, error) {
 	return net.ListenTCP("tcp", addr)
@@ -161,10 +175,11 @@ func (n *SystemIMSNetwork) ListenPacket(network string, addr *net.UDPAddr) (net.
 type Service struct {
 	cfg *IMSConfig
 
-	mu         sync.RWMutex
-	registerMu sync.Mutex
-	state      string
-	regState   string
+	mu          sync.RWMutex
+	registerMu  sync.Mutex
+	subscribeMu sync.Mutex
+	state       string
+	regState    string
 
 	// Registration state.
 	regSession *registerSession
@@ -173,9 +188,15 @@ type Service struct {
 	// SIP transport.
 	transport           *sipTransport
 	registrationIO      net.PacketConn
-	securityServerIO    net.PacketConn
+	registrationTCP     net.Conn
+	securityServerIO    net.Listener
+	clientPortReserve   net.Listener
 	registrationRemote  *net.UDPAddr
+	protectedClientPort int
 	protectedServerPort int
+	externalTransport   bool
+	protectedConnMu     sync.Mutex
+	protectedConns      map[net.Conn]struct{}
 	networkDone         sync.WaitGroup
 	refreshTimer        *time.Timer
 	registerErrors      chan error

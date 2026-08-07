@@ -103,6 +103,13 @@ func (n *Network) DialContext(ctx context.Context, network, address string) (net
 	return n.backend.DialContext(ctx, network, address)
 }
 
+func (n *Network) DialTCPContext(ctx context.Context, local, remote *net.TCPAddr) (net.Conn, error) {
+	if err := n.ready(); err != nil {
+		return nil, err
+	}
+	return n.backend.DialTCPContext(ctx, local, remote)
+}
+
 func (n *Network) ListenTCP(address *net.TCPAddr) (net.Listener, error) {
 	if err := n.ready(); err != nil {
 		return nil, err

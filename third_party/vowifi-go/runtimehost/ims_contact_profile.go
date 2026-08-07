@@ -26,21 +26,17 @@ func imsRegisterConfigForPrepared(prepared *identity.PreparedSession) (imscore.I
 	}
 	template := carrierConfig.IMS
 	registerTemplate := imscore.IMSRegisterTemplate{
-		Expires:         time.Duration(template.ExpiresSeconds) * time.Second,
-		SupportedHeader: strings.TrimSpace(template.SupportedHeader),
-		AllowHeader:     strings.TrimSpace(template.AllowHeader),
-		ContactMode:     strings.TrimSpace(template.ContactMode),
-		AccessType:      strings.TrimSpace(template.AccessType),
-		ICSIRef:         strings.TrimSpace(template.ICSIRef),
-		ContactOrder:    append([]string(nil), template.ContactOrder...),
+		Expires:                   time.Duration(template.ExpiresSeconds) * time.Second,
+		SupportedHeader:           strings.TrimSpace(template.SupportedHeader),
+		AllowHeader:               strings.TrimSpace(template.AllowHeader),
+		ContactMode:               strings.TrimSpace(template.ContactMode),
+		AccessType:                strings.TrimSpace(template.AccessType),
+		ICSIRef:                   strings.TrimSpace(template.ICSIRef),
+		ContactOrder:              append([]string(nil), template.ContactOrder...),
+		IncludePANIAuthenticated:  template.IncludePANIAuthenticated,
+		StrictSecurityServerOffer: template.StrictSecurityServerOffer,
 	}
-	return registerTemplate, carrierUserAgent(carrierConfig), nil
+	return registerTemplate, profile.ResolveUserAgentForModel(defaultIMSDeviceModel), nil
 }
 
-func carrierUserAgent(carrierConfig carrier.EffectiveCarrierConfig) string {
-	model := strings.TrimSpace(carrierConfig.DeviceModel)
-	if model == "" {
-		return ""
-	}
-	return profile.ResolveUserAgentForModel(model)
-}
+const defaultIMSDeviceModel = "iphone15,4"

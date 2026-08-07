@@ -1,6 +1,7 @@
 package imscore
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -17,6 +18,7 @@ type securityMechanism struct {
 	Protocol, Mode         string
 	SPIC, SPIS             uint32
 	PortC, PortS           uint16
+	Priority               float64
 }
 
 type securityAgreement struct {
@@ -31,7 +33,10 @@ func (s *Service) prepareSecurityAgreement() (*securityAgreement, error) {
 		return nil, nil
 	}
 	s.mu.RLock()
-	clientPort, serverPort := s.cfg.LocalPort, s.protectedServerPort
+	clientPort, serverPort := s.protectedClientPort, s.protectedServerPort
+	if clientPort == 0 && s.externalTransport {
+		clientPort = s.cfg.LocalPort
+	}
 	s.mu.RUnlock()
 	if clientPort <= 0 || clientPort > 65535 || serverPort <= 0 || serverPort > 65535 {
 		return nil, errors.New("imscore: protected IMS ports were not bound")
@@ -70,10 +75,24 @@ func randomSPI(excluded map[uint32]struct{}) (uint32, error) {
 }
 
 func securityClientHeader(client securityMechanism) string {
-	format := "ipsec-3gpp;alg=%s;ealg=%s;prot=esp;mod=trans;spi-c=%010d;spi-s=%010d;port-c=%d;port-s=%d"
-	aesOffer := fmt.Sprintf(format, client.Auth, ipsec3gpp.EncryptionAES, client.SPIC, client.SPIS, client.PortC, client.PortS)
-	nullOffer := fmt.Sprintf(format, client.Auth, ipsec3gpp.EncryptionNull, client.SPIC, client.SPIS, client.PortC, client.PortS)
-	return aesOffer + ", " + nullOffer
+	mechanisms := [][2]string{
+		{"hmac-md5-96", "des-ede3-cbc"},
+		{"hmac-md5-96", ipsec3gpp.EncryptionAES},
+		{"hmac-md5-96", ipsec3gpp.EncryptionNull},
+		{ipsec3gpp.AuthHMACSHA196, "des-ede3-cbc"},
+		{ipsec3gpp.AuthHMACSHA196, ipsec3gpp.EncryptionAES},
+		{ipsec3gpp.AuthHMACSHA196, ipsec3gpp.EncryptionNull},
+	}
+	offers := make([]string, 0, len(mechanisms))
+	for _, mechanism := range mechanisms {
+		offers = append(offers, formatSecurityClientOffer(client, mechanism[0], mechanism[1]))
+	}
+	return strings.Join(offers, ",")
+}
+
+func formatSecurityClientOffer(client securityMechanism, auth, encryption string) string {
+	format := "ipsec-3gpp; alg=%s; ealg=%s; spi-c=%d; spi-s=%d; port-c=%d; port-s=%d"
+	return fmt.Sprintf(format, auth, encryption, client.SPIC, client.SPIS, client.PortC, client.PortS)
 }
 
 func selectSecurityServer(header string) (*securityMechanism, string, error) {
@@ -81,14 +100,19 @@ func selectSecurityServer(header string) (*securityMechanism, string, error) {
 	if header == "" {
 		return nil, "", errors.New("imscore: AKA challenge missing Security-Server")
 	}
+	var selected *securityMechanism
 	for _, value := range splitSecurityMechanisms(header) {
 		mechanism, err := parseSecurityMechanism(value)
 		if err != nil {
 			continue
 		}
-		if mechanismSupported(mechanism) {
-			return &mechanism, header, nil
+		if mechanismSupported(mechanism) && (selected == nil || mechanism.Priority > selected.Priority) {
+			candidate := mechanism
+			selected = &candidate
 		}
+	}
+	if selected != nil {
+		return selected, header, nil
 	}
 	return nil, "", errors.New("imscore: Security-Server has no supported ipsec-3gpp offer")
 }
@@ -140,6 +164,13 @@ func assignSecurityParameters(mechanism *securityMechanism, parameters map[strin
 	if mechanism.Encryption == "" {
 		mechanism.Encryption = ipsec3gpp.EncryptionNull
 	}
+	if value := strings.TrimSpace(parameters["q"]); value != "" {
+		priority, err := strconv.ParseFloat(value, 64)
+		if err != nil || priority < 0 || priority > 1 {
+			return errors.New("imscore: invalid Security-Server q value")
+		}
+		mechanism.Priority = priority
+	}
 	var err error
 	if mechanism.SPIC, err = parseSPI(parameters["spi-c"]); err != nil {
 		return fmt.Errorf("imscore: invalid Security-Server spi-c: %w", err)
@@ -190,7 +221,7 @@ func mechanismSupported(mechanism securityMechanism) bool {
 	return mechanism.Encryption == ipsec3gpp.EncryptionAES || mechanism.Encryption == ipsec3gpp.EncryptionNull
 }
 
-func (s *Service) installNegotiatedIPSec(session *registerSession, response *sipResponse, aka AKAResult) error {
+func (s *Service) installNegotiatedIPSec(ctx context.Context, session *registerSession, response *sipResponse, aka AKAResult) error {
 	server, verify, err := selectSecurityServer(response.Header("Security-Server"))
 	if err != nil {
 		return err
@@ -214,6 +245,14 @@ func (s *Service) installNegotiatedIPSec(session *registerSession, response *sip
 	}
 	if err := s.setProtectedRegistrarPort(server.PortS); err != nil {
 		return err
+	}
+	s.mu.RLock()
+	externalTransport := s.externalTransport
+	s.mu.RUnlock()
+	if !externalTransport {
+		if err := s.connectProtectedRegistrationTCP(ctx, client, *server); err != nil {
+			return err
+		}
 	}
 	s.recordSecurityAgreement(session, server, verify)
 	return nil

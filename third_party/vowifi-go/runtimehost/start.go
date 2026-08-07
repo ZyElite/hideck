@@ -298,7 +298,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 	}
 	cfg := &imscore.IMSConfig{
 		DeviceID:         req.DeviceID,
-		IMEI:             req.Prepared.Profile.IMEI,
+		IMEI:             imscore.GenerateRandomIMEIForModel(defaultIMSDeviceModel),
 		IMSI:             imsiOf(impi),
 		IMPI:             impi,
 		IMPU:             impu,
@@ -314,7 +314,11 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		IMSNetwork:       imsNetwork,
 		IPSec3GPPEnabled: true,
 		UserAgent:        userAgent,
-		RegisterTemplate: registerTemplate,
+		CellularNetworkInfo: imscore.GenerateDefaultCellularNetworkInfo(
+			req.Prepared.Profile.MCC, req.Prepared.Profile.MNC,
+		),
+		PAccessNetworkCountry: imscore.CountryISO2FromMCC(req.Prepared.Profile.MCC),
+		RegisterTemplate:      registerTemplate,
 	}
 	if req.DeliveryStore != nil {
 		cfg.DeliveryStore = newDeliveryStoreAdapter(req.DeliveryStore)
@@ -338,10 +342,10 @@ func preferredPCSCF(servers []net.IP, innerIP net.IP) net.IP {
 }
 
 func preferredInnerAddress(inner swu.InnerNetworkConfig) (net.IP, int) {
-	if inner.IPv4 != nil {
-		return inner.IPv4, inner.PrefixLen
+	if inner.IPv6 != nil {
+		return inner.IPv6, inner.IPv6PrefixLen
 	}
-	return inner.IPv6, inner.IPv6PrefixLen
+	return inner.IPv4, inner.PrefixLen
 }
 
 // imsiOf extracts the IMSI from an IMPI (the part before '@').

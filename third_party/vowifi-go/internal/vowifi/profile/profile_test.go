@@ -58,10 +58,10 @@ func TestGenerateStableIMEIForModel(t *testing.T) {
 }
 
 func TestResolveUserAgentForModel(t *testing.T) {
-	if got := ResolveUserAgentForModel("iPhone 14"); got != "iPhone" {
+	if got := ResolveUserAgentForModel("iPhone 14"); got != "iOS/18.2.1 iPhone (iPhone15,4)" {
 		t.Errorf("ua = %q", got)
 	}
-	if got := ResolveUserAgentForModel("unknown"); got != "vowifi" {
+	if got := ResolveUserAgentForModel("unknown"); got != "iOS/18.2.1 iPhone (iPhone15,4)" {
 		t.Errorf("ua default = %q", got)
 	}
 	if got := ResolveUserAgentForModel("rmx3366"); got != "realme_RMX3366_0.0.2100" {

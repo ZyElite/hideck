@@ -156,6 +156,21 @@ func (g *gvisorNetwork) DialContext(ctx context.Context, network, addr string) (
 	return nil, fmt.Errorf("netstack: unsupported network %q", network)
 }
 
+func (g *gvisorNetwork) DialTCPContext(ctx context.Context, local, remote *net.TCPAddr) (net.Conn, error) {
+	localAddress, localProtocol, err := fullAddress(local.IP, local.Port)
+	if err != nil {
+		return nil, err
+	}
+	remoteAddress, remoteProtocol, err := fullAddress(remote.IP, remote.Port)
+	if err != nil {
+		return nil, err
+	}
+	if localProtocol != remoteProtocol {
+		return nil, errors.New("netstack: TCP local and remote address families differ")
+	}
+	return gonet.DialTCPWithBind(ctx, g.stack, localAddress, remoteAddress, localProtocol)
+}
+
 func (g *gvisorNetwork) ListenTCP(addr *net.TCPAddr) (net.Listener, error) {
 	full, protocol, err := fullAddress(addr.IP, addr.Port)
 	if err != nil {

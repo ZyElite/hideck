@@ -397,6 +397,10 @@ func imeiLuhnCheckDigit(prefix string) byte {
 
 // resolveKnownModelTAC resolves a known model to its TAC.
 func resolveKnownModelTAC(model string) string {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "iphone15,4":
+		return "86034905"
+	}
 	switch normalizeModelName(model) {
 	case "iphone":
 		return "35693803"
@@ -426,9 +430,13 @@ func normalizeModelName(model string) string {
 
 // ResolveUserAgentForModel resolves the SIP User-Agent for a device model.
 func ResolveUserAgentForModel(model string) string {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "iphone15,4":
+		return "iOS/18.2.1 iPhone (iPhone15,4)"
+	}
 	switch normalizeModelName(model) {
 	case "iphone":
-		return "iPhone"
+		return "iOS/18.2.1 iPhone (iPhone15,4)"
 	case "pixel":
 		return "Android"
 	case "galaxy":
@@ -436,6 +444,6 @@ func ResolveUserAgentForModel(model string) string {
 	case "rmx3366":
 		return "realme_RMX3366_0.0.2100"
 	default:
-		return "vowifi"
+		return "iOS/18.2.1 iPhone (iPhone15,4)"
 	}
 }

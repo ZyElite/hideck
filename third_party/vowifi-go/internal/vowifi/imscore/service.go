@@ -32,6 +32,7 @@ func New(cfg *IMSConfig) (*Service, error) {
 		delivery:       cfg.DeliveryStore,
 		stop:           make(chan struct{}),
 		registerErrors: make(chan error, 1),
+		protectedConns: make(map[net.Conn]struct{}),
 		transport:      newSIPTransport(),
 		ussd:           newUSSDService(),
 	}
@@ -148,6 +149,9 @@ func (s *Service) GetLocalPorts() []int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ports := []int{s.cfg.LocalPort}
+	if s.protectedClientPort > 0 && s.protectedClientPort != s.cfg.LocalPort {
+		ports = append(ports, s.protectedClientPort)
+	}
 	if s.protectedServerPort > 0 && s.protectedServerPort != s.cfg.LocalPort {
 		ports = append(ports, s.protectedServerPort)
 	}
@@ -180,8 +184,10 @@ func (s *Service) GetPAccessNetworkInfo() string {
 	if len(cfg.IMPU) > 0 {
 		impu = cfg.IMPU[0]
 	}
-	seed := stablePANIGenerationSeed([]string{cfg.IMPI, impu, cfg.Domain, cfg.DeviceID})
-	return GenerateStablePAccessNetworkInfo(seed)
+	seed := stablePANIGenerationSeed([]string{cfg.IMSI, cfg.IMPI, impu, cfg.Domain, cfg.DeviceID})
+	return AppendPAccessNetworkCountry(
+		GenerateStablePAccessNetworkInfo(seed), cfg.PAccessNetworkCountry,
+	)
 }
 
 // GetPubGRUU returns the public GRUU.
@@ -273,9 +279,20 @@ func (s *Service) Stop() {
 	if s.registrationIO != nil {
 		_ = s.registrationIO.Close()
 	}
+	if s.registrationTCP != nil {
+		_ = s.registrationTCP.Close()
+	}
 	if s.securityServerIO != nil {
 		_ = s.securityServerIO.Close()
 	}
+	if s.clientPortReserve != nil {
+		_ = s.clientPortReserve.Close()
+	}
+	s.protectedConnMu.Lock()
+	for conn := range s.protectedConns {
+		_ = conn.Close()
+	}
+	s.protectedConnMu.Unlock()
 	s.networkDone.Wait()
 	if closer, ok := s.cfg.IMSNetwork.(interface{ Close() error }); ok {
 		_ = closer.Close()
