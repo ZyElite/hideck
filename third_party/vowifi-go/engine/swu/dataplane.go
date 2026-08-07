@@ -240,24 +240,28 @@ func (s *Session) startEstablishedDataPlane() error {
 	}
 	s.dataPlaneStarted = true
 	s.mu.Unlock()
-	go s.startDataPlaneLoop()
+	s.startDataPlaneLoop()
 	return nil
 }
 
 // startDataPlaneLoop runs the two data-plane loops: ESP → inner and inner → ESP.
 func (s *Session) startDataPlaneLoop() {
-	go s.loopESPToInner()
-	go s.loopInnerToESP()
+	transport := s.socket
+	endpoint := s.innerEndpoint
+	s.dataPlaneWG.Add(2)
+	go s.loopESPToInner(transport, endpoint)
+	go s.loopInnerToESP(transport, endpoint)
 }
 
 // loopESPToInner reads ESP packets from the socket and delivers the inner
 // packets to the endpoint.
-func (s *Session) loopESPToInner() {
+func (s *Session) loopESPToInner(transport ipsec.Transport, endpoint *userspaceInnerPacketEndpoint) {
+	defer s.dataPlaneWG.Done()
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case raw, ok := <-s.socket.ESPPackets():
+		case raw, ok := <-transport.ESPPackets():
 			if !ok {
 				return
 			}
@@ -265,20 +269,21 @@ func (s *Session) loopESPToInner() {
 			if err != nil {
 				continue
 			}
-			if s.innerEndpoint != nil {
-				_ = s.innerEndpoint.WritePacket(inner)
+			if endpoint != nil {
+				_ = endpoint.WritePacket(inner)
 			}
 		}
 	}
 }
 
 // loopInnerToESP reads inner packets from the endpoint and sends them as ESP.
-func (s *Session) loopInnerToESP() {
+func (s *Session) loopInnerToESP(transport ipsec.Transport, endpoint *userspaceInnerPacketEndpoint) {
+	defer s.dataPlaneWG.Done()
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case pkt, ok := <-s.innerEndpoint.hostPackets:
+		case pkt, ok := <-endpoint.hostPackets:
 			if !ok {
 				return
 			}
@@ -286,9 +291,7 @@ func (s *Session) loopInnerToESP() {
 			if err != nil {
 				continue
 			}
-			if s.socket != nil {
-				s.socket.SendESP(esp)
-			}
+			transport.SendESP(esp)
 		}
 	}
 }

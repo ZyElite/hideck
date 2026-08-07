@@ -81,3 +81,10 @@ func TestNewNetworkWithoutPacketIOFailsExplicitly(t *testing.T) {
 		t.Fatal("DialContext error=nil, want missing SWu packet IO")
 	}
 }
+
+func TestPreferIPv4ForIPv4OnlyTunnel(t *testing.T) {
+	addresses := []net.IP{net.ParseIP("2001:db8::1"), net.ParseIP("192.0.2.10")}
+	if got := preferIPv4(addresses); !got.Equal(net.ParseIP("192.0.2.10")) {
+		t.Fatalf("preferIPv4() = %v, want IPv4 address", got)
+	}
+}

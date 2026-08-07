@@ -12,7 +12,6 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/eap"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
-	"github.com/iniwex5/vowifi-go/engine/ipsec"
 )
 
 func TestBuildAlgorithmPlan(t *testing.T) {
@@ -263,6 +262,15 @@ func TestNewSessionInitializesStrictAEADAlgorithms(t *testing.T) {
 	}
 }
 
+func TestNewSessionRejectsUnsupportedGCMTagLengths(t *testing.T) {
+	for _, transform := range []uint16{19, 20} {
+		s := NewSession(&Config{IKEEncryption: transform, IKEIntegrity: 0})
+		if s.initErr == nil || !strings.Contains(s.initErr.Error(), "non-16-byte GCM tag") {
+			t.Fatalf("transform %d initErr = %v, want explicit tag-length error", transform, s.initErr)
+		}
+	}
+}
+
 func TestNewSessionInitializesLegacyAlgorithms(t *testing.T) {
 	s := NewSession(&Config{AlgorithmPolicy: "legacy_prefer"})
 	if s.initErr != nil {
@@ -286,7 +294,7 @@ func TestConnectReportsAlgorithmInitializationFailure(t *testing.T) {
 
 func TestStartEstablishedDataPlaneMarksRunning(t *testing.T) {
 	s := NewSession(&Config{})
-	s.socket = &ipsec.SocketManager{}
+	s.socket = newTestIKETransport()
 	s.innerEndpoint = newUserspaceInnerPacketEndpoint(1, 1)
 	if err := s.startEstablishedDataPlane(); err != nil {
 		t.Fatalf("startEstablishedDataPlane() error = %v", err)
@@ -297,8 +305,26 @@ func TestStartEstablishedDataPlaneMarksRunning(t *testing.T) {
 	if !started {
 		t.Fatal("data plane not marked started")
 	}
-	s.cancel()
-	s.stopDataPlane()
+	s.Shutdown()
+}
+
+func TestShutdownWaitsForDataPlaneBeforeClearingTransport(t *testing.T) {
+	s := NewSession(&Config{})
+	s.socket = newTestIKETransport()
+	s.innerEndpoint = newUserspaceInnerPacketEndpoint(1, 1)
+	if err := s.startEstablishedDataPlane(); err != nil {
+		t.Fatalf("startEstablishedDataPlane() error = %v", err)
+	}
+	s.Shutdown()
+	if s.socket != nil {
+		t.Fatal("Shutdown did not clear transport")
+	}
+	s.mu.RLock()
+	started := s.dataPlaneStarted
+	s.mu.RUnlock()
+	if started {
+		t.Fatal("Shutdown left data plane marked started")
+	}
 }
 
 func TestSessionManager(t *testing.T) {

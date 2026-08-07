@@ -61,9 +61,11 @@ func supportedEncryption(transformID uint16) (encryptionParameters, error) {
 		params.keyLen = 16
 	case crypto.Encr3DESCBC:
 		params.keyLen = 24
-	case crypto.EncrAESGCM16, crypto.EncrAESGCM12, crypto.EncrAESGCM8:
+	case crypto.EncrAESGCM16:
 		params.keyLen = 20
 		params.aead = true
+	case crypto.EncrAESGCM12, crypto.EncrAESGCM8:
+		return params, fmt.Errorf("transform %d requires an unsupported non-16-byte GCM tag", transformID)
 	default:
 		return params, fmt.Errorf("unsupported transform %d", transformID)
 	}

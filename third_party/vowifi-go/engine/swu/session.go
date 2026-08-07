@@ -169,6 +169,7 @@ type Session struct {
 	initErr          error
 	state            string
 	dataPlaneStarted bool
+	dataPlaneWG      sync.WaitGroup
 	startedAt        time.Time
 	lastPingAt       time.Time
 	lastDPDAt        time.Time
@@ -474,9 +475,10 @@ func (s *Session) Shutdown() {
 	s.mu.Unlock()
 
 	s.stopTimers()
+	s.cancel()
+	s.dataPlaneWG.Wait()
 	s.stopDataPlane()
 	s.stopTransport()
-	s.cancel()
 	select {
 	case <-s.done:
 	default:

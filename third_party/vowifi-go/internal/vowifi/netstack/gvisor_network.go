@@ -137,7 +137,7 @@ func (g *gvisorNetwork) resolveViaServers(ctx context.Context, host string, serv
 		resolver := g.resolver(server)
 		ips, err := resolver.LookupIP(ctx, "ip", host)
 		if err == nil && len(ips) > 0 {
-			return ips[0], nil
+			return preferIPv4(ips), nil
 		}
 		if err != nil {
 			lastErr = err
@@ -146,6 +146,18 @@ func (g *gvisorNetwork) resolveViaServers(ctx context.Context, host string, serv
 		}
 	}
 	return nil, fmt.Errorf("netstack: resolve %s through SWu DNS: %w", host, lastErr)
+}
+
+func preferIPv4(ips []net.IP) net.IP {
+	for _, ip := range ips {
+		if ipv4 := ip.To4(); ipv4 != nil {
+			return ipv4
+		}
+	}
+	if len(ips) == 0 {
+		return nil
+	}
+	return ips[0]
 }
 
 func (g *gvisorNetwork) LookupSRV(ctx context.Context, service, proto, name string) (string, uint16, error) {
