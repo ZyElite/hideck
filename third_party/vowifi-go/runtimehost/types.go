@@ -157,6 +157,10 @@ type IMSLifecycle interface {
 	Register(context.Context) error
 }
 
+type registrationFailureSource interface {
+	RegistrationErrors() <-chan error
+}
+
 // IMSFactory builds the IMS lifecycle after SWu has established.
 type IMSFactory func(StartRequest, Tunnel) (IMSLifecycle, error)
 

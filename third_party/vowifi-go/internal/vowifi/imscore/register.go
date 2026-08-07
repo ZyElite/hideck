@@ -22,11 +22,19 @@ type registerSession struct {
 
 // Register performs the IMS registration flow (RFC 3261 + Digest-AKA).
 func (s *Service) Register(ctx context.Context) error {
+	s.registerMu.Lock()
+	defer s.registerMu.Unlock()
+	select {
+	case <-s.stop:
+		return errors.New("imscore: service stopped")
+	default:
+	}
 	s.mu.Lock()
 	s.regState = regRegistering
 	s.mu.Unlock()
 
-	if err := s.runRegisterFlow(ctx); err != nil {
+	expires, err := s.runRegisterFlow(ctx)
+	if err != nil {
 		s.mu.Lock()
 		s.regState = regFailed
 		s.mu.Unlock()
@@ -38,16 +46,17 @@ func (s *Service) Register(ctx context.Context) error {
 	if s.onRegistered != nil {
 		s.onRegistered()
 	}
+	s.scheduleRegistrationRefresh(expires)
 	return nil
 }
 
 // runRegisterFlow drives the REGISTER -> 401/407 -> REGISTER flow.
-func (s *Service) runRegisterFlow(ctx context.Context) error {
+func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	if s.cfg == nil {
-		return errors.New("imscore: no configuration")
+		return 0, errors.New("imscore: no configuration")
 	}
 	if err := s.ensureRegistrationTransport(ctx); err != nil {
-		return err
+		return 0, err
 	}
 	session := &registerSession{
 		callID:  newCallID(),
@@ -61,43 +70,45 @@ func (s *Service) runRegisterFlow(ctx context.Context) error {
 	// Initial REGISTER.
 	req := s.buildRegister(session, "")
 	if err := s.sendSIP(req); err != nil {
-		return fmt.Errorf("imscore: send initial REGISTER: %w", err)
+		return 0, fmt.Errorf("imscore: send initial REGISTER: %w", err)
 	}
 
 	// Wait for the challenge response.
 	resp, err := s.receiveResponse(ctx, session.callID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if resp.StatusCode == 401 || resp.StatusCode == 407 {
 		challenge, err := s.extractChallenge(resp, resp.StatusCode)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		session.challenge = challenge
 
 		// Build the authenticated REGISTER.
 		auth, err := s.buildAuthorization(session)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		session.cseq++
 		req = s.buildRegister(session, auth)
 		if err := s.sendSIP(req); err != nil {
-			return fmt.Errorf("imscore: send authenticated REGISTER: %w", err)
+			return 0, fmt.Errorf("imscore: send authenticated REGISTER: %w", err)
 		}
 
 		// Wait for the final response.
 		resp, err = s.receiveResponse(ctx, session.callID)
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
+		expires := registrationExpires(resp, s.cfg.Expires)
+		session.expires = expires
+		return expires, nil
 	}
-	return fmt.Errorf("imscore: registration failed with status %d", resp.StatusCode)
+	return 0, fmt.Errorf("imscore: registration failed with status %d", resp.StatusCode)
 }
 
 // buildRegister builds a REGISTER request.
@@ -110,11 +121,12 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("REGISTER sip:%s SIP/2.0\r\n", cfg.Domain))
 	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;branch=z9hG4bK%s;rport\r\n", transportUpper(cfg.Transport), sipLocalAddress(cfg), newBranch()))
-	b.WriteString(fmt.Sprintf("From: <sip:%s@%s>;tag=%s\r\n", cfg.IMPI, cfg.Domain, session.fromTag))
-	b.WriteString(fmt.Sprintf("To: <sip:%s@%s>\r\n", cfg.IMPI, cfg.Domain))
+	publicIdentity := primaryPublicIdentity(cfg)
+	b.WriteString(fmt.Sprintf("From: <%s>;tag=%s\r\n", publicIdentity, session.fromTag))
+	b.WriteString(fmt.Sprintf("To: <%s>\r\n", publicIdentity))
 	b.WriteString(fmt.Sprintf("Call-ID: %s\r\n", session.callID))
 	b.WriteString(fmt.Sprintf("CSeq: %d REGISTER\r\n", session.cseq))
-	b.WriteString(fmt.Sprintf("Contact: <sip:%s@%s>;+sip.instance=\"urn:uuid:%s\"\r\n", cfg.IMPI, sipLocalAddress(cfg), cfg.DeviceID))
+	b.WriteString(fmt.Sprintf("Contact: <sip:%s@%s>;+sip.instance=\"urn:uuid:%s\"\r\n", contactUser(cfg), sipLocalAddress(cfg), cfg.DeviceID))
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
 	b.WriteString("Supported: path, outbound\r\n")
@@ -123,6 +135,62 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	}
 	b.WriteString("Content-Length: 0\r\n\r\n")
 	return b.String()
+}
+
+func primaryPublicIdentity(cfg *IMSConfig) string {
+	if len(cfg.IMPU) > 0 && strings.TrimSpace(cfg.IMPU[0]) != "" {
+		identity := strings.TrimSpace(cfg.IMPU[0])
+		if strings.HasPrefix(strings.ToLower(identity), "sip:") {
+			return identity
+		}
+		return "sip:" + identity
+	}
+	return "sip:" + cfg.IMPI
+}
+
+func contactUser(cfg *IMSConfig) string {
+	if strings.TrimSpace(cfg.IMSI) != "" {
+		return strings.TrimSpace(cfg.IMSI)
+	}
+	user, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(cfg.IMPI), "sip:"), "@")
+	return user
+}
+
+func registrationExpires(resp *sipResponse, configured time.Duration) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(resp.Header("Expires"))); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if configured > 0 {
+		return configured
+	}
+	return time.Hour
+}
+
+func (s *Service) scheduleRegistrationRefresh(expires time.Duration) {
+	delay := expires - expires/5
+	if delay <= 0 {
+		delay = expires / 2
+	}
+	if delay <= 0 {
+		delay = time.Second
+	}
+	s.mu.Lock()
+	if s.refreshTimer != nil {
+		s.refreshTimer.Stop()
+	}
+	s.refreshTimer = time.AfterFunc(delay, s.refreshRegistration)
+	s.mu.Unlock()
+}
+
+func (s *Service) refreshRegistration() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.Register(ctx); err != nil {
+		select {
+		case s.registerErrors <- fmt.Errorf("imscore: registration refresh failed: %w", err):
+		default:
+		}
+	}
 }
 
 func sipLocalAddress(cfg *IMSConfig) string {

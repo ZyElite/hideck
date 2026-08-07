@@ -145,9 +145,10 @@ func (n *SystemIMSNetwork) ListenPacket(network string, addr *net.UDPAddr) (net.
 type Service struct {
 	cfg *IMSConfig
 
-	mu       sync.RWMutex
-	state    string
-	regState string
+	mu         sync.RWMutex
+	registerMu sync.Mutex
+	state      string
+	regState   string
 
 	// Registration state.
 	regSession *registerSession
@@ -157,6 +158,8 @@ type Service struct {
 	transport      *sipTransport
 	registrationIO net.PacketConn
 	networkDone    sync.WaitGroup
+	refreshTimer   *time.Timer
+	registerErrors chan error
 
 	// Dialogs.
 	dialogs *dialogRegistry

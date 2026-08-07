@@ -29,6 +29,13 @@ func (a *serviceAdapter) Register(ctx context.Context) error {
 	return a.svc.Register(ctx)
 }
 
+func (a *serviceAdapter) RegistrationErrors() <-chan error {
+	if a == nil || a.svc == nil {
+		return nil
+	}
+	return a.svc.RegistrationErrors()
+}
+
 // SendSMSWithOptions sends an SMS with options.
 func (a *serviceAdapter) SendSMSWithOptions(ctx context.Context, to, text string, opts messaging.SendOptions) (messaging.SendOutcome, error) {
 	if a == nil || a.svc == nil {

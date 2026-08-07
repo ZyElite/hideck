@@ -24,15 +24,16 @@ func New(cfg *IMSConfig) (*Service, error) {
 		bus = newIMSEventBus()
 	}
 	s := &Service{
-		cfg:       cfg,
-		state:     regIdle,
-		regState:  regIdle,
-		dialogs:   newDialogRegistry(),
-		bus:       bus,
-		delivery:  cfg.DeliveryStore,
-		stop:      make(chan struct{}),
-		transport: newSIPTransport(),
-		ussd:      newUSSDService(),
+		cfg:            cfg,
+		state:          regIdle,
+		regState:       regIdle,
+		dialogs:        newDialogRegistry(),
+		bus:            bus,
+		delivery:       cfg.DeliveryStore,
+		stop:           make(chan struct{}),
+		registerErrors: make(chan error, 1),
+		transport:      newSIPTransport(),
+		ussd:           newUSSDService(),
 	}
 	return s, nil
 }
@@ -235,6 +236,12 @@ func (s *Service) Stop() {
 	default:
 		close(s.stop)
 	}
+	s.mu.Lock()
+	if s.refreshTimer != nil {
+		s.refreshTimer.Stop()
+		s.refreshTimer = nil
+	}
+	s.mu.Unlock()
 	if s.transport != nil {
 		_ = s.transport.Close()
 	}
@@ -248,6 +255,14 @@ func (s *Service) Stop() {
 	s.mu.Lock()
 	s.regState = regUnregister
 	s.mu.Unlock()
+}
+
+// RegistrationErrors reports background refresh failures.
+func (s *Service) RegistrationErrors() <-chan error {
+	if s == nil {
+		return nil
+	}
+	return s.registerErrors
 }
 
 // TriggerRegisterImmediate triggers an immediate re-registration.

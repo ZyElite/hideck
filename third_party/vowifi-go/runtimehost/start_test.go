@@ -62,6 +62,7 @@ type lifecycleIMS struct {
 	stopped     bool
 	started     chan struct{}
 	release     chan struct{}
+	refreshErrs chan error
 }
 
 func (s *lifecycleIMS) Register(ctx context.Context) error {
@@ -89,6 +90,8 @@ func (s *lifecycleIMS) Status() Status {
 }
 
 func (s *lifecycleIMS) StatusSnapshot() Status { return s.Status() }
+
+func (s *lifecycleIMS) RegistrationErrors() <-chan error { return s.refreshErrs }
 
 type lifecyclePacketIO struct{}
 
@@ -255,6 +258,37 @@ func TestStartMarksIMSReadyOnlyAfterRegister(t *testing.T) {
 	}
 	if !inst.State().IMSReady || !inst.State().SMSReady || inst.State().IMSState != "registered" {
 		t.Errorf("IMS state = %+v", inst.State())
+	}
+}
+
+func TestStartClearsIMSReadyWhenRegistrationRefreshFails(t *testing.T) {
+	prepared := &identity.PreparedSession{
+		Profile:     identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},
+		IMSIdentity: identity.IMSIdentity{IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example", Domain: "ims.example"},
+		EPDGAddr:    "epdg.example.com",
+	}
+	refreshErrs := make(chan error, 1)
+	req := runtimeTestRequest(prepared, newLifecycleTunnel(nil))
+	req.IMSFactory = func(req StartRequest, _ Tunnel) (IMSLifecycle, error) {
+		return &lifecycleIMS{deviceID: req.DeviceID, refreshErrs: refreshErrs}, nil
+	}
+	inst, err := Start(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	refreshErrs <- errors.New("registrar expired")
+	deadline := time.After(time.Second)
+	for inst.State().IMSReady {
+		select {
+		case <-deadline:
+			t.Fatal("runtime did not clear IMSReady after refresh failure")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	state := inst.State()
+	if state.IMSState != "failed" || state.SMSReady || !state.TunnelReady {
+		t.Fatalf("runtime refresh failure state = %+v", state)
 	}
 }
 

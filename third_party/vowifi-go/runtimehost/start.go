@@ -122,8 +122,24 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 		return failIMSStart(inst, fmt.Errorf("runtimehost: IMS registration failed: %w", err))
 	}
 	inst.markIMSRegistered()
+	go monitorRegistrationFailures(runCtx, inst, ims)
 	go stopRuntimeOnContext(runCtx, inst)
 	return inst, nil
+}
+
+func monitorRegistrationFailures(ctx context.Context, inst *Instance, ims IMSLifecycle) {
+	source, ok := ims.(registrationFailureSource)
+	if !ok || source.RegistrationErrors() == nil {
+		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case err := <-source.RegistrationErrors():
+		if err != nil {
+			inst.setIMSRefreshFailure(err)
+		}
+	}
 }
 
 func failIMSStart(inst *Instance, err error) (*Instance, error) {

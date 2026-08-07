@@ -204,6 +204,21 @@ func (i *Instance) setIMSFailure(err error) {
 	})
 }
 
+func (i *Instance) setIMSRefreshFailure(err error) {
+	i.updateState(func(state *State) {
+		state.SessionState = "error"
+		state.IMSState = "failed"
+		state.Error = err.Error()
+		state.LastError = err.Error()
+		state.LastErrorClass = "ims"
+		state.LastReason = "IMS registration refresh failed"
+		state.IMSReady = false
+		state.SMSReady = false
+		state.RegStatus = 0
+		state.RegStatusText = "failed"
+	})
+}
+
 // setService installs the IMS service.
 func (i *Instance) setService(s Service) {
 	i.mu.Lock()

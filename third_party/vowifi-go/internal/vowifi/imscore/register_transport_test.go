@@ -41,8 +41,60 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 		if !strings.HasPrefix(request, "REGISTER sip:ims.example SIP/2.0") {
 			t.Fatalf("unexpected request: %q", request)
 		}
+		if strings.Contains(request, "@ims.example@") {
+			t.Fatalf("REGISTER contains a duplicated identity domain: %q", request)
+		}
+		if !strings.Contains(request, "From: <sip:310260123456789@ims.example>") ||
+			!strings.Contains(request, "Contact: <sip:310260123456789@127.0.0.1:") {
+			t.Fatalf("REGISTER identity URIs are invalid: %q", request)
+		}
 	case <-ctx.Done():
 		t.Fatal("registrar did not receive REGISTER")
+	}
+}
+
+func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
+	registrar, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP: %v", err)
+	}
+	defer registrar.Close()
+	requests := make(chan string, 2)
+	go serveRegistrationSequence(registrar, requests, []int{200, 403})
+
+	svc, err := New(&IMSConfig{
+		DeviceID: "dev-refresh", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
+		IMPU: []string{"sip:310260123456789@ims.example"}, Domain: "ims.example",
+		LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp", Registrar: registrar.LocalAddr().String(),
+		IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)), AKAProvider: stubAKAProvider{},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer svc.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		select {
+		case <-requests:
+		case <-ctx.Done():
+			t.Fatalf("received only %d REGISTER requests before timeout", attempt)
+		}
+	}
+	select {
+	case err := <-svc.RegistrationErrors():
+		if err == nil || !strings.Contains(err.Error(), "status 403") {
+			t.Fatalf("refresh error = %v, want status 403", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("registration refresh failure was not reported")
+	}
+	if svc.IsRegistered() || svc.RegState() != regFailed {
+		t.Fatalf("registration state after refresh failure = %q", svc.RegState())
 	}
 }
 
@@ -85,6 +137,21 @@ func serveRegisterStatus(conn *net.UDPConn, status int, seen chan<- string) {
 	callID := sipHeaderValue(request, "Call-ID")
 	response := fmt.Sprintf("SIP/2.0 %d Test\r\nCall-ID: %s\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n", status, callID)
 	_, _ = conn.WriteToUDP([]byte(response), remote)
+}
+
+func serveRegistrationSequence(conn *net.UDPConn, seen chan<- string, statuses []int) {
+	buffer := make([]byte, 64*1024)
+	for _, status := range statuses {
+		n, remote, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			return
+		}
+		request := string(buffer[:n])
+		seen <- request
+		callID := sipHeaderValue(request, "Call-ID")
+		response := fmt.Sprintf("SIP/2.0 %d Test\r\nCall-ID: %s\r\nCSeq: 1 REGISTER\r\nExpires: 1\r\nContent-Length: 0\r\n\r\n", status, callID)
+		_, _ = conn.WriteToUDP([]byte(response), remote)
+	}
 }
 
 func sipHeaderValue(message, name string) string {
