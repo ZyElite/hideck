@@ -118,6 +118,75 @@ func ContactURIWithOptions(uri string, instance string, expires int, regID int) 
 	return base
 }
 
+// IMSContactOptions describes the IMS feature parameters advertised by a
+// registration Contact binding.
+type IMSContactOptions struct {
+	Transport  string
+	AccessType string
+	Instance   string
+	ICSIRef    string
+	ParamOrder []string
+}
+
+// IMSContactURI builds a Contact value using the carrier-defined parameter
+// order. The transport parameter belongs to the SIP URI; feature parameters
+// belong to the Contact header.
+func IMSContactURI(uri string, options IMSContactOptions) string {
+	uri = strings.TrimSpace(uri)
+	if transport := strings.ToLower(strings.TrimSpace(options.Transport)); transport != "" {
+		uri += ";transport=" + transport
+	}
+	params := orderedIMSContactParams(options)
+	if len(params) == 0 {
+		return "<" + uri + ">"
+	}
+	return "<" + uri + ">;" + strings.Join(params, ";")
+}
+
+func orderedIMSContactParams(options IMSContactOptions) []string {
+	params := make([]string, 0, len(options.ParamOrder))
+	for _, name := range options.ParamOrder {
+		if param := imsContactParam(strings.ToLower(strings.TrimSpace(name)), options); param != "" {
+			params = append(params, param)
+		}
+	}
+	return params
+}
+
+func imsContactParam(name string, options IMSContactOptions) string {
+	switch name {
+	case "access_type":
+		return quotedContactParam("+g.3gpp.accesstype", options.AccessType)
+	case "sip_instance":
+		return quotedContactParam("+sip.instance", NormalizeSipInstance(options.Instance))
+	case "audio":
+		return "audio"
+	case "smsip":
+		return "+g.3gpp.smsip"
+	case "icsi_ref":
+		return quotedContactParam("+g.3gpp.icsi-ref", options.ICSIRef)
+	case "mid_call":
+		return "+g.3gpp.mid-call"
+	case "srvcc_alerting":
+		return "+g.3gpp.srvcc-alerting"
+	case "ps2cs_srvcc_orig_pre_alerting":
+		return "+g.3gpp.ps2cs-srvcc-orig-pre-alerting"
+	default:
+		return ""
+	}
+}
+
+func quotedContactParam(name, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
+		return name + "=" + value
+	}
+	return name + `="` + value + `"`
+}
+
 // PickAssociatedMSISDN picks the preferred MSISDN from a list of associated
 // URIs (RFC 3455 P-Associated-URI).
 func PickAssociatedMSISDN(uris []string) string {

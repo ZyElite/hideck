@@ -67,6 +67,20 @@ type IMSConfig struct {
 	TraceID string
 	// UserAgent is the SIP User-Agent header value.
 	UserAgent string
+	// RegisterTemplate carries the recovered carrier-specific REGISTER wire
+	// policy selected by the runtime host.
+	RegisterTemplate IMSRegisterTemplate
+}
+
+// IMSRegisterTemplate is the carrier-specific REGISTER wire policy.
+type IMSRegisterTemplate struct {
+	Expires         time.Duration
+	SupportedHeader string
+	AllowHeader     string
+	ContactMode     string
+	AccessType      string
+	ICSIRef         string
+	ContactOrder    []string
 }
 
 // AKAProvider computes AKA from the network challenge.

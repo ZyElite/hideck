@@ -290,6 +290,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 	if pcscf := preferredPCSCF(inner.PCSCF, innerIP); pcscf != nil {
 		registrar = net.JoinHostPort(pcscf.String(), fmt.Sprint(defaultIMSSIPPort))
 	}
+	registerTemplate := imsRegisterTemplateForProfile(req.Prepared.Profile)
 	cfg := &imscore.IMSConfig{
 		DeviceID:         req.DeviceID,
 		IMEI:             req.Prepared.Profile.IMEI,
@@ -302,11 +303,12 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		LocalIP:          innerIP,
 		Registrar:        registrar,
 		Transport:        "udp",
-		Expires:          3600 * time.Second,
+		Expires:          registerTemplate.Expires,
 		TraceID:          req.TraceID,
 		AKAProvider:      req.SIM.AKAProvider(),
 		IMSNetwork:       imsNetwork,
 		IPSec3GPPEnabled: true,
+		RegisterTemplate: registerTemplate,
 	}
 	if req.DeliveryStore != nil {
 		cfg.DeliveryStore = newDeliveryStoreAdapter(req.DeliveryStore)

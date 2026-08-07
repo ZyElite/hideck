@@ -69,6 +69,57 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 	}
 }
 
+func TestRegisterContactUsesRecoveredCarrierTemplate(t *testing.T) {
+	const icsi = "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel," +
+		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.msg," +
+		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.sms"
+	config := &IMSConfig{
+		IMEI: "356938035643809", IMSI: "234102356143376", Transport: "udp",
+		RegisterTemplate: IMSRegisterTemplate{
+			AccessType: "wlan1", ICSIRef: icsi,
+			ContactOrder: []string{
+				"access_type", "sip_instance", "audio", "smsip", "icsi_ref",
+				"mid_call", "srvcc_alerting", "ps2cs_srvcc_orig_pre_alerting",
+			},
+		},
+	}
+	got := registerContact(config, "192.0.2.10:5060", 3600)
+	want := `<sip:234102356143376@192.0.2.10:5060;transport=udp>` +
+		`;+g.3gpp.accesstype="wlan1"` +
+		`;+sip.instance="<urn:gsma:imei:35693803-564380-9>"` +
+		`;audio;+g.3gpp.smsip` +
+		`;+g.3gpp.icsi-ref="` + icsi + `"` +
+		`;+g.3gpp.mid-call;+g.3gpp.srvcc-alerting` +
+		`;+g.3gpp.ps2cs-srvcc-orig-pre-alerting`
+	if got != want {
+		t.Fatalf("REGISTER Contact = %q\nwant             = %q", got, want)
+	}
+}
+
+func TestBuildRegisterUsesRecoveredTemplateHeaders(t *testing.T) {
+	const allow = "OPTIONS, REGISTER, SUBSCRIBE, NOTIFY, PUBLISH, INVITE, ACK, BYE, CANCEL, UPDATE, PRACK, REFER, INFO, MESSAGE"
+	config := &IMSConfig{
+		IMSI: "234102356143376", IMPI: "234102356143376@ims.example",
+		IMPU: []string{"sip:234102356143376@ims.example"}, Domain: "ims.example",
+		LocalIP: net.IPv4(192, 0, 2, 10), Transport: "udp",
+		RegisterTemplate: IMSRegisterTemplate{
+			Expires: 600000 * time.Second, SupportedHeader: "path,sec-agree",
+			AllowHeader: allow, ContactMode: "android_default",
+		},
+	}
+	service := &Service{cfg: config}
+	request := service.buildRegister(&registerSession{callID: "call-1", fromTag: "tag-1", cseq: 1}, "")
+	if got := sipHeaderValue(request, "Expires"); got != "600000" {
+		t.Fatalf("Expires = %q", got)
+	}
+	if got := sipHeaderValue(request, "Supported"); got != "path,sec-agree" {
+		t.Fatalf("Supported = %q", got)
+	}
+	if got := sipHeaderValue(request, "Allow"); got != allow {
+		t.Fatalf("Allow = %q", got)
+	}
+}
+
 func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 	registrar, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
 	if err != nil {

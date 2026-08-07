@@ -54,6 +54,28 @@ func TestContactURIWithOptions(t *testing.T) {
 	}
 }
 
+func TestIMSContactURIUsesRecoveredParameterOrder(t *testing.T) {
+	const icsi = "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"
+	got := IMSContactURI("sip:user@192.0.2.10:5060", IMSContactOptions{
+		Transport: "UDP", AccessType: "IEEE-802.11",
+		Instance: "356938035643809", ICSIRef: icsi,
+		ParamOrder: []string{
+			"access_type", "sip_instance", "audio", "smsip", "icsi_ref",
+			"mid_call", "srvcc_alerting", "ps2cs_srvcc_orig_pre_alerting",
+		},
+	})
+	want := `<sip:user@192.0.2.10:5060;transport=udp>` +
+		`;+g.3gpp.accesstype="IEEE-802.11"` +
+		`;+sip.instance="<urn:gsma:imei:35693803-564380-9>"` +
+		`;audio;+g.3gpp.smsip` +
+		`;+g.3gpp.icsi-ref="` + icsi + `"` +
+		`;+g.3gpp.mid-call;+g.3gpp.srvcc-alerting` +
+		`;+g.3gpp.ps2cs-srvcc-orig-pre-alerting`
+	if got != want {
+		t.Fatalf("IMS Contact = %q\nwant        = %q", got, want)
+	}
+}
+
 func TestExtractPhoneFromAssociatedMSISDN(t *testing.T) {
 	if got := ExtractPhoneFromAssociatedMSISDN("tel:+8613800000000"); got != "8613800000000" {
 		t.Errorf("tel = %q", got)

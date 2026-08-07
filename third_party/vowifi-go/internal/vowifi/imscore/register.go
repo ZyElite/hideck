@@ -161,10 +161,7 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	// Each request starts a distinct SIP transaction even when refresh reuses
 	// the registration Call-ID.
 	session.branch = "z9hG4bK" + newBranch()
-	expires := cfg.Expires
-	if expires <= 0 {
-		expires = 3600 * time.Second
-	}
+	expires := registerExpires(cfg)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("REGISTER sip:%s SIP/2.0\r\n", cfg.Domain))
 	localAddress := s.registerLocalAddress(session)
@@ -177,7 +174,10 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	b.WriteString("Contact: " + registerContact(cfg, localAddress, int(expires.Seconds())) + "\r\n")
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
-	b.WriteString("Supported: path, outbound\r\n")
+	b.WriteString("Supported: " + registerSupportedHeader(cfg) + "\r\n")
+	if allow := strings.TrimSpace(cfg.RegisterTemplate.AllowHeader); allow != "" {
+		b.WriteString("Allow: " + allow + "\r\n")
+	}
 	b.WriteString("P-Access-Network-Info: " + s.GetPAccessNetworkInfo() + "\r\n")
 	b.WriteString(registerSecurityHeaders(session))
 	if authHeader == "" {
@@ -197,7 +197,32 @@ func registerContact(cfg *IMSConfig, localAddress string, expires int) string {
 		instance = strings.TrimSpace(cfg.DeviceID)
 	}
 	uri := fmt.Sprintf("sip:%s@%s", contactUser(cfg), localAddress)
+	template := cfg.RegisterTemplate
+	if len(template.ContactOrder) > 0 {
+		return imsheaders.IMSContactURI(uri, imsheaders.IMSContactOptions{
+			Transport: cfg.Transport, AccessType: template.AccessType,
+			Instance: instance, ICSIRef: template.ICSIRef,
+			ParamOrder: template.ContactOrder,
+		})
+	}
 	return imsheaders.ContactURIWithOptions(uri, instance, expires, 0)
+}
+
+func registerExpires(cfg *IMSConfig) time.Duration {
+	if cfg.RegisterTemplate.Expires > 0 {
+		return cfg.RegisterTemplate.Expires
+	}
+	if cfg.Expires > 0 {
+		return cfg.Expires
+	}
+	return 3600 * time.Second
+}
+
+func registerSupportedHeader(cfg *IMSConfig) string {
+	if supported := strings.TrimSpace(cfg.RegisterTemplate.SupportedHeader); supported != "" {
+		return supported
+	}
+	return "path, outbound"
 }
 
 func initialIMSAuthorization(cfg *IMSConfig) string {
