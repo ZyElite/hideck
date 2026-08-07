@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
@@ -18,14 +19,19 @@ const (
 
 // buildESPProposals builds the ESP proposal list for the CHILD_SA (RFC 7296
 // §3.3.2). Zero transform IDs select the default (AES-CBC + HMAC-SHA1).
-func buildESPProposals(encr, integ uint16) []*ikev2.Proposal {
+func buildESPProposals(encr, integ uint16, spi ...uint32) []*ikev2.Proposal {
 	if encr == 0 {
 		encr = 12 // ENCR_AES_CBC
 	}
-	if integ == 0 {
+	if integ == 0 && encr != crypto.EncrAESGCM16 {
 		integ = 2 // AUTH_HMAC_SHA1_96
 	}
-	return ikev2.CreateMultiProposalESP(encr, integ, 0, 0)
+	proposals := ikev2.CreateMultiProposalESP(encr, integ, 0, 0)
+	if len(spi) > 0 && spi[0] != 0 {
+		proposals[0].SPI = spiBytes(spi[0])
+		proposals[0].SPISize = 4
+	}
+	return proposals
 }
 
 // parseEncr extracts the encryption transform ID from a proposal.
@@ -92,8 +98,17 @@ func parseESPProposal(p *ikev2.Proposal) (encr, integ uint16, err error) {
 	if err != nil {
 		return
 	}
-	integ, err = parseInteg(p)
+	integ, err = parseOptionalInteg(p)
 	return
+}
+
+func parseOptionalInteg(p *ikev2.Proposal) (uint16, error) {
+	for _, transform := range p.Transforms {
+		if transform.TransformType == byte(transformIntegrity) {
+			return transform.TransformID, nil
+		}
+	}
+	return 0, nil
 }
 
 // normalizeProposal normalises a proposal's transform list (dedupe, order).

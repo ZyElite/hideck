@@ -142,8 +142,12 @@ type Session struct {
 
 	// --- data plane ---
 	innerEndpoint *userspaceInnerPacketEndpoint
-	espSA         *ipsec.SecurityAssociation // outbound ESP SA
+	espOutboundSA *ipsec.SecurityAssociation
+	espInboundSA  *ipsec.SecurityAssociation
+	espLocalSPI   uint32
 	espRemoteSPI  uint32
+	childNi       []byte
+	childNr       []byte
 	espCipher     uint16
 	espInteg      uint16
 	espKey        []byte
@@ -320,9 +324,12 @@ func (s *Session) connectOnce(ctx context.Context) (err error) {
 		return err
 	}
 
-	// CREATE_CHILD_SA for the ESP data plane.
-	if err := s.dispatchCreateChildSA(ctx); err != nil {
-		return err
+	// Some ePDGs establish the first CHILD_SA in IKE_AUTH. If the responder did
+	// not return SAr2, create it explicitly with a CREATE_CHILD_SA exchange.
+	if s.espRemoteSPI == 0 {
+		if err := s.dispatchCreateChildSA(ctx); err != nil {
+			return err
+		}
 	}
 
 	// Bring up the data plane.
@@ -554,10 +561,10 @@ func cloneIPs(in []net.IP) []net.IP {
 
 // NextSequenceNumber returns the next ESP sequence number for the outbound SA.
 func (s *Session) NextSequenceNumber() uint32 {
-	if s.espSA == nil {
+	if s.espOutboundSA == nil {
 		return 0
 	}
-	return s.espSA.NextSequenceNumber()
+	return s.espOutboundSA.NextSequenceNumber()
 }
 
 // InnerPacketEndpoint returns the user-space inner packet endpoint.

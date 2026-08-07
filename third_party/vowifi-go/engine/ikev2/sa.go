@@ -220,8 +220,12 @@ func CreateMultiProposalIKE(encr, prf, integ, dh uint16) []*Proposal {
 func CreateMultiProposalESP(encr, integ, dh, esn uint16) []*Proposal {
 	p := &Proposal{ProposalNum: 1, ProtocolID: ProtoESP}
 	p.AddTransform(TypeEncryption, encr)
-	p.AddTransform(TypeIntegrity, integ)
-	p.AddTransform(TypeDHGroup, dh)
+	if integ != 0 {
+		p.AddTransform(TypeIntegrity, integ)
+	}
+	if dh != 0 {
+		p.AddTransform(TypeDHGroup, dh)
+	}
 	p.AddTransform(TypeESN, esn)
 	return []*Proposal{p}
 }

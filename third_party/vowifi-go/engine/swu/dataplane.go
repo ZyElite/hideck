@@ -148,34 +148,47 @@ func (s *Session) setupDataPlane() error {
 		return err
 	}
 
-	sa, err := s.newESPAssociation(childKeys)
+	outbound, err := s.newESPAssociation(s.espRemoteSPI, childKeys.initiator)
 	if err != nil {
 		return err
 	}
-	s.espSA = sa
-	s.espKey = childKeys.enc
-	s.espIntegKey = childKeys.integ
+	inbound, err := s.newESPAssociation(s.espLocalSPI, childKeys.responder)
+	if err != nil {
+		return err
+	}
+	s.espOutboundSA = outbound
+	s.espInboundSA = inbound
+	s.espKey = append([]byte{}, childKeys.initiator.enc...)
+	s.espIntegKey = append([]byte{}, childKeys.initiator.integ...)
 
 	// Create the inner packet endpoint.
 	s.innerEndpoint = newUserspaceInnerPacketEndpoint(0, 0)
 	return nil
 }
 
-func (s *Session) newESPAssociation(keys *childSAKeys) (*ipsec.SecurityAssociation, error) {
+func (s *Session) newESPAssociation(spi uint32, keys childDirectionKeys) (*ipsec.SecurityAssociation, error) {
+	if spi == 0 {
+		return nil, errors.New("swu: ESP SPI is zero")
+	}
 	if s.espAEAD {
-		return ipsec.NewSecurityAssociation(s.espRemoteSPI, s.espCipher, keys.enc, s.espRemoteSPI), nil
+		return ipsec.NewSecurityAssociation(spi, s.espCipher, keys.enc, 0), nil
 	}
 	integ := crypto.NewIntegrity(s.espInteg)
 	if integ == nil {
 		return nil, fmt.Errorf("swu: unsupported ESP integrity transform %d", s.espInteg)
 	}
 	return ipsec.NewSecurityAssociationCBC(
-		s.espRemoteSPI, s.espCipher, keys.enc, integ, keys.integ, s.espRemoteSPI,
+		spi, s.espCipher, keys.enc, integ, keys.integ, 0,
 	), nil
 }
 
 // childSAKeys holds the derived CHILD_SA key material.
 type childSAKeys struct {
+	initiator childDirectionKeys
+	responder childDirectionKeys
+}
+
+type childDirectionKeys struct {
 	enc   []byte
 	integ []byte
 }
@@ -186,19 +199,29 @@ func (s *Session) deriveChildSAKeys() (*childSAKeys, error) {
 	if s.prf == nil {
 		return nil, errors.New("swu: no PRF for child SA keys")
 	}
-	seed := append(append([]byte{}, s.Ni...), s.Nr()...)
+	if len(s.childNi) == 0 || len(s.childNr) == 0 {
+		return nil, errors.New("swu: child SA nonces are incomplete")
+	}
+	seed := append(append([]byte{}, s.childNi...), s.childNr...)
 	encLen := s.espEncKeyLen
 	integLen := s.espIntegKeyLen
 	if encLen <= 0 {
 		return nil, errors.New("swu: invalid ESP encryption key length")
 	}
-	km := crypto.PrfPlus(s.prf, s.ikeKeys.SK_d, seed, encLen+integLen)
-	if len(km) < encLen+integLen {
+	directionLen := encLen + integLen
+	km := crypto.PrfPlus(s.prf, s.ikeKeys.SK_d, seed, 2*directionLen)
+	if len(km) < 2*directionLen {
 		return nil, errors.New("swu: prf+ produced insufficient child SA keys")
 	}
 	return &childSAKeys{
-		enc:   append([]byte{}, km[:encLen]...),
-		integ: append([]byte{}, km[encLen:encLen+integLen]...),
+		initiator: childDirectionKeys{
+			enc:   append([]byte{}, km[:encLen]...),
+			integ: append([]byte{}, km[encLen:directionLen]...),
+		},
+		responder: childDirectionKeys{
+			enc:   append([]byte{}, km[directionLen:directionLen+encLen]...),
+			integ: append([]byte{}, km[directionLen+encLen:2*directionLen]...),
+		},
 	}, nil
 }
 
@@ -272,10 +295,10 @@ func (s *Session) loopInnerToESP() {
 
 // encapsulateInnerPacket wraps an inner IP packet in ESP (RFC 4303).
 func (s *Session) encapsulateInnerPacket(inner []byte) ([]byte, error) {
-	if s.espSA == nil {
+	if s.espOutboundSA == nil {
 		return nil, errors.New("swu: no ESP SA")
 	}
-	return ipsec.Encapsulate(inner, nil, s.espSA)
+	return ipsec.Encapsulate(inner, nil, s.espOutboundSA)
 }
 
 // encapsulateInnerPacketLease wraps an inner packet using a buffer-pool lease.
@@ -289,10 +312,10 @@ func (s *Session) encapsulateInnerPacketLease(inner []byte) (*packetLease, error
 
 // decapsulateOuterESP unwraps an ESP packet into the inner IP packet.
 func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, error) {
-	if s.espSA == nil {
+	if s.espInboundSA == nil {
 		return nil, errors.New("swu: no ESP SA")
 	}
-	return ipsec.Decapsulate(esp, nil, s.espSA)
+	return ipsec.Decapsulate(esp, nil, s.espInboundSA)
 }
 
 // handleOuterESP processes an inbound ESP packet (alias for decapsulateOuterESP).
@@ -310,7 +333,8 @@ func (s *Session) stopDataPlane() {
 	if s.innerEndpoint != nil {
 		_ = s.innerEndpoint.Close()
 	}
-	s.espSA = nil
+	s.espOutboundSA = nil
+	s.espInboundSA = nil
 	s.mu.Lock()
 	s.dataPlaneStarted = false
 	s.mu.Unlock()
@@ -350,5 +374,5 @@ func (s *Session) resolveXFRMOuterTuple() (net.IP, net.IP, uint16, uint16, error
 
 // selectOutgoingSA selects the outbound ESP SA (single-SA model).
 func (s *Session) selectOutgoingSA() *ipsec.SecurityAssociation {
-	return s.espSA
+	return s.espOutboundSA
 }

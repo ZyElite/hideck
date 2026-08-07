@@ -253,8 +253,16 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 		return nil, err
 	}
 
-	// SAi2 (ESP proposal).
-	espProposals := buildESPProposals(s.cfg.ESPEncryption, s.cfg.ESPIntegrity)
+	if s.espLocalSPI == 0 {
+		localSPI, err := randomChildSPI()
+		if err != nil {
+			return nil, err
+		}
+		s.espLocalSPI = localSPI
+	}
+
+	// SAi2 (ESP proposal) includes the initiator-selected inbound SPI.
+	espProposals := buildESPProposals(s.espCipher, s.espInteg, s.espLocalSPI)
 	sa2 := &ikev2.EncryptedPayloadSA{Proposals: espProposals}
 
 	// TSi / TSr.
@@ -468,7 +476,15 @@ func (s *Session) handleIKEAuthFinalResp(resp *ikev2.IKEPacket) error {
 	}
 	// Extract the inner address from the CP payload.
 	for _, pl := range payloads {
-		if pl.Type() == ikev2.PayloadCP {
+		switch pl.Type() {
+		case ikev2.PayloadSA:
+			sa, ok := pl.(*ikev2.EncryptedPayloadSA)
+			if ok && len(sa.Proposals) > 0 && len(sa.Proposals[0].SPI) == 4 {
+				s.espRemoteSPI = binary.BigEndian.Uint32(sa.Proposals[0].SPI)
+				s.childNi = append([]byte{}, s.Ni...)
+				s.childNr = s.Nr()
+			}
+		case ikev2.PayloadCP:
 			if cp, ok := pl.(*ikev2.EncryptedPayloadCP); ok {
 				cfg := ikev2.ParseCPConfig(cp)
 				if cfg != nil {

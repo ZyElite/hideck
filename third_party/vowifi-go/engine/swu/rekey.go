@@ -105,7 +105,11 @@ func (s *Session) dispatchCreateChildSA(ctx context.Context) error {
 	if _, err := rand.Read(ni); err != nil {
 		return err
 	}
-	espProposals := buildESPProposals(s.cfg.ESPEncryption, s.cfg.ESPIntegrity)
+	localSPI, err := randomChildSPI()
+	if err != nil {
+		return err
+	}
+	espProposals := buildESPProposals(s.espCipher, s.espInteg, localSPI)
 	tsi, tsr := buildTrafficSelectorsForIPStack(s.innerIP)
 	pkt := &ikev2.IKEPacket{
 		InitiatorSPI: s.SPIi,
@@ -136,15 +140,53 @@ func (s *Session) dispatchCreateChildSA(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Extract the responder SPI from the SA payload.
-	for _, pl := range payloads {
-		if pl.Type() == ikev2.PayloadSA {
-			if sa, ok := pl.(*ikev2.EncryptedPayloadSA); ok && len(sa.Proposals) > 0 && len(sa.Proposals[0].SPI) >= 4 {
-				s.espRemoteSPI = binary.BigEndian.Uint32(sa.Proposals[0].SPI[:4])
+	remoteSPI, nr, err := childSAResponseParameters(payloads)
+	if err != nil {
+		return err
+	}
+	s.espLocalSPI = localSPI
+	s.espRemoteSPI = remoteSPI
+	s.childNi = append([]byte{}, ni...)
+	s.childNr = nr
+	return nil
+}
+
+func randomChildSPI() (uint32, error) {
+	var raw [4]byte
+	for attempts := 0; attempts < 3; attempts++ {
+		if _, err := rand.Read(raw[:]); err != nil {
+			return 0, fmt.Errorf("generate CHILD_SA SPI: %w", err)
+		}
+		if spi := binary.BigEndian.Uint32(raw[:]); spi != 0 {
+			return spi, nil
+		}
+	}
+	return 0, errors.New("generate CHILD_SA SPI: random source returned zero")
+}
+
+func childSAResponseParameters(payloads []ikev2.Payload) (uint32, []byte, error) {
+	var remoteSPI uint32
+	var nonce []byte
+	for _, payload := range payloads {
+		switch payload.Type() {
+		case ikev2.PayloadSA:
+			sa, ok := payload.(*ikev2.EncryptedPayloadSA)
+			if ok && len(sa.Proposals) > 0 && len(sa.Proposals[0].SPI) == 4 {
+				remoteSPI = binary.BigEndian.Uint32(sa.Proposals[0].SPI)
+			}
+		case ikev2.PayloadNi:
+			if raw, ok := payload.(*ikev2.RawPayload); ok {
+				nonce = append([]byte{}, raw.Data...)
 			}
 		}
 	}
-	return nil
+	if remoteSPI == 0 {
+		return 0, nil, errors.New("swu: CREATE_CHILD_SA response missing responder SPI")
+	}
+	if len(nonce) == 0 {
+		return 0, nil, errors.New("swu: CREATE_CHILD_SA response missing nonce")
+	}
+	return remoteSPI, nonce, nil
 }
 
 // UpdateAddresses handles a MOBIKE address update (RFC 4555): it records the
