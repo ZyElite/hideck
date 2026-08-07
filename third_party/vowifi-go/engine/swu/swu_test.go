@@ -76,7 +76,7 @@ func TestNormalizeLegacyName(t *testing.T) {
 func TestBuildNAI(t *testing.T) {
 	// IMSI 310260123456789: MCC=310, MNC=26 (2 digits, padded to 026).
 	got := buildNAI("310260123456789", "", "")
-	want := "310260123456789@nai.epc.mnc026.mcc310.3gppnetwork.org"
+	want := "0310260123456789@nai.epc.mnc026.mcc310.3gppnetwork.org"
 	if got != want {
 		t.Errorf("buildNAI = %q, want %q", got, want)
 	}

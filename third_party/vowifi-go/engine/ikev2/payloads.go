@@ -131,10 +131,11 @@ func (p *EncryptedPayloadID) Encode(b []byte) []byte {
 
 // Authentication method types (RFC 7296 §3.3.3).
 const (
-	AuthMethodRSA byte = 1  // RSA digital signature
-	AuthMethodPSK byte = 2  // pre-shared key
-	AuthMethodDSS byte = 3  // DSS digital signature
-	AuthMethodEAP byte = 14 // EAP
+	AuthMethodRSA              byte = 1                          // RSA digital signature
+	AuthMethodPSK              byte = 2                          // shared-key message integrity code
+	AuthMethodDSS              byte = 3                          // DSS digital signature
+	AuthMethodDigitalSignature byte = 14                         // RFC 7427 Digital Signature
+	AuthMethodEAP                   = AuthMethodDigitalSignature // compatibility alias
 )
 
 // EncryptedPayloadAuth is an Authentication payload.

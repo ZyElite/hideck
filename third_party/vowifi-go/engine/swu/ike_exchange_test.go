@@ -12,6 +12,7 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/eap"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
+	"github.com/iniwex5/vowifi-go/engine/swu/eapaka"
 )
 
 func TestReceiveIKERetransmitsThenTimesOut(t *testing.T) {
@@ -64,6 +65,8 @@ func TestNextMessageIDStartsAfterIKESAInit(t *testing.T) {
 func TestApplyEAPSuccessAdvancesToFinalAuth(t *testing.T) {
 	session := NewSession(&Config{})
 	session.stage = stageEAP
+	session.responderAuthenticated = true
+	session.eapKeys = eapaka.Keys{MSK: bytes.Repeat([]byte{0x11}, eapaka.KeyLengthMSK)}
 	payload := &ikev2.EncryptedPayloadEAP{Data: (&eap.EAPPacket{
 		Code: eap.CodeSuccess, Identifier: 3,
 	}).Encode()}

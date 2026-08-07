@@ -3,14 +3,11 @@ package swu
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha1"
 	"errors"
 	"net"
 	"strings"
 	"testing"
 
-	"github.com/iniwex5/vowifi-go/engine/eap"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
@@ -99,85 +96,8 @@ func TestSpoofAppleIMEI(t *testing.T) {
 
 func TestBuildNAIWithOverride(t *testing.T) {
 	got := buildNAI("310260123456789", "310", "26")
-	if got != "310260123456789@nai.epc.mnc026.mcc310.3gppnetwork.org" {
+	if got != "0310260123456789@nai.epc.mnc026.mcc310.3gppnetwork.org" {
 		t.Errorf("NAI = %q", got)
-	}
-}
-
-func TestVerifyEAPAKAMAC(t *testing.T) {
-	// Build a challenge, compute the MAC, and verify it.
-	ck := bytes.Repeat([]byte{0x11}, 16)
-	ik := bytes.Repeat([]byte{0x22}, 16)
-	randAttr := bytes.Repeat([]byte{0x33}, 16)
-	autnAttr := bytes.Repeat([]byte{0x44}, 16)
-
-	// AT_RAND + AT_AUTN attributes, each padded to a multiple of 4 bytes.
-	body := make([]byte, 0, 60)
-	body = append(body, eap.AttrATRAND, 5)
-	body = append(body, randAttr...)
-	body = append(body, 0, 0) // pad to 20 bytes
-	body = append(body, eap.AttrATAUTN, 5)
-	body = append(body, autnAttr...)
-	body = append(body, 0, 0) // pad to 20 bytes
-	// AT_MAC placeholder (zeroed), 20 bytes total.
-	body = append(body, eap.AttrATMAC, 5)
-	body = append(body, make([]byte, 18)...)
-
-	pkt := &eap.EAPPacket{
-		Code:       eap.CodeRequest,
-		Identifier: 1,
-		Type:       eap.TypeAKA,
-		SubType:    eap.SubtypeAKAChallenge,
-		Data:       body,
-	}
-
-	// Compute the MAC over the packet with AT_MAC zeroed.
-	raw := pkt.Encode()
-	if len(raw) >= 20 {
-		for i := len(raw) - 20; i < len(raw); i++ {
-			raw[i] = 0
-		}
-	}
-	key := append(append([]byte{}, ck...), ik...)
-	mac := hmac.New(sha1.New, key)
-	mac.Write([]byte("EAP-AKA"))
-	mac.Write(raw)
-	// Place the 16-byte MAC into the AT_MAC value (first 16 of the 18-byte value).
-	copy(body[len(body)-18:len(body)-2], mac.Sum(nil)[:16])
-
-	attrs, err := eap.ParseAttributes(pkt.Data, 0)
-	if err != nil {
-		t.Fatalf("ParseAttributes: %v", err)
-	}
-	if err := verifyEAPAKAMAC(pkt, attrs, ck, ik, eap.TypeAKA); err != nil {
-		t.Errorf("verifyEAPAKAMAC: %v", err)
-	}
-	// Wrong key must fail.
-	if err := verifyEAPAKAMAC(pkt, attrs, bytes.Repeat([]byte{0x99}, 16), ik, eap.TypeAKA); err == nil {
-		t.Error("verifyEAPAKAMAC with wrong CK should fail")
-	}
-}
-
-func TestBuildSignedEAPResponse(t *testing.T) {
-	ck := bytes.Repeat([]byte{0x11}, 16)
-	ik := bytes.Repeat([]byte{0x22}, 16)
-	aka := AKAResult{RES: bytes.Repeat([]byte{0x55}, 8), CK: ck, IK: ik}
-	req := &eap.EAPPacket{
-		Code:       eap.CodeRequest,
-		Identifier: 2,
-		Type:       eap.TypeAKA,
-		SubType:    eap.SubtypeAKAChallenge,
-		Data:       []byte{},
-	}
-	resp, err := buildSignedEAPResponse(req, nil, aka, eap.TypeAKA)
-	if err != nil {
-		t.Fatalf("buildSignedEAPResponse: %v", err)
-	}
-	if resp.Code != eap.CodeResponse || resp.Identifier != 2 {
-		t.Errorf("resp = code %d id %d", resp.Code, resp.Identifier)
-	}
-	if len(resp.Data) < 4 {
-		t.Error("response too short")
 	}
 }
 

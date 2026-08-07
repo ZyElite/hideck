@@ -62,16 +62,16 @@ func buildAlgorithmPlan(policy string, cfg *Config) *AlgorithmPlan {
 	case policyStrict:
 		plan.IKEEncryption = 18 // ENCR_AES_GCM_16
 		plan.IKEPRF = 5         // PRF_HMAC_SHA2_256
-		plan.IKEIntegrity = 0  // AEAD (no separate integrity)
+		plan.IKEIntegrity = 0   // AEAD (no separate integrity)
 		plan.IKEDH = 14         // MODP-2048
 		plan.ESPEncryption = 18 // ENCR_AES_GCM_16
 		plan.ESPIntegrity = 0
 	case policyLegacyPrefer:
-		plan.IKEEncryption = 3  // ENCR_3DES
-		plan.IKEPRF = 2          // PRF_HMAC_SHA1
-		plan.IKEIntegrity = 2    // AUTH_HMAC_SHA1_96
-		plan.IKEDH = 2           // MODP-1024
-		plan.ESPEncryption = 3  // ENCR_3DES
+		plan.IKEEncryption = 3 // ENCR_3DES
+		plan.IKEPRF = 2        // PRF_HMAC_SHA1
+		plan.IKEIntegrity = 2  // AUTH_HMAC_SHA1_96
+		plan.IKEDH = 2         // MODP-1024
+		plan.ESPEncryption = 3 // ENCR_3DES
 		plan.ESPIntegrity = 2
 	default: // prefer
 		plan.IKEEncryption = 12 // ENCR_AES_CBC
@@ -110,7 +110,7 @@ func buildAlgorithmPlan(policy string, cfg *Config) *AlgorithmPlan {
 // unless mccOverride/mncOverride are non-empty. A 2-digit MNC is zero-padded
 // to 3 digits.
 //
-//	NAI = "<IMSI>@nai.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org"
+//	NAI = "0<IMSI>@nai.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org"
 func buildNAI(imsi string, mccOverride, mncOverride string) string {
 	if len(imsi) < 5 {
 		return ""
@@ -126,5 +126,5 @@ func buildNAI(imsi string, mccOverride, mncOverride string) string {
 	if len(mnc) == 2 {
 		mnc = "0" + mnc
 	}
-	return fmt.Sprintf("%s@nai.epc.mnc%s.mcc%s.3gppnetwork.org", imsi, mnc, mcc)
+	return fmt.Sprintf("0%s@nai.epc.mnc%s.mcc%s.3gppnetwork.org", imsi, mnc, mcc)
 }

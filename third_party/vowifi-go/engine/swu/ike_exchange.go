@@ -15,13 +15,12 @@ func (s *Session) sendIKE(raw []byte) error {
 	if s.socket == nil {
 		return errors.New("swu: no IKE transport")
 	}
-	packet, err := ikev2.DecodePacket(raw)
+	_, err := ikev2.DecodePacket(raw)
 	if err != nil {
 		return fmt.Errorf("swu: encode IKE request: %w", err)
 	}
 	s.mu.Lock()
 	s.lastIKERequest = append(s.lastIKERequest[:0], raw...)
-	s.lastIKEMessageID = packet.MessageID
 	s.mu.Unlock()
 	s.socket.SendIKE(raw)
 	return nil
@@ -84,6 +83,9 @@ func (s *Session) waitForIKEResponse(ctx context.Context, expected *ikev2.IKEPac
 				return nil, false, err
 			}
 			if validIKEResponseHeader(packet, expected) {
+				s.mu.Lock()
+				s.lastIKEResponse = append(s.lastIKEResponse[:0], raw...)
+				s.mu.Unlock()
 				return packet, false, nil
 			}
 		}

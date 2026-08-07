@@ -13,6 +13,7 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
+	"github.com/iniwex5/vowifi-go/engine/swu/eapaka"
 )
 
 // Config carries the SWu session configuration recovered from the decompiled
@@ -134,11 +135,16 @@ type Session struct {
 	socket ipsec.Transport
 
 	// --- IKE_AUTH state ---
-	stage       ikeAuthStage
-	eapID       byte   // current EAP identifier
-	eapType     byte   // negotiated EAP method (AKA / AKA')
-	authPayload []byte // responder AUTH payload (for verification)
-	skf         []byte // SKF (encrypted IKE_AUTH response) pending decrypt
+	stage                  ikeAuthStage
+	eapID                  byte // current EAP identifier
+	eapType                byte // negotiated EAP method (AKA / AKA')
+	eapKeys                eapaka.Keys
+	eapIdentityTranscript  [][]byte
+	authPayload            []byte // responder AUTH payload (for verification)
+	skf                    []byte // SKF (encrypted IKE_AUTH response) pending decrypt
+	responderAuthenticated bool
+	ikeSAInitRequest       []byte
+	ikeSAInitResponse      []byte
 
 	// --- data plane ---
 	innerEndpoint *userspaceInnerPacketEndpoint
@@ -175,7 +181,7 @@ type Session struct {
 	lastDPDAt        time.Time
 	rekeyResetCh     chan struct{}
 	lastIKERequest   []byte
-	lastIKEMessageID uint32
+	lastIKEResponse  []byte
 	nextOutboundID   uint32
 
 	// --- timers ---
@@ -251,12 +257,6 @@ func (s *Session) terminalError() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.terminalErr
-}
-
-// canAcceptMissingResponderAuth reports whether the session tolerates a missing
-// responder AUTH payload (recovered from the decompiled flag at +0x3f8).
-func (s *Session) canAcceptMissingResponderAuth() bool {
-	return s.cfg != nil && s.cfg.IMSI == ""
 }
 
 // Connect establishes the SWu tunnel: IKE_SA_INIT → IKE_AUTH (EAP-AKA) →
@@ -371,6 +371,10 @@ func (s *Session) runIKESAInit(ctx context.Context) error {
 		}
 		err = s.handleIKESAInitResp(resp)
 		if err == nil {
+			s.mu.Lock()
+			s.ikeSAInitRequest = append([]byte(nil), s.lastIKERequest...)
+			s.ikeSAInitResponse = append([]byte(nil), s.lastIKEResponse...)
+			s.mu.Unlock()
 			return nil
 		}
 		if errors.Is(err, errCookieRequired) {
