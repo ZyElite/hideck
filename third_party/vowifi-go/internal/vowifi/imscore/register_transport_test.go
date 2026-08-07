@@ -252,6 +252,7 @@ func TestRegisterPropagatesRegistrarRejection(t *testing.T) {
 		DeviceID: "dev-1", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
 		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp",
 		Registrar: registrar.LocalAddr().String(), IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)),
+		IPSec3GPPEnabled: true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

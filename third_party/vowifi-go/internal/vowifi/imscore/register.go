@@ -93,16 +93,15 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 			return 0, fmt.Errorf("imscore: AKA synchronization response status %d did not provide a fresh challenge", resp.StatusCode)
 		}
 	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("imscore: registration failed with status %d", resp.StatusCode)
+	}
 	if session.security != nil && session.security.server == nil {
 		return 0, errors.New("imscore: registration completed without 3GPP security agreement")
 	}
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		expires := registrationExpires(resp, s.cfg.Expires)
-		session.expires = expires
-		return expires, nil
-	}
-	return 0, fmt.Errorf("imscore: registration failed with status %d", resp.StatusCode)
+	expires := registrationExpires(resp, s.cfg.Expires)
+	session.expires = expires
+	return expires, nil
 }
 
 func (s *Service) exchangeRegister(ctx context.Context, session *registerSession, authorization string) (*sipResponse, error) {
