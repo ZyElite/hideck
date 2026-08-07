@@ -355,6 +355,11 @@ func (s *Session) handleIKEAuthFinalResp(resp *ikev2.IKEPacket) error {
 			return errors.New("swu: responder was not authenticated before EAP completion")
 		}
 	}
+	// The encrypted response is integrity-protected by the IKE SA. Surface a
+	// responder rejection before requiring AUTH, because error responses omit it.
+	if err := ikeAuthenticationError(payloads); err != nil {
+		return err
+	}
 	if err := s.verifyEAPResponderAuth(payloads); err != nil {
 		return err
 	}
@@ -414,7 +419,7 @@ func parseAssignedInnerConfig(payloads []ikev2.Payload) (assignedInnerConfig, er
 		cp = value
 	}
 	if cp == nil {
-		return result, nil
+		return result, fmt.Errorf("swu: final IKE_AUTH response omitted CFG_REPLY (payloads=%s)", ikePayloadTypes(payloads))
 	}
 	config := ikev2.ParseCPConfig(cp)
 	if raw, ok := config.Attrs[ikev2.CPAttrIP4Address]; ok {
@@ -431,7 +436,25 @@ func parseAssignedInnerConfig(payloads []ikev2.Payload) (assignedInnerConfig, er
 		result.ipv6 = append(net.IP(nil), raw[:net.IPv6len]...)
 	}
 	result.dns = dnsServersFromCP(config)
+	if result.ipv4 == nil && result.ipv6 == nil {
+		return result, fmt.Errorf("swu: CFG_REPLY omitted an assigned address (attributes=%s)", cpAttributeSummary(cp))
+	}
 	return result, nil
+}
+
+func cpAttributeSummary(cp *ikev2.EncryptedPayloadCP) string {
+	if cp == nil || len(cp.Attrs) == 0 {
+		return "none"
+	}
+	attributes := make([]string, 0, len(cp.Attrs))
+	for _, attribute := range cp.Attrs {
+		if attribute == nil {
+			attributes = append(attributes, "nil")
+			continue
+		}
+		attributes = append(attributes, fmt.Sprintf("%d:%d", attribute.Type, len(attribute.Value)))
+	}
+	return strings.Join(attributes, ",")
 }
 
 func ipv4PrefixFromCP(cfg *ikev2.CPConfig) int {

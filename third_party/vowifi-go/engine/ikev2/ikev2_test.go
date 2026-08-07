@@ -136,9 +136,14 @@ func TestNotifyTypeToString(t *testing.T) {
 		t    uint16
 		want string
 	}{
-		{1, "INVALID_SA_PROPOSAL"},
+		{1, "UNSUPPORTED_CRITICAL_PAYLOAD"},
+		{24, "AUTHENTICATION_FAILED"},
+		{34, "SINGLE_PAIR_REQUIRED"},
+		{36, "INTERNAL_ADDRESS_FAILURE"},
 		{16388, "NAT_DETECTION_SOURCE_IP"},
 		{16393, "REKEY_SA"},
+		{16403, "AUTH_LIFETIME"},
+		{16417, "EAP_ONLY_AUTHENTICATION"},
 		{999, "999"},
 	}
 	for _, c := range cases {
