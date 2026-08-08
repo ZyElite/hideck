@@ -12,6 +12,7 @@ type voiceSIPDialog struct {
 	remoteURI      string
 	remoteTarget   string
 	contactURI     string
+	contactHeader  string
 	localAddress   string
 	transport      string
 	serviceRoute   []string
@@ -21,7 +22,9 @@ type voiceSIPDialog struct {
 	localTag       string
 	remoteTag      string
 	inviteBranch   string
+	sessionID      string
 	cseq           int
+	inviteCSeq     int
 }
 
 func (a *Agent) prepareVoiceDialog(call *Call, number string) error {
@@ -32,17 +35,22 @@ func (a *Agent) prepareVoiceDialog(call *Call, number string) error {
 	if err != nil {
 		return err
 	}
-	callee := sanitizeVoicePhone(number)
-	if callee == "" {
+	remoteURI := buildIMSCalledPartyURI(number, profile.LocalURI, profile.Domain)
+	if remoteURI == "" {
 		return errors.New("voice: callee is empty")
 	}
-	remoteURI := "sip:" + callee + "@" + profile.Domain
+	initialCSeq := profile.InitialCSeq
+	if initialCSeq <= 0 {
+		initialCSeq = 1
+	}
 	call.setVoiceDialog(&voiceSIPDialog{
 		localURI: profile.LocalURI, remoteURI: remoteURI, remoteTarget: remoteURI,
-		contactURI: profile.ContactURI, localAddress: profile.LocalAddress,
-		transport: profile.Transport, serviceRoute: splitVoiceHeaderValues(profile.ServiceRoute),
+		contactURI: profile.ContactURI, contactHeader: profile.ContactHeader,
+		localAddress: profile.LocalAddress,
+		transport:    profile.Transport, serviceRoute: splitVoiceHeaderValues(profile.ServiceRoute),
 		securityVerify: profile.SecurityVerify, pani: profile.PANI, userAgent: profile.UserAgent,
-		localTag: voiceTag(), inviteBranch: voiceBranch(), cseq: 1,
+		localTag: voiceTag(), inviteBranch: voiceBranch(), sessionID: voiceSessionID(),
+		cseq: initialCSeq, inviteCSeq: initialCSeq,
 	})
 	return nil
 }
@@ -71,6 +79,19 @@ func (c *Call) advanceVoiceCSeq() voiceSIPDialog {
 		return voiceSIPDialog{}
 	}
 	c.sipDialog.cseq++
+	copy := *c.sipDialog
+	copy.serviceRoute = append([]string(nil), c.sipDialog.serviceRoute...)
+	return copy
+}
+
+func (c *Call) advanceVoiceInviteCSeq() voiceSIPDialog {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sipDialog == nil {
+		return voiceSIPDialog{}
+	}
+	c.sipDialog.cseq++
+	c.sipDialog.inviteCSeq = c.sipDialog.cseq
 	copy := *c.sipDialog
 	copy.serviceRoute = append([]string(nil), c.sipDialog.serviceRoute...)
 	return copy

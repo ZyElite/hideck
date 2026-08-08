@@ -15,6 +15,14 @@ type sipTransactionKey struct {
 }
 
 func (t *sipTransport) RoundTrip(ctx context.Context, request string) (*sipResponse, error) {
+	return t.roundTripWithProvisional(ctx, request, nil)
+}
+
+func (t *sipTransport) roundTripWithProvisional(
+	ctx context.Context,
+	request string,
+	onProvisional func(*sipResponse) error,
+) (*sipResponse, error) {
 	if t == nil {
 		return nil, errors.New("imscore: nil SIP transport")
 	}
@@ -40,8 +48,16 @@ func (t *sipTransport) RoundTrip(ctx context.Context, request string) (*sipRespo
 		case <-t.closed:
 			return nil, errors.New("imscore: SIP transport closed")
 		case response := <-waiter:
-			if response != nil && response.StatusCode >= 200 {
+			if response == nil {
+				continue
+			}
+			if response.StatusCode >= 200 {
 				return response, nil
+			}
+			if response.StatusCode >= 100 && onProvisional != nil {
+				if err := onProvisional(response); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}

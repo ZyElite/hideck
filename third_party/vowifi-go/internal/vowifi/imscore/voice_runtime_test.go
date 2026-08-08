@@ -2,10 +2,47 @@ package imscore
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestRegisteredSIPDialogProfileUsesNegotiatedIdentityAndBinding(t *testing.T) {
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+	service := &Service{
+		cfg: &IMSConfig{
+			Domain: "ims.mnc010.mcc234.3gppnetwork.org", LocalIP: net.ParseIP("2001:db8::10"),
+			IMEI: "860349050445311", UserAgent: "test-agent",
+			RegisterTemplate: IMSRegisterTemplate{
+				AccessType: "wlan1", ContactOrder: []string{"access_type", "sip_instance", "audio"},
+			},
+		},
+		regState: regRegistered, registrationTCP: client,
+		protectedClientPort: 50309, protectedServerPort: 48554,
+		regSession: &registerSession{
+			contactUser: "binding-uuid", cseq: 3,
+			publicID: "sip:+447840844894@o2.co.uk", serviceRoute: "<sip:pcscf.example;lr>",
+			security: &securityAgreement{verifyHeader: "ipsec-3gpp;alg=hmac-sha-1-96"},
+		},
+	}
+
+	profile, err := service.RegisteredSIPDialogProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.LocalURI != "sip:+447840844894@o2.co.uk" || profile.InitialCSeq != 6 {
+		t.Fatalf("registered identity/CSeq = %q/%d", profile.LocalURI, profile.InitialCSeq)
+	}
+	if profile.LocalAddress != "[2001:db8::10]:50309" || profile.ContactURI != "sip:binding-uuid@[2001:db8::10]:48554" {
+		t.Fatalf("registered addresses = local %q contact %q", profile.LocalAddress, profile.ContactURI)
+	}
+	wantContact := `<sip:binding-uuid@[2001:db8::10]:48554>;+g.3gpp.accesstype="wlan1";+sip.instance="<urn:gsma:imei:86034905-044531-1>";audio`
+	if profile.ContactHeader != wantContact {
+		t.Fatalf("Contact = %q, want %q", profile.ContactHeader, wantContact)
+	}
+}
 
 type recordingVoiceHandler struct {
 	request InboundVoiceRequest

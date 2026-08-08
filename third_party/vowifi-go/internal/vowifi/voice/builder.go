@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+const (
+	voiceInviteSupported = "100rel, timer, replaces, norefersub, early-session, sec-agree"
+	voiceInviteAllow     = "INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, OPTIONS"
+)
+
 // BuildIMSInvite builds the initial IMS INVITE with the registered route.
 func BuildIMSInvite(agent *Agent, call *Call) string {
 	return buildIMSInviteWithSDP(agent, call, "")
@@ -26,11 +31,20 @@ func buildIMSInviteWithSDP(agent *Agent, call *Call, sdp string) string {
 	}
 	var request strings.Builder
 	fmt.Fprintf(&request, "INVITE %s SIP/2.0\r\n", dialog.remoteURI)
-	writeVoiceDialogHeaders(&request, dialog, call.CallID(), "INVITE", dialog.inviteBranch)
-	writeVoiceOptionalHeader(&request, "Contact", "<"+dialog.contactURI+">")
-	request.WriteString("P-Preferred-Service: urn:urn-7:3gpp-service.ims.icsi.mmtel\r\n")
+	writeVoiceCoreHeaders(&request, dialog, call.CallID(), "INVITE", dialog.inviteBranch)
+	writeVoiceOptionalHeader(&request, "Contact", dialog.contactHeader)
+	if dialog.securityVerify != "" {
+		request.WriteString("Require: sec-agree\r\nProxy-Require: sec-agree\r\n")
+	}
+	request.WriteString("Supported: " + voiceInviteSupported + "\r\n")
+	request.WriteString("Allow: " + voiceInviteAllow + "\r\n")
 	request.WriteString("Accept-Contact: *;+g.3gpp.icsi-ref=\"urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel\"\r\n")
-	request.WriteString("Supported: 100rel, timer\r\n")
+	request.WriteString("P-Preferred-Service: urn:urn-7:3gpp-service.ims.icsi.mmtel\r\n")
+	writeVoiceOptionalHeader(&request, "P-Access-Network-Info", dialog.pani)
+	writeVoiceOptionalHeader(&request, "P-Preferred-Identity", "<"+dialog.localURI+">")
+	writeVoiceOptionalHeader(&request, "Security-Verify", dialog.securityVerify)
+	writeVoiceOptionalHeader(&request, "User-Agent", dialog.userAgent)
+	writeVoiceOptionalHeader(&request, "Session-ID", dialog.sessionID)
 	if sdp != "" {
 		request.WriteString("Content-Type: application/sdp\r\n")
 	}
@@ -52,7 +66,7 @@ func buildIMSReinvite(agent *Agent, call *Call) string {
 	if agent == nil || call == nil {
 		return ""
 	}
-	dialog := call.advanceVoiceCSeq()
+	dialog := call.advanceVoiceInviteCSeq()
 	sdp := call.imsLocalSDPValue()
 	if strings.TrimSpace(sdp) == "" {
 		sdp = generateBasicSDP(agent, call)
@@ -70,6 +84,7 @@ func buildIMSACKForStatus(agent *Agent, call *Call, statusCode int) string {
 		return ""
 	}
 	dialog := ensureBuilderVoiceDialog(agent, call)
+	dialog.cseq = dialog.inviteCSeq
 	branch := voiceBranch()
 	if statusCode >= 300 {
 		branch = dialog.inviteBranch
@@ -83,7 +98,18 @@ func BuildIMSCancel(agent *Agent, call *Call) string {
 		return ""
 	}
 	dialog := ensureBuilderVoiceDialog(agent, call)
+	dialog.cseq = dialog.inviteCSeq
 	return buildVoiceRequest(dialog, call.CallID(), "CANCEL", dialog.inviteBranch, "")
+}
+
+func buildIMSPrack(agent *Agent, call *Call, rseq uint32) string {
+	if agent == nil || call == nil || rseq == 0 {
+		return ""
+	}
+	dialog := call.advanceVoiceCSeq()
+	request := buildVoiceRequest(dialog, call.CallID(), "PRACK", voiceBranch(), "")
+	rack := fmt.Sprintf("RAck: %d %d INVITE\r\n", rseq, dialog.inviteCSeq)
+	return strings.Replace(request, "Content-Length: 0\r\n", rack+"Content-Length: 0\r\n", 1)
 }
 
 func ensureBuilderVoiceDialog(agent *Agent, call *Call) voiceSIPDialog {
@@ -112,6 +138,14 @@ func buildVoiceRequest(dialog voiceSIPDialog, callID, method, branch, body strin
 }
 
 func writeVoiceDialogHeaders(out *strings.Builder, dialog voiceSIPDialog, callID, method, branch string) {
+	writeVoiceCoreHeaders(out, dialog, callID, method, branch)
+	writeVoiceOptionalHeader(out, "P-Preferred-Identity", "<"+dialog.localURI+">")
+	writeVoiceOptionalHeader(out, "Security-Verify", dialog.securityVerify)
+	writeVoiceOptionalHeader(out, "P-Access-Network-Info", dialog.pani)
+	writeVoiceOptionalHeader(out, "User-Agent", dialog.userAgent)
+}
+
+func writeVoiceCoreHeaders(out *strings.Builder, dialog voiceSIPDialog, callID, method, branch string) {
 	transport := strings.ToUpper(strings.TrimSpace(dialog.transport))
 	if transport == "" {
 		transport = "UDP"
@@ -127,10 +161,6 @@ func writeVoiceDialogHeaders(out *strings.Builder, dialog voiceSIPDialog, callID
 	}
 	fmt.Fprintf(out, "To: %s\r\nCall-ID: %s\r\nCSeq: %d %s\r\n", to, callID, dialog.cseq, method)
 	out.WriteString("Max-Forwards: 70\r\n")
-	writeVoiceOptionalHeader(out, "P-Preferred-Identity", "<"+dialog.localURI+">")
-	writeVoiceOptionalHeader(out, "Security-Verify", dialog.securityVerify)
-	writeVoiceOptionalHeader(out, "P-Access-Network-Info", dialog.pani)
-	writeVoiceOptionalHeader(out, "User-Agent", dialog.userAgent)
 }
 
 func writeVoiceOptionalHeader(out *strings.Builder, name, value string) {
@@ -145,12 +175,15 @@ func fallbackVoiceDialog(agent *Agent, call *Call) voiceSIPDialog {
 	if identities := agent.ims.GetIMPU(); len(identities) > 0 && strings.TrimSpace(identities[0]) != "" {
 		localURI = strings.TrimSpace(identities[0])
 	}
-	remoteURI := "sip:" + sanitizeVoicePhone(call.Peer()) + "@" + domain
+	remoteURI := buildIMSCalledPartyURI(call.Peer(), localURI, domain)
 	return voiceSIPDialog{
 		localURI: localURI, remoteURI: remoteURI, remoteTarget: remoteURI,
-		contactURI: localURI, localAddress: agent.localAddr(), transport: "udp",
+		contactURI: localURI, contactHeader: "<" + localURI + ">",
+		localAddress: agent.localAddr(), transport: "udp",
 		serviceRoute: agent.ims.GetServiceRoute(), securityVerify: agent.ims.GetSecurityVerify(),
-		pani: agent.ims.GetPAccessNetworkInfo(), localTag: voiceTag(), inviteBranch: voiceBranch(), cseq: 1,
+		pani: agent.ims.GetPAccessNetworkInfo(), localTag: voiceTag(), inviteBranch: voiceBranch(),
+		sessionID: voiceSessionID(), cseq: 1,
+		inviteCSeq: 1,
 	}
 }
 
@@ -235,8 +268,39 @@ func sanitizeVoicePhone(phone string) string {
 	return sanitized.String()
 }
 
-func voiceTag() string    { return voiceHex(8) }
-func voiceBranch() string { return "z9hG4bK" + voiceHex(16) }
+func buildIMSCalledPartyURI(phone, publicIdentity, fallbackDomain string) string {
+	digits := sanitizeVoicePhone(phone)
+	if digits == "" {
+		return ""
+	}
+	user := digits
+	normalized := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(phone), "tel:"))
+	if strings.HasPrefix(normalized, "+") {
+		user = "+" + digits
+	}
+	domain := publicIdentityDomain(publicIdentity)
+	if domain == "" {
+		domain = strings.TrimSpace(fallbackDomain)
+	}
+	if domain == "" {
+		return ""
+	}
+	return "sip:" + user + "@" + domain + ";user=phone"
+}
+
+func publicIdentityDomain(identity string) string {
+	identity = strings.Trim(strings.TrimSpace(identity), "<>")
+	at := strings.LastIndexByte(identity, '@')
+	if at < 0 || at == len(identity)-1 {
+		return ""
+	}
+	domain, _, _ := strings.Cut(identity[at+1:], ";")
+	return strings.TrimSpace(domain)
+}
+
+func voiceTag() string       { return voiceHex(16) }
+func voiceBranch() string    { return "z9hG4bK-" + voiceHex(24) }
+func voiceSessionID() string { return voiceHex(32) }
 
 func voiceSessID() int64 {
 	bytes := make([]byte, 8)

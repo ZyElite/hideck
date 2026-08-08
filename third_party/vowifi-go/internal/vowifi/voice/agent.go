@@ -9,6 +9,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/media"
 )
@@ -151,10 +152,14 @@ func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, err
 		return nil, a.failOutboundCall(call, err)
 	}
 	invite := buildIMSInviteWithSDP(a, call, imsOffer)
-	response, err := a.ims.RoundTripSIP(ctx, invite)
+	logging.RunDebug("IMS INVITE outbound", "sip", logging.RedactSIPRaw(invite))
+	response, err := a.ims.RoundTripSIPWithProvisional(ctx, invite, func(response imscore.SIPResponse) error {
+		return a.handleOutboundProvisional(ctx, call, response)
+	})
 	if err != nil {
 		return nil, a.failOutboundCall(call, fmt.Errorf("voice: INVITE transaction failed: %w", err))
 	}
+	logOutboundInviteResponse("IMS INVITE 最终响应", response)
 	if err := a.completeOutboundInvite(call, response); err != nil {
 		return nil, a.failOutboundCall(call, err)
 	}
@@ -200,8 +205,10 @@ func (a *Agent) completeOutboundInvite(call *Call, response imscore.SIPResponse)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("voice: INVITE rejected: %d %s", response.StatusCode, response.Reason)
 	}
-	if err := call.Transition(callstate.StateConnecting); err != nil {
-		return err
+	if state := call.GetState(); state == callstate.StateDialing || state == callstate.StateAlerting {
+		if err := call.Transition(callstate.StateConnecting); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -564,7 +571,7 @@ func (a *Agent) simulateCall(number string) (*Call, error) {
 
 // newVoiceCallID generates a call ID.
 func newVoiceCallID() string {
-	return fmt.Sprintf("call-%s-%d", randomVoiceHex(8), time.Now().UnixNano()%100000)
+	return "vohive-" + randomVoiceHex(32)
 }
 
 // randomVoiceHex generates a hex string of n random bytes.

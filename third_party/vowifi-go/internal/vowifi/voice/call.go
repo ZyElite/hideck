@@ -359,6 +359,33 @@ func (c *Call) MarkReliableProvisional() {
 	c.mu.Unlock()
 }
 
+// HasReliableProvisional reports whether this call negotiated 100rel.
+func (c *Call) HasReliableProvisional() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.reliableProvisional
+}
+
+func (c *Call) markReliableProvisionalRSeq(rseq uint32) bool {
+	if c == nil || rseq == 0 {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.reliableRSeq == nil {
+		c.reliableRSeq = make(map[uint32]struct{})
+	}
+	if _, exists := c.reliableRSeq[rseq]; exists {
+		return false
+	}
+	c.reliableRSeq[rseq] = struct{}{}
+	c.reliableProvisional = true
+	return true
+}
+
 // SetOutboundCancelReason records the outbound cancel reason.
 func (c *Call) SetOutboundCancelReason(reason string) {
 	if c == nil {

@@ -73,6 +73,7 @@ type Call struct {
 	inviteProvisional    bool
 	localCancelSent      bool
 	reliableProvisional  bool
+	reliableRSeq         map[uint32]struct{}
 	outboundCancelReason string
 }
 

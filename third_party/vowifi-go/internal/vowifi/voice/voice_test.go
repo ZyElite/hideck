@@ -518,7 +518,7 @@ func TestBuildIMSInvite(t *testing.T) {
 	agent := newTestAgent(t)
 	call := NewCall(agent, callstate.DirectionOutbound, "call-1", "+8613800000000")
 	invite := BuildIMSInvite(agent, call)
-	if !strings.HasPrefix(invite, "INVITE sip:8613800000000@") {
+	if !strings.HasPrefix(invite, "INVITE sip:+8613800000000@") {
 		t.Errorf("invite = %q", invite)
 	}
 	if !strings.Contains(invite, "Call-ID: call-1") {
@@ -529,11 +529,51 @@ func TestBuildIMSInvite(t *testing.T) {
 	}
 }
 
+func TestBuildIMSInviteMatchesRegisteredCarrierProfile(t *testing.T) {
+	agent := &Agent{}
+	call := NewCall(agent, callstate.DirectionOutbound, "vohive-test", "+447942985429")
+	call.setVoiceDialog(&voiceSIPDialog{
+		localURI:  "sip:+447840844894@o2.co.uk",
+		remoteURI: "sip:+447942985429@o2.co.uk;user=phone", remoteTarget: "sip:+447942985429@o2.co.uk;user=phone",
+		contactURI:    "sip:binding@[2001:db8::10]:48554",
+		contactHeader: `<sip:binding@[2001:db8::10]:48554>;+g.3gpp.accesstype="wlan1";audio`,
+		localAddress:  "[2001:db8::10]:50309", transport: "tcp",
+		serviceRoute:   []string{"<sip:pcscf.example;lr>"},
+		securityVerify: "ipsec-3gpp;alg=hmac-sha-1-96", pani: "IEEE-802.11;country=GB",
+		userAgent: "test-agent", localTag: "local-tag", inviteBranch: "z9hG4bK-branch",
+		sessionID: "session-id", cseq: 10, inviteCSeq: 10,
+	})
+
+	invite := buildIMSInviteWithSDP(agent, call, "v=0\r\n")
+	checks := []string{
+		"INVITE sip:+447942985429@o2.co.uk;user=phone SIP/2.0",
+		"CSeq: 10 INVITE",
+		`Contact: <sip:binding@[2001:db8::10]:48554>;+g.3gpp.accesstype="wlan1";audio`,
+		"Require: sec-agree", "Proxy-Require: sec-agree",
+		"Supported: " + voiceInviteSupported, "Allow: " + voiceInviteAllow,
+		"P-Preferred-Identity: <sip:+447840844894@o2.co.uk>", "Session-ID: session-id",
+	}
+	for _, value := range checks {
+		if !strings.Contains(invite, value) {
+			t.Fatalf("INVITE missing %q: %s", value, invite)
+		}
+	}
+}
+
+func TestBuildIMSCalledPartyURIUsesAssociatedPublicDomain(t *testing.T) {
+	got := buildIMSCalledPartyURI(
+		"+44 7942 985429", "sip:+447840844894@o2.co.uk", "ims.mnc010.mcc234.3gppnetwork.org",
+	)
+	if got != "sip:+447942985429@o2.co.uk;user=phone" {
+		t.Fatalf("called party URI = %q", got)
+	}
+}
+
 func TestBuildIMSBye(t *testing.T) {
 	agent := newTestAgent(t)
 	call := NewCall(agent, callstate.DirectionOutbound, "call-1", "+8613800000000")
 	bye := BuildIMSBye(agent, call)
-	if !strings.HasPrefix(bye, "BYE sip:8613800000000@") {
+	if !strings.HasPrefix(bye, "BYE sip:+8613800000000@") {
 		t.Errorf("bye = %q", bye)
 	}
 	if !strings.Contains(bye, "CSeq: 2 BYE") {

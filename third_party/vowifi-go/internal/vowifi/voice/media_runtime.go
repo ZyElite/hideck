@@ -139,6 +139,7 @@ func (a *Agent) newOutboundMediaRelay() (*media.RTPRelay, error) {
 }
 
 func (a *Agent) completeOutboundMedia(call *Call, response imscore.SIPResponse) error {
+	response = finalOrEarlyMediaResponse(call, response)
 	if !isVoiceSDPContentType(voiceResponseHeader(response.Headers, "Content-Type")) {
 		return errors.New("voice: IMS INVITE response has no application/sdp media answer")
 	}
@@ -157,7 +158,7 @@ func (a *Agent) completeOutboundMedia(call *Call, response imscore.SIPResponse) 
 	clientOffer, _ := call.localSDPs()
 	relay.SetRemoteAddr(remote)
 	if strings.TrimSpace(clientOffer) == "" {
-		return completeSimulatedOutboundMedia(call, imsAnswer, string(response.Body))
+		return completeSimulatedOutboundMedia(call, string(response.Body))
 	}
 	parsedClientOffer, err := ProcessOutgoingClientSDP(clientOffer)
 	if err != nil {
@@ -169,35 +170,26 @@ func (a *Agent) completeOutboundMedia(call *Call, response imscore.SIPResponse) 
 	return call.StartMedia()
 }
 
-func completeSimulatedOutboundMedia(call *Call, answer *SDPInfo, rawAnswer string) error {
-	if err := requirePCMU(answer); err != nil {
-		return err
+func finalOrEarlyMediaResponse(call *Call, response imscore.SIPResponse) imscore.SIPResponse {
+	if isVoiceSDPContentType(voiceResponseHeader(response.Headers, "Content-Type")) && len(response.Body) > 0 {
+		return response
 	}
+	if call == nil {
+		return response
+	}
+	earlyAnswer := call.remoteSDPValue()
+	if strings.TrimSpace(earlyAnswer) == "" {
+		return response
+	}
+	response.Headers = map[string]string{"Content-Type": "application/sdp"}
+	response.Body = []byte(earlyAnswer)
+	return response
+}
+
+func completeSimulatedOutboundMedia(call *Call, rawAnswer string) error {
 	call.setComfortNoise(media.NewComfortNoiseGenerator())
 	call.setRemoteSDP(rawAnswer, "")
 	return call.StartMedia()
-}
-
-func requirePCMU(answer *SDPInfo) error {
-	if answer == nil {
-		return errors.New("voice: empty simulated-call SDP answer")
-	}
-	for _, section := range answer.Media {
-		if section.Type != "audio" {
-			continue
-		}
-		for _, codec := range section.Codecs {
-			if codec.PayloadType == 0 && strings.EqualFold(codec.Encoding, "PCMU") && codec.ClockRate == 8000 {
-				return nil
-			}
-		}
-		for _, payloadType := range section.Formats {
-			if payloadType == 0 {
-				return nil
-			}
-		}
-	}
-	return errors.New("voice: IMS SDP answer does not accept PT0 PCMU media")
 }
 
 func (a *Agent) updateRemoteMedia(call *Call, response imscore.SIPResponse) error {
@@ -219,9 +211,6 @@ func (a *Agent) updateRemoteMedia(call *Call, response imscore.SIPResponse) erro
 	}
 	clientLocal, _ := call.localSDPs()
 	if strings.TrimSpace(clientLocal) == "" {
-		if err := requirePCMU(parsedRemote); err != nil {
-			return err
-		}
 		relay.SetRemoteAddr(remote)
 		call.setRemoteSDP(remoteSDP, "")
 		return nil

@@ -80,6 +80,27 @@ func TestSIPTransactionRegistersBeforeSynchronousSend(t *testing.T) {
 	}
 }
 
+func TestSIPTransactionDeliversProvisionalBeforeFinalResponse(t *testing.T) {
+	transport := newSIPTransport()
+	request := transactionRequest("INVITE", "reliable-provisional-call")
+	transport.SetSendFn(func(string) error {
+		transport.DeliverResponse(transactionResponse(request, 183))
+		transport.DeliverResponse(transactionResponse(request, 200))
+		return nil
+	})
+	var provisional []int
+	response, err := transport.roundTripWithProvisional(context.Background(), request, func(value *sipResponse) error {
+		provisional = append(provisional, value.StatusCode)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("roundTripWithProvisional: %v", err)
+	}
+	if response.StatusCode != 200 || len(provisional) != 1 || provisional[0] != 183 {
+		t.Fatalf("final=%d provisional=%v", response.StatusCode, provisional)
+	}
+}
+
 func TestSIPTransactionTimeoutRemovesWaiter(t *testing.T) {
 	transport := newSIPTransport()
 	transport.SetSendFn(func(string) error { return nil })

@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
 )
 
 // SIPDialogProfile is the registered signaling endpoint used by IMS dialogs.
 type SIPDialogProfile struct {
 	LocalURI       string
 	ContactURI     string
+	ContactHeader  string
 	Domain         string
 	LocalAddress   string
 	Transport      string
@@ -18,6 +21,7 @@ type SIPDialogProfile struct {
 	SecurityVerify string
 	PANI           string
 	UserAgent      string
+	InitialCSeq    int
 }
 
 // SIPResponse is the public form of a final SIP transaction response.
@@ -92,17 +96,53 @@ func (s *Service) RegisteredSIPDialogProfile() (SIPDialogProfile, error) {
 	if clientAddress == "" || serverAddress == "" {
 		return SIPDialogProfile{}, errors.New("imscore: registered SIP transport is unavailable")
 	}
-	localURI := firstPublicIdentity(s.cfg)
+	s.mu.RLock()
+	session := s.regSession
+	if session == nil {
+		s.mu.RUnlock()
+		return SIPDialogProfile{}, errors.New("imscore: registered SIP session is unavailable")
+	}
+	localURI := strings.TrimSpace(session.publicID)
+	registeredContactUser := strings.TrimSpace(session.contactUser)
+	initialCSeq := session.cseq + 1
+	s.mu.RUnlock()
+	if localURI == "" {
+		localURI = firstPublicIdentity(s.cfg)
+	}
 	if localURI == "" {
 		return SIPDialogProfile{}, errors.New("imscore: registered public identity is unavailable")
 	}
+	if registeredContactUser == "" {
+		return SIPDialogProfile{}, errors.New("imscore: registered Contact identity is unavailable")
+	}
+	if securityVerify != "" {
+		initialCSeq += 2 // REGISTER subscription consumes the next two sequence slots.
+	}
+	contactURI, contactHeader := registeredVoiceContact(s.cfg, registeredContactUser, serverAddress)
 	return SIPDialogProfile{
 		LocalURI: localURI, Domain: strings.TrimSpace(s.cfg.Domain),
 		LocalAddress: clientAddress, Transport: transport, ServiceRoute: route,
-		ContactURI:     fmt.Sprintf("sip:%s@%s;transport=%s", contactUser(s.cfg), serverAddress, transport),
+		ContactURI: contactURI, ContactHeader: contactHeader,
 		SecurityVerify: securityVerify, PANI: s.GetPAccessNetworkInfo(),
-		UserAgent: strings.TrimSpace(s.cfg.UserAgent),
+		UserAgent: strings.TrimSpace(s.cfg.UserAgent), InitialCSeq: initialCSeq,
 	}, nil
+}
+
+func registeredVoiceContact(cfg *IMSConfig, user, address string) (string, string) {
+	uri := fmt.Sprintf("sip:%s@%s", user, address)
+	template := cfg.RegisterTemplate
+	if len(template.ContactOrder) == 0 {
+		return uri, "<" + uri + ">"
+	}
+	instance := strings.TrimSpace(cfg.IMEI)
+	if instance == "" {
+		instance = strings.TrimSpace(cfg.DeviceID)
+	}
+	header := imsheaders.IMSContactURI(uri, imsheaders.IMSContactOptions{
+		AccessType: template.AccessType, Instance: instance,
+		ICSIRef: template.ICSIRef, ParamOrder: template.ContactOrder,
+	})
+	return uri, header
 }
 
 // RoundTripSIP sends a request and waits for its real final response.
@@ -114,10 +154,39 @@ func (s *Service) RoundTripSIP(ctx context.Context, request string) (SIPResponse
 	if err != nil {
 		return SIPResponse{}, err
 	}
+	return publicSIPResponse(response), nil
+}
+
+// RoundTripSIPWithProvisional delivers each 1xx response while retaining the
+// INVITE transaction until its final response arrives.
+func (s *Service) RoundTripSIPWithProvisional(
+	ctx context.Context,
+	request string,
+	onProvisional func(SIPResponse) error,
+) (SIPResponse, error) {
+	if s == nil || s.transport == nil {
+		return SIPResponse{}, errors.New("imscore: SIP transport is unavailable")
+	}
+	response, err := s.transport.roundTripWithProvisional(ctx, request, func(value *sipResponse) error {
+		if onProvisional == nil {
+			return nil
+		}
+		return onProvisional(publicSIPResponse(value))
+	})
+	if err != nil {
+		return SIPResponse{}, err
+	}
+	return publicSIPResponse(response), nil
+}
+
+func publicSIPResponse(response *sipResponse) SIPResponse {
+	if response == nil {
+		return SIPResponse{}
+	}
 	return SIPResponse{
 		StatusCode: response.StatusCode, Reason: response.Reason,
 		Headers: cloneSIPHeaders(response.Headers), Body: append([]byte(nil), response.Body...),
-	}, nil
+	}
 }
 
 // EventBus returns the service event bus used by lifecycle consumers.
