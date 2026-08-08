@@ -83,6 +83,39 @@ func TestDataPlaneUsesIndependentInboundAndOutboundSPI(t *testing.T) {
 	}
 }
 
+func TestDataPlaneEncapsulationLeaseReleasesPooledBuffer(t *testing.T) {
+	s := NewSession(&Config{})
+	s.ikeKeys = &IKEKeys{SK_d: bytes.Repeat([]byte{0x61}, 20)}
+	s.childNi = bytes.Repeat([]byte{0x71}, 32)
+	s.childNr = bytes.Repeat([]byte{0x81}, 32)
+	s.espLocalSPI = 0x11223344
+	s.espRemoteSPI = 0x55667788
+	s.innerIP = net.IPv4(10, 0, 0, 2)
+	if err := s.setupDataPlane(); err != nil {
+		t.Fatalf("setupDataPlane: %v", err)
+	}
+
+	inner := append([]byte{0x45}, make([]byte, 31)...)
+	lease, err := s.encapsulateInnerPacketLease(inner)
+	if err != nil {
+		t.Fatalf("encapsulateInnerPacketLease: %v", err)
+	}
+	if len(lease.data) == 0 || cap(lease.buffer.Bytes()) < len(lease.data) {
+		t.Fatalf("invalid lease: data length %d, capacity %d", len(lease.data), cap(lease.buffer.Bytes()))
+	}
+	decoded, err := ipsec.Decapsulate(lease.data, nil, s.espOutboundSA)
+	if err != nil {
+		t.Fatalf("decapsulate leased ESP packet: %v", err)
+	}
+	if !bytes.Equal(decoded, inner) {
+		t.Fatal("leased ESP plaintext mismatch")
+	}
+	lease.Release()
+	if lease.data != nil || lease.buffer.Bytes() != nil {
+		t.Fatal("packet lease retained data after Release")
+	}
+}
+
 func TestValidateChildSAResponseAcceptsExactProposalAndNarrowing(t *testing.T) {
 	innerIP := net.IPv4(10, 0, 0, 2)
 	offer := testChildSAOffer(innerIP)

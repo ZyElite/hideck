@@ -2,9 +2,6 @@ package bufferpool
 
 import "sync"
 
-// bufferClasses are the pooled size classes (power-of-two up to 8 KiB, matching
-// the decompiled 5-class pool). Requests larger than the biggest class are
-// allocated fresh and never returned to a pool.
 var bufferClasses = [...]int{512, 1024, 2048, 4096, 8192}
 
 var pools [len(bufferClasses)]sync.Pool
@@ -12,16 +9,14 @@ var pools [len(bufferClasses)]sync.Pool
 func init() {
 	for i := range pools {
 		size := bufferClasses[i]
-		pools[i].New = func() interface{} { return make([]byte, size) }
+		pools[i].New = func() any {
+			buffer := make([]byte, size)
+			return &buffer
+		}
 	}
 }
 
-// classIndex returns the pool class index for n, or -1 if n exceeds the largest
-// class.
 func classIndex(n int) int {
-	if n < 0 {
-		n = 0
-	}
 	for i, size := range bufferClasses {
 		if n <= size {
 			return i
@@ -30,30 +25,41 @@ func classIndex(n int) int {
 	return -1
 }
 
-// Get returns a Lease over a buffer of at least n bytes. Buffers up to the
-// largest class are drawn from a sized sync.Pool; larger buffers are allocated
-// fresh.
-func Get(n int) *Lease {
+// Get returns a lease whose visible length is n. Negative sizes are treated as
+// zero, matching make([]byte, 0) rather than panicking.
+func Get(n int) Lease {
 	if n < 0 {
 		n = 0
 	}
-	if c := classIndex(n); c >= 0 {
-		buf := pools[c].Get().([]byte)
-		return &Lease{buf: buf, n: n, class: c}
+	class := classIndex(n)
+	if class < 0 {
+		return Lease{bytes: make([]byte, n), class: -1}
 	}
-	return &Lease{buf: make([]byte, n), n: n, class: -1}
+	return pooledLease(n, class)
 }
 
-// Release returns the buffer to its pool. It is safe to call on a nil lease or
-// an unpooled lease.
+func pooledLease(n, class int) Lease {
+	slot, ok := pools[class].Get().(*[]byte)
+	classSize := bufferClasses[class]
+	if !ok || slot == nil || cap(*slot) < classSize {
+		buffer := make([]byte, classSize)
+		slot = &buffer
+	}
+	return Lease{slot: slot, bytes: (*slot)[:n], class: class}
+}
+
+// Release returns a pooled buffer and clears the lease metadata. Unpooled
+// leases are cleared without being retained.
 func (l *Lease) Release() {
-	if l == nil || l.class < 0 || l.class >= len(pools) {
+	if l == nil || l.bytes == nil {
 		return
 	}
-	// Restore the full class length before returning to the pool.
-	buf := l.buf[:cap(l.buf)]
-	pools[l.class].Put(buf)
-	l.buf = nil
-	l.n = 0
-	l.class = -1
+	if l.class >= 0 && l.class < len(pools) {
+		classSize := bufferClasses[l.class]
+		if l.slot != nil && cap(l.bytes) >= classSize {
+			*l.slot = l.bytes[:classSize:cap(l.bytes)]
+			pools[l.class].Put(l.slot)
+		}
+	}
+	*l = Lease{class: -1}
 }

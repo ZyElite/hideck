@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/iniwex5/vowifi-go/engine/bufferpool"
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
 )
@@ -306,11 +307,12 @@ func (s *Session) loopInnerToESP(transport ipsec.Transport, endpoint *userspaceI
 			if !ok {
 				return
 			}
-			esp, err := s.encapsulateInnerPacket(pkt)
+			lease, err := s.encapsulateInnerPacketLease(pkt)
 			if err != nil {
 				continue
 			}
-			transport.SendESP(esp)
+			transport.SendESP(lease.data)
+			lease.Release()
 		}
 	}
 }
@@ -330,11 +332,25 @@ func (s *Session) encapsulateInnerPacket(inner []byte) ([]byte, error) {
 
 // encapsulateInnerPacketLease wraps an inner packet using a buffer-pool lease.
 func (s *Session) encapsulateInnerPacketLease(inner []byte) (*packetLease, error) {
-	esp, err := s.encapsulateInnerPacket(inner)
+	s.childSAMu.RLock()
+	defer s.childSAMu.RUnlock()
+	if s.espOutboundSA == nil {
+		return nil, errors.New("swu: no ESP SA")
+	}
+	if !matchSelectors(inner, s.childTSi, s.childTSr) {
+		return nil, errors.New("swu: outbound inner packet is outside negotiated traffic selectors")
+	}
+	total, _, err := ipsec.EncapsulationLayout(len(inner), s.espOutboundSA)
 	if err != nil {
 		return nil, err
 	}
-	return &packetLease{data: esp}, nil
+	buffer := bufferpool.Get(total)
+	esp, err := ipsec.EncapsulateInto(inner, buffer.Bytes()[:0], s.espOutboundSA)
+	if err != nil {
+		buffer.Release()
+		return nil, err
+	}
+	return &packetLease{data: esp, buffer: buffer}, nil
 }
 
 // decapsulateOuterESP unwraps an ESP packet into the inner IP packet.
@@ -380,11 +396,16 @@ func (s *Session) stopDataPlane() {
 
 // packetLease wraps a buffer-pool lease for an outbound packet.
 type packetLease struct {
-	data []byte
+	data   []byte
+	buffer bufferpool.Lease
 }
 
 // Release returns the lease to the pool.
 func (l *packetLease) Release() {
+	if l == nil {
+		return
+	}
+	l.buffer.Release()
 	l.data = nil
 }
 

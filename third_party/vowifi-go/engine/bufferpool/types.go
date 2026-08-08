@@ -1,18 +1,20 @@
-// Package bufferpool provides fixed-size buffer pools for IKE/ESP packet
-// buffers, recovered from the decompiled engine/bufferpool.
+// Package bufferpool provides fixed-size pools for packet buffers.
 package bufferpool
 
-// Lease is a buffer obtained from the pool. Release returns it.
+// Lease owns a buffer until Release is called.
+//
+// The slot pointer is retained separately from bytes so Release can restore
+// the full slice header before returning it to sync.Pool.
 type Lease struct {
-	buf   []byte // backing buffer (cap = class size)
-	n     int    // requested length
-	class int    // pool class index, -1 if unpooled
+	slot  *[]byte
+	bytes []byte
+	class int
 }
 
-// Bytes returns the leased slice (buf[:n]).
+// Bytes returns the requested-length slice owned by the lease.
 func (l *Lease) Bytes() []byte {
 	if l == nil {
 		return nil
 	}
-	return l.buf[:l.n]
+	return l.bytes
 }
