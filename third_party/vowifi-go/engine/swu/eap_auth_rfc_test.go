@@ -221,8 +221,8 @@ func TestComputeEAPInitiatorAuthUsesSignedOctetsAndMSK(t *testing.T) {
 	signed = append(signed, macedID...)
 	sharedKey := hmacSHA1(session.eapKeys.MSK, []byte(ikev2KeyPad))
 	want := hmacSHA1(sharedKey, signed)
-	if auth.AuthMethod != ikev2.AuthMethodPSK || !bytes.Equal(auth.Data, want) {
-		t.Fatalf("AUTH method=%d data=%x, want method=%d data=%x", auth.AuthMethod, auth.Data, ikev2.AuthMethodPSK, want)
+	if auth.AuthMethod != ikev2.AuthMethodSharedKey || !bytes.Equal(auth.AuthData, want) {
+		t.Fatalf("AUTH method=%d data=%x, want method=%d data=%x", auth.AuthMethod, auth.AuthData, ikev2.AuthMethodSharedKey, want)
 	}
 }
 
@@ -232,7 +232,7 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
 	}
-	want := []byte{
+	want := []ikev2.PayloadType{
 		ikev2.PayloadIDi, ikev2.PayloadIDr, ikev2.PayloadSA, ikev2.PayloadTSi,
 		ikev2.PayloadTSr, ikev2.PayloadNotify, ikev2.PayloadCP,
 	}
@@ -245,7 +245,7 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 		}
 	}
 	idr := payloads[1].(*ikev2.EncryptedPayloadID)
-	if idr.IDType != ikev2.IDTypeFQDN || string(idr.Data) != "ims" {
+	if idr.IDType != ikev2.ID_FQDN || string(idr.IDData) != "ims" {
 		t.Fatalf("APN IDr = %+v", idr)
 	}
 	notify := payloads[5].(*ikev2.EncryptedPayloadNotify)
@@ -257,10 +257,10 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 		ikev2.CPAttrIP4Address, ikev2.CPAttrIP4DNS, ikev2.CPAttrPCSCFIP4,
 		ikev2.CPAttrIP6Address, ikev2.CPAttrIP6DNS, ikev2.CPAttrPCSCFIP6,
 	}
-	if len(cp.Attrs) != len(wantCPTypes) {
-		t.Fatalf("initial CP request address families: %+v", cp.Attrs)
+	if len(cp.Attributes) != len(wantCPTypes) {
+		t.Fatalf("initial CP request address families: %+v", cp.Attributes)
 	}
-	for index, attribute := range cp.Attrs {
+	for index, attribute := range cp.Attributes {
 		if attribute.Type != wantCPTypes[index] || len(attribute.Value) != 0 {
 			t.Fatalf("initial CP attribute[%d] = %+v, want type %d", index, attribute, wantCPTypes[index])
 		}
@@ -288,7 +288,7 @@ func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
 	session.Ni = []byte("initiator-nonce")
 	session.eapOnlyRequested = true
 	initial := []ikev2.Payload{
-		&ikev2.EncryptedPayloadEAP{Data: []byte{eapaka.CodeRequest, 1, 0, 5, eapTypeIdentity}},
+		&ikev2.EncryptedPayloadEAP{EAPMessage: []byte{eapaka.CodeRequest, 1, 0, 5, eapTypeIdentity}},
 	}
 	deferred, err := session.authenticateInitialResponder(initial)
 	if err != nil || !deferred || !session.eapOnlyAuthentication {
@@ -305,11 +305,11 @@ func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
 	}
 	sharedKey := session.prf.Compute(session.eapKeys.MSK, []byte(ikev2KeyPad))
 	auth := session.prf.Compute(sharedKey, signed)
-	final := []ikev2.Payload{&ikev2.EncryptedPayloadAuth{AuthMethod: ikev2.AuthMethodPSK, Data: auth}}
+	final := []ikev2.Payload{&ikev2.EncryptedPayloadAuth{AuthMethod: ikev2.AuthMethodSharedKey, AuthData: auth}}
 	if err := session.verifyEAPResponderAuth(final); err != nil {
 		t.Fatalf("verifyEAPResponderAuth: %v", err)
 	}
-	final[0].(*ikev2.EncryptedPayloadAuth).Data[0] ^= 0xff
+	final[0].(*ikev2.EncryptedPayloadAuth).AuthData[0] ^= 0xff
 	if err := session.verifyEAPResponderAuth(final); err == nil {
 		t.Fatal("accepted invalid final EAP-only AUTH")
 	}
@@ -319,7 +319,7 @@ func TestEAPOnlyResponderCannotOmitUnconfiguredIdentity(t *testing.T) {
 	session := NewSession(&Config{IMSI: "234102356143376"})
 	session.eapOnlyRequested = true
 	payloads := []ikev2.Payload{
-		&ikev2.EncryptedPayloadEAP{Data: []byte{eapaka.CodeRequest, 1, 0, 5, eapTypeIdentity}},
+		&ikev2.EncryptedPayloadEAP{EAPMessage: []byte{eapaka.CodeRequest, 1, 0, 5, eapTypeIdentity}},
 	}
 	if _, err := session.authenticateInitialResponder(payloads); err == nil {
 		t.Fatal("accepted an omitted IDr without a configured ePDG identity")

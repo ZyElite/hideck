@@ -14,7 +14,7 @@ import (
 // plaintext, encrypted with SK_ei (initiator) and integrity-protected with
 // SK_ai, then wrapped in an Encrypted payload.
 func (s *Session) encryptAndWrap(pkt *ikev2.IKEPacket) ([]byte, error) {
-	return s.encryptAndWrapWithMsgID(pkt, pkt.MessageID)
+	return s.encryptAndWrapWithMsgID(pkt, packetIKEHeader(pkt).MessageID)
 }
 
 // encryptAndWrapWithMsgID encrypts the payload chain with an explicit message
@@ -23,12 +23,16 @@ func (s *Session) encryptAndWrapWithMsgID(pkt *ikev2.IKEPacket, msgID uint32) ([
 	if s.ikeKeys == nil {
 		return nil, errors.New("swu: no IKE SA keys")
 	}
-	encKey, integKey := s.ikeProtectionKeys(pkt.Flags&ikeInitiatorFlag == 0)
+	encKey, integKey := s.ikeProtectionKeys(packetIKEHeader(pkt).Flags&ikeInitiatorFlag == 0)
 	cipher, err := crypto.PrepareCipher(s.encrAlg, encKey)
 	if err != nil {
 		return nil, fmt.Errorf("prepare cipher: %w", err)
 	}
-	plain := padIKEPlaintext(ikev2.EncodePayloadChain(pkt.Payloads), cipher.BlockSize())
+	encodedPayloads, err := ikev2.EncodePayloadChainChecked(pkt.Payloads)
+	if err != nil {
+		return nil, fmt.Errorf("encode IKE payloads: %w", err)
+	}
+	plain := padIKEPlaintext(encodedPayloads, cipher.BlockSize())
 	iv := make([]byte, cipher.IVSize())
 	if _, err := rand.Read(iv); err != nil {
 		return nil, fmt.Errorf("generate IV: %w", err)
@@ -47,7 +51,10 @@ func (s *Session) encryptAndWrapWithMsgID(pkt *ikev2.IKEPacket, msgID uint32) ([
 	}
 	body := append(append([]byte{}, iv...), encrypted...)
 	body = append(body, make([]byte, integ.OutputSize())...)
-	raw := protectedIKEPacket(pkt, msgID, firstPayload, body).Encode()
+	raw, err := protectedIKEPacket(pkt, msgID, firstPayload, body).Encode()
+	if err != nil {
+		return nil, fmt.Errorf("encode protected IKE packet: %w", err)
+	}
 	checksum := integ.Compute(integKey, raw[:len(raw)-integ.OutputSize()])
 	copy(raw[len(raw)-len(checksum):], checksum)
 	return raw, nil
@@ -66,7 +73,7 @@ func (s *Session) decryptAndParse(pkt *ikev2.IKEPacket) ([]ikev2.Payload, error)
 	if !ok {
 		return nil, errors.New("swu: payload is not Encrypted")
 	}
-	encKey, integKey := s.ikeProtectionKeys(pkt.Flags&ikeInitiatorFlag == 0)
+	encKey, integKey := s.ikeProtectionKeys(packetIKEHeader(pkt).Flags&ikeInitiatorFlag == 0)
 	cipher, err := crypto.PrepareCipher(s.encrAlg, encKey)
 	if err != nil {
 		return nil, fmt.Errorf("prepare cipher: %w", err)
@@ -89,7 +96,10 @@ func (s *Session) decryptAndParse(pkt *ikev2.IKEPacket) ([]ikev2.Payload, error)
 	checksum := enc.Data[len(enc.Data)-integSize:]
 
 	// Verify integrity.
-	raw := pkt.Encode()
+	raw, err := pkt.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("encode protected IKE packet: %w", err)
+	}
 	if !integ.Verify(integKey, raw[:len(raw)-integSize], checksum) {
 		return nil, errors.New("swu: IKE message integrity check failed")
 	}
@@ -138,13 +148,12 @@ func (s *Session) decryptSKF(body []byte) ([]ikev2.Payload, error) {
 
 // buildSKFPacket wraps an encrypted payload chain into an IKE packet.
 func (s *Session) buildSKFPacket(pkt *ikev2.IKEPacket, body []byte) *ikev2.IKEPacket {
+	header := packetIKEHeader(pkt)
 	return &ikev2.IKEPacket{
-		InitiatorSPI: pkt.InitiatorSPI,
-		ResponderSPI: pkt.ResponderSPI,
-		Version:      pkt.Version,
-		ExchangeType: pkt.ExchangeType,
-		Flags:        pkt.Flags,
-		MessageID:    pkt.MessageID,
+		Header: &ikev2.IKEHeader{
+			SPIi: header.SPIi, SPIr: header.SPIr, Version: header.Version,
+			ExchangeType: header.ExchangeType, Flags: header.Flags, MessageID: header.MessageID,
+		},
 		Payloads: []ikev2.Payload{
 			ikev2.NewEncryptedPayloadSK(ikev2.PayloadNoNext, body),
 		},

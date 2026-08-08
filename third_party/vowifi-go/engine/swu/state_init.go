@@ -95,18 +95,13 @@ func (s *Session) buildIKESAInitPacket() (*ikev2.IKEPacket, error) {
 	}
 	payloads = append(payloads,
 		&ikev2.EncryptedPayloadSA{Proposals: buildIKEProposalsForSession(s)},
-		&ikev2.EncryptedPayloadKE{DHGroupNum: s.dhGroup, KeyData: s.dh.PublicKeyBytes()},
-		&ikev2.EncryptedPayloadNonce{Data: append([]byte(nil), s.Ni...)},
+		&ikev2.EncryptedPayloadKE{DHGroup: ikev2.AlgorithmType(s.dhGroup), KEData: s.dh.PublicKeyBytes()},
+		&ikev2.EncryptedPayloadNonce{NonceData: append([]byte(nil), s.Ni...)},
 	)
 
 	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi,
-		ResponderSPI: [8]byte{}, // unknown for IKE_SA_INIT
-		Version:      0x20,
-		ExchangeType: ikev2.ExchangeIKEInit,
-		Flags:        0x08, // Initiator
-		MessageID:    0,
-		Payloads:     payloads,
+		Header:   newIKEHeader(s.SPIi, [8]byte{}, ikev2.IKE_SA_INIT, ikev2.FlagInitiator, 0),
+		Payloads: payloads,
 	}
 	if s.socket != nil {
 		pkt.Payloads = append(pkt.Payloads,
@@ -143,15 +138,16 @@ func (s *Session) handleIKESAInitResp(resp *ikev2.IKEPacket) error {
 	if resp == nil {
 		return errors.New("nil IKE_SA_INIT response")
 	}
-	if resp.ExchangeType != ikev2.ExchangeIKEInit {
-		return fmt.Errorf("unexpected exchange type %d in IKE_SA_INIT response", resp.ExchangeType)
+	header := packetIKEHeader(resp)
+	if header.ExchangeType != ikev2.IKE_SA_INIT {
+		return fmt.Errorf("unexpected exchange type %d in IKE_SA_INIT response", header.ExchangeType)
 	}
 
 	// First pass: handle control notifies (COOKIE / INVALID_KE / REDIRECT)
 	// before doing any DH work.
 	var nATSource, nATDest []byte
 	var selectedSA *ikev2.EncryptedPayloadSA
-	var keRaw *ikev2.RawPayload
+	var kePayload ikev2.Payload
 	var nr []byte
 	for _, pl := range resp.Payloads {
 		switch pl.Type() {
@@ -162,7 +158,10 @@ func (s *Session) handleIKESAInitResp(resp *ikev2.IKEPacket) error {
 			}
 			selectedSA = value
 		case ikev2.PayloadNotify:
-			nt, data := parseNotifyRaw(pl.(*ikev2.RawPayload))
+			nt, data, ok := parseNotifyPayload(pl)
+			if !ok {
+				return errors.New("invalid IKE_SA_INIT Notify payload")
+			}
 			switch nt {
 			case notifyInvalidKE:
 				if len(data) >= 2 {
@@ -184,23 +183,30 @@ func (s *Session) handleIKESAInitResp(resp *ikev2.IKEPacket) error {
 				nATDest = append([]byte{}, data...)
 			}
 		case ikev2.PayloadKE:
-			keRaw = pl.(*ikev2.RawPayload)
+			if kePayload != nil {
+				return errors.New("duplicate IKE_SA_INIT KE payload")
+			}
+			kePayload = pl
 		case ikev2.PayloadNi:
-			nr = append([]byte{}, pl.(*ikev2.RawPayload).Data...)
+			value, ok := pl.(*ikev2.EncryptedPayloadNonce)
+			if !ok || len(value.NonceData) == 0 || len(nr) != 0 {
+				return errors.New("invalid or duplicate IKE_SA_INIT nonce payload")
+			}
+			nr = append([]byte{}, value.NonceData...)
 		}
 	}
 	if err := s.validateIKESAInitSelection(selectedSA); err != nil {
 		return err
 	}
 
-	if keRaw == nil {
+	if kePayload == nil {
 		return errors.New("IKE_SA_INIT response missing KE payload")
 	}
 	if len(nr) == 0 {
 		return errors.New("IKE_SA_INIT response missing nonce")
 	}
 
-	group, peerKey, err := parseKERaw(keRaw)
+	group, peerKey, err := parseKEPayload(kePayload)
 	if err != nil {
 		return fmt.Errorf("parse KEr: %w", err)
 	}
@@ -214,7 +220,7 @@ func (s *Session) handleIKESAInitResp(resp *ikev2.IKEPacket) error {
 	}
 
 	// Record the responder SPI and nonce.
-	s.SPIr = resp.ResponderSPI
+	s.SPIr = ikeSPIBytes(header.SPIr)
 	s.setNr(nr)
 	s.dhSharedSecret = shared
 
@@ -236,31 +242,32 @@ func (s *Session) validateIKESAInitSelection(sa *ikev2.EncryptedPayloadSA) error
 		return errors.New("IKE_SA_INIT response missing one selected SA proposal")
 	}
 	proposal := sa.Proposals[0]
-	if proposal == nil || proposal.ProposalNum != 1 || proposal.ProtocolID != ikev2.ProtoIKE ||
-		proposal.SPISize != 0 || len(proposal.SPI) != 0 || proposal.NumTransforms != byte(len(proposal.Transforms)) {
+	if proposal == nil || proposal.ProposalNum != 1 || proposal.ProtocolID != ikev2.ProtoIKE || len(proposal.SPI) != 0 {
 		return errors.New("IKE_SA_INIT response selected an invalid IKE proposal")
 	}
-	want := map[byte]uint16{
-		ikev2.TypeEncryption: s.encrAlg, ikev2.TypePRF: s.prfAlg,
-		ikev2.TypeIntegrity: s.integAlg, ikev2.TypeDHGroup: s.dhGroup,
+	want := map[ikev2.TransformType]ikev2.AlgorithmType{
+		ikev2.TransformTypeEncr:  ikev2.AlgorithmType(s.encrAlg),
+		ikev2.TransformTypePRF:   ikev2.AlgorithmType(s.prfAlg),
+		ikev2.TransformTypeInteg: ikev2.AlgorithmType(s.integAlg),
+		ikev2.TransformTypeDH:    ikev2.AlgorithmType(s.dhGroup),
 	}
-	seen := make(map[byte]bool, len(want))
+	seen := make(map[ikev2.TransformType]bool, len(want))
 	for _, transform := range proposal.Transforms {
 		if transform == nil {
 			return errors.New("IKE_SA_INIT response selected a nil transform")
 		}
-		expected, ok := want[transform.TransformType]
-		if !ok || seen[transform.TransformType] || expected != transform.TransformID {
+		expected, ok := want[transform.Type]
+		if !ok || seen[transform.Type] || expected != transform.ID {
 			return fmt.Errorf("IKE_SA_INIT response selected unexpected transform")
 		}
-		if transform.TransformType == ikev2.TypeEncryption {
+		if transform.Type == ikev2.TransformTypeEncr {
 			if err := validateEncryptionKeyLength(transform, s.encKeyBits); err != nil {
 				return err
 			}
 		} else if len(transform.Attributes) != 0 {
 			return errors.New("IKE_SA_INIT non-encryption transform has attributes")
 		}
-		seen[transform.TransformType] = true
+		seen[transform.Type] = true
 	}
 	if len(seen) != len(want) {
 		return errors.New("IKE_SA_INIT response selected an incomplete IKE proposal")
@@ -312,6 +319,17 @@ func parseKERaw(p *ikev2.RawPayload) (uint16, []byte, error) {
 	return group, key, nil
 }
 
+func parseKEPayload(payload ikev2.Payload) (uint16, []byte, error) {
+	switch value := payload.(type) {
+	case *ikev2.EncryptedPayloadKE:
+		return uint16(value.DHGroup), value.KEData, nil
+	case *ikev2.RawPayload:
+		return parseKERaw(value)
+	default:
+		return 0, nil, fmt.Errorf("unexpected KE payload type %T", payload)
+	}
+}
+
 // parseNotifyRaw extracts the notify type and data from a raw Notify payload
 // body (proto 1B | spiSize 1B | type 2B | [spi] | data).
 func parseNotifyRaw(p *ikev2.RawPayload) (uint16, []byte) {
@@ -325,4 +343,16 @@ func parseNotifyRaw(p *ikev2.RawPayload) (uint16, []byte) {
 		return nt, nil
 	}
 	return nt, p.Data[off:]
+}
+
+func parseNotifyPayload(payload ikev2.Payload) (uint16, []byte, bool) {
+	switch value := payload.(type) {
+	case *ikev2.EncryptedPayloadNotify:
+		return value.NotifyType, value.NotifyData, true
+	case *ikev2.RawPayload:
+		notifyType, data := parseNotifyRaw(value)
+		return notifyType, data, true
+	default:
+		return 0, nil, false
+	}
 }

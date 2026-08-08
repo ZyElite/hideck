@@ -71,16 +71,16 @@ func (s *Session) buildChildSARekeyRequest(localSPI uint32, nonce []byte, tsi, t
 	oldLocalSPI := s.espLocalSPI
 	s.childSAMu.RUnlock()
 	return &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi, ResponderSPI: s.SPIr,
-		Version: 0x20, ExchangeType: ikev2.ExchangeCreateChildSA,
-		Flags: s.localIKEFlags(false), MessageID: s.nextMessageID(),
+		Header: newIKEHeader(
+			s.SPIi, s.SPIr, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false), s.nextMessageID(),
+		),
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadNotify{
-				ProtocolID: ikev2.ProtoESP, SPISize: 4,
+				ProtocolID: ikev2.ProtoESP,
 				NotifyType: ikev2.NotifyTypeRekeySA, SPI: spiBytes(oldLocalSPI),
 			},
 			&ikev2.EncryptedPayloadSA{Proposals: buildESPProposalsForSession(s, localSPI)},
-			&ikev2.EncryptedPayloadNonce{Data: append([]byte(nil), nonce...)},
+			&ikev2.EncryptedPayloadNonce{NonceData: append([]byte(nil), nonce...)},
 			cloneTrafficSelectorPayload(tsi),
 			cloneTrafficSelectorPayload(tsr),
 		},
@@ -203,7 +203,7 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 	}
 	responsePayloads := []ikev2.Payload{
 		&ikev2.EncryptedPayloadSA{Proposals: buildESPProposalsForSession(s, localSPI)},
-		&ikev2.EncryptedPayloadNonce{Data: append([]byte(nil), localNonce...)},
+		&ikev2.EncryptedPayloadNonce{NonceData: append([]byte(nil), localNonce...)},
 		cloneTrafficSelectorPayload(selection.tsi),
 		cloneTrafficSelectorPayload(selection.tsr),
 	}
@@ -214,10 +214,10 @@ func (s *Session) handlePeerChildSARekeyPayloads(packet *ikev2.IKEPacket, payloa
 	return nil
 }
 
-func retypeTrafficSelectorPayload(payload *ikev2.EncryptedPayloadTS, payloadType byte) *ikev2.EncryptedPayloadTS {
+func retypeTrafficSelectorPayload(payload *ikev2.EncryptedPayloadTS, payloadType ikev2.PayloadType) *ikev2.EncryptedPayloadTS {
 	cloned := cloneTrafficSelectorPayload(payload)
 	if cloned != nil {
-		cloned.PayloadType = payloadType
+		cloned.IsInitiator = payloadType == ikev2.TSI
 	}
 	return cloned
 }
@@ -230,15 +230,12 @@ func (s *Session) validatePeerRekeyNotify(payloads []ikev2.Payload) error {
 		if payload == nil || payload.Type() != ikev2.PayloadNotify {
 			continue
 		}
-		raw, ok := payload.(*ikev2.RawPayload)
-		if !ok || len(raw.Data) < 8 {
+		notify, ok := payload.(*ikev2.EncryptedPayloadNotify)
+		if !ok || notify.ProtocolID != ikev2.ProtoESP || len(notify.SPI) != 4 ||
+			notify.NotifyType != ikev2.NotifyTypeRekeySA {
 			continue
 		}
-		if raw.Data[0] != ikev2.ProtoESP || raw.Data[1] != 4 ||
-			binary.BigEndian.Uint16(raw.Data[2:4]) != ikev2.NotifyTypeRekeySA {
-			continue
-		}
-		if binary.BigEndian.Uint32(raw.Data[4:8]) != expectedSPI {
+		if binary.BigEndian.Uint32(notify.SPI) != expectedSPI {
 			return errors.New("swu: peer REKEY_SA identifies an unknown ESP SPI")
 		}
 		return nil
@@ -247,10 +244,13 @@ func (s *Session) validatePeerRekeyNotify(payloads []ikev2.Payload) error {
 }
 
 func (s *Session) sendEstablishedIKEResponse(request *ikev2.IKEPacket, payloads []ikev2.Payload) error {
+	requestHeader := packetIKEHeader(request)
 	response := &ikev2.IKEPacket{
-		InitiatorSPI: request.InitiatorSPI, ResponderSPI: request.ResponderSPI,
-		Version: request.Version, ExchangeType: request.ExchangeType,
-		Flags: s.localIKEFlags(true), MessageID: request.MessageID,
+		Header: &ikev2.IKEHeader{
+			SPIi: requestHeader.SPIi, SPIr: requestHeader.SPIr, Version: requestHeader.Version,
+			ExchangeType: requestHeader.ExchangeType, Flags: s.localIKEFlags(true),
+			MessageID: requestHeader.MessageID,
+		},
 		Payloads: payloads,
 	}
 	raw, err := s.encryptAndWrap(response)

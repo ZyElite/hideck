@@ -19,8 +19,8 @@ func TestParseAssignedInnerConfigRejectsMissingReply(t *testing.T) {
 
 func TestParseAssignedInnerConfigReportsReplyAttributesWithoutAddress(t *testing.T) {
 	cp := &ikev2.EncryptedPayloadCP{
-		ConfigType: ikev2.CPTypeReply,
-		Attrs: []*ikev2.CPAttribute{
+		CFGType: ikev2.CFG_REPLY,
+		Attributes: []*ikev2.CPAttribute{
 			{Type: ikev2.CPAttrIP4DNS, Value: net.IPv4(1, 1, 1, 1).To4()},
 		},
 	}
@@ -32,8 +32,8 @@ func TestParseAssignedInnerConfigReportsReplyAttributesWithoutAddress(t *testing
 
 func TestParseAssignedInnerConfigAcceptsIPv4Reply(t *testing.T) {
 	cp := &ikev2.EncryptedPayloadCP{
-		ConfigType: ikev2.CPTypeReply,
-		Attrs: []*ikev2.CPAttribute{
+		CFGType: ikev2.CFG_REPLY,
+		Attributes: []*ikev2.CPAttribute{
 			{Type: ikev2.CPAttrIP4Address, Value: net.IPv4(10, 0, 0, 8).To4()},
 		},
 	}
@@ -51,8 +51,8 @@ func TestParseAssignedInnerConfigAcceptsIPv6OnlyReply(t *testing.T) {
 	dns := net.ParseIP("2001:db8::53").To16()
 	pcscf := net.ParseIP("2001:db8::5060").To16()
 	cp := &ikev2.EncryptedPayloadCP{
-		ConfigType: ikev2.CPTypeReply,
-		Attrs: []*ikev2.CPAttribute{
+		CFGType: ikev2.CFG_REPLY,
+		Attributes: []*ikev2.CPAttribute{
 			{Type: ikev2.CPAttrIP6Address, Value: ipv6},
 			{Type: ikev2.CPAttrIP6DNS, Value: dns},
 			{Type: ikev2.CPAttrPCSCFIP6, Value: pcscf},

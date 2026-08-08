@@ -117,17 +117,19 @@ func validIKEResponseHeader(packet, request *ikev2.IKEPacket) bool {
 	if packet == nil || request == nil {
 		return false
 	}
-	if packet.MessageID != request.MessageID || packet.ExchangeType != request.ExchangeType {
+	packetHeader := packetIKEHeader(packet)
+	requestHeader := packetIKEHeader(request)
+	if packetHeader.MessageID != requestHeader.MessageID || packetHeader.ExchangeType != requestHeader.ExchangeType {
 		return false
 	}
-	if packet.Flags&ikeResponseFlag == 0 ||
-		packet.Flags&ikeInitiatorFlag == request.Flags&ikeInitiatorFlag {
+	if packetHeader.Flags&ikeResponseFlag == 0 ||
+		packetHeader.Flags&ikeInitiatorFlag == requestHeader.Flags&ikeInitiatorFlag {
 		return false
 	}
-	if packet.InitiatorSPI != request.InitiatorSPI {
+	if packetHeader.SPIi != requestHeader.SPIi {
 		return false
 	}
-	return request.ResponderSPI == ([8]byte{}) || packet.ResponderSPI == request.ResponderSPI
+	return requestHeader.SPIr == 0 || packetHeader.SPIr == requestHeader.SPIr
 }
 
 func normalizedRetransmitConfig(cfg *Config) RetransmitConfig {

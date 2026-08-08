@@ -11,7 +11,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -37,7 +36,7 @@ func (s *Session) computeEAPInitiatorAuth() (*ikev2.EncryptedPayloadAuth, error)
 	}
 	sharedKey := s.prf.Compute(s.eapKeys.MSK, []byte(ikev2KeyPad))
 	auth := s.prf.Compute(sharedKey, signed)
-	return &ikev2.EncryptedPayloadAuth{AuthMethod: ikev2.AuthMethodPSK, Data: auth}, nil
+	return &ikev2.EncryptedPayloadAuth{AuthMethod: ikev2.AuthMethodSharedKey, AuthData: auth}, nil
 }
 
 func (s *Session) initiatorSignedOctets(idType byte, idData []byte) ([]byte, error) {
@@ -80,9 +79,9 @@ func (s *Session) verifyResponderCertificateAuth(payloads []ikev2.Payload) error
 	}
 	switch auth.AuthMethod {
 	case ikev2.AuthMethodRSA:
-		return verifyLegacyRSASignature(leaf, signed, auth.Data)
+		return verifyLegacyRSASignature(leaf, signed, auth.AuthData)
 	case ikev2.AuthMethodDigitalSignature:
-		return verifyGenericSignature(leaf, signed, auth.Data)
+		return verifyGenericSignature(leaf, signed, auth.AuthData)
 	default:
 		return fmt.Errorf("swu: unsupported responder AUTH method %d", auth.AuthMethod)
 	}
@@ -158,7 +157,7 @@ func (s *Session) verifyEAPResponderAuth(payloads []ikev2.Payload) error {
 		return errors.New("swu: incomplete EAP responder authentication state")
 	}
 	auth := responderAuthPayload(payloads)
-	if auth == nil || auth.AuthMethod != ikev2.AuthMethodPSK || len(auth.Data) == 0 {
+	if auth == nil || auth.AuthMethod != ikev2.AuthMethodSharedKey || len(auth.AuthData) == 0 {
 		return fmt.Errorf("swu: final EAP IKE_AUTH response missing MSK AUTH (payloads=%s)", ikePayloadTypes(payloads))
 	}
 	signed, err := s.responderSignedOctets(s.responderIDType, s.responderID)
@@ -167,7 +166,7 @@ func (s *Session) verifyEAPResponderAuth(payloads []ikev2.Payload) error {
 	}
 	sharedKey := s.prf.Compute(s.eapKeys.MSK, []byte(ikev2KeyPad))
 	expected := s.prf.Compute(sharedKey, signed)
-	if !hmac.Equal(auth.Data, expected) {
+	if !hmac.Equal(auth.AuthData, expected) {
 		return errors.New("swu: EAP responder MSK AUTH verification failed")
 	}
 	return nil
@@ -179,8 +178,8 @@ func responderIdentity(payloads []ikev2.Payload) (byte, []byte, bool) {
 			continue
 		}
 		identity, ok := payload.(*ikev2.EncryptedPayloadID)
-		if ok && len(identity.Data) > 0 {
-			return identity.IDType, append([]byte(nil), identity.Data...), true
+		if ok && len(identity.IDData) > 0 {
+			return identity.IDType, append([]byte(nil), identity.IDData...), true
 		}
 	}
 	return 0, nil, false
@@ -196,7 +195,7 @@ func responderAuthPayload(payloads []ikev2.Payload) *ikev2.EncryptedPayloadAuth 
 	return nil
 }
 
-func hasPayloadType(payloads []ikev2.Payload, payloadType byte) bool {
+func hasPayloadType(payloads []ikev2.Payload, payloadType ikev2.PayloadType) bool {
 	for _, payload := range payloads {
 		if payload != nil && payload.Type() == payloadType {
 			return true
@@ -210,11 +209,10 @@ func ikeAuthenticationError(payloads []ikev2.Payload) error {
 		if payload == nil || payload.Type() != ikev2.PayloadNotify {
 			continue
 		}
-		raw, ok := payload.(*ikev2.RawPayload)
-		if !ok || len(raw.Data) < 4 {
+		notifyType, _, ok := parseNotifyPayload(payload)
+		if !ok {
 			return errors.New("swu: malformed IKE_AUTH Notify payload")
 		}
-		notifyType := binary.BigEndian.Uint16(raw.Data[2:4])
 		if notifyType < 16384 {
 			return fmt.Errorf("swu: IKE_AUTH rejected with %s (%d)", ikev2.NotifyTypeToString(notifyType), notifyType)
 		}
@@ -243,7 +241,7 @@ func responderAuthMaterial(payloads []ikev2.Payload) (byte, []byte, *ikev2.Encry
 		switch payload.Type() {
 		case ikev2.PayloadIDr:
 			if id, ok := payload.(*ikev2.EncryptedPayloadID); ok {
-				idType, idData = id.IDType, append([]byte(nil), id.Data...)
+				idType, idData = id.IDType, append([]byte(nil), id.IDData...)
 			}
 		case ikev2.PayloadAuth:
 			auth, _ = payload.(*ikev2.EncryptedPayloadAuth)
@@ -255,7 +253,7 @@ func responderAuthMaterial(payloads []ikev2.Payload) (byte, []byte, *ikev2.Encry
 			certs = append(certs, certificate)
 		}
 	}
-	if len(idData) == 0 || auth == nil || len(auth.Data) == 0 {
+	if len(idData) == 0 || auth == nil || len(auth.AuthData) == 0 {
 		return 0, nil, nil, nil, errors.New("swu: IKE_AUTH response missing IDr or AUTH")
 	}
 	if len(certs) == 0 {

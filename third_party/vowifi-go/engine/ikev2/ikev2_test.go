@@ -8,21 +8,22 @@ import (
 
 func TestPacketRoundTrip(t *testing.T) {
 	pkt := &IKEPacket{
-		InitiatorSPI: [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
-		ResponderSPI: [8]byte{9, 10, 11, 12, 13, 14, 15, 16},
-		Version:      0x20,
-		ExchangeType: ExchangeIKEInit,
-		Flags:        0x08, // Initiator
-		MessageID:    1,
+		Header: &IKEHeader{
+			SPIi: 0x0102030405060708, SPIr: 0x090a0b0c0d0e0f10,
+			Version: 0x20, ExchangeType: IKE_SA_INIT, Flags: FlagInitiator, MessageID: 1,
+		},
 		Payloads: []Payload{
 			&EncryptedPayloadSA{Proposals: CreateMultiProposalIKE(12, 2, 2, 14)}, // AES-CBC/HMAC-SHA1/HMAC-SHA1/MODP-2048
-			&EncryptedPayloadKE{DHGroupNum: 14, KeyData: []byte{0xde, 0xad, 0xbe, 0xef}},
-			&EncryptedPayloadNonce{Data: []byte("nonce-data-1234")},
+			&EncryptedPayloadKE{DHGroup: 14, KEData: []byte{0xde, 0xad, 0xbe, 0xef}},
+			&EncryptedPayloadNonce{NonceData: []byte("nonce-data-1234")},
 			&EncryptedPayloadNotify{ProtocolID: ProtoIKE, NotifyType: 16388, NotifyData: []byte{1, 2, 3, 4, 5, 6, 7, 8}},
 		},
 	}
 
-	raw := pkt.Encode()
+	raw, err := pkt.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
 	if len(raw) < 28 {
 		t.Fatalf("encoded too short: %d", len(raw))
 	}
@@ -31,10 +32,10 @@ func TestPacketRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodePacket: %v", err)
 	}
-	if dec.ExchangeType != ExchangeIKEInit || dec.MessageID != 1 {
+	if dec.Header.ExchangeType != IKE_SA_INIT || dec.Header.MessageID != 1 {
 		t.Errorf("header mismatch: %+v", dec)
 	}
-	if !bytes.Equal(dec.InitiatorSPI[:], pkt.InitiatorSPI[:]) {
+	if dec.Header.SPIi != pkt.Header.SPIi {
 		t.Error("initiator SPI mismatch")
 	}
 	if len(dec.Payloads) != 4 {
@@ -52,12 +53,12 @@ func TestPacketRoundTrip(t *testing.T) {
 
 	// The KE payload keeps its DH group header and key bytes
 	// (body = DH group 2B | reserved 2B | key data).
-	ke, ok := dec.Payloads[1].(*RawPayload)
+	ke, ok := dec.Payloads[1].(*EncryptedPayloadKE)
 	if !ok {
 		t.Fatalf("payload 1 type = %T", dec.Payloads[1])
 	}
-	if ke.Type() != PayloadKE || !bytes.Equal(ke.Data[4:8], []byte{0xde, 0xad, 0xbe, 0xef}) {
-		t.Errorf("KE payload = type %d data %x", ke.Type(), ke.Data)
+	if ke.Type() != KE || ke.DHGroup != 14 || !bytes.Equal(ke.KEData, []byte{0xde, 0xad, 0xbe, 0xef}) {
+		t.Errorf("KE payload = type %d group %d data %x", ke.Type(), ke.DHGroup, ke.KEData)
 	}
 }
 
@@ -67,51 +68,55 @@ func TestProposalEncodeDecode(t *testing.T) {
 	p.AddTransform(TypeIntegrity, 2)                  // HMAC-SHA1-96
 	p.AddTransform(TypeDHGroup, 14)
 
-	enc := p.Encode(nil)
-	dec, n, err := DecodeProposal(enc)
+	enc, err := p.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	dec, err := DecodeProposal(enc)
 	if err != nil {
 		t.Fatalf("DecodeProposal: %v", err)
-	}
-	if n != len(enc) {
-		t.Errorf("consumed %d of %d", n, len(enc))
 	}
 	if len(dec.Transforms) != 3 {
 		t.Fatalf("transforms = %d, want 3", len(dec.Transforms))
 	}
-	if dec.Transforms[0].TransformID != 12 || len(dec.Transforms[0].Attributes) != 1 {
+	if dec.Transforms[0].ID != 12 || len(dec.Transforms[0].Attributes) != 1 {
 		t.Errorf("transform 0 = %+v", dec.Transforms[0])
 	}
-	if dec.Transforms[0].Attributes[0].Value != 128 {
-		t.Errorf("key length attr = %d, want 128", dec.Transforms[0].Attributes[0].Value)
+	if dec.Transforms[0].Attributes[0].Val != 128 {
+		t.Errorf("key length attr = %d, want 128", dec.Transforms[0].Attributes[0].Val)
 	}
 }
 
 func TestProposalUsesRFC7296WireFormat(t *testing.T) {
-	p := &Proposal{ProposalNum: 1, ProtocolID: ProtoESP, SPI: []byte{1, 2, 3, 4}}
+	p := &Proposal{LastProposal: true, ProposalNum: 1, ProtocolID: ProtoESP, SPI: []byte{1, 2, 3, 4}}
 	p.AddTransformWithKeyLen(TypeEncryption, 12, 128)
 	want := []byte{
-		0, 0, 0, 24, 1, ProtoESP, 4, 1, 1, 2, 3, 4,
-		0, 0, 0, 12, TypeEncryption, 0, 0, 12, 0x80, 14, 0, 128,
+		0, 0, 0, 24, 1, byte(ProtoESP), 4, 1, 1, 2, 3, 4,
+		0, 0, 0, 12, byte(TypeEncryption), 0, 0, 12, 0x80, 14, 0, 128,
 	}
-	if got := p.Encode(nil); !bytes.Equal(got, want) {
+	got, err := p.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if !bytes.Equal(got, want) {
 		t.Fatalf("proposal wire bytes = %x, want %x", got, want)
 	}
 }
 
 func TestDecodeIdentificationAndAuthenticationPayloads(t *testing.T) {
-	idr := &EncryptedPayloadID{PayloadType: PayloadIDr, IDType: 2, Data: []byte("epdg")}
-	auth := &EncryptedPayloadAuth{AuthMethod: AuthMethodRSA, Data: []byte{1, 2, 3}}
+	idr := &EncryptedPayloadID{IDType: 2, IDData: []byte("epdg")}
+	auth := &EncryptedPayloadAuth{AuthMethod: AuthMethodRSA, AuthData: []byte{1, 2, 3}}
 	raw := EncodePayloadChain([]Payload{idr, auth})
 	payloads, err := DecodePayloadChainWithFirst(PayloadIDr, raw)
 	if err != nil {
 		t.Fatalf("DecodePayloadChainWithFirst: %v", err)
 	}
 	gotID, ok := payloads[0].(*EncryptedPayloadID)
-	if !ok || gotID.Type() != PayloadIDr || gotID.IDType != 2 || string(gotID.Data) != "epdg" {
+	if !ok || gotID.Type() != IDr || gotID.IDType != 2 || string(gotID.IDData) != "epdg" {
 		t.Fatalf("decoded IDr = %#v", payloads[0])
 	}
 	gotAuth, ok := payloads[1].(*EncryptedPayloadAuth)
-	if !ok || gotAuth.AuthMethod != AuthMethodRSA || !bytes.Equal(gotAuth.Data, []byte{1, 2, 3}) {
+	if !ok || gotAuth.AuthMethod != AuthMethodRSA || !bytes.Equal(gotAuth.AuthData, []byte{1, 2, 3}) {
 		t.Fatalf("decoded AUTH = %#v", payloads[1])
 	}
 }
@@ -144,7 +149,7 @@ func TestNotifyTypeToString(t *testing.T) {
 		{16393, "REKEY_SA"},
 		{16403, "AUTH_LIFETIME"},
 		{16417, "EAP_ONLY_AUTHENTICATION"},
-		{999, "999"},
+		{999, "UNKNOWN_ERROR(999)"},
 	}
 	for _, c := range cases {
 		if got := NotifyTypeToString(c.t); got != c.want {
@@ -154,12 +159,11 @@ func TestNotifyTypeToString(t *testing.T) {
 }
 
 func TestNATDetectionHash(t *testing.T) {
-	key := []byte("prf-key")
-	spiI := [8]byte{1, 1, 1, 1, 1, 1, 1, 1}
-	spiR := [8]byte{2, 2, 2, 2, 2, 2, 2, 2}
-	ip := net.ParseIP("192.168.1.100")
-	h1 := CalculateNATDetectionHash(key, spiI, spiR, ip, 500)
-	h2 := CalculateNATDetectionHash(key, spiI, spiR, ip, 500)
+	spiI := uint64(0x0101010101010101)
+	spiR := uint64(0x0202020202020202)
+	ip := net.ParseIP("192.168.1.100").To4()
+	h1 := CalculateNATDetectionHash(spiI, spiR, []byte(ip), uint16(500))
+	h2 := CalculateNATDetectionHash(spiI, spiR, []byte(ip), uint16(500))
 	if !bytes.Equal(h1, h2) {
 		t.Error("NAT hash not deterministic")
 	}
@@ -176,8 +180,11 @@ func TestCPConfig(t *testing.T) {
 			{Type: 3, Value: []byte{10, 0, 0, 1}}, // INTERNAL_IP4_DNS
 		},
 	}
-	raw := cp.Encode(nil)
-	dec, err := DecodePayloadCP(raw[4:])
+	raw, err := cp.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	dec, err := DecodePayloadCP(raw)
 	if err != nil {
 		t.Fatalf("DecodePayloadCP: %v", err)
 	}

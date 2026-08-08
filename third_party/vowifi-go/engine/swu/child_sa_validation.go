@@ -121,7 +121,7 @@ func collectChildSAPayloads(payloads []ikev2.Payload) (*ikev2.EncryptedPayloadSA
 func childSANonceData(payload ikev2.Payload) []byte {
 	switch value := payload.(type) {
 	case *ikev2.EncryptedPayloadNonce:
-		return append([]byte(nil), value.Data...)
+		return append([]byte(nil), value.NonceData...)
 	case *ikev2.RawPayload:
 		return append([]byte(nil), value.Data...)
 	default:
@@ -133,22 +133,19 @@ func validateESPSelection(proposal *ikev2.Proposal, offer childSAOffer) (uint32,
 	if proposal == nil || proposal.ProposalNum != 1 || proposal.ProtocolID != ikev2.ProtoESP {
 		return 0, 0, 0, errors.New("swu: CHILD_SA response selected an invalid ESP proposal")
 	}
-	if proposal.SPISize != 4 || len(proposal.SPI) != 4 {
+	if len(proposal.SPI) != 4 {
 		return 0, 0, 0, errors.New("swu: CHILD_SA response SPI must be four bytes")
 	}
 	spi := binary.BigEndian.Uint32(proposal.SPI)
 	if spi == 0 {
 		return 0, 0, 0, errors.New("swu: CHILD_SA response SPI is zero")
 	}
-	if proposal.NumTransforms != byte(len(proposal.Transforms)) {
-		return 0, 0, 0, errors.New("swu: CHILD_SA response transform count mismatch")
-	}
 	transforms, err := indexESPTransforms(proposal.Transforms)
 	if err != nil {
 		return 0, 0, 0, err
 	}
 	encryption := transforms[ikev2.TypeEncryption]
-	if encryption == nil || encryption.TransformID != offer.encryption {
+	if encryption == nil || uint16(encryption.ID) != offer.encryption {
 		return 0, 0, 0, fmt.Errorf("swu: CHILD_SA encryption selection %v does not match offer %d", transformID(encryption), offer.encryption)
 	}
 	if err := validateEncryptionKeyLength(encryption, offer.encryptionKeyBits); err != nil {
@@ -159,44 +156,44 @@ func validateESPSelection(proposal *ikev2.Proposal, offer childSAOffer) (uint32,
 		if integrity != nil {
 			return 0, 0, 0, errors.New("swu: AEAD CHILD_SA response selected a separate integrity transform")
 		}
-	} else if integrity == nil || integrity.TransformID != offer.integrity {
+	} else if integrity == nil || uint16(integrity.ID) != offer.integrity {
 		return 0, 0, 0, fmt.Errorf("swu: CHILD_SA integrity selection %v does not match offer %d", transformID(integrity), offer.integrity)
 	}
 	esn := transforms[ikev2.TypeESN]
-	if esn == nil || esn.TransformID != 0 {
+	if esn == nil || esn.ID != 0 {
 		return 0, 0, 0, errors.New("swu: CHILD_SA response did not select ESN disabled")
 	}
-	return spi, encryption.TransformID, offer.integrity, nil
+	return spi, uint16(encryption.ID), offer.integrity, nil
 }
 
-func indexESPTransforms(transforms []*ikev2.Transform) (map[byte]*ikev2.Transform, error) {
-	indexed := make(map[byte]*ikev2.Transform, len(transforms))
+func indexESPTransforms(transforms []*ikev2.Transform) (map[ikev2.TransformType]*ikev2.Transform, error) {
+	indexed := make(map[ikev2.TransformType]*ikev2.Transform, len(transforms))
 	for _, transform := range transforms {
 		if transform == nil {
 			return nil, errors.New("swu: CHILD_SA response contains a nil transform")
 		}
-		switch transform.TransformType {
-		case ikev2.TypeEncryption, ikev2.TypeIntegrity, ikev2.TypeESN:
+		switch transform.Type {
+		case ikev2.TransformTypeEncr, ikev2.TransformTypeInteg, ikev2.TransformTypeESN:
 		default:
-			return nil, fmt.Errorf("swu: CHILD_SA response selected unexpected transform type %d", transform.TransformType)
+			return nil, fmt.Errorf("swu: CHILD_SA response selected unexpected transform type %d", transform.Type)
 		}
-		if indexed[transform.TransformType] != nil {
-			return nil, fmt.Errorf("swu: CHILD_SA response selected duplicate transform type %d", transform.TransformType)
+		if indexed[transform.Type] != nil {
+			return nil, fmt.Errorf("swu: CHILD_SA response selected duplicate transform type %d", transform.Type)
 		}
-		indexed[transform.TransformType] = transform
+		indexed[transform.Type] = transform
 	}
 	return indexed, nil
 }
 
 func validateEncryptionKeyLength(transform *ikev2.Transform, expectedBits uint16) error {
-	if transform.TransformID != crypto.EncrAESCBC && transform.TransformID != crypto.EncrAESGCM16 {
+	if uint16(transform.ID) != crypto.EncrAESCBC && uint16(transform.ID) != crypto.EncrAESGCM16 {
 		if len(transform.Attributes) != 0 {
 			return errors.New("swu: non-AES CHILD_SA encryption selected unexpected attributes")
 		}
 		return nil
 	}
 	if len(transform.Attributes) != 1 || transform.Attributes[0].Type != transformAttributeKeyLength ||
-		transform.Attributes[0].Value != expectedBits {
+		transform.Attributes[0].Val != expectedBits {
 		return fmt.Errorf("swu: AES selection requires a %d-bit KEY_LENGTH", expectedBits)
 	}
 	return nil
@@ -206,19 +203,20 @@ func transformID(transform *ikev2.Transform) any {
 	if transform == nil {
 		return "missing"
 	}
-	return transform.TransformID
+	return transform.ID
 }
 
-func validateTrafficSelectorNarrowing(name string, selected, offered *ikev2.EncryptedPayloadTS, payloadType byte) error {
-	if selected == nil || offered == nil || selected.Type() != payloadType || len(selected.Selectors) == 0 {
+func validateTrafficSelectorNarrowing(
+	name string,
+	selected, offered *ikev2.EncryptedPayloadTS,
+	payloadType ikev2.PayloadType,
+) error {
+	if selected == nil || offered == nil || selected.Type() != payloadType || len(selected.TrafficSelectors) == 0 {
 		return fmt.Errorf("swu: CHILD_SA response missing valid %s", name)
 	}
-	if selected.TSNumber != 0 && int(selected.TSNumber) != len(selected.Selectors) {
-		return fmt.Errorf("swu: CHILD_SA %s selector count mismatch", name)
-	}
-	for _, selector := range selected.Selectors {
+	for _, selector := range selected.TrafficSelectors {
 		contained := false
-		for _, offeredSelector := range offered.Selectors {
+		for _, offeredSelector := range offered.TrafficSelectors {
 			if trafficSelectorContained(selector, offeredSelector) {
 				contained = true
 				break
@@ -232,12 +230,12 @@ func validateTrafficSelectorNarrowing(name string, selected, offered *ikev2.Encr
 }
 
 func trafficSelectorContained(selected, offered *ikev2.TrafficSelector) bool {
-	if selected == nil || offered == nil || selected.Type != offered.Type || len(selected.StartAddr) != len(offered.StartAddr) ||
+	if selected == nil || offered == nil || selected.TSType != offered.TSType || len(selected.StartAddr) != len(offered.StartAddr) ||
 		len(selected.EndAddr) != len(offered.EndAddr) || bytes.Compare(selected.StartAddr, selected.EndAddr) > 0 ||
 		selected.StartPort > selected.EndPort {
 		return false
 	}
-	if offered.ProtocolID != 0 && selected.ProtocolID != offered.ProtocolID {
+	if offered.IPProtocol != 0 && selected.IPProtocol != offered.IPProtocol {
 		return false
 	}
 	return selected.StartPort >= offered.StartPort && selected.EndPort <= offered.EndPort &&
@@ -248,10 +246,10 @@ func selectorsContainAnyIP(payload *ikev2.EncryptedPayloadTS, ips []net.IP) bool
 	if payload == nil || len(ips) == 0 {
 		return false
 	}
-	for _, selector := range payload.Selectors {
+	for _, selector := range payload.TrafficSelectors {
 		for _, ip := range ips {
 			address := ip.To16()
-			if selector.Type == ikev2.TSIPv4Range {
+			if selector.TSType == ikev2.TS_IPV4_ADDR_RANGE {
 				address = ip.To4()
 			}
 			if len(address) == len(selector.StartAddr) && bytes.Compare(address, selector.StartAddr) >= 0 && bytes.Compare(address, selector.EndAddr) <= 0 {
@@ -266,12 +264,12 @@ func cloneTrafficSelectorPayload(payload *ikev2.EncryptedPayloadTS) *ikev2.Encry
 	if payload == nil {
 		return nil
 	}
-	clone := &ikev2.EncryptedPayloadTS{PayloadType: payload.PayloadType, TSNumber: payload.TSNumber}
-	for _, selector := range payload.Selectors {
+	clone := &ikev2.EncryptedPayloadTS{IsInitiator: payload.IsInitiator}
+	for _, selector := range payload.TrafficSelectors {
 		copied := *selector
 		copied.StartAddr = append([]byte(nil), selector.StartAddr...)
 		copied.EndAddr = append([]byte(nil), selector.EndAddr...)
-		clone.Selectors = append(clone.Selectors, &copied)
+		clone.TrafficSelectors = append(clone.TrafficSelectors, &copied)
 	}
 	return clone
 }

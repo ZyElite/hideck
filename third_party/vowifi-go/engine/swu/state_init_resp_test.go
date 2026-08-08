@@ -37,7 +37,11 @@ func buildInitResp(t *testing.T, initiator *Session, responderDH *crypto.DiffieH
 			&ikev2.EncryptedPayloadNonce{Data: nr},
 		}, extraPayloads...),
 	}
-	dec, err := ikev2.DecodePacket(pkt.Encode())
+	raw, err := pkt.Encode()
+	if err != nil {
+		t.Fatalf("Encode(response): %v", err)
+	}
+	dec, err := ikev2.DecodePacket(raw)
 	if err != nil {
 		t.Fatalf("DecodePacket(response): %v", err)
 	}
@@ -56,7 +60,7 @@ func TestHandleIKESAInitRespRejectsWrongAESKeyLength(t *testing.T) {
 	respDH, _ := crypto.NewDiffieHellman(14)
 	resp := buildInitResp(t, init, respDH)
 	sa := resp.Payloads[0].(*ikev2.EncryptedPayloadSA)
-	sa.Proposals[0].Transforms[0].Attributes[0].Value = 128
+	sa.Proposals[0].Transforms[0].Attributes[0].Val = 128
 	err := init.handleIKESAInitResp(resp)
 	if err == nil || !strings.Contains(err.Error(), "256-bit KEY_LENGTH") {
 		t.Fatalf("handleIKESAInitResp() error = %v", err)
@@ -96,7 +100,7 @@ func TestHandleIKESAInitRespDerivesKeys(t *testing.T) {
 	}
 	// SKEYSEED must be prf(Ni|Nr, g^ir) on both sides — recompute with the
 	// responder's view to confirm.
-	nr := resp.Payloads[2].(*ikev2.RawPayload).Data
+	nr := resp.Payloads[2].(*ikev2.EncryptedPayloadNonce).NonceData
 	key := append(append([]byte{}, init.Ni...), nr...)
 	want := init.prf.Compute(key, responderShared)
 	if !bytes.Equal(init.ikeKeys.SKEYSEED, want) {
@@ -106,7 +110,9 @@ func TestHandleIKESAInitRespDerivesKeys(t *testing.T) {
 
 func TestHandleIKESAInitRespInvalidKE(t *testing.T) {
 	init := newInitSession(t)
-	init.buildIKESAInitPacket()
+	if _, err := init.buildIKESAInitPacket(); err != nil {
+		t.Fatal(err)
+	}
 	respDH, _ := crypto.NewDiffieHellman(14)
 	// INVALID_KE_PAYLOAD notify carrying DH group 21.
 	notify := &ikev2.EncryptedPayloadNotify{ProtocolID: ikev2.ProtoIKE, NotifyType: notifyInvalidKE, NotifyData: []byte{0, 21}}
@@ -171,7 +177,14 @@ func TestHandleIKESAInitRespMissingKE(t *testing.T) {
 			&ikev2.EncryptedPayloadNonce{Data: bytes.Repeat([]byte{1}, 32)},
 		},
 	}
-	dec, _ := ikev2.DecodePacket(pkt.Encode())
+	raw, err := pkt.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, err := ikev2.DecodePacket(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := init.handleIKESAInitResp(dec); err == nil {
 		t.Error("missing KE payload should error")
 	}

@@ -197,6 +197,6 @@ func (s *Session) sendEAPPacket(packet eapaka.Packet) error {
 
 func (s *Session) sendEAPBytes(raw []byte) error {
 	return s.sendIKEAuthRequest([]ikev2.Payload{
-		&ikev2.EncryptedPayloadEAP{Data: append([]byte(nil), raw...)},
+		&ikev2.EncryptedPayloadEAP{EAPMessage: append([]byte(nil), raw...)},
 	})
 }

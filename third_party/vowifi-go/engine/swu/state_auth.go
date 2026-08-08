@@ -52,8 +52,8 @@ func (s *Session) currentEAPIdentity() string {
 // IPv4 or IPv6 address (RFC 7296 section 3.15).
 func (s *Session) buildCPRequestPayload() *ikev2.EncryptedPayloadCP {
 	return &ikev2.EncryptedPayloadCP{
-		ConfigType: ikev2.CPTypeRequest,
-		Attrs: []*ikev2.CPAttribute{
+		CFGType: ikev2.CFG_REQUEST,
+		Attributes: []*ikev2.CPAttribute{
 			{Type: ikev2.CPAttrIP4Address},
 			{Type: ikev2.CPAttrIP4DNS},
 			{Type: ikev2.CPAttrPCSCFIP4},
@@ -86,8 +86,8 @@ func buildTrafficSelectorsForIPStack(innerIP net.IP) (*ikev2.EncryptedPayloadTS,
 }
 
 func trafficSelectorPayloads(initiator, responder []*ikev2.TrafficSelector) (*ikev2.EncryptedPayloadTS, *ikev2.EncryptedPayloadTS) {
-	return &ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSi, Selectors: initiator},
-		&ikev2.EncryptedPayloadTS{PayloadType: ikev2.PayloadTSr, Selectors: responder}
+	return &ikev2.EncryptedPayloadTS{IsInitiator: true, TrafficSelectors: initiator},
+		&ikev2.EncryptedPayloadTS{TrafficSelectors: responder}
 }
 
 func anyIPv4Selector() *ikev2.TrafficSelector {
@@ -220,13 +220,8 @@ func (s *Session) advanceIKEAuthStage() error {
 // sendIKEAuthRequest encrypts and sends an IKE_AUTH request.
 func (s *Session) sendIKEAuthRequest(payloads []ikev2.Payload) error {
 	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi,
-		ResponderSPI: s.SPIr,
-		Version:      0x20,
-		ExchangeType: ikev2.ExchangeIKEAuth,
-		Flags:        0x08,
-		MessageID:    s.nextMessageID(),
-		Payloads:     payloads,
+		Header:   newIKEHeader(s.SPIi, s.SPIr, ikev2.IKE_AUTH, ikev2.FlagInitiator, s.nextMessageID()),
+		Payloads: payloads,
 	}
 	raw, err := s.encryptAndWrap(pkt)
 	if err != nil {
@@ -246,10 +241,10 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 
 	// IDi (ID_NAI).
 	idType, idData := s.currentIKEIdentity()
-	idi := &ikev2.EncryptedPayloadID{IDType: idType, Data: idData}
+	idi := &ikev2.EncryptedPayloadID{IDType: idType, IDData: idData, IsInitiator: true}
 	payloads := []ikev2.Payload{idi}
 	if apn := strings.TrimSpace(s.cfg.APN); apn != "" {
-		idr := &ikev2.EncryptedPayloadID{PayloadType: ikev2.PayloadIDr, IDType: ikev2.IDTypeFQDN, Data: []byte(apn)}
+		idr := &ikev2.EncryptedPayloadID{IDType: ikev2.ID_FQDN, IDData: []byte(apn)}
 		payloads = append(payloads, idr)
 	}
 
@@ -331,7 +326,7 @@ func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, erro
 func ikeEAPData(payload ikev2.Payload) ([]byte, bool) {
 	switch value := payload.(type) {
 	case *ikev2.EncryptedPayloadEAP:
-		return value.Data, true
+		return value.EAPMessage, true
 	case *ikev2.RawPayload:
 		return value.Data, true
 	default:
@@ -423,7 +418,7 @@ func parseAssignedInnerConfig(payloads []ikev2.Payload) (assignedInnerConfig, er
 			continue
 		}
 		value, ok := payload.(*ikev2.EncryptedPayloadCP)
-		if !ok || cp != nil || value.ConfigType != ikev2.CPTypeReply {
+		if !ok || cp != nil || value.CFGType != ikev2.CFG_REPLY {
 			return result, errors.New("swu: invalid, duplicate, or non-reply CP payload")
 		}
 		cp = value
@@ -432,19 +427,19 @@ func parseAssignedInnerConfig(payloads []ikev2.Payload) (assignedInnerConfig, er
 		return result, fmt.Errorf("swu: final IKE_AUTH response omitted CFG_REPLY (payloads=%s)", ikePayloadTypes(payloads))
 	}
 	config := ikev2.ParseCPConfig(cp)
-	if raw, ok := config.Attrs[ikev2.CPAttrIP4Address]; ok {
+	if raw, ok := cpAttributeValue(cp, ikev2.INTERNAL_IP4_ADDRESS); ok {
 		if len(raw) != net.IPv4len {
 			return result, fmt.Errorf("swu: invalid assigned IPv4 length %d", len(raw))
 		}
-		result.ipv4 = append(net.IP(nil), raw...)
-		result.ipv4Prefix = ipv4PrefixFromCP(config)
+		result.ipv4 = append(net.IP(nil), config.IPv4Addresses[0]...)
+		result.ipv4Prefix = ipv4PrefixFromCP(cp)
 	}
-	if raw, ok := config.Attrs[ikev2.CPAttrIP6Address]; ok {
+	if raw, ok := cpAttributeValue(cp, ikev2.INTERNAL_IP6_ADDRESS); ok {
 		if len(raw) != net.IPv6len+1 {
 			return result, fmt.Errorf("swu: invalid assigned IPv6 length %d", len(raw))
 		}
-		result.ipv6 = append(net.IP(nil), raw[:net.IPv6len]...)
-		result.ipv6Prefix = int(raw[net.IPv6len])
+		result.ipv6 = append(net.IP(nil), config.IPv6Addresses[0]...)
+		result.ipv6Prefix = int(config.IPv6Prefix)
 		if result.ipv6Prefix > net.IPv6len*8 {
 			return result, fmt.Errorf("swu: invalid assigned IPv6 prefix %d", result.ipv6Prefix)
 		}
@@ -465,11 +460,11 @@ func parseAssignedInnerConfig(payloads []ikev2.Payload) (assignedInnerConfig, er
 }
 
 func cpAttributeSummary(cp *ikev2.EncryptedPayloadCP) string {
-	if cp == nil || len(cp.Attrs) == 0 {
+	if cp == nil || len(cp.Attributes) == 0 {
 		return "none"
 	}
-	attributes := make([]string, 0, len(cp.Attrs))
-	for _, attribute := range cp.Attrs {
+	attributes := make([]string, 0, len(cp.Attributes))
+	for _, attribute := range cp.Attributes {
 		if attribute == nil {
 			attributes = append(attributes, "nil")
 			continue
@@ -479,9 +474,9 @@ func cpAttributeSummary(cp *ikev2.EncryptedPayloadCP) string {
 	return strings.Join(attributes, ",")
 }
 
-func ipv4PrefixFromCP(cfg *ikev2.CPConfig) int {
+func ipv4PrefixFromCP(cp *ikev2.EncryptedPayloadCP) int {
 	const defaultIPv4Prefix = 32
-	maskBytes := cfg.Attrs[ikev2.CPAttrIP4Netmask]
+	maskBytes, _ := cpAttributeValue(cp, ikev2.INTERNAL_IP4_NETMASK)
 	if len(maskBytes) < net.IPv4len {
 		return defaultIPv4Prefix
 	}
@@ -492,9 +487,21 @@ func ipv4PrefixFromCP(cfg *ikev2.CPConfig) int {
 	return ones
 }
 
+func cpAttributeValue(cp *ikev2.EncryptedPayloadCP, attributeType uint16) ([]byte, bool) {
+	if cp == nil {
+		return nil, false
+	}
+	for _, attribute := range cp.Attributes {
+		if attribute != nil && attribute.Type == attributeType {
+			return attribute.Value, true
+		}
+	}
+	return nil, false
+}
+
 func cpIPAddresses(cp *ikev2.EncryptedPayloadCP, ipv4Type, ipv6Type uint16) ([]net.IP, error) {
 	var addresses []net.IP
-	for _, attribute := range cp.Attrs {
+	for _, attribute := range cp.Attributes {
 		if attribute == nil || attribute.Type != ipv4Type && attribute.Type != ipv6Type {
 			continue
 		}

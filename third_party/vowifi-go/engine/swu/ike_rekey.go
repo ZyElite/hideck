@@ -29,15 +29,14 @@ func (s *Session) performIKESARekey(ctx context.Context) error {
 	}
 	proposals := buildIKEProposalsForSession(s)
 	proposals[0].SPI = append([]byte(nil), initiatorSPI[:]...)
-	proposals[0].SPISize = 8
 	request := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi, ResponderSPI: s.SPIr,
-		Version: 0x20, ExchangeType: ikev2.ExchangeCreateChildSA,
-		Flags: s.localIKEFlags(false), MessageID: s.nextMessageID(),
+		Header: newIKEHeader(
+			s.SPIi, s.SPIr, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false), s.nextMessageID(),
+		),
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadSA{Proposals: proposals},
-			&ikev2.EncryptedPayloadNonce{Data: append([]byte(nil), nonce...)},
-			&ikev2.EncryptedPayloadKE{DHGroupNum: s.dhGroup, KeyData: dh.PublicKeyBytes()},
+			&ikev2.EncryptedPayloadNonce{NonceData: append([]byte(nil), nonce...)},
+			&ikev2.EncryptedPayloadKE{DHGroup: ikev2.AlgorithmType(s.dhGroup), KEData: dh.PublicKeyBytes()},
 		},
 	}
 	payloads, err := s.exchangeEstablishedIKE(ctx, request)
@@ -97,11 +96,10 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 	}
 	proposals := buildIKEProposalsForSession(s)
 	proposals[0].SPI = append([]byte(nil), responderSPI[:]...)
-	proposals[0].SPISize = 8
 	responsePayloads := []ikev2.Payload{
 		&ikev2.EncryptedPayloadSA{Proposals: proposals},
-		&ikev2.EncryptedPayloadNonce{Data: append([]byte(nil), responderNonce...)},
-		&ikev2.EncryptedPayloadKE{DHGroupNum: s.dhGroup, KeyData: dh.PublicKeyBytes()},
+		&ikev2.EncryptedPayloadNonce{NonceData: append([]byte(nil), responderNonce...)},
+		&ikev2.EncryptedPayloadKE{DHGroup: ikev2.AlgorithmType(s.dhGroup), KEData: dh.PublicKeyBytes()},
 	}
 	if err := s.sendEstablishedIKEResponse(packet, responsePayloads); err != nil {
 		return err
@@ -157,11 +155,7 @@ func (s *Session) validateIKESARekeyResponse(payloads []ikev2.Payload) (*ikeSARe
 		case ikev2.PayloadNi:
 			nonce = childSANonceData(payload)
 		case ikev2.PayloadKE:
-			raw, ok := payload.(*ikev2.RawPayload)
-			if !ok {
-				return nil, errors.New("swu: invalid IKE rekey KE payload")
-			}
-			group, key, err := parseKERaw(raw)
+			group, key, err := parseKEPayload(payload)
 			if err != nil || group != s.dhGroup {
 				return nil, fmt.Errorf("swu: invalid IKE rekey DH group %d: %w", group, err)
 			}
@@ -185,31 +179,32 @@ func (s *Session) validateIKESARekeyResponse(payloads []ikev2.Payload) (*ikeSARe
 }
 
 func (s *Session) validateIKERekeyProposal(proposal *ikev2.Proposal) error {
-	if proposal == nil || proposal.ProtocolID != ikev2.ProtoIKE ||
-		proposal.SPISize != 8 || len(proposal.SPI) != 8 ||
-		proposal.NumTransforms != byte(len(proposal.Transforms)) {
+	if proposal == nil || proposal.ProtocolID != ikev2.ProtoIKE || len(proposal.SPI) != 8 {
 		return errors.New("swu: invalid IKE rekey proposal")
 	}
-	expected := map[byte]uint16{
-		ikev2.TypeEncryption: s.encrAlg,
-		ikev2.TypePRF:        s.prfAlg,
-		ikev2.TypeIntegrity:  s.integAlg,
-		ikev2.TypeDHGroup:    s.dhGroup,
+	expected := map[ikev2.TransformType]ikev2.AlgorithmType{
+		ikev2.TransformTypeEncr:  ikev2.AlgorithmType(s.encrAlg),
+		ikev2.TransformTypePRF:   ikev2.AlgorithmType(s.prfAlg),
+		ikev2.TransformTypeInteg: ikev2.AlgorithmType(s.integAlg),
+		ikev2.TransformTypeDH:    ikev2.AlgorithmType(s.dhGroup),
 	}
-	seen := make(map[byte]bool, len(expected))
+	seen := make(map[ikev2.TransformType]bool, len(expected))
 	for _, transform := range proposal.Transforms {
-		want, ok := expected[transform.TransformType]
-		if !ok || seen[transform.TransformType] || transform.TransformID != want {
-			return fmt.Errorf("swu: unexpected IKE rekey transform type=%d id=%d", transform.TransformType, transform.TransformID)
+		if transform == nil {
+			return errors.New("swu: IKE rekey proposal contains a nil transform")
 		}
-		if transform.TransformType == ikev2.TypeEncryption {
+		want, ok := expected[transform.Type]
+		if !ok || seen[transform.Type] || transform.ID != want {
+			return fmt.Errorf("swu: unexpected IKE rekey transform type=%d id=%d", transform.Type, transform.ID)
+		}
+		if transform.Type == ikev2.TransformTypeEncr {
 			if err := validateEncryptionKeyLength(transform, s.encKeyBits); err != nil {
 				return err
 			}
 		} else if len(transform.Attributes) != 0 {
 			return errors.New("swu: non-encryption IKE rekey transform has attributes")
 		}
-		seen[transform.TransformType] = true
+		seen[transform.Type] = true
 	}
 	if len(seen) != len(expected) || binary.BigEndian.Uint64(proposal.SPI) == 0 {
 		return errors.New("swu: incomplete IKE rekey proposal")
@@ -219,9 +214,9 @@ func (s *Session) validateIKERekeyProposal(proposal *ikev2.Proposal) error {
 
 func (s *Session) deleteOldIKESA(ctx context.Context) error {
 	request := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi, ResponderSPI: s.SPIr,
-		Version: 0x20, ExchangeType: ikev2.ExchangeInformational,
-		Flags: s.localIKEFlags(false), MessageID: s.nextMessageID(),
+		Header: newIKEHeader(
+			s.SPIi, s.SPIr, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
+		),
 		Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadDelete{
 			ProtocolID: ikev2.ProtoIKE,
 		}},

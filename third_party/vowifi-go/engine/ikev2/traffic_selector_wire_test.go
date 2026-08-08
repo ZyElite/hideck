@@ -8,7 +8,7 @@ import (
 
 func TestTrafficSelectorIPv4WireFormat(t *testing.T) {
 	selector := NewTrafficSelectorIPV4(net.IPv4(10, 0, 0, 1), 17, 5060, 5060)
-	got := selector.Encode(nil)
+	got := selector.Encode()
 	want := []byte{
 		0x07, 0x11, 0x00, 0x10,
 		0x13, 0xc4, 0x13, 0xc4,
@@ -28,7 +28,7 @@ func TestTrafficSelectorPayloadTypesStayDistinct(t *testing.T) {
 		NewTrafficSelectorIPV4(net.IPv4zero, 0, 0, 0xffff),
 	}}
 	raw := EncodePayloadChain([]Payload{tsi, tsr})
-	if raw[0] != PayloadTSr {
+	if PayloadType(raw[0]) != PayloadTSr {
 		t.Fatalf("TSi next payload = %d, want TSr %d", raw[0], PayloadTSr)
 	}
 	decoded, err := DecodePayloadChainWithFirst(PayloadTSi, raw)
@@ -41,8 +41,11 @@ func TestTrafficSelectorPayloadTypesStayDistinct(t *testing.T) {
 }
 
 func TestAESProposalCarries128BitKeyLength(t *testing.T) {
-	proposal := CreateMultiProposalIKE(encrAESCBC, 2, 2, 14)[0]
-	raw := proposal.Encode(nil)
+	proposal := CreateMultiProposalIKE(uint16(ENCR_AES_CBC), uint16(2), uint16(2), uint16(14))[0]
+	raw, err := proposal.Encode()
+	if err != nil {
+		t.Fatalf("encode proposal: %v", err)
+	}
 	wantEncryptionTransform := []byte{
 		0x03, 0x00, 0x00, 0x0c,
 		0x01, 0x00, 0x00, 0x0c,
@@ -55,10 +58,13 @@ func TestAESProposalCarries128BitKeyLength(t *testing.T) {
 
 func TestAESProposalCarriesExplicit256BitKeyLength(t *testing.T) {
 	proposal := CreateIKEProposals(IKEProposalAlgorithms{
-		Encryption: encrAESCBC, EncryptionKeyBits: 256,
+		Encryption: uint16(ENCR_AES_CBC), EncryptionKeyBits: 256,
 		PRF: 7, Integrity: 14, DH: 14,
 	})[0]
-	raw := proposal.Encode(nil)
+	raw, err := proposal.Encode()
+	if err != nil {
+		t.Fatalf("encode proposal: %v", err)
+	}
 	wantEncryptionTransform := []byte{
 		0x03, 0x00, 0x00, 0x0c,
 		0x01, 0x00, 0x00, 0x0c,

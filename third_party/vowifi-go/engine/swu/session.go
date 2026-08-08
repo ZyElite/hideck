@@ -416,7 +416,10 @@ func (s *Session) runIKESAInit(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		raw := pkt.Encode()
+		raw, err := pkt.Encode()
+		if err != nil {
+			return fmt.Errorf("encode IKE_SA_INIT: %w", err)
+		}
 		if err := s.sendIKE(raw); err != nil {
 			return fmt.Errorf("send IKE_SA_INIT: %w", err)
 		}
@@ -769,12 +772,9 @@ func (s *Session) DPDProbe() error {
 	s.lastDPDAt = time.Now()
 	s.mu.Unlock()
 	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi,
-		ResponderSPI: s.SPIr,
-		Version:      0x20,
-		ExchangeType: ikev2.ExchangeInformational,
-		Flags:        s.localIKEFlags(false),
-		MessageID:    s.nextMessageID(),
+		Header: newIKEHeader(
+			s.SPIi, s.SPIr, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
+		),
 	}
 	payloads, err := s.exchangeEstablishedIKE(s.ctx, pkt)
 	if err != nil {

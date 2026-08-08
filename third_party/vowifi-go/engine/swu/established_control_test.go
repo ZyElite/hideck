@@ -259,7 +259,7 @@ func respondToIKESARekey(t *testing.T, session *Session, transport *testIKETrans
 		case ikev2.PayloadNi:
 			nonce = childSANonceData(payload)
 		case ikev2.PayloadKE:
-			_, peerKey, err = parseKERaw(payload.(*ikev2.RawPayload))
+			_, peerKey, err = parseKEPayload(payload)
 		}
 	}
 	if err != nil || len(nonce) == 0 || len(peerKey) == 0 {

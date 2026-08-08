@@ -37,18 +37,25 @@ func (s *Session) localIKEFlags(response bool) byte {
 	return flags
 }
 
-func firstIKEPayloadType(payloads []ikev2.Payload) byte {
+func firstIKEPayloadType(payloads []ikev2.Payload) ikev2.PayloadType {
 	if len(payloads) == 0 {
 		return ikev2.PayloadNoNext
 	}
 	return payloads[0].Type()
 }
 
-func protectedIKEPacket(source *ikev2.IKEPacket, messageID uint32, first byte, body []byte) *ikev2.IKEPacket {
+func protectedIKEPacket(
+	source *ikev2.IKEPacket,
+	messageID uint32,
+	first ikev2.PayloadType,
+	body []byte,
+) *ikev2.IKEPacket {
+	header := packetIKEHeader(source)
 	return &ikev2.IKEPacket{
-		InitiatorSPI: source.InitiatorSPI, ResponderSPI: source.ResponderSPI,
-		Version: source.Version, ExchangeType: source.ExchangeType,
-		Flags: source.Flags, MessageID: messageID,
+		Header: &ikev2.IKEHeader{
+			SPIi: header.SPIi, SPIr: header.SPIr, Version: header.Version,
+			ExchangeType: header.ExchangeType, Flags: header.Flags, MessageID: messageID,
+		},
 		Payloads: []ikev2.Payload{ikev2.NewEncryptedPayloadSK(first, body)},
 	}
 }
@@ -76,23 +83,35 @@ func unpadIKEPlaintext(data []byte) ([]byte, error) {
 	return append([]byte(nil), data[:len(data)-paddingLength-1]...), nil
 }
 
-func (s *Session) encryptAEADIKE(source *ikev2.IKEPacket, messageID uint32, first byte, plain, iv []byte, cipher enginecrypto.PreparedCipher) ([]byte, error) {
+func (s *Session) encryptAEADIKE(
+	source *ikev2.IKEPacket,
+	messageID uint32,
+	first ikev2.PayloadType,
+	plain, iv []byte,
+	cipher enginecrypto.PreparedCipher,
+) ([]byte, error) {
 	bodyLength := len(iv) + len(plain) + aesGCMTagLength
-	template := protectedIKEPacket(source, messageID, first, make([]byte, bodyLength)).Encode()
+	template, err := protectedIKEPacket(source, messageID, first, make([]byte, bodyLength)).Encode()
+	if err != nil {
+		return nil, fmt.Errorf("encode IKE AEAD template: %w", err)
+	}
 	aad := template[:ikeHeaderLength+ikePayloadHeaderLength]
 	encrypted, err := cipher.Seal(nil, plain, iv, aad)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt IKE AEAD message: %w", err)
 	}
 	body := append(append([]byte{}, iv...), encrypted...)
-	return protectedIKEPacket(source, messageID, first, body).Encode(), nil
+	return protectedIKEPacket(source, messageID, first, body).Encode()
 }
 
 func (s *Session) decryptAEADIKE(packet *ikev2.IKEPacket, encrypted *ikev2.EncryptedPayloadSK, cipher enginecrypto.PreparedCipher) ([]ikev2.Payload, error) {
 	if len(encrypted.Data) < cipher.IVSize()+aesGCMTagLength {
 		return nil, errors.New("swu: encrypted AEAD payload too short")
 	}
-	raw := packet.Encode()
+	raw, err := packet.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("encode protected IKE packet: %w", err)
+	}
 	aad := raw[:ikeHeaderLength+ikePayloadHeaderLength]
 	iv := encrypted.Data[:cipher.IVSize()]
 	ciphertext := encrypted.Data[cipher.IVSize():]

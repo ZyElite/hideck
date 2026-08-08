@@ -55,7 +55,7 @@ func (s *Session) handleIncomingCreateChildSAParsed(packet *ikev2.IKEPacket) err
 	return s.handlePeerChildSARekeyPayloads(packet, payloads)
 }
 
-func createChildSAProtocol(payloads []ikev2.Payload) (byte, error) {
+func createChildSAProtocol(payloads []ikev2.Payload) (ikev2.ProtocolID, error) {
 	for _, payload := range payloads {
 		sa, ok := payload.(*ikev2.EncryptedPayloadSA)
 		if !ok || len(sa.Proposals) != 1 || sa.Proposals[0] == nil {
@@ -89,15 +89,12 @@ func (s *Session) dispatchCreateChildSA(ctx context.Context) error {
 	espProposals := buildESPProposalsForSession(s, localSPI)
 	tsi, tsr := buildTrafficSelectorsForIPStack(s.primaryInnerIP())
 	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi,
-		ResponderSPI: s.SPIr,
-		Version:      0x20,
-		ExchangeType: ikev2.ExchangeCreateChildSA,
-		Flags:        s.localIKEFlags(false),
-		MessageID:    s.nextMessageID(),
+		Header: newIKEHeader(
+			s.SPIi, s.SPIr, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false), s.nextMessageID(),
+		),
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadSA{Proposals: espProposals},
-			&ikev2.EncryptedPayloadNonce{Data: ni},
+			&ikev2.EncryptedPayloadNonce{NonceData: ni},
 			tsi,
 			tsr,
 		},
@@ -176,12 +173,9 @@ func (s *Session) sendMOBIKEUpdate() error {
 		return errors.New("swu: session not established")
 	}
 	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi,
-		ResponderSPI: s.SPIr,
-		Version:      0x20,
-		ExchangeType: ikev2.ExchangeInformational,
-		Flags:        s.localIKEFlags(false),
-		MessageID:    s.nextMessageID(),
+		Header: newIKEHeader(
+			s.SPIi, s.SPIr, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
+		),
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadNotify{
 				ProtocolID: ikev2.ProtoIKE,
@@ -214,14 +208,13 @@ func (s *Session) sendDeleteChildSA() error {
 		return errors.New("swu: session not established")
 	}
 	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi,
-		ResponderSPI: s.SPIr,
-		Version:      0x20,
-		ExchangeType: ikev2.ExchangeInformational,
-		Flags:        s.localIKEFlags(false),
-		MessageID:    s.nextMessageID(),
+		Header: newIKEHeader(
+			s.SPIi, s.SPIr, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
+		),
 		Payloads: []ikev2.Payload{
-			&ikev2.EncryptedPayloadDelete{ProtocolID: ikev2.ProtoESP, SPIs: spiBytes(s.espRemoteSPI)},
+			&ikev2.EncryptedPayloadDelete{
+				ProtocolID: ikev2.ProtoESP, SPISize: 4, NumSPIs: 1, SPIs: spiBytes(s.espRemoteSPI),
+			},
 		},
 	}
 	raw, err := s.encryptAndWrap(pkt)
@@ -237,14 +230,11 @@ func (s *Session) sendDeleteIKE() error {
 		return errors.New("swu: session not established")
 	}
 	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi,
-		ResponderSPI: s.SPIr,
-		Version:      0x20,
-		ExchangeType: ikev2.ExchangeInformational,
-		Flags:        s.localIKEFlags(false),
-		MessageID:    s.nextMessageID(),
+		Header: newIKEHeader(
+			s.SPIi, s.SPIr, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
+		),
 		Payloads: []ikev2.Payload{
-			&ikev2.EncryptedPayloadDelete{ProtocolID: ikev2.ProtoIKE, SPIs: spiBytes(0)},
+			&ikev2.EncryptedPayloadDelete{ProtocolID: ikev2.ProtoIKE},
 		},
 	}
 	raw, err := s.encryptAndWrap(pkt)
@@ -263,13 +253,8 @@ func spiBytes(spi uint32) []byte {
 // message ID.
 func (s *Session) sendEncryptedResponseWithMsgID(payloads []ikev2.Payload, msgID uint32) error {
 	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: s.SPIi,
-		ResponderSPI: s.SPIr,
-		Version:      0x20,
-		ExchangeType: ikev2.ExchangeInformational,
-		Flags:        0x20, // responder
-		MessageID:    msgID,
-		Payloads:     payloads,
+		Header:   newIKEHeader(s.SPIi, s.SPIr, ikev2.INFORMATIONAL, ikev2.FlagResponse, msgID),
+		Payloads: payloads,
 	}
 	raw, err := s.encryptAndWrapWithMsgID(pkt, msgID)
 	if err != nil {
@@ -362,7 +347,7 @@ func (s *Session) ikeDispatchLoop(transport ipsec.Transport, responses chan *ike
 				s.failEstablishedControl(fmt.Errorf("swu: decode established IKE packet: %w", err))
 				return
 			}
-			if pkt.Flags&ikeResponseFlag != 0 {
+			if packetIKEHeader(pkt).Flags&ikeResponseFlag != 0 {
 				select {
 				case responses <- pkt:
 				case <-s.ctx.Done():
@@ -399,13 +384,14 @@ func (s *Session) ikeRequestLoop(requests <-chan *ikev2.IKEPacket) {
 
 // handleIncomingIKE routes an inbound IKE message.
 func (s *Session) handleIncomingIKE(pkt *ikev2.IKEPacket) error {
-	switch pkt.ExchangeType {
+	header := packetIKEHeader(pkt)
+	switch header.ExchangeType {
 	case ikev2.ExchangeInformational:
 		return s.handleIncomingInformational(pkt)
 	case ikev2.ExchangeCreateChildSA:
 		return s.handleIncomingCreateChildSAParsed(pkt)
 	default:
-		return fmt.Errorf("swu: unsupported established IKE exchange %d", pkt.ExchangeType)
+		return fmt.Errorf("swu: unsupported established IKE exchange %d", header.ExchangeType)
 	}
 }
 
@@ -588,12 +574,12 @@ func selectorPayloadMatches(payload *ikev2.EncryptedPayloadTS, ip net.IP, protoc
 	if payload == nil {
 		return true
 	}
-	for _, selector := range payload.Selectors {
+	for _, selector := range payload.TrafficSelectors {
 		address := ip.To16()
-		if selector.Type == ikev2.TSIPv4Range {
+		if selector.TSType == ikev2.TS_IPV4_ADDR_RANGE {
 			address = ip.To4()
 		}
-		if len(address) != len(selector.StartAddr) || (selector.ProtocolID != 0 && selector.ProtocolID != protocol) {
+		if len(address) != len(selector.StartAddr) || (selector.IPProtocol != 0 && selector.IPProtocol != protocol) {
 			continue
 		}
 		if port < selector.StartPort || port > selector.EndPort {

@@ -29,7 +29,6 @@ func buildESPProposals(encr, integ uint16, spi ...uint32) []*ikev2.Proposal {
 	proposals := ikev2.CreateMultiProposalESP(encr, integ, 0, 0)
 	if len(spi) > 0 && spi[0] != 0 {
 		proposals[0].SPI = spiBytes(spi[0])
-		proposals[0].SPISize = 4
 	}
 	return proposals
 }
@@ -41,7 +40,6 @@ func buildESPProposalsForSession(session *Session, spi uint32) []*ikev2.Proposal
 	})
 	if spi != 0 {
 		proposals[0].SPI = spiBytes(spi)
-		proposals[0].SPISize = 4
 	}
 	return proposals
 }
@@ -49,8 +47,8 @@ func buildESPProposalsForSession(session *Session, spi uint32) []*ikev2.Proposal
 // parseEncr extracts the encryption transform ID from a proposal.
 func parseEncr(p *ikev2.Proposal) (uint16, error) {
 	for _, t := range p.Transforms {
-		if t.TransformType == byte(transformEncryption) {
-			return t.TransformID, nil
+		if t.Type == ikev2.TransformTypeEncr {
+			return uint16(t.ID), nil
 		}
 	}
 	return 0, errors.New("swu: proposal missing encryption transform")
@@ -59,8 +57,8 @@ func parseEncr(p *ikev2.Proposal) (uint16, error) {
 // parseInteg extracts the integrity transform ID from a proposal.
 func parseInteg(p *ikev2.Proposal) (uint16, error) {
 	for _, t := range p.Transforms {
-		if t.TransformType == byte(transformIntegrity) {
-			return t.TransformID, nil
+		if t.Type == ikev2.TransformTypeInteg {
+			return uint16(t.ID), nil
 		}
 	}
 	return 0, errors.New("swu: proposal missing integrity transform")
@@ -69,8 +67,8 @@ func parseInteg(p *ikev2.Proposal) (uint16, error) {
 // parsePRF extracts the PRF transform ID from a proposal.
 func parsePRF(p *ikev2.Proposal) (uint16, error) {
 	for _, t := range p.Transforms {
-		if t.TransformType == byte(transformPRF) {
-			return t.TransformID, nil
+		if t.Type == ikev2.TransformTypePRF {
+			return uint16(t.ID), nil
 		}
 	}
 	return 0, errors.New("swu: proposal missing PRF transform")
@@ -79,8 +77,8 @@ func parsePRF(p *ikev2.Proposal) (uint16, error) {
 // parseDH extracts the DH group transform ID from a proposal.
 func parseDH(p *ikev2.Proposal) (uint16, error) {
 	for _, t := range p.Transforms {
-		if t.TransformType == byte(transformDH) {
-			return t.TransformID, nil
+		if t.Type == ikev2.TransformTypeDH {
+			return uint16(t.ID), nil
 		}
 	}
 	return 0, errors.New("swu: proposal missing DH transform")
@@ -116,8 +114,8 @@ func parseESPProposal(p *ikev2.Proposal) (encr, integ uint16, err error) {
 
 func parseOptionalInteg(p *ikev2.Proposal) (uint16, error) {
 	for _, transform := range p.Transforms {
-		if transform.TransformType == byte(transformIntegrity) {
-			return transform.TransformID, nil
+		if transform.Type == ikev2.TransformTypeInteg {
+			return uint16(transform.ID), nil
 		}
 	}
 	return 0, nil
@@ -128,13 +126,13 @@ func normalizeProposal(p *ikev2.Proposal) *ikev2.Proposal {
 	if p == nil {
 		return nil
 	}
-	seen := make(map[byte]bool)
+	seen := make(map[ikev2.TransformType]bool)
 	var out []*ikev2.Transform
 	for _, t := range p.Transforms {
-		if t == nil || seen[t.TransformType] {
+		if t == nil || seen[t.Type] {
 			continue
 		}
-		seen[t.TransformType] = true
+		seen[t.Type] = true
 		out = append(out, t)
 	}
 	p.Transforms = out
@@ -149,14 +147,11 @@ func cloneProposal(p *ikev2.Proposal) *ikev2.Proposal {
 	cp := &ikev2.Proposal{
 		ProposalNum: p.ProposalNum,
 		ProtocolID:  p.ProtocolID,
-		SPISize:     p.SPISize,
 		SPI:         append([]byte{}, p.SPI...),
 	}
 	for _, t := range p.Transforms {
 		cp.Transforms = append(cp.Transforms, &ikev2.Transform{
-			TransformType: t.TransformType,
-			TransformID:   t.TransformID,
-			Attributes:    t.Attributes,
+			Type: t.Type, ID: t.ID, Attributes: t.Attributes,
 		})
 	}
 	return cp

@@ -67,7 +67,7 @@ func TestApplyEAPSuccessAdvancesToFinalAuth(t *testing.T) {
 	session.stage = stageEAP
 	session.responderAuthenticated = true
 	session.eapKeys = eapaka.Keys{MSK: bytes.Repeat([]byte{0x11}, eapaka.KeyLengthMSK)}
-	payload := &ikev2.EncryptedPayloadEAP{Data: (&eap.EAPPacket{
+	payload := &ikev2.EncryptedPayloadEAP{EAPMessage: (&eap.EAPPacket{
 		Code: eap.CodeSuccess, Identifier: 3,
 	}).Encode()}
 
@@ -87,8 +87,8 @@ func TestIKEProtectionRoundTripPreservesInnerPayloadTypes(t *testing.T) {
 		Version: 0x20, ExchangeType: ikev2.ExchangeIKEAuth,
 		Flags: 0x08, MessageID: 1,
 		Payloads: []ikev2.Payload{
-			&ikev2.EncryptedPayloadEAP{Data: []byte{eap.CodeSuccess, 1, 0, 4}},
-			&ikev2.EncryptedPayloadCP{ConfigType: ikev2.CPTypeRequest},
+			&ikev2.EncryptedPayloadEAP{EAPMessage: []byte{eap.CodeSuccess, 1, 0, 4}},
+			&ikev2.EncryptedPayloadCP{CFGType: ikev2.CFG_REQUEST},
 		},
 	}
 	raw, err := session.encryptAndWrap(packet)
@@ -114,7 +114,7 @@ func TestIKEProtectionRejectsTamperedPacket(t *testing.T) {
 	packet := &ikev2.IKEPacket{
 		Version: 0x20, ExchangeType: ikev2.ExchangeIKEAuth,
 		Flags: 0x08, MessageID: 1,
-		Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadAuth{Data: []byte("auth")}},
+		Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadAuth{AuthData: []byte("auth")}},
 	}
 	raw, err := session.encryptAndWrap(packet)
 	if err != nil {
@@ -138,17 +138,25 @@ func testIKEKeys() *IKEKeys {
 }
 
 func testIKEPacket(messageID uint32) []byte {
-	return (&ikev2.IKEPacket{
+	packet, err := (&ikev2.IKEPacket{
 		Version: 0x20, ExchangeType: ikev2.ExchangeIKEInit,
 		Flags: ikeInitiatorFlag, MessageID: messageID,
 	}).Encode()
+	if err != nil {
+		panic(err)
+	}
+	return packet
 }
 
 func testIKEResponse(messageID uint32) []byte {
-	return (&ikev2.IKEPacket{
+	packet, err := (&ikev2.IKEPacket{
 		Version: 0x20, ExchangeType: ikev2.ExchangeIKEInit,
 		Flags: ikeResponseFlag, MessageID: messageID,
 	}).Encode()
+	if err != nil {
+		panic(err)
+	}
+	return packet
 }
 
 type testIKETransport struct {
