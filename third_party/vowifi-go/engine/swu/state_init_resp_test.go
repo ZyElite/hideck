@@ -48,6 +48,15 @@ func buildInitResp(t *testing.T, initiator *Session, responderDH *crypto.DiffieH
 	return dec
 }
 
+func encodeInitPacket(t *testing.T, packet *ikev2.IKEPacket) []byte {
+	t.Helper()
+	raw, err := packet.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 func TestHandleIKESAInitRespRejectsWrongAESKeyLength(t *testing.T) {
 	init := NewSession(&Config{
 		IKEEncryption: crypto.EncrAESCBC, IKEEncryptionKeyBits: 256,
@@ -61,8 +70,8 @@ func TestHandleIKESAInitRespRejectsWrongAESKeyLength(t *testing.T) {
 	resp := buildInitResp(t, init, respDH)
 	sa := resp.Payloads[0].(*ikev2.EncryptedPayloadSA)
 	sa.Proposals[0].Transforms[0].Attributes[0].Val = 128
-	err := init.handleIKESAInitResp(resp)
-	if err == nil || !strings.Contains(err.Error(), "256-bit KEY_LENGTH") {
+	err := init.handleIKESAInitResp(encodeInitPacket(t, resp))
+	if err == nil || !strings.Contains(err.Error(), "unoffered") {
 		t.Fatalf("handleIKESAInitResp() error = %v", err)
 	}
 }
@@ -79,7 +88,7 @@ func TestHandleIKESAInitRespDerivesKeys(t *testing.T) {
 	}
 	resp := buildInitResp(t, init, respDH)
 
-	if err := init.handleIKESAInitResp(resp); err != nil {
+	if err := init.handleIKESAInitResp(encodeInitPacket(t, resp)); err != nil {
 		t.Fatalf("handleIKESAInitResp: %v", err)
 	}
 	if init.SPIr == ([8]byte{}) {
@@ -117,9 +126,9 @@ func TestHandleIKESAInitRespInvalidKE(t *testing.T) {
 	// INVALID_KE_PAYLOAD notify carrying DH group 21.
 	notify := &ikev2.EncryptedPayloadNotify{ProtocolID: ikev2.ProtoIKE, NotifyType: notifyInvalidKE, NotifyData: []byte{0, 21}}
 	resp := buildInitResp(t, init, respDH, notify)
-	err := init.handleIKESAInitResp(resp)
+	err := init.handleIKESAInitResp(encodeInitPacket(t, resp))
 	var keErr *ErrInvalidKEGroup
-	if !errors.As(err, &keErr) || keErr.Group != 21 {
+	if !errors.As(err, &keErr) || keErr.PreferredGroup != 21 {
 		t.Fatalf("err = %v, want ErrInvalidKEGroup{21}", err)
 	}
 }
@@ -131,16 +140,20 @@ func TestHandleIKESAInitRespCookie(t *testing.T) {
 	cookie := []byte{0xde, 0xad, 0xbe, 0xef}
 	notify := &ikev2.EncryptedPayloadNotify{ProtocolID: ikev2.ProtoIKE, NotifyType: notifyCookie, NotifyData: cookie}
 	resp := buildInitResp(t, init, respDH, notify)
-	if err := init.handleIKESAInitResp(resp); !errors.Is(err, errCookieRequired) {
+	if err := init.handleIKESAInitResp(encodeInitPacket(t, resp)); !errors.Is(err, errCookieRequired) {
 		t.Fatalf("err = %v, want errCookieRequired", err)
 	}
 	if !bytes.Equal(init.cookie, cookie) {
 		t.Error("cookie not stored from COOKIE notify")
 	}
 	// The next IKE_SA_INIT must carry the cookie.
-	pkt, err := init.buildIKESAInitPacket()
+	raw, err := init.buildIKESAInitPacket()
 	if err != nil {
 		t.Fatalf("resend build: %v", err)
+	}
+	pkt, err := ikev2.DecodePacket(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
 	var hasCookie bool
 	for _, pl := range pkt.Payloads {
@@ -160,9 +173,9 @@ func TestHandleIKESAInitRespRedirect(t *testing.T) {
 	// REDIRECTED_TO with an FQDN gateway.
 	notify := &ikev2.EncryptedPayloadNotify{ProtocolID: ikev2.ProtoIKE, NotifyType: notifyRedirectedTo, NotifyData: []byte{3, 'e', 'p', 'd', 'g', '.', 'x'}}
 	resp := buildInitResp(t, init, respDH, notify)
-	err := init.handleIKESAInitResp(resp)
+	err := init.handleIKESAInitResp(encodeInitPacket(t, resp))
 	var redir *RedirectError
-	if !errors.As(err, &redir) || redir.Target != "epdg.x" {
+	if !errors.As(err, &redir) || redir.NewAddr != "epdg.x" {
 		t.Fatalf("err = %v, want RedirectError{epdg.x}", err)
 	}
 }
@@ -181,11 +194,7 @@ func TestHandleIKESAInitRespMissingKE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dec, err := ikev2.DecodePacket(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := init.handleIKESAInitResp(dec); err == nil {
+	if err := init.handleIKESAInitResp(raw); err == nil {
 		t.Error("missing KE payload should error")
 	}
 }

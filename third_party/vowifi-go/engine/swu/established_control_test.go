@@ -46,7 +46,7 @@ func TestPeerChildSARekeyIsValidatedAndAnswered(t *testing.T) {
 				ProtocolID: ikev2.ProtoESP, SPISize: 4,
 				NotifyType: ikev2.NotifyTypeRekeySA, SPI: spiBytes(session.espRemoteSPI),
 			},
-			&ikev2.EncryptedPayloadSA{Proposals: buildESPProposals(session.espCipher, session.espInteg, peerSPI)},
+			&ikev2.EncryptedPayloadSA{Proposals: buildESPProposalsForSession(session, peerSPI)},
 			&ikev2.EncryptedPayloadNonce{Data: bytes.Repeat([]byte{0x83}, 32)},
 			retypeTrafficSelectorPayload(currentTSr, ikev2.PayloadTSi),
 			retypeTrafficSelectorPayload(currentTSi, ikev2.PayloadTSr),
@@ -135,7 +135,7 @@ func respondToChildSARekey(
 			Version: 0x20, ExchangeType: request.ExchangeType,
 			Flags: ikeResponseFlag, MessageID: request.MessageID,
 			Payloads: []ikev2.Payload{
-				&ikev2.EncryptedPayloadSA{Proposals: buildESPProposals(session.espCipher, session.espInteg, remoteSPI)},
+				&ikev2.EncryptedPayloadSA{Proposals: buildESPProposalsForSession(session, remoteSPI)},
 				&ikev2.EncryptedPayloadNonce{Data: append([]byte(nil), responderNonce...)},
 				cloneTrafficSelectorPayload(tsi),
 				cloneTrafficSelectorPayload(tsr),
@@ -206,7 +206,7 @@ func TestPeerIKESARekeyChangesOriginalInitiatorRole(t *testing.T) {
 	}
 	var peerSPI [8]byte
 	copy(peerSPI[:], []byte("peer-new"))
-	proposals := buildIKEProposals(session.encrAlg, session.prfAlg, session.integAlg, session.dhGroup)
+	proposals := buildIKEProposalsForSession(session)
 	proposals[0].SPI, proposals[0].SPISize = append([]byte(nil), peerSPI[:]...), 8
 	request := &ikev2.IKEPacket{
 		InitiatorSPI: session.SPIi, ResponderSPI: session.SPIr,
@@ -270,7 +270,7 @@ func respondToIKESARekey(t *testing.T, session *Session, transport *testIKETrans
 	_ = responderDH.GenerateKey()
 	var responderSPI [8]byte
 	copy(responderSPI[:], []byte("new-resp"))
-	proposals := buildIKEProposals(session.encrAlg, session.prfAlg, session.integAlg, session.dhGroup)
+	proposals := buildIKEProposalsForSession(session)
 	proposals[0].SPI, proposals[0].SPISize = append([]byte(nil), responderSPI[:]...), 8
 	response := &ikev2.IKEPacket{
 		InitiatorSPI: request.InitiatorSPI, ResponderSPI: request.ResponderSPI,

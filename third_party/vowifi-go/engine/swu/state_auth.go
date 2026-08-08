@@ -45,7 +45,7 @@ func (s *Session) currentEAPIdentity() string {
 	if s.cfg != nil {
 		imsi = s.cfg.IMSI
 	}
-	return buildNAI(imsi, s.cfg.MCC, s.cfg.MNC)
+	return buildNAI(imsi, s.cfg)
 }
 
 // buildCPRequestPayload builds the Configuration payload requesting an inner
@@ -257,7 +257,10 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	}
 
 	// SAi2 (ESP proposal) includes the initiator-selected inbound SPI.
-	espProposals := buildESPProposalsForSession(s, s.espLocalSPI)
+	espProposals, err := buildESPProposals(s.cfg, spiBytes(s.espLocalSPI))
+	if err != nil {
+		return nil, err
+	}
 	sa2 := &ikev2.EncryptedPayloadSA{Proposals: espProposals}
 
 	// TSi / TSr.

@@ -1,115 +1,161 @@
 package swu
 
 import (
-	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha1"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
+	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
-// IKEv2 notify types used during IKE_SA_INIT (RFC 7296 §3.10.1, §2.6, RFC 5685).
 const (
-	notifyInvalidKE      uint16 = 35    // INVALID_KE_PAYLOAD
-	notifyCookie         uint16 = 16390 // COOKIE
-	notifyNATSource      uint16 = 16388 // NAT_DETECTION_SOURCE_IP
-	notifyNATDestination uint16 = 16389 // NAT_DETECTION_DESTINATION_IP
-	notifyRedirectedTo   uint16 = 16407 // REDIRECTED_TO
+	notifyInvalidKE      uint16 = 17
+	notifyCookie         uint16 = 16390
+	notifyNATSource      uint16 = 16388
+	notifyNATDestination uint16 = 16389
+	notifyRedirectedTo   uint16 = 16407
+	notifyFragmentation  uint16 = 16430
 )
 
-// errCookieRequired signals that the responder returned a COOKIE notify and the
-// IKE_SA_INIT must be resent with that cookie.
-var errCookieRequired = errors.New("ike: responder requires cookie")
+var errCookieRequired = ErrCookieRequired
 
-// ParseRedirectData parses the data of an IKEv2 REDIRECTED_TO notify
-// (RFC 5685 §3). The first byte is the gateway identifier type:
-//
-//	1 = IPv4 address (4 bytes)   → "<a.b.c.d>"
-//	2 = IPv6 address (16 bytes)  → "<ipv6>"
-//	3 = FQDN                      → the domain name
-//
-// It returns the gateway as a string.
 func ParseRedirectData(data []byte) (string, error) {
-	if len(data) == 0 {
+	if len(data) < 1 {
 		return "", errors.New("empty redirect data")
 	}
-	typ := data[0]
-	body := data[1:]
-	switch typ {
-	case 1: // IPv4
-		if len(data) != 5 {
-			return "", fmt.Errorf("bad IPv4 redirect length %d", len(data)-1)
+	gatewayType, gatewayData := data[0], data[1:]
+	switch gatewayType {
+	case 1:
+		if len(gatewayData) != net.IPv4len {
+			return "", fmt.Errorf("invalid IPv4 length: %d", len(gatewayData))
 		}
-		return net.IP(body).String(), nil
-	case 2: // IPv6
-		if len(data) != 17 {
-			return "", fmt.Errorf("bad IPv6 redirect length %d", len(data)-1)
+		return net.IP(gatewayData).String(), nil
+	case 2:
+		if len(gatewayData) != net.IPv6len {
+			return "", fmt.Errorf("invalid IPv6 length: %d", len(gatewayData))
 		}
-		return net.IP(body).String(), nil
-	case 3: // FQDN
-		return string(body), nil
+		return net.IP(gatewayData).String(), nil
+	case 3:
+		return string(gatewayData), nil
 	default:
-		return "", fmt.Errorf("unsupported redirect gateway type %d", typ)
+		return "", fmt.Errorf("unknown gateway identity type: %d", gatewayType)
 	}
 }
 
-// buildIKEProposals builds the SAi proposal list for IKE_SA_INIT from the
-// configured IKE algorithm transform IDs.
-func buildIKEProposals(encr, prf, integ, dh uint16) []*ikev2.Proposal {
-	return ikev2.CreateMultiProposalIKE(encr, prf, integ, dh)
+func detectOutboundIPv4(remoteIP net.IP, remotePort uint16) (net.IP, error) {
+	if remoteIP == nil {
+		return nil, errors.New("remote ip is nil")
+	}
+	remote := &net.UDPAddr{IP: remoteIP, Port: int(remotePort)}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	connection, err := (&net.Dialer{}).DialContext(ctx, "udp", remote.String())
+	if err != nil {
+		return nil, err
+	}
+	defer connection.Close()
+	local, ok := connection.LocalAddr().(*net.UDPAddr)
+	if ok && local.IP.To4() != nil {
+		return local.IP.To4(), nil
+	}
+	return nil, errors.New("cannot detect outbound ip")
 }
 
-func buildIKEProposalsForSession(session *Session) []*ikev2.Proposal {
-	return ikev2.CreateIKEProposals(ikev2.IKEProposalAlgorithms{
-		Encryption: session.encrAlg, EncryptionKeyBits: session.encKeyBits,
-		PRF: session.prfAlg, Integrity: session.integAlg, DH: session.dhGroup,
-	})
+func (s *Session) sendIKESAInit() error {
+	data, err := s.buildIKESAInitPacket()
+	if err != nil {
+		return err
+	}
+	return s.sendIKE(data)
 }
 
-// buildIKESAInitPacket constructs the IKE_SA_INIT request: SAi | KEi | Ni.
-// The initiator SPI is randomly generated, the DH keypair is generated on the
-// session's Diffie-Hellman instance, and the initiator nonce is stored for
-// later key derivation.
-func (s *Session) buildIKESAInitPacket() (*ikev2.IKEPacket, error) {
-	if s.dh == nil {
-		return nil, errors.New("no Diffie-Hellman instance configured")
+func (s *Session) buildIKESAInitPacket() ([]byte, error) {
+	packet, err := s.buildIKESAInitPacketObject()
+	if err != nil {
+		return nil, err
 	}
-	if len(s.cookie) == 0 {
-		if err := s.generateIKEInitMaterial(); err != nil {
-			return nil, err
-		}
-	} else if s.SPIi == ([8]byte{}) || len(s.Ni) == 0 || len(s.dh.PublicKeyBytes()) == 0 {
-		return nil, errors.New("cannot retry COOKIE without original IKE_SA_INIT material")
+	data, err := packet.Encode()
+	if err != nil {
+		return nil, err
 	}
+	return data, nil
+}
 
-	payloads := make([]ikev2.Payload, 0, 6)
-	if len(s.cookie) > 0 {
+func (s *Session) buildIKESAInitPacketObject() (*ikev2.IKEPacket, error) {
+	proposals, profiles, _, err := buildIKEProposals(s.cfg, nil, s.ikeProfileOffset)
+	if err != nil {
+		return nil, err
+	}
+	s.offeredIKEProfiles = append([]string(nil), profiles...)
+	s.effectiveCipherPolicy = buildAlgorithmPlan(s.cfg).policyLabel()
+	if err := s.prepareIKEInitMaterial(proposals); err != nil {
+		return nil, err
+	}
+	s.offeredIKEProposals = cloneProposals(proposals)
+
+	payloads := make([]ikev2.Payload, 0, 7)
+	if s.sendCookie && len(s.cookie) > 0 {
 		payloads = append(payloads, &ikev2.EncryptedPayloadNotify{
-			NotifyType: notifyCookie,
+			ProtocolID: 0, NotifyType: notifyCookie,
 			NotifyData: append([]byte(nil), s.cookie...),
 		})
 	}
 	payloads = append(payloads,
-		&ikev2.EncryptedPayloadSA{Proposals: buildIKEProposalsForSession(s)},
-		&ikev2.EncryptedPayloadKE{DHGroup: ikev2.AlgorithmType(s.dhGroup), KEData: s.dh.PublicKeyBytes()},
+		&ikev2.EncryptedPayloadSA{Proposals: proposals},
+		&ikev2.EncryptedPayloadKE{
+			DHGroup: ikev2.AlgorithmType(s.dhGroup), KEData: s.dh.PublicKeyBytes(),
+		},
 		&ikev2.EncryptedPayloadNonce{NonceData: append([]byte(nil), s.Ni...)},
 	)
-
-	pkt := &ikev2.IKEPacket{
+	payloads = append(payloads, s.ikeInitNetworkNotifies()...)
+	payloads = append(payloads, &ikev2.EncryptedPayloadNotify{NotifyType: notifyFragmentation})
+	return &ikev2.IKEPacket{
 		Header:   newIKEHeader(s.SPIi, [8]byte{}, ikev2.IKE_SA_INIT, ikev2.FlagInitiator, 0),
 		Payloads: payloads,
+	}, nil
+}
+
+func (s *Session) prepareIKEInitMaterial(proposals []*ikev2.Proposal) error {
+	preferredGroup := uint16(firstDHGroupFromProposals(proposals))
+	if s.dh == nil {
+		dh, err := crypto.NewDiffieHellman(preferredGroup)
+		if err != nil {
+			return err
+		}
+		s.dh, s.dhGroup = dh, preferredGroup
 	}
-	if s.socket != nil {
-		pkt.Payloads = append(pkt.Payloads,
-			natDetectionNotify(notifyNATSource, s.SPIi, [8]byte{}, s.socket.LocalIP(), s.socket.LocalPort()),
-			natDetectionNotify(notifyNATDestination, s.SPIi, [8]byte{}, s.socket.RemoteIP(), uint16(s.socket.RemotePort())),
-		)
+	ensureProposalDHGroup(proposals, ikev2.AlgorithmType(s.dhGroup))
+	prioritizeDHGroup(proposals, ikev2.AlgorithmType(s.dhGroup))
+	if s.SPIi != ([8]byte{}) && len(s.Ni) > 0 && len(s.dh.PublicKeyBytes()) > 0 {
+		return nil
 	}
-	return pkt, nil
+	if s.sendCookie {
+		return errors.New("cannot retry COOKIE without original IKE_SA_INIT material")
+	}
+	return s.generateIKEInitMaterial()
+}
+
+func ensureProposalDHGroup(proposals []*ikev2.Proposal, group ikev2.AlgorithmType) {
+	for _, proposal := range proposals {
+		for _, transform := range proposal.Transforms {
+			if transform != nil && transform.Type == ikev2.TransformTypeDH && transform.ID == group {
+				return
+			}
+		}
+	}
+	for _, proposal := range proposals {
+		for _, transform := range proposal.Transforms {
+			if transform != nil && transform.Type == ikev2.TransformTypeDH {
+				transform.ID = group
+			}
+		}
+	}
 }
 
 func (s *Session) generateIKEInitMaterial() error {
@@ -119,240 +165,117 @@ func (s *Session) generateIKEInitMaterial() error {
 	if _, err := rand.Read(s.SPIi[:]); err != nil {
 		return fmt.Errorf("generate SPIi: %w", err)
 	}
-	nonceLen := s.nonceLen
-	if nonceLen <= 0 {
-		nonceLen = 32
+	nonceLength := s.nonceLen
+	if nonceLength <= 0 {
+		nonceLength = 32
 	}
-	s.Ni = make([]byte, nonceLen)
+	s.Ni = make([]byte, nonceLength)
 	if _, err := rand.Read(s.Ni); err != nil {
 		return fmt.Errorf("generate nonce: %w", err)
 	}
 	return nil
 }
 
-// handleIKESAInitResp processes an IKE_SA_INIT response. On a normal response
-// it records the responder SPI/nonce, computes the DH shared secret and derives
-// the IKE SA keys. Special responses (COOKIE, INVALID_KE_PAYLOAD, REDIRECT) are
-// surfaced as sentinel/error values for the caller.
-func (s *Session) handleIKESAInitResp(resp *ikev2.IKEPacket) error {
-	if resp == nil {
-		return errors.New("nil IKE_SA_INIT response")
+func (s *Session) ikeInitNetworkNotifies() []ikev2.Payload {
+	if s.socket == nil {
+		return nil
 	}
-	header := packetIKEHeader(resp)
-	if header.ExchangeType != ikev2.IKE_SA_INIT {
-		return fmt.Errorf("unexpected exchange type %d in IKE_SA_INIT response", header.ExchangeType)
+	return []ikev2.Payload{
+		natDetectionNotify(notifyNATSource, s.SPIi, [8]byte{}, s.socket.LocalIP(), s.socket.LocalPort()),
+		natDetectionNotify(notifyNATDestination, s.SPIi, [8]byte{}, s.socket.RemoteIP(), uint16(s.socket.RemotePort())),
 	}
+}
 
-	// First pass: handle control notifies (COOKIE / INVALID_KE / REDIRECT)
-	// before doing any DH work.
-	var nATSource, nATDest []byte
-	var selectedSA *ikev2.EncryptedPayloadSA
-	var kePayload ikev2.Payload
-	var nr []byte
-	for _, pl := range resp.Payloads {
-		switch pl.Type() {
-		case ikev2.PayloadSA:
-			value, ok := pl.(*ikev2.EncryptedPayloadSA)
-			if !ok || selectedSA != nil {
-				return errors.New("invalid or duplicate IKE_SA_INIT SA payload")
-			}
-			selectedSA = value
-		case ikev2.PayloadNotify:
-			nt, data, ok := parseNotifyPayload(pl)
-			if !ok {
-				return errors.New("invalid IKE_SA_INIT Notify payload")
-			}
-			switch nt {
-			case notifyInvalidKE:
-				if len(data) >= 2 {
-					return &ErrInvalidKEGroup{Group: binary.BigEndian.Uint16(data[:2])}
-				}
-				return &ErrInvalidKEGroup{}
-			case notifyCookie:
-				s.cookie = append([]byte{}, data...)
-				return errCookieRequired
-			case notifyRedirectedTo:
-				target, err := ParseRedirectData(data)
-				if err != nil {
-					return fmt.Errorf("redirect: %w", err)
-				}
-				return &RedirectError{Target: target}
-			case notifyNATSource:
-				nATSource = append([]byte{}, data...)
-			case notifyNATDestination:
-				nATDest = append([]byte{}, data...)
-			}
-		case ikev2.PayloadKE:
-			if kePayload != nil {
-				return errors.New("duplicate IKE_SA_INIT KE payload")
-			}
-			kePayload = pl
-		case ikev2.PayloadNi:
-			value, ok := pl.(*ikev2.EncryptedPayloadNonce)
-			if !ok || len(value.NonceData) == 0 || len(nr) != 0 {
-				return errors.New("invalid or duplicate IKE_SA_INIT nonce payload")
-			}
-			nr = append([]byte{}, value.NonceData...)
+func prioritizeDHGroup(proposals []*ikev2.Proposal, preferred ikev2.AlgorithmType) {
+	for _, proposal := range proposals {
+		if proposal == nil {
+			continue
 		}
+		others := make([]*ikev2.Transform, 0, len(proposal.Transforms))
+		preferredDH := make([]*ikev2.Transform, 0, 1)
+		remainingDH := make([]*ikev2.Transform, 0, len(proposal.Transforms))
+		for _, transform := range proposal.Transforms {
+			if transform == nil || transform.Type != ikev2.TransformTypeDH {
+				others = append(others, transform)
+				continue
+			}
+			if transform.ID == preferred {
+				preferredDH = append(preferredDH, transform)
+			} else {
+				remainingDH = append(remainingDH, transform)
+			}
+		}
+		proposal.Transforms = append(others, preferredDH...)
+		proposal.Transforms = append(proposal.Transforms, remainingDH...)
 	}
-	if err := s.validateIKESAInitSelection(selectedSA); err != nil {
-		return err
-	}
+}
 
-	if kePayload == nil {
-		return errors.New("IKE_SA_INIT response missing KE payload")
+func cloneProposals(proposals []*ikev2.Proposal) []*ikev2.Proposal {
+	result := make([]*ikev2.Proposal, 0, len(proposals))
+	for _, proposal := range proposals {
+		result = append(result, cloneProposal(proposal))
 	}
-	if len(nr) == 0 {
-		return errors.New("IKE_SA_INIT response missing nonce")
-	}
+	return result
+}
 
-	group, peerKey, err := parseKEPayload(kePayload)
+func (s *Session) advanceIKEProfileOffset() bool {
+	profileCount := len(s.cfg.IKEProposals)
+	if profileCount == 0 {
+		profileCount = len(ikev2.CreateMultiProposalIKE([]byte(nil)))
+	}
+	if s.ikeProfileOffset+1 >= profileCount {
+		return false
+	}
+	s.ikeProfileOffset++
+	s.negotiationFallbackCount++
+	return true
+}
+
+func (s *Session) resetIKEInitMaterial() {
+	s.SPIr = [8]byte{}
+	s.nr = nil
+	s.ikeKeys = nil
+	s.dhSharedSecret = nil
+}
+
+func (s *Session) selectRequestedDHGroup(groupError *ErrInvalidKEGroup) error {
+	group := groupError.PreferredGroup
+	if group == 0 {
+		group = groupError.Group
+	}
+	dh, err := crypto.NewDiffieHellman(group)
 	if err != nil {
-		return fmt.Errorf("parse KEr: %w", err)
+		return fmt.Errorf("服务器期望的 DH Group %d 不支持: %v", group, err)
 	}
-	if group != s.dhGroup {
-		return fmt.Errorf("KEr DH group %d does not match KEi group %d", group, s.dhGroup)
-	}
-
-	shared, err := s.dh.ComputeSharedSecret(peerKey)
-	if err != nil {
-		return fmt.Errorf("compute DH shared secret: %w", err)
-	}
-
-	// Record the responder SPI and nonce.
-	s.SPIr = ikeSPIBytes(header.SPIr)
-	s.setNr(nr)
-	s.dhSharedSecret = shared
-
-	// Derive the IKE SA keys (RFC 7296 §2.14-2.21).
-	if err := s.GenerateIKESAKeys(nr); err != nil {
-		return fmt.Errorf("derive IKE SA keys: %w", err)
-	}
-
-	// Stash the NAT-D hashes for later NAT detection (the comparison requires
-	// the local/remote transport addresses, wired up with the data plane).
-	s.natSourceHash = nATSource
-	s.natDestHash = nATDest
-	s.applyNATTraversal(nATSource, nATDest)
+	s.dh, s.dhGroup = dh, group
+	s.SPIi, s.SPIr = [8]byte{}, [8]byte{}
+	s.Ni, s.nr, s.ikeKeys, s.dhSharedSecret = nil, nil, nil, nil
+	s.cookie, s.sendCookie = nil, false
 	return nil
 }
 
-func (s *Session) validateIKESAInitSelection(sa *ikev2.EncryptedPayloadSA) error {
-	if sa == nil || len(sa.Proposals) != 1 {
-		return errors.New("IKE_SA_INIT response missing one selected SA proposal")
-	}
-	proposal := sa.Proposals[0]
-	if proposal == nil || proposal.ProposalNum != 1 || proposal.ProtocolID != ikev2.ProtoIKE || len(proposal.SPI) != 0 {
-		return errors.New("IKE_SA_INIT response selected an invalid IKE proposal")
-	}
-	want := map[ikev2.TransformType]ikev2.AlgorithmType{
-		ikev2.TransformTypeEncr:  ikev2.AlgorithmType(s.encrAlg),
-		ikev2.TransformTypePRF:   ikev2.AlgorithmType(s.prfAlg),
-		ikev2.TransformTypeInteg: ikev2.AlgorithmType(s.integAlg),
-		ikev2.TransformTypeDH:    ikev2.AlgorithmType(s.dhGroup),
-	}
-	seen := make(map[ikev2.TransformType]bool, len(want))
-	for _, transform := range proposal.Transforms {
-		if transform == nil {
-			return errors.New("IKE_SA_INIT response selected a nil transform")
-		}
-		expected, ok := want[transform.Type]
-		if !ok || seen[transform.Type] || expected != transform.ID {
-			return fmt.Errorf("IKE_SA_INIT response selected unexpected transform")
-		}
-		if transform.Type == ikev2.TransformTypeEncr {
-			if err := validateEncryptionKeyLength(transform, s.encKeyBits); err != nil {
-				return err
-			}
-		} else if len(transform.Attributes) != 0 {
-			return errors.New("IKE_SA_INIT non-encryption transform has attributes")
-		}
-		seen[transform.Type] = true
-	}
-	if len(seen) != len(want) {
-		return errors.New("IKE_SA_INIT response selected an incomplete IKE proposal")
-	}
-	return nil
-}
-
-func natDetectionNotify(notifyType uint16, spiI, spiR [8]byte, ip net.IP, port uint16) *ikev2.EncryptedPayloadNotify {
+func natDetectionNotify(
+	notifyType uint16,
+	initiatorSPI, responderSPI [8]byte,
+	ip net.IP,
+	port uint16,
+) *ikev2.EncryptedPayloadNotify {
 	return &ikev2.EncryptedPayloadNotify{
 		NotifyType: notifyType,
-		NotifyData: natDetectionHash(spiI, spiR, ip, port),
+		NotifyData: natDetectionHash(initiatorSPI, responderSPI, ip, port),
 	}
 }
 
-func natDetectionHash(spiI, spiR [8]byte, ip net.IP, port uint16) []byte {
+func natDetectionHash(initiatorSPI, responderSPI [8]byte, ip net.IP, port uint16) []byte {
 	data := make([]byte, 0, 16+net.IPv6len+2)
-	data = append(data, spiI[:]...)
-	data = append(data, spiR[:]...)
+	data = append(data, initiatorSPI[:]...)
+	data = append(data, responderSPI[:]...)
 	if ipv4 := ip.To4(); ipv4 != nil {
 		data = append(data, ipv4...)
 	} else if ipv6 := ip.To16(); ipv6 != nil {
 		data = append(data, ipv6...)
 	}
 	data = binary.BigEndian.AppendUint16(data, port)
-	sum := sha1.Sum(data)
-	return sum[:]
-}
-
-func (s *Session) applyNATTraversal(sourceHash, destinationHash []byte) {
-	if s.socket == nil || len(sourceHash) == 0 || len(destinationHash) == 0 {
-		return
-	}
-	expectedSource := natDetectionHash(s.SPIi, s.SPIr, s.socket.RemoteIP(), uint16(s.socket.RemotePort()))
-	expectedDestination := natDetectionHash(s.SPIi, s.SPIr, s.socket.LocalIP(), s.socket.LocalPort())
-	if !bytes.Equal(sourceHash, expectedSource) || !bytes.Equal(destinationHash, expectedDestination) {
-		s.socket.SetRemotePort(4500)
-		s.remotePort = 4500
-	}
-}
-
-// parseKERaw extracts the DH group and key bytes from a raw KE payload body
-// (group 2B | reserved 2B | key data).
-func parseKERaw(p *ikev2.RawPayload) (uint16, []byte, error) {
-	if len(p.Data) < 4 {
-		return 0, nil, errors.New("KE payload too short")
-	}
-	group := binary.BigEndian.Uint16(p.Data[0:2])
-	key := p.Data[4:]
-	return group, key, nil
-}
-
-func parseKEPayload(payload ikev2.Payload) (uint16, []byte, error) {
-	switch value := payload.(type) {
-	case *ikev2.EncryptedPayloadKE:
-		return uint16(value.DHGroup), value.KEData, nil
-	case *ikev2.RawPayload:
-		return parseKERaw(value)
-	default:
-		return 0, nil, fmt.Errorf("unexpected KE payload type %T", payload)
-	}
-}
-
-// parseNotifyRaw extracts the notify type and data from a raw Notify payload
-// body (proto 1B | spiSize 1B | type 2B | [spi] | data).
-func parseNotifyRaw(p *ikev2.RawPayload) (uint16, []byte) {
-	if len(p.Data) < 4 {
-		return 0, nil
-	}
-	spiSize := int(p.Data[1])
-	nt := binary.BigEndian.Uint16(p.Data[2:4])
-	off := 4 + spiSize
-	if off > len(p.Data) {
-		return nt, nil
-	}
-	return nt, p.Data[off:]
-}
-
-func parseNotifyPayload(payload ikev2.Payload) (uint16, []byte, bool) {
-	switch value := payload.(type) {
-	case *ikev2.EncryptedPayloadNotify:
-		return value.NotifyType, value.NotifyData, true
-	case *ikev2.RawPayload:
-		notifyType, data := parseNotifyRaw(value)
-		return notifyType, data, true
-	default:
-		return 0, nil, false
-	}
+	digest := sha1.Sum(data)
+	return digest[:]
 }

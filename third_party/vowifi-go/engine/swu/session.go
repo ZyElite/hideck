@@ -30,11 +30,17 @@ type Config struct {
 	DNSServer string
 	// EPDGAddr is the ePDG host (FQDN or IP) and optional port.
 	EPDGAddr string
+	// EpDGAddr/EpDGPort are the original endpoint fields.
+	EpDGAddr string
+	EpDGPort uint16
 	// APN is carried as IDr in the first IKE_AUTH request (3GPP TS 24.302).
 	// Empty requests the operator's default APN.
 	APN string
 	// LocalIP is the local address to bind the IKE/ESP socket to.
 	LocalIP net.IP
+	// LocalAddr/LocalPort retain the original bind-address API.
+	LocalAddr string
+	LocalPort uint16
 	// ProxyAddr and Proxy route IKE/ESP through a SOCKS5 UDP associate.
 	ProxyAddr string
 	Proxy     *ipsec.Socks5Config
@@ -54,6 +60,13 @@ type Config struct {
 	OnFastReauthUpdate func(reauthID string, mk, kAut, kEncr []byte)
 	// AlgorithmPolicy selects the IKE/ESP algorithm offer policy.
 	AlgorithmPolicy string
+	// IKEProposals and ESPProposals are ordered legacy proposal strings. Empty
+	// selects the original multi-proposal compatibility set.
+	IKEProposals []string
+	ESPProposals []string
+	// Legacy encryption is disabled unless explicitly enabled and allowed.
+	EnableLegacyCiphers  bool
+	AllowedLegacyCiphers []string
 	// IKEEncryption / IKEPRF / IKEIntegrity / IKEDH are the IKE algorithm
 	// transform IDs (RFC 7296 §3.3.2). Zero selects the policy default.
 	IKEEncryption        uint16
@@ -250,6 +263,15 @@ type Session struct {
 
 	// --- wireshark ---
 	debug *WiresharkDebugger
+
+	// --- IKE_SA_INIT proposal negotiation ---
+	ikeProfileOffset         int
+	offeredIKEProfiles       []string
+	offeredIKEProposals      []*ikev2.Proposal
+	effectiveCipherPolicy    string
+	negotiationFallbackCount int
+	sendCookie               bool
+	fragmentationSupported   bool
 }
 
 // NewSession builds a SWu session from the configuration.
@@ -351,9 +373,15 @@ func (s *Session) Connect(ctx context.Context) error {
 		}
 		var redir *RedirectError
 		if errors.As(err, &redir) {
-			if s.cfg != nil && s.cfg.OnRedirect != nil {
-				s.cfg.OnRedirect(redir.Target)
+			target := redir.NewAddr
+			if target == "" {
+				target = redir.Target
 			}
+			if s.cfg != nil && s.cfg.OnRedirect != nil {
+				s.cfg.OnRedirect(target)
+			}
+			s.cfg.EPDGAddr, s.cfg.EpDGAddr = target, target
+			s.resetForRedirect()
 			lastErr = err
 			continue
 		}
@@ -367,12 +395,20 @@ func (s *Session) Connect(ctx context.Context) error {
 	return errors.New("swu: connect failed")
 }
 
+func (s *Session) resetForRedirect() {
+	s.SPIi, s.SPIr = [8]byte{}, [8]byte{}
+	s.Ni, s.nr, s.cookie = nil, nil, nil
+	s.dh, s.ikeKeys, s.dhSharedSecret = nil, nil, nil
+	s.sendCookie = false
+	s.ikeProfileOffset = 0
+}
+
 // connectOnce runs a single IKE_SA_INIT → IKE_AUTH → CREATE_CHILD_SA attempt.
 func (s *Session) connectOnce(ctx context.Context) (err error) {
 	if s.cfg == nil {
 		return errors.New("swu: no configuration")
 	}
-	if s.cfg.EPDGAddr == "" {
+	if configuredEPDGAddress(s.cfg) == "" {
 		return errors.New("swu: no ePDG address configured")
 	}
 	defer func() {
@@ -430,14 +466,10 @@ func (s *Session) stopTransport() {
 // runIKESAInit performs the IKE_SA_INIT exchange with COOKIE / INVALID_KE /
 // REDIRECT handling.
 func (s *Session) runIKESAInit(ctx context.Context) error {
-	for attempt := 0; attempt < 3; attempt++ {
-		pkt, err := s.buildIKESAInitPacket()
+	for {
+		raw, err := s.buildIKESAInitPacket()
 		if err != nil {
 			return err
-		}
-		raw, err := pkt.Encode()
-		if err != nil {
-			return fmt.Errorf("encode IKE_SA_INIT: %w", err)
 		}
 		if err := s.sendIKE(raw); err != nil {
 			return fmt.Errorf("send IKE_SA_INIT: %w", err)
@@ -446,7 +478,11 @@ func (s *Session) runIKESAInit(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("receive IKE_SA_INIT response: %w", err)
 		}
-		err = s.handleIKESAInitResp(resp)
+		responseData, err := resp.Encode()
+		if err != nil {
+			return fmt.Errorf("encode received IKE_SA_INIT response: %w", err)
+		}
+		err = s.handleIKESAInitResp(responseData)
 		if err == nil {
 			s.mu.Lock()
 			s.ikeSAInitRequest = append([]byte(nil), s.lastIKERequest...)
@@ -457,23 +493,37 @@ func (s *Session) runIKESAInit(ctx context.Context) error {
 		if errors.Is(err, errCookieRequired) {
 			continue // resend with the cookie
 		}
+		var negotiationError *NegotiationError
+		if errors.As(err, &negotiationError) && negotiationError.Retryable && s.advanceIKEProfileOffset() {
+			s.resetIKEInitMaterial()
+			continue
+		}
+		var groupError *ErrInvalidKEGroup
+		if errors.As(err, &groupError) {
+			if err := s.selectRequestedDHGroup(groupError); err != nil {
+				return err
+			}
+			continue
+		}
 		return err
 	}
-	return errors.New("swu: IKE_SA_INIT failed after retries")
 }
 
 // buildTransport resolves the ePDG and opens the IKE/ESP socket.
 func (s *Session) buildTransport() error {
-	host, port := s.cfg.EPDGAddr, "500"
-	if h, p, err := net.SplitHostPort(s.cfg.EPDGAddr); err == nil {
+	endpoint := configuredEPDGAddress(s.cfg)
+	host, port := endpoint, "500"
+	if h, p, err := net.SplitHostPort(endpoint); err == nil {
 		host, port = h, p
+	} else if s.cfg.EpDGPort != 0 {
+		port = fmt.Sprintf("%d", s.cfg.EpDGPort)
 	}
 	if strings.TrimSpace(s.cfg.ProxyAddr) != "" {
 		return s.buildProxyTransport(host, port)
 	}
-	localIP := s.cfg.LocalIP
+	localIP := configuredLocalIP(s.cfg)
 	if localIP == nil {
-		ip, err := detectOutboundIPv4(host, port)
+		ip, err := detectOutboundIPv4ByHost(host, port)
 		if err != nil {
 			return fmt.Errorf("detect outbound IP: %w", err)
 		}
@@ -519,23 +569,32 @@ func (s *Session) buildProxyTransport(host, port string) error {
 	return nil
 }
 
-// detectOutboundIPv4 finds the local IPv4 address used to reach the ePDG.
-func detectOutboundIPv4(host, port string) (net.IP, error) {
+func configuredEPDGAddress(cfg *Config) string {
+	if cfg.EPDGAddr != "" {
+		return cfg.EPDGAddr
+	}
+	return cfg.EpDGAddr
+}
+
+func configuredLocalIP(cfg *Config) net.IP {
+	if cfg.LocalIP != nil {
+		return cfg.LocalIP
+	}
+	return net.ParseIP(cfg.LocalAddr)
+}
+
+// detectOutboundIPv4ByHost resolves a configured hostname before invoking the
+// original IP-based outbound-route detector.
+func detectOutboundIPv4ByHost(host, port string) (net.IP, error) {
 	remoteIP, err := detectOutboundRoute(host)
 	if err != nil {
 		return nil, err
 	}
-	remote := net.JoinHostPort(remoteIP.String(), port)
-	conn, err := net.Dial("udp", remote)
+	remotePort, err := net.LookupPort("udp", port)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
-	addr, ok := conn.LocalAddr().(*net.UDPAddr)
-	if !ok {
-		return nil, errors.New("swu: no UDP local address")
-	}
-	return addr.IP, nil
+	return detectOutboundIPv4(remoteIP, uint16(remotePort))
 }
 
 // detectOutboundRoute resolves the ePDG host to an IP (used by buildTransport).

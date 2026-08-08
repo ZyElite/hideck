@@ -500,11 +500,6 @@ func (s *Session) fillSAKeys() error {
 	return nil
 }
 
-// handleCookie processes a COOKIE notify.
-func (s *Session) handleCookie() error {
-	return errors.New("swu: COOKIE handling not wired")
-}
-
 // performSessionResumption attempts IKE session resumption.
 func (s *Session) performSessionResumption() error {
 	return errors.New("swu: session resumption not wired")

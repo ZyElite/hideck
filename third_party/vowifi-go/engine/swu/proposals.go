@@ -1,209 +1,218 @@
 package swu
 
 import (
-	"errors"
 	"fmt"
+	"strings"
 
-	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
-// IKEv2 transform IDs (RFC 7296 §3.3.2) used by the proposal helpers.
-const (
-	transformEncryption uint16 = 1
-	transformPRF        uint16 = 2
-	transformIntegrity  uint16 = 3
-	transformDH         uint16 = 4
-	transformESN        uint16 = 5
-)
+func configuredIKEProposalSummary(configured []string) []string {
+	if len(configured) == 0 {
+		return []string{"default-multi-proposal"}
+	}
+	return append([]string(nil), configured...)
+}
 
-// buildESPProposals builds the ESP proposal list for the CHILD_SA (RFC 7296
-// §3.3.2). Zero transform IDs select the default (AES-CBC + HMAC-SHA1).
-func buildESPProposals(encr, integ uint16, spi ...uint32) []*ikev2.Proposal {
-	if encr == 0 {
-		encr = 12 // ENCR_AES_CBC
+func configuredESPProposalSummary(configured []string) []string {
+	if len(configured) == 0 {
+		return []string{"default-multi-proposal"}
 	}
-	if integ == 0 && encr != crypto.EncrAESGCM16 {
-		integ = 2 // AUTH_HMAC_SHA1_96
+	return append([]string(nil), configured...)
+}
+
+func buildIKEProposals(
+	cfg *Config,
+	spi []byte,
+	profileOffset int,
+) ([]*ikev2.Proposal, []string, []string, error) {
+	plan := buildAlgorithmPlan(cfg)
+	source, err := configuredIKEProposals(cfg, spi, plan)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	proposals := ikev2.CreateMultiProposalESP(encr, integ, 0, 0)
-	if len(spi) > 0 && spi[0] != 0 {
-		proposals[0].SPI = spiBytes(spi[0])
+	if profileOffset > 0 && profileOffset < len(source) {
+		source = source[profileOffset:]
 	}
+	if len(source) == 0 {
+		return nil, nil, nil, fmt.Errorf("无可用 IKE 提议(profile_offset=%d)", profileOffset)
+	}
+	proposals, profiles := filterIKEProposals(source)
+	if len(proposals) == 0 {
+		return nil, nil, nil, fmt.Errorf("IKE 提议经过能力过滤后为空")
+	}
+	return proposals, profiles, plan.effectiveAlgSetLabel(), nil
+}
+
+func configuredIKEProposals(cfg *Config, spi []byte, plan algorithmPlan) ([]*ikev2.Proposal, error) {
+	if len(cfg.IKEProposals) == 0 {
+		if hasExplicitIKEAlgorithms(cfg) {
+			return explicitIKEProposals(cfg, spi), nil
+		}
+		return ikev2.CreateMultiProposalIKE(spi), nil
+	}
+	result := make([]*ikev2.Proposal, 0, len(cfg.IKEProposals))
+	for index, raw := range cfg.IKEProposals {
+		proposal, err := parseIKEProposal(raw, uint8(index+1), spi, plan)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, proposal)
+	}
+	return result, nil
+}
+
+func buildESPProposals(cfg *Config, spi []byte) ([]*ikev2.Proposal, error) {
+	plan := buildAlgorithmPlan(cfg)
+	source, err := configuredESPProposals(cfg, spi, plan)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*ikev2.Proposal, 0, len(source))
+	for _, proposal := range source {
+		if filtered, ok := filterESPProposal(proposal); ok {
+			result = append(result, filtered)
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("ESP 提议经过能力过滤后为空")
+	}
+	return result, nil
+}
+
+func configuredESPProposals(cfg *Config, spi []byte, plan algorithmPlan) ([]*ikev2.Proposal, error) {
+	if len(cfg.ESPProposals) == 0 {
+		if hasExplicitESPAlgorithms(cfg) {
+			return explicitESPProposals(cfg, spi), nil
+		}
+		return ikev2.CreateMultiProposalESP(spi), nil
+	}
+	result := make([]*ikev2.Proposal, 0, len(cfg.ESPProposals))
+	for index, raw := range cfg.ESPProposals {
+		proposal, err := parseESPProposal(raw, uint8(index+1), spi, plan)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, proposal)
+	}
+	return result, nil
+}
+
+func hasExplicitIKEAlgorithms(cfg *Config) bool {
+	return cfg.IKEEncryption != 0 || cfg.IKEPRF != 0 || cfg.IKEIntegrity != 0 || cfg.IKEDH != 0
+}
+
+func hasExplicitESPAlgorithms(cfg *Config) bool {
+	return cfg.ESPEncryption != 0 || cfg.ESPIntegrity != 0
+}
+
+func explicitIKEProposals(cfg *Config, spi []byte) []*ikev2.Proposal {
+	plan := buildExplicitAlgorithmPlan(cfg)
+	proposals := ikev2.CreateIKEProposals(ikev2.IKEProposalAlgorithms{
+		Encryption: plan.IKEEncryption, EncryptionKeyBits: plan.IKEEncryptionKeyBits,
+		PRF: plan.IKEPRF, Integrity: plan.IKEIntegrity, DH: plan.IKEDH,
+	})
+	proposals[0].SPI = append([]byte(nil), spi...)
 	return proposals
 }
 
+func explicitESPProposals(cfg *Config, spi []byte) []*ikev2.Proposal {
+	plan := buildExplicitAlgorithmPlan(cfg)
+	proposals := ikev2.CreateESPProposals(ikev2.ESPProposalAlgorithms{
+		Encryption: plan.ESPEncryption, EncryptionKeyBits: plan.ESPEncryptionKeyBits,
+		Integrity: plan.ESPIntegrity,
+	})
+	proposals[0].SPI = append([]byte(nil), spi...)
+	return proposals
+}
+
+func summarizeIKEProposal(proposal *ikev2.Proposal, index int) string {
+	algorithms := firstProposalAlgorithmNames(proposal)
+	return fmt.Sprintf("p%d:%s-%s-%s-%s", index, algorithms.encryption,
+		algorithms.integrity, algorithms.prf, algorithms.dh)
+}
+
+type proposalAlgorithmNames struct {
+	encryption string
+	integrity  string
+	prf        string
+	dh         string
+}
+
+func firstProposalAlgorithmNames(proposal *ikev2.Proposal) proposalAlgorithmNames {
+	result := proposalAlgorithmNames{}
+	for _, transform := range proposal.Transforms {
+		switch transform.Type {
+		case ikev2.TransformTypeEncr:
+			if result.encryption == "" {
+				result.encryption = ikev2.EncrToString(uint16(transform.ID))
+			}
+		case ikev2.TransformTypeInteg:
+			if result.integrity == "" {
+				result.integrity = ikev2.IntegToString(uint16(transform.ID))
+			}
+		case ikev2.TransformTypePRF:
+			if result.prf == "" {
+				result.prf = ikev2.PRFToString(uint16(transform.ID))
+			}
+		case ikev2.TransformTypeDH:
+			if result.dh == "" {
+				result.dh = ikev2.DHToString(uint16(transform.ID))
+			}
+		}
+	}
+	result.fillDefaults()
+	return result
+}
+
+func (names *proposalAlgorithmNames) fillDefaults() {
+	if names.encryption == "" {
+		names.encryption = "UNKNOWN"
+	}
+	if names.integrity == "" {
+		names.integrity = "AEAD"
+	}
+	if names.prf == "" {
+		names.prf = "UNKNOWN"
+	}
+	if names.dh == "" {
+		names.dh = "UNKNOWN"
+	}
+	names.encryption = strings.ToLower(names.encryption)
+	names.integrity = strings.ToLower(names.integrity)
+	names.prf = strings.ToLower(names.prf)
+	names.dh = strings.ToLower(names.dh)
+}
+
+func firstDHGroupFromProposals(proposals []*ikev2.Proposal) ikev2.AlgorithmType {
+	for _, proposal := range proposals {
+		for _, transform := range proposal.Transforms {
+			if transform.Type == ikev2.TransformTypeDH {
+				return transform.ID
+			}
+		}
+	}
+	return ikev2.MODP_2048_bit
+}
+
+// buildIKEProposalsForSession builds the single already-negotiated proposal
+// used by IKE SA rekey. Initial negotiation uses buildIKEProposals instead.
+func buildIKEProposalsForSession(session *Session) []*ikev2.Proposal {
+	return ikev2.CreateIKEProposals(ikev2.IKEProposalAlgorithms{
+		Encryption: session.encrAlg, EncryptionKeyBits: session.encKeyBits,
+		PRF: session.prfAlg, Integrity: session.integAlg, DH: session.dhGroup,
+	})
+}
+
+// buildESPProposalsForSession builds the single already-negotiated proposal
+// used by CHILD_SA rekey responses.
 func buildESPProposalsForSession(session *Session, spi uint32) []*ikev2.Proposal {
 	proposals := ikev2.CreateESPProposals(ikev2.ESPProposalAlgorithms{
 		Encryption: session.espCipher, EncryptionKeyBits: session.espEncKeyBits,
-		Integrity: session.espInteg, ESN: 0,
+		Integrity: session.espInteg,
 	})
 	if spi != 0 {
 		proposals[0].SPI = spiBytes(spi)
 	}
 	return proposals
-}
-
-// parseEncr extracts the encryption transform ID from a proposal.
-func parseEncr(p *ikev2.Proposal) (uint16, error) {
-	for _, t := range p.Transforms {
-		if t.Type == ikev2.TransformTypeEncr {
-			return uint16(t.ID), nil
-		}
-	}
-	return 0, errors.New("swu: proposal missing encryption transform")
-}
-
-// parseInteg extracts the integrity transform ID from a proposal.
-func parseInteg(p *ikev2.Proposal) (uint16, error) {
-	for _, t := range p.Transforms {
-		if t.Type == ikev2.TransformTypeInteg {
-			return uint16(t.ID), nil
-		}
-	}
-	return 0, errors.New("swu: proposal missing integrity transform")
-}
-
-// parsePRF extracts the PRF transform ID from a proposal.
-func parsePRF(p *ikev2.Proposal) (uint16, error) {
-	for _, t := range p.Transforms {
-		if t.Type == ikev2.TransformTypePRF {
-			return uint16(t.ID), nil
-		}
-	}
-	return 0, errors.New("swu: proposal missing PRF transform")
-}
-
-// parseDH extracts the DH group transform ID from a proposal.
-func parseDH(p *ikev2.Proposal) (uint16, error) {
-	for _, t := range p.Transforms {
-		if t.Type == ikev2.TransformTypeDH {
-			return uint16(t.ID), nil
-		}
-	}
-	return 0, errors.New("swu: proposal missing DH transform")
-}
-
-// parseIKEProposal parses an IKE proposal into the four algorithm IDs.
-func parseIKEProposal(p *ikev2.Proposal) (encr, prf, integ, dh uint16, err error) {
-	encr, err = parseEncr(p)
-	if err != nil {
-		return
-	}
-	prf, err = parsePRF(p)
-	if err != nil {
-		return
-	}
-	integ, err = parseInteg(p)
-	if err != nil {
-		return
-	}
-	dh, err = parseDH(p)
-	return
-}
-
-// parseESPProposal parses an ESP proposal into encryption/integrity IDs.
-func parseESPProposal(p *ikev2.Proposal) (encr, integ uint16, err error) {
-	encr, err = parseEncr(p)
-	if err != nil {
-		return
-	}
-	integ, err = parseOptionalInteg(p)
-	return
-}
-
-func parseOptionalInteg(p *ikev2.Proposal) (uint16, error) {
-	for _, transform := range p.Transforms {
-		if transform.Type == ikev2.TransformTypeInteg {
-			return uint16(transform.ID), nil
-		}
-	}
-	return 0, nil
-}
-
-// normalizeProposal normalises a proposal's transform list (dedupe, order).
-func normalizeProposal(p *ikev2.Proposal) *ikev2.Proposal {
-	if p == nil {
-		return nil
-	}
-	seen := make(map[ikev2.TransformType]bool)
-	var out []*ikev2.Transform
-	for _, t := range p.Transforms {
-		if t == nil || seen[t.Type] {
-			continue
-		}
-		seen[t.Type] = true
-		out = append(out, t)
-	}
-	p.Transforms = out
-	return p
-}
-
-// cloneProposal returns a deep copy of a proposal.
-func cloneProposal(p *ikev2.Proposal) *ikev2.Proposal {
-	if p == nil {
-		return nil
-	}
-	cp := &ikev2.Proposal{
-		ProposalNum: p.ProposalNum,
-		ProtocolID:  p.ProtocolID,
-		SPI:         append([]byte{}, p.SPI...),
-	}
-	for _, t := range p.Transforms {
-		cp.Transforms = append(cp.Transforms, &ikev2.Transform{
-			Type: t.Type, ID: t.ID, Attributes: t.Attributes,
-		})
-	}
-	return cp
-}
-
-// filterIKEProposals keeps only the proposals whose algorithms are supported.
-func filterIKEProposals(proposals []*ikev2.Proposal) []*ikev2.Proposal {
-	var out []*ikev2.Proposal
-	for _, p := range proposals {
-		if filterIKEProposal(p) {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-// filterIKEProposal reports whether an IKE proposal is supported.
-func filterIKEProposal(p *ikev2.Proposal) bool {
-	_, _, _, _, err := parseIKEProposal(p)
-	return err == nil
-}
-
-// filterESPProposal reports whether an ESP proposal is supported.
-func filterESPProposal(p *ikev2.Proposal) bool {
-	_, _, err := parseESPProposal(p)
-	return err == nil
-}
-
-// summarizeIKEProposal returns a short human-readable summary of a proposal.
-func summarizeIKEProposal(p *ikev2.Proposal) string {
-	if p == nil {
-		return "<nil>"
-	}
-	encr, prf, integ, dh, err := parseIKEProposal(p)
-	if err != nil {
-		return fmt.Sprintf("proposal %d (unparsed)", p.ProposalNum)
-	}
-	return fmt.Sprintf("proposal %d: encr=%d prf=%d integ=%d dh=%d", p.ProposalNum, encr, prf, integ, dh)
-}
-
-// prioritizeDHGroup reorders the DH group preference list so the preferred
-// group comes first (recovered from the decompiled prioritizeDHGroup).
-func prioritizeDHGroup(groups []uint16, preferred uint16) []uint16 {
-	if preferred == 0 {
-		return groups
-	}
-	out := make([]uint16, 0, len(groups))
-	out = append(out, preferred)
-	for _, g := range groups {
-		if g != preferred {
-			out = append(out, g)
-		}
-	}
-	return out
 }

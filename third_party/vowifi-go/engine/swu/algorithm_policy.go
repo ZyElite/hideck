@@ -1,149 +1,180 @@
 package swu
 
 import (
-	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
+	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
-// Algorithm policy names recovered from the decompiled
-// normalizeAlgorithmPolicy: the client offers a "strict" (strong algorithms
-// only), "legacy_prefer" (prefer legacy such as 3DES) or default policy.
 const (
-	policyStrict       = "strict"
-	policyLegacyPrefer = "legacy_prefer"
-	policyPrefer       = "prefer"
+	AlgorithmPolicyStrict       = "strict"
+	AlgorithmPolicyBalanced     = "balanced"
+	AlgorithmPolicyLegacyPrefer = "legacy_prefer"
+
+	ErrClassAlgorithmCapabilityMismatch = "algorithm_capability_mismatch"
+	ErrClassAlgorithmPolicyRejected     = "algorithm_policy_rejected"
+	ErrClassDriverUnsupported           = "driver_unsupported"
 )
 
-// normalizeAlgorithmPolicy lower-cases and trims the policy string and maps it
-// to one of the canonical policy names. Unknown values map to "prefer".
-func normalizeAlgorithmPolicy(policy string) string {
-	p := strings.TrimSpace(strings.ToLower(policy))
-	switch p {
-	case policyStrict:
-		return policyStrict
-	case policyLegacyPrefer:
-		return policyLegacyPrefer
-	default:
-		return policyPrefer
+type algorithmPlan struct {
+	policy        string
+	allowLegacy   bool
+	allowedLegacy map[ikev2.AlgorithmType]bool
+}
+
+func buildAlgorithmPlan(cfg *Config) algorithmPlan {
+	policy := normalizeAlgorithmPolicy(cfg.AlgorithmPolicy)
+	allowLegacy := cfg.EnableLegacyCiphers && policy != AlgorithmPolicyStrict
+	allowedLegacy := make(map[ikev2.AlgorithmType]bool)
+	if allowLegacy {
+		populateAllowedLegacy(allowedLegacy, cfg.AllowedLegacyCiphers)
+	}
+	return algorithmPlan{policy: policy, allowLegacy: allowLegacy, allowedLegacy: allowedLegacy}
+}
+
+func populateAllowedLegacy(allowed map[ikev2.AlgorithmType]bool, configured []string) {
+	if len(configured) == 0 {
+		allowed[ikev2.ENCR_3DES] = true
+		allowed[ikev2.ENCR_DES] = true
+		return
+	}
+	for _, raw := range configured {
+		switch normalizeLegacyName(raw) {
+		case "3des":
+			allowed[ikev2.ENCR_3DES] = true
+		case "des":
+			allowed[ikev2.ENCR_DES] = true
+		}
 	}
 }
 
-// normalizeLegacyName normalises a legacy algorithm name: it lower-cases,
-// strips separators and maps "triple-des" / "3des" variants to "3des".
-func normalizeLegacyName(name string) string {
-	s := strings.ToLower(strings.TrimSpace(name))
-	s = strings.ReplaceAll(s, "-", "")
-	s = strings.ReplaceAll(s, " ", "")
-	if s == "3des" || s == "tripledes" {
+func normalizeAlgorithmPolicy(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case AlgorithmPolicyStrict:
+		return AlgorithmPolicyStrict
+	case AlgorithmPolicyLegacyPrefer:
+		return AlgorithmPolicyLegacyPrefer
+	default:
+		return AlgorithmPolicyBalanced
+	}
+}
+
+func normalizeLegacyName(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.ReplaceAll(value, "_", "")
+	value = strings.ReplaceAll(value, "-", "")
+	if value == "tripledes" || value == "3des" {
 		return "3des"
 	}
-	return s
+	return value
 }
 
-// AlgorithmPlan is the resolved IKE/ESP algorithm offer set for a session.
+func (p algorithmPlan) allowsEncryption(algorithm ikev2.AlgorithmType) bool {
+	if !isLegacyEncryption(algorithm) {
+		return true
+	}
+	if p.policy == AlgorithmPolicyStrict {
+		return false
+	}
+	return p.allowLegacy && p.allowedLegacy[algorithm]
+}
+
+func (p algorithmPlan) policyLabel() string {
+	if p.policy == AlgorithmPolicyStrict {
+		return AlgorithmPolicyStrict
+	}
+	if p.allowLegacy && p.policy == AlgorithmPolicyLegacyPrefer {
+		return AlgorithmPolicyLegacyPrefer
+	}
+	if p.allowLegacy {
+		return "balanced+legacy"
+	}
+	return AlgorithmPolicyBalanced
+}
+
+func (p algorithmPlan) effectiveAlgSetLabel() []string {
+	result := []string{"aes_cbc", "aes_gcm", "sha1/sha2", "prf_sha1/sha2", "dh_modp/ecp"}
+	if p.allowsEncryption(ikev2.ENCR_3DES) {
+		result = append(result, "3des")
+	}
+	if p.allowsEncryption(ikev2.ENCR_DES) {
+		result = append(result, "des")
+	}
+	sort.Strings(result)
+	return result
+}
+
+func isLegacyEncryption(algorithm ikev2.AlgorithmType) bool {
+	return algorithm == ikev2.ENCR_DES || algorithm == ikev2.ENCR_3DES
+}
+
+func isAEADEncryption(algorithm ikev2.AlgorithmType) bool {
+	switch algorithm {
+	case ikev2.ENCR_AES_GCM_8, ikev2.ENCR_AES_GCM_12, ikev2.ENCR_AES_GCM_16,
+		ikev2.ENCR_AES_CCM_8, ikev2.ENCR_AES_CCM_12, ikev2.ENCR_AES_CCM_16:
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedByCryptoFactory(encryptionID uint16, keyLengthBits int) bool {
+	_, err := crypto.GetEncrypterWithKeyLen(encryptionID, keyLengthBits)
+	return err == nil
+}
+
+// AlgorithmPlan retains the explicit transform-ID API added by this module.
+// Legacy proposal policy is resolved separately by buildAlgorithmPlan.
 type AlgorithmPlan struct {
-	// IKE SA transforms.
 	IKEEncryption        uint16
 	IKEEncryptionKeyBits uint16
 	IKEPRF               uint16
 	IKEIntegrity         uint16
 	IKEDH                uint16
-	// ESP transforms.
 	ESPEncryption        uint16
 	ESPEncryptionKeyBits uint16
 	ESPIntegrity         uint16
 }
 
-// buildAlgorithmPlan resolves the algorithm plan from the configured policy
-// (recovered from the decompiled buildAlgorithmPlan). The "strict" policy
-// offers AES-GCM + SHA-256 + MODP-2048; "legacy_prefer" offers 3DES + SHA-1;
-// the default "prefer" offers AES-CBC + SHA-1 + MODP-2048.
-func buildAlgorithmPlan(policy string, cfg *Config) *AlgorithmPlan {
-	plan := &AlgorithmPlan{}
-	switch normalizeAlgorithmPolicy(policy) {
-	case policyStrict:
-		plan.IKEEncryption = crypto.EncrAESGCM16
-		plan.IKEPRF = 5       // PRF_HMAC_SHA2_256
-		plan.IKEIntegrity = 0 // AEAD (no separate integrity)
-		plan.IKEDH = 14       // MODP-2048
-		plan.ESPEncryption = crypto.EncrAESGCM16
-		plan.ESPIntegrity = 0
-	case policyLegacyPrefer:
-		plan.IKEEncryption = 3 // ENCR_3DES
-		plan.IKEPRF = 2        // PRF_HMAC_SHA1
-		plan.IKEIntegrity = 2  // AUTH_HMAC_SHA1_96
-		plan.IKEDH = 2         // MODP-1024
-		plan.ESPEncryption = 3 // ENCR_3DES
-		plan.ESPIntegrity = 2
-	default: // prefer
-		plan.IKEEncryption = 12 // ENCR_AES_CBC
-		plan.IKEPRF = 2         // PRF_HMAC_SHA1
-		plan.IKEIntegrity = 2   // AUTH_HMAC_SHA1_96
-		plan.IKEDH = 14         // MODP-2048
-		plan.ESPEncryption = 12 // ENCR_AES_CBC
-		plan.ESPIntegrity = 2
+func buildExplicitAlgorithmPlan(cfg *Config) *AlgorithmPlan {
+	plan := &AlgorithmPlan{
+		IKEEncryption: crypto.EncrAESCBC, IKEEncryptionKeyBits: 128,
+		IKEPRF: uint16(ikev2.PRF_HMAC_SHA1), IKEIntegrity: uint16(ikev2.AUTH_HMAC_SHA1_96),
+		IKEDH: uint16(ikev2.MODP_2048_bit), ESPEncryption: crypto.EncrAESCBC,
+		ESPEncryptionKeyBits: 128, ESPIntegrity: uint16(ikev2.AUTH_HMAC_SHA1_96),
 	}
-	// Explicit configuration overrides the policy.
-	if cfg != nil {
-		if cfg.IKEEncryption != 0 {
-			plan.IKEEncryption = cfg.IKEEncryption
-		}
-		if cfg.IKEPRF != 0 {
-			plan.IKEPRF = cfg.IKEPRF
-		}
-		if cfg.IKEIntegrity != 0 {
-			plan.IKEIntegrity = cfg.IKEIntegrity
-		}
-		if cfg.IKEDH != 0 {
-			plan.IKEDH = cfg.IKEDH
-		}
-		if cfg.ESPEncryption != 0 {
-			plan.ESPEncryption = cfg.ESPEncryption
-		}
-		if cfg.ESPIntegrity != 0 {
-			plan.ESPIntegrity = cfg.ESPIntegrity
-		}
+	if cfg == nil {
+		return plan
 	}
-	plan.IKEEncryptionKeyBits = defaultEncryptionKeyBits(plan.IKEEncryption)
-	plan.ESPEncryptionKeyBits = defaultEncryptionKeyBits(plan.ESPEncryption)
-	if cfg != nil && cfg.IKEEncryptionKeyBits != 0 {
-		plan.IKEEncryptionKeyBits = cfg.IKEEncryptionKeyBits
-	}
-	if cfg != nil && cfg.ESPEncryptionKeyBits != 0 {
-		plan.ESPEncryptionKeyBits = cfg.ESPEncryptionKeyBits
-	}
+	applyExplicitAlgorithmOverrides(plan, cfg)
 	return plan
 }
 
-func defaultEncryptionKeyBits(transformID uint16) uint16 {
-	if transformID == 12 || transformID == 18 || transformID == 19 || transformID == 20 {
-		return 128
+func applyExplicitAlgorithmOverrides(plan *AlgorithmPlan, cfg *Config) {
+	if cfg.IKEEncryption != 0 {
+		plan.IKEEncryption = cfg.IKEEncryption
 	}
-	return 0
-}
-
-// buildNAI builds the EAP-AKA Network Access Identifier (3GPP TS 23.003) from
-// an IMSI. The MCC (3 digits) and MNC (2-3 digits) are taken from the IMSI
-// unless mccOverride/mncOverride are non-empty. A 2-digit MNC is zero-padded
-// to 3 digits.
-//
-//	NAI = "0<IMSI>@nai.epc.mnc<MNC>.mcc<MCC>.3gppnetwork.org"
-func buildNAI(imsi string, mccOverride, mncOverride string) string {
-	if len(imsi) < 5 {
-		return ""
+	if cfg.IKEEncryptionKeyBits != 0 {
+		plan.IKEEncryptionKeyBits = cfg.IKEEncryptionKeyBits
 	}
-	mcc := imsi[:3]
-	mnc := imsi[3:5]
-	if mccOverride != "" {
-		mcc = mccOverride
+	if cfg.IKEPRF != 0 {
+		plan.IKEPRF = cfg.IKEPRF
 	}
-	if mncOverride != "" {
-		mnc = mncOverride
+	if cfg.IKEIntegrity != 0 {
+		plan.IKEIntegrity = cfg.IKEIntegrity
 	}
-	if len(mnc) == 2 {
-		mnc = "0" + mnc
+	if cfg.IKEDH != 0 {
+		plan.IKEDH = cfg.IKEDH
 	}
-	return fmt.Sprintf("0%s@nai.epc.mnc%s.mcc%s.3gppnetwork.org", imsi, mnc, mcc)
+	if cfg.ESPEncryption != 0 {
+		plan.ESPEncryption = cfg.ESPEncryption
+	}
+	if cfg.ESPEncryptionKeyBits != 0 {
+		plan.ESPEncryptionKeyBits = cfg.ESPEncryptionKeyBits
+	}
+	if cfg.ESPIntegrity != 0 {
+		plan.ESPIntegrity = cfg.ESPIntegrity
+	}
 }

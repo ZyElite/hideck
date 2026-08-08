@@ -215,12 +215,12 @@ func TestComputeEAPInitiatorAuthUsesSignedOctetsAndMSK(t *testing.T) {
 		t.Fatalf("computeEAPInitiatorAuth: %v", err)
 	}
 	idType, idData := session.currentIKEIdentity()
-	macedID := hmacSHA1(session.ikeKeys.SK_pi, identityPayloadBody(idType, idData))
+	macedID := session.prf.Compute(session.ikeKeys.SK_pi, identityPayloadBody(idType, idData))
 	signed := append([]byte(nil), session.ikeSAInitRequest...)
 	signed = append(signed, session.nr...)
 	signed = append(signed, macedID...)
-	sharedKey := hmacSHA1(session.eapKeys.MSK, []byte(ikev2KeyPad))
-	want := hmacSHA1(sharedKey, signed)
+	sharedKey := session.prf.Compute(session.eapKeys.MSK, []byte(ikev2KeyPad))
+	want := session.prf.Compute(sharedKey, signed)
 	if auth.AuthMethod != ikev2.AuthMethodSharedKey || !bytes.Equal(auth.AuthData, want) {
 		t.Fatalf("AUTH method=%d data=%x, want method=%d data=%x", auth.AuthMethod, auth.AuthData, ikev2.AuthMethodSharedKey, want)
 	}

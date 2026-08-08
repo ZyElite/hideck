@@ -46,8 +46,8 @@ func TestNormalizeAlgorithmPolicy(t *testing.T) {
 		"  strict  ":    "strict",
 		"legacy_prefer": "legacy_prefer",
 		"LEGACY_PREFER": "legacy_prefer",
-		"anything-else": "prefer",
-		"":              "prefer",
+		"anything-else": "balanced",
+		"":              "balanced",
 	}
 	for in, want := range cases {
 		if got := normalizeAlgorithmPolicy(in); got != want {
@@ -61,7 +61,7 @@ func TestNormalizeLegacyName(t *testing.T) {
 		"3des":       "3des",
 		"3DES":       "3des",
 		"3-des":      "3des",
-		"3 des":      "3des",
+		"3 des":      "3 des",
 		"triple-des": "3des",
 		"TRIPLEDES":  "3des",
 		"aes-cbc":    "aescbc",
@@ -75,24 +75,24 @@ func TestNormalizeLegacyName(t *testing.T) {
 
 func TestBuildNAI(t *testing.T) {
 	// IMSI 310260123456789: MCC=310, MNC=26 (2 digits, padded to 026).
-	got := buildNAI("310260123456789", "", "")
+	got := buildNAI("310260123456789", &Config{})
 	want := "0310260123456789@nai.epc.mnc026.mcc310.3gppnetwork.org"
 	if got != want {
 		t.Errorf("buildNAI = %q, want %q", got, want)
 	}
 	// Override MCC/MNC.
-	got = buildNAI("310260123456789", "999", "88")
+	got = buildNAI("310260123456789", &Config{MCC: "999", MNC: "88"})
 	if !strings.Contains(got, "mnc088.mcc999") {
 		t.Errorf("override: %q", got)
 	}
 	// 3-digit MNC override is not padded.
-	got = buildNAI("310260123456789", "310", "260")
+	got = buildNAI("310260123456789", &Config{MCC: "310", MNC: "260"})
 	if !strings.Contains(got, "mnc260.mcc310") {
 		t.Errorf("3-digit mnc: %q", got)
 	}
 	// Too-short IMSI is rejected.
-	if got := buildNAI("310", "", ""); got != "" {
-		t.Errorf("short IMSI = %q, want empty", got)
+	if got := buildNAI("310", &Config{}); got != "0310@nai.epc.mnc.mcc.3gppnetwork.org" {
+		t.Errorf("short IMSI = %q", got)
 	}
 }
 

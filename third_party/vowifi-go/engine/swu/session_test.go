@@ -14,63 +14,62 @@ import (
 )
 
 func TestBuildAlgorithmPlan(t *testing.T) {
-	cases := map[string]struct {
-		policy string
-		encr   uint16
-		prf    uint16
-	}{
-		"strict":        {policy: "strict", encr: enginecrypto.EncrAESGCM16, prf: 5},
-		"legacy_prefer": {policy: "legacy_prefer", encr: 3, prf: 2},
-		"prefer":        {policy: "prefer", encr: 12, prf: 2},
-		"":              {policy: "", encr: 12, prf: 2},
+	strict := buildAlgorithmPlan(&Config{AlgorithmPolicy: "strict", EnableLegacyCiphers: true})
+	if strict.policyLabel() != AlgorithmPolicyStrict || strict.allowsEncryption(ikev2.ENCR_3DES) {
+		t.Fatalf("strict plan = %+v", strict)
 	}
-	for name, tc := range cases {
-		plan := buildAlgorithmPlan(tc.policy, nil)
-		if plan.IKEEncryption != tc.encr || plan.IKEPRF != tc.prf {
-			t.Errorf("%s: plan = encr %d prf %d, want encr %d prf %d",
-				name, plan.IKEEncryption, plan.IKEPRF, tc.encr, tc.prf)
-		}
+	legacy := buildAlgorithmPlan(&Config{
+		AlgorithmPolicy: AlgorithmPolicyLegacyPrefer, EnableLegacyCiphers: true,
+		AllowedLegacyCiphers: []string{"3-des"},
+	})
+	if !legacy.allowsEncryption(ikev2.ENCR_3DES) || legacy.allowsEncryption(ikev2.ENCR_DES) {
+		t.Fatalf("legacy plan = %+v", legacy)
 	}
-	// Explicit config overrides the policy.
+
 	cfg := &Config{IKEEncryption: 7}
-	plan := buildAlgorithmPlan("strict", cfg)
+	plan := buildExplicitAlgorithmPlan(cfg)
 	if plan.IKEEncryption != 7 {
 		t.Errorf("override: encr = %d, want 7", plan.IKEEncryption)
 	}
 }
 
 func TestBuildESPProposals(t *testing.T) {
-	proposals := buildESPProposals(0, 0)
-	if len(proposals) != 1 {
-		t.Fatalf("proposals = %d, want 1", len(proposals))
-	}
-	encr, integ, err := parseESPProposal(proposals[0])
+	proposals, err := buildESPProposals(&Config{}, nil)
 	if err != nil {
-		t.Fatalf("parseESPProposal: %v", err)
+		t.Fatal(err)
 	}
-	if encr != 12 || integ != 2 {
-		t.Errorf("esp = encr %d integ %d, want 12/2", encr, integ)
+	if len(proposals) != 4 {
+		t.Fatalf("proposals = %d, want 4", len(proposals))
+	}
+	selection, err := firstESPAlgorithmSelection(proposals[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	encr, integ := selection.encryption, selection.integrity
+	if encr != enginecrypto.EncrAESGCM16 || integ != 0 || selection.keyBits != 256 {
+		t.Errorf("esp = encr %d/%d integ %d, want GCM256/NONE", encr, selection.keyBits, integ)
 	}
 }
 
 func TestParseIKEProposal(t *testing.T) {
-	proposals := buildIKEProposals(12, 2, 2, 14)
-	encr, prf, integ, dh, err := parseIKEProposal(proposals[0])
+	proposals := explicitIKEProposals(&Config{IKEEncryption: 12, IKEPRF: 2, IKEIntegrity: 2, IKEDH: 14}, nil)
+	selection, err := firstIKEAlgorithmSelection(proposals[0])
 	if err != nil {
-		t.Fatalf("parseIKEProposal: %v", err)
+		t.Fatalf("firstIKEAlgorithmSelection: %v", err)
 	}
+	encr, prf, integ, dh := selection.encryption, selection.prf, selection.integrity, selection.dh
 	if encr != 12 || prf != 2 || integ != 2 || dh != 14 {
 		t.Errorf("ike = %d/%d/%d/%d, want 12/2/2/14", encr, prf, integ, dh)
 	}
 }
 
 func TestPrioritizeDHGroup(t *testing.T) {
-	got := prioritizeDHGroup([]uint16{2, 14, 19}, 14)
-	if got[0] != 14 {
-		t.Errorf("first = %d, want 14", got[0])
-	}
-	if len(got) != 3 {
-		t.Errorf("len = %d, want 3", len(got))
+	proposal := ikev2.NewProposal(1, ikev2.ProtoIKE, nil)
+	proposal.AddTransform(ikev2.TransformTypeDH, ikev2.MODP_1024_bit)
+	proposal.AddTransform(ikev2.TransformTypeDH, ikev2.MODP_2048_bit)
+	prioritizeDHGroup([]*ikev2.Proposal{proposal}, ikev2.MODP_2048_bit)
+	if proposal.Transforms[0].ID != ikev2.MODP_2048_bit {
+		t.Errorf("first = %d, want 14", proposal.Transforms[0].ID)
 	}
 }
 
@@ -97,7 +96,7 @@ func TestSpoofAppleIMEI(t *testing.T) {
 }
 
 func TestBuildNAIWithOverride(t *testing.T) {
-	got := buildNAI("310260123456789", "310", "26")
+	got := buildNAI("310260123456789", &Config{MCC: "310", MNC: "26"})
 	if got != "0310260123456789@nai.epc.mnc026.mcc310.3gppnetwork.org" {
 		t.Errorf("NAI = %q", got)
 	}
@@ -232,26 +231,26 @@ func TestNewSessionInitializesDefaultAlgorithms(t *testing.T) {
 	if s.dh == nil || s.prf == nil {
 		t.Fatal("NewSession did not initialize DH and PRF")
 	}
-	if s.encrAlg != 12 || s.prfAlg != 2 || s.integAlg != 2 || s.dhGroup != 14 {
+	if s.encrAlg != 12 || s.prfAlg != 5 || s.integAlg != 12 || s.dhGroup != 14 {
 		t.Fatalf("IKE algorithms = %d/%d/%d/%d", s.encrAlg, s.prfAlg, s.integAlg, s.dhGroup)
 	}
-	if s.encKeyLen != 16 || s.integKeyLen != 20 {
+	if s.encKeyLen != 16 || s.integKeyLen != 32 {
 		t.Fatalf("IKE key lengths = %d/%d", s.encKeyLen, s.integKeyLen)
 	}
-	if s.espCipher != 12 || s.espInteg != 2 || s.espEncKeyLen != 16 || s.espIntegKeyLen != 20 {
+	if s.espCipher != 20 || s.espInteg != 0 || s.espEncKeyLen != 36 || s.espIntegKeyLen != 0 {
 		t.Fatalf("ESP algorithms not initialized: %+v", s)
 	}
 }
 
-func TestNewSessionInitializesStrictAEADAlgorithms(t *testing.T) {
+func TestNewSessionStrictPolicyRejectsLegacyWithoutChangingProposalOrder(t *testing.T) {
 	s := NewSession(&Config{AlgorithmPolicy: "strict"})
 	if s.initErr != nil {
 		t.Fatalf("initErr = %v", s.initErr)
 	}
-	if !s.aead || !s.espAEAD || s.encKeyLen != 20 || s.espEncKeyLen != 20 {
+	if s.aead || !s.espAEAD || s.encKeyLen != 16 || s.espEncKeyLen != 36 {
 		t.Fatalf("strict AEAD parameters = ike(%t,%d) esp(%t,%d)", s.aead, s.encKeyLen, s.espAEAD, s.espEncKeyLen)
 	}
-	if s.integKeyLen != 0 || s.espIntegKeyLen != 0 {
+	if s.integKeyLen != 32 || s.espIntegKeyLen != 0 {
 		t.Fatalf("strict integrity key lengths = %d/%d", s.integKeyLen, s.espIntegKeyLen)
 	}
 }
@@ -279,8 +278,12 @@ func TestNewSessionRejectsUnsupportedGCMTagLengths(t *testing.T) {
 	}
 }
 
-func TestNewSessionInitializesLegacyAlgorithms(t *testing.T) {
-	s := NewSession(&Config{AlgorithmPolicy: "legacy_prefer"})
+func TestNewSessionInitializesExplicitlyEnabledLegacyAlgorithms(t *testing.T) {
+	s := NewSession(&Config{
+		AlgorithmPolicy: AlgorithmPolicyLegacyPrefer, EnableLegacyCiphers: true,
+		IKEProposals: []string{"3des-sha1-modp1024"},
+		ESPProposals: []string{"3des-sha1"},
+	})
 	if s.initErr != nil {
 		t.Fatalf("initErr = %v", s.initErr)
 	}

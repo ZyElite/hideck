@@ -5,6 +5,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/driver"
+	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
 type encryptionParameters struct {
@@ -24,7 +25,10 @@ func initializeSessionAlgorithms(s *Session, cfg *Config) error {
 	if err := validatePlatformDataplaneMode(normalizedMode); err != nil {
 		return err
 	}
-	plan := buildAlgorithmPlan(cfg.AlgorithmPolicy, cfg)
+	plan, err := initialAlgorithmPlan(cfg)
+	if err != nil {
+		return err
+	}
 	ikeEncryption, err := supportedEncryption(plan.IKEEncryption, plan.IKEEncryptionKeyBits)
 	if err != nil {
 		return fmt.Errorf("IKE encryption: %w", err)
@@ -70,6 +74,117 @@ func initializeSessionAlgorithms(s *Session, cfg *Config) error {
 	return nil
 }
 
+func initialAlgorithmPlan(cfg *Config) (*AlgorithmPlan, error) {
+	if hasExplicitIKEAlgorithms(cfg) || hasExplicitESPAlgorithms(cfg) {
+		return buildExplicitAlgorithmPlan(cfg), nil
+	}
+	ikeProposals, _, _, err := buildIKEProposals(cfg, nil, 0)
+	if err != nil {
+		return nil, fmt.Errorf("build IKE proposals: %w", err)
+	}
+	espProposals, err := buildESPProposals(cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build ESP proposals: %w", err)
+	}
+	plan, err := algorithmPlanFromProposals(ikeProposals[0], espProposals[0])
+	if err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+func algorithmPlanFromProposals(ikeProposal, espProposal *ikev2.Proposal) (*AlgorithmPlan, error) {
+	ikeSelection, err := firstIKEAlgorithmSelection(ikeProposal)
+	if err != nil {
+		return nil, fmt.Errorf("select initial IKE algorithms: %w", err)
+	}
+	espSelection, err := firstESPAlgorithmSelection(espProposal)
+	if err != nil {
+		return nil, fmt.Errorf("select initial ESP algorithms: %w", err)
+	}
+	return &AlgorithmPlan{
+		IKEEncryption: ikeSelection.encryption, IKEEncryptionKeyBits: ikeSelection.keyBits,
+		IKEPRF: ikeSelection.prf, IKEIntegrity: ikeSelection.integrity, IKEDH: ikeSelection.dh,
+		ESPEncryption: espSelection.encryption, ESPEncryptionKeyBits: espSelection.keyBits,
+		ESPIntegrity: espSelection.integrity,
+	}, nil
+}
+
+type selectedAlgorithms struct {
+	encryption uint16
+	keyBits    uint16
+	integrity  uint16
+	prf        uint16
+	dh         uint16
+}
+
+func firstIKEAlgorithmSelection(proposal *ikev2.Proposal) (selectedAlgorithms, error) {
+	selection := firstAlgorithmSelection(proposal)
+	if selection.encryption == 0 || selection.prf == 0 || selection.dh == 0 {
+		return selectedAlgorithms{}, fmt.Errorf("incomplete IKE proposal")
+	}
+	if !isAEADEncryption(ikev2.AlgorithmType(selection.encryption)) && selection.integrity == 0 {
+		return selectedAlgorithms{}, fmt.Errorf("non-AEAD IKE proposal has no integrity transform")
+	}
+	return selection, nil
+}
+
+func firstESPAlgorithmSelection(proposal *ikev2.Proposal) (selectedAlgorithms, error) {
+	selection := firstAlgorithmSelection(proposal)
+	if selection.encryption == 0 {
+		return selectedAlgorithms{}, fmt.Errorf("incomplete ESP proposal")
+	}
+	if !isAEADEncryption(ikev2.AlgorithmType(selection.encryption)) && selection.integrity == 0 {
+		return selectedAlgorithms{}, fmt.Errorf("non-AEAD ESP proposal has no integrity transform")
+	}
+	return selection, nil
+}
+
+func firstAlgorithmSelection(proposal *ikev2.Proposal) selectedAlgorithms {
+	selection := selectedAlgorithms{}
+	if proposal == nil {
+		return selection
+	}
+	for _, transform := range proposal.Transforms {
+		if transform == nil {
+			continue
+		}
+		applyFirstTransform(&selection, transform)
+	}
+	return selection
+}
+
+func applyFirstTransform(selection *selectedAlgorithms, transform *ikev2.Transform) {
+	switch transform.Type {
+	case ikev2.TransformTypeEncr:
+		if selection.encryption == 0 {
+			selection.encryption = uint16(transform.ID)
+			selection.keyBits = encryptionKeyBits(transform)
+		}
+	case ikev2.TransformTypeInteg:
+		if selection.integrity == 0 {
+			selection.integrity = uint16(transform.ID)
+		}
+	case ikev2.TransformTypePRF:
+		if selection.prf == 0 {
+			selection.prf = uint16(transform.ID)
+		}
+	case ikev2.TransformTypeDH:
+		if selection.dh == 0 {
+			selection.dh = uint16(transform.ID)
+		}
+	}
+}
+
+func encryptionKeyBits(transform *ikev2.Transform) uint16 {
+	for _, attribute := range transform.Attributes {
+		if attribute != nil && attribute.Type == ikev2.AttributeKeyLength {
+			return attribute.Val
+		}
+	}
+	return 0
+}
+
 func validateDriverAlgorithms(plan *AlgorithmPlan, isAEAD bool, cfg *Config) error {
 	if driver.IsAEADAlgorithm(plan.ESPEncryption) != isAEAD {
 		return fmt.Errorf("ESP transform %d has inconsistent AEAD classification", plan.ESPEncryption)
@@ -112,8 +227,8 @@ func supportedEncryption(transformID, keyLengthBits uint16) (encryptionParameter
 		}
 		params.keyLen = 24
 	case crypto.EncrAESGCM16:
-		if keyLengthBits != 128 {
-			return params, fmt.Errorf("AES-GCM currently supports only 128-bit keys")
+		if keyLengthBits != 128 && keyLengthBits != 192 && keyLengthBits != 256 {
+			return params, fmt.Errorf("AES-GCM key length must be 128, 192, or 256 bits")
 		}
 		params.keyLen = int(keyLengthBits/8) + 4
 		params.aead = true

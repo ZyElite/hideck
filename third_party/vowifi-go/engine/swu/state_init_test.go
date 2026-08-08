@@ -45,6 +45,11 @@ func newInitSession(t *testing.T) *Session {
 		t.Fatalf("NewDiffieHellman: %v", err)
 	}
 	return &Session{
+		cfg: &Config{
+			IKEEncryption: crypto.EncrAESCBC, IKEEncryptionKeyBits: 128,
+			IKEPRF: 2, IKEIntegrity: 2, IKEDH: 14,
+			ESPEncryption: crypto.EncrAESCBC, ESPEncryptionKeyBits: 128, ESPIntegrity: 2,
+		},
 		dh:          dh,
 		dhGroup:     14,
 		encrAlg:     crypto.EncrAESCBC, // 12
@@ -64,9 +69,13 @@ func TestBuildIKESAInitPacketCarriesAES256KeyLength(t *testing.T) {
 		IKEPRF: 7, IKEIntegrity: 14, IKEDH: 14,
 		ESPEncryption: crypto.EncrAESCBC, ESPEncryptionKeyBits: 256, ESPIntegrity: 14,
 	})
-	packet, err := s.buildIKESAInitPacket()
+	raw, err := s.buildIKESAInitPacket()
 	if err != nil {
 		t.Fatalf("buildIKESAInitPacket() error = %v", err)
+	}
+	packet, err := ikev2.DecodePacket(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
 	sa := packet.Payloads[0].(*ikev2.EncryptedPayloadSA)
 	encryption := sa.Proposals[0].Transforms[0]
@@ -79,7 +88,12 @@ func TestBuildIKESAInitPacketCarriesAES256KeyLength(t *testing.T) {
 }
 
 func TestBuildIKEProposals(t *testing.T) {
-	props := buildIKEProposals(crypto.EncrAESCBC, 2, 2, 14)
+	props, _, _, err := buildIKEProposals(&Config{
+		IKEProposals: []string{"aes128-sha1-prfsha1-modp2048"},
+	}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(props) != 1 {
 		t.Fatalf("proposals = %d, want 1", len(props))
 	}
@@ -94,9 +108,13 @@ func TestBuildIKEProposals(t *testing.T) {
 
 func TestBuildIKESAInitPacket(t *testing.T) {
 	s := newInitSession(t)
-	pkt, err := s.buildIKESAInitPacket()
+	raw, err := s.buildIKESAInitPacket()
 	if err != nil {
 		t.Fatalf("buildIKESAInitPacket: %v", err)
+	}
+	pkt, err := ikev2.DecodePacket(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if pkt.Header.ExchangeType != ikev2.IKE_SA_INIT {
 		t.Errorf("exchange = %d, want IKE_SA_INIT", pkt.Header.ExchangeType)
@@ -113,8 +131,8 @@ func TestBuildIKESAInitPacket(t *testing.T) {
 	if len(s.Ni) != 32 {
 		t.Errorf("Ni length = %d, want 32", len(s.Ni))
 	}
-	if len(pkt.Payloads) != 3 {
-		t.Fatalf("payloads = %d, want 3 (SA/KE/Ni)", len(pkt.Payloads))
+	if len(pkt.Payloads) != 4 {
+		t.Fatalf("payloads = %d, want 4 (SA/KE/Ni/FRAG)", len(pkt.Payloads))
 	}
 
 	// Encode and round-trip through the ikev2 decoder.
@@ -129,8 +147,8 @@ func TestBuildIKESAInitPacket(t *testing.T) {
 	if dec.Header.ExchangeType != ikev2.IKE_SA_INIT {
 		t.Errorf("decoded exchange = %d", dec.Header.ExchangeType)
 	}
-	if len(dec.Payloads) != 3 {
-		t.Fatalf("decoded payloads = %d, want 3", len(dec.Payloads))
+	if len(dec.Payloads) != 4 {
+		t.Fatalf("decoded payloads = %d, want 4", len(dec.Payloads))
 	}
 
 	// SA payload.
@@ -168,9 +186,12 @@ func TestBuildIKESAInitPacket(t *testing.T) {
 	}
 }
 
-func TestBuildIKESAInitPacketNoDH(t *testing.T) {
-	s := &Session{dhGroup: 14, encrAlg: crypto.EncrAESCBC}
-	if _, err := s.buildIKESAInitPacket(); err == nil {
-		t.Error("buildIKESAInitPacket without DH should error")
+func TestBuildIKESAInitPacketCreatesDH(t *testing.T) {
+	s := &Session{cfg: &Config{}, nonceLen: 32}
+	if _, err := s.buildIKESAInitPacket(); err != nil {
+		t.Fatal(err)
+	}
+	if s.dh == nil || s.dhGroup == 0 {
+		t.Fatal("buildIKESAInitPacket did not create DH state")
 	}
 }

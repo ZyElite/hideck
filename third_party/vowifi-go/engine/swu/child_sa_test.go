@@ -14,7 +14,9 @@ import (
 
 func TestBuildESPProposalsCarriesInboundSPI(t *testing.T) {
 	const spi = uint32(0x10203040)
-	proposal := buildESPProposals(enginecrypto.EncrAESGCM16, 0, spi)[0]
+	proposal := buildESPProposalsForSession(&Session{
+		espCipher: enginecrypto.EncrAESGCM16, espEncKeyBits: 128,
+	}, spi)[0]
 	if got := binary.BigEndian.Uint32(proposal.SPI); got != spi {
 		t.Fatalf("proposal SPI = %08x, want %08x", got, spi)
 	}
