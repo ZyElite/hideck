@@ -22,6 +22,14 @@ func New(cfg *IMSConfig) (*Service, error) {
 	if cfg.Domain == "" {
 		cfg.Domain = "ims.mnc000.mcc000.3gppnetwork.org"
 	}
+	keepaliveInterval := cfg.KeepaliveInterval
+	if keepaliveInterval <= 0 {
+		keepaliveInterval = imsKeepaliveInterval
+	}
+	keepaliveTimeout := cfg.KeepaliveTimeout
+	if keepaliveTimeout <= 0 {
+		keepaliveTimeout = imsKeepaliveTransactionTimeout
+	}
 	bus := cfg.EventBus
 	if bus == nil {
 		bus = newIMSEventBus()
@@ -35,14 +43,15 @@ func New(cfg *IMSConfig) (*Service, error) {
 		delivery:              cfg.DeliveryStore,
 		stop:                  make(chan struct{}),
 		registerErrors:        make(chan error, 1),
+		maintenanceWake:       make(chan struct{}, 1),
 		protectedConns:        make(map[net.Conn]struct{}),
 		transport:             newSIPTransport(),
 		ussd:                  ussi.NewService(),
 		smsReassembler:        smscodec.NewReassembler(),
 		smsTransactionTimeout: outboundSMSTransactionTimeout,
 		smsReportTimeout:      defaultSMSDeliveryReportTimeout,
-		keepaliveInterval:     imsKeepaliveInterval,
-		keepaliveTimeout:      imsKeepaliveTransactionTimeout,
+		keepaliveInterval:     keepaliveInterval,
+		keepaliveTimeout:      keepaliveTimeout,
 		keepaliveFailureLimit: imsKeepaliveFailureLimit,
 	}
 	return s, nil
@@ -289,10 +298,6 @@ func (s *Service) Stop() {
 		close(s.stop)
 	}
 	s.mu.Lock()
-	if s.refreshTimer != nil {
-		s.refreshTimer.Stop()
-		s.refreshTimer = nil
-	}
 	registrationIO := s.registrationIO
 	registrationTCP := s.registrationTCP
 	registrationPreviousTCP := s.registrationPreviousTCP

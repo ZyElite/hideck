@@ -103,6 +103,81 @@ func TestIMSKeepaliveUsesRegisteredProtectedProfile(t *testing.T) {
 	}
 }
 
+func TestIMSMaintenanceChoosesEarliestRegistrationOrKeepaliveDeadline(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	now := time.Date(2026, 8, 8, 18, 0, 0, 0, time.UTC)
+	service.mu.Lock()
+	service.registrationRefreshAt = now.Add(30 * time.Second)
+	service.lastPingAt = now.Add(-45 * time.Second)
+	service.keepaliveInterval = time.Minute
+	service.mu.Unlock()
+
+	if got, want := service.computeNextIMSWakeTime(now), now.Add(5*time.Second); !got.Equal(want) {
+		t.Fatalf("next poll wake = %s, want %s", got, want)
+	}
+	if got := service.nextIMSMaintenanceAction(now.Add(15 * time.Second)); got != imsMaintenanceKeepalive {
+		t.Fatalf("action at keepalive deadline = %d, want keepalive", got)
+	}
+	if got := service.nextIMSMaintenanceAction(now.Add(30 * time.Second)); got != imsMaintenanceRefresh {
+		t.Fatalf("action at refresh deadline = %d, want refresh", got)
+	}
+}
+
+func TestInboundSIPTrafficDefersKeepaliveAndResetsFailures(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	service.mu.Lock()
+	service.lastPingAt = time.Now().Add(-time.Minute)
+	service.keepaliveFailures = 2
+	service.mu.Unlock()
+
+	raw := "SIP/2.0 200 OK\r\nCall-ID: traffic\r\nCSeq: 9 OPTIONS\r\nContent-Length: 0\r\n\r\n"
+	before := time.Now()
+	if err := service.dispatchInboundSIP(raw, nil); err != nil {
+		t.Fatalf("dispatchInboundSIP: %v", err)
+	}
+	service.mu.RLock()
+	lastTrafficAt := service.lastPingAt
+	failures := service.keepaliveFailures
+	service.mu.RUnlock()
+	if lastTrafficAt.Before(before) {
+		t.Fatalf("last traffic = %s, want at or after %s", lastTrafficAt, before)
+	}
+	if failures != 0 {
+		t.Fatalf("keepalive failures = %d, want 0", failures)
+	}
+}
+
+func TestThreeKeepaliveFailuresRequestRuntimeReconnect(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	keepaliveErr := errors.New("OPTIONS timeout")
+	for attempt := 1; attempt <= imsKeepaliveFailureLimit; attempt++ {
+		service.recordIMSKeepaliveResult(keepaliveErr, time.Now())
+		if attempt < imsKeepaliveFailureLimit && service.RegState() != regRegistered {
+			t.Fatalf("registration failed after attempt %d", attempt)
+		}
+	}
+	if service.RegState() != regFailed {
+		t.Fatalf("registration state = %s, want %s", service.RegState(), regFailed)
+	}
+	select {
+	case err := <-service.RegistrationErrors():
+		if !strings.Contains(err.Error(), "fast reconnect requested after 3 keepalive failures") {
+			t.Fatalf("registration error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runtime reconnect was not requested")
+	}
+}
+
+func TestRegistrationRefreshDelayMatchesRecoveredClient(t *testing.T) {
+	if got, want := registrationRefreshDelay(time.Hour), 59*time.Minute; got != want {
+		t.Fatalf("hour refresh delay = %s, want %s", got, want)
+	}
+	if got, want := registrationRefreshDelay(time.Second), 500*time.Millisecond; got != want {
+		t.Fatalf("short refresh delay = %s, want %s", got, want)
+	}
+}
+
 func newProtectedKeepaliveTestService(t *testing.T) *Service {
 	t.Helper()
 	service, err := New(&IMSConfig{

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
@@ -106,6 +107,7 @@ func (s *Service) handleInboundSIPWithReply(ctx context.Context, raw string, rep
 }
 
 func (s *Service) dispatchInboundSIP(raw string, reply func(string) error) error {
+	s.UpdateLastPingAt(time.Now())
 	response := parseSIPResponse(raw)
 	if response != nil && response.StatusCode != 0 {
 		s.transport.DeliverResponse(response)

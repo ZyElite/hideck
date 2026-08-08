@@ -2,7 +2,6 @@ package imscore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,6 +13,17 @@ const (
 	imsKeepaliveInterval           = 60 * time.Second
 	imsKeepaliveTransactionTimeout = 5 * time.Second
 	imsKeepaliveFailureLimit       = 3
+	imsMaintenancePollInterval     = 5 * time.Second
+	imsMaintenanceMinimumDelay     = 100 * time.Millisecond
+	imsRegistrationRefreshAdvance  = 60 * time.Second
+)
+
+type imsMaintenanceAction uint8
+
+const (
+	imsMaintenanceIdle imsMaintenanceAction = iota
+	imsMaintenanceRefresh
+	imsMaintenanceKeepalive
 )
 
 func (s *Service) startIMSKeepalive() {
@@ -23,60 +33,147 @@ func (s *Service) startIMSKeepalive() {
 	s.keepaliveOnce.Do(func() {
 		s.UpdateLastPingAt(time.Now())
 		s.networkDone.Add(1)
-		go s.runIMSKeepalive()
+		go s.runIMSMaintenance()
 	})
+	s.signalIMSMaintenance()
 }
 
-func (s *Service) runIMSKeepalive() {
+func (s *Service) runIMSMaintenance() {
 	defer s.networkDone.Done()
-	interval := s.keepaliveInterval
-	if interval <= 0 {
-		interval = imsKeepaliveInterval
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	failures := 0
 	for {
-		select {
-		case <-s.stop:
+		if !s.waitForIMSMaintenance(s.computeNextIMSWakeTime(time.Now())) {
 			return
-		case <-ticker.C:
-			failures = s.handleIMSKeepaliveTick(failures)
+		}
+		switch s.nextIMSMaintenanceAction(time.Now()) {
+		case imsMaintenanceRefresh:
+			s.refreshRegistration()
+		case imsMaintenanceKeepalive:
+			s.handleIMSKeepaliveTick()
 		}
 	}
 }
 
-func (s *Service) handleIMSKeepaliveTick(failures int) int {
-	if !s.IsRegistered() {
-		return failures
+func (s *Service) waitForIMSMaintenance(wakeAt time.Time) bool {
+	delay := time.Until(wakeAt)
+	if delay < imsMaintenanceMinimumDelay {
+		delay = imsMaintenanceMinimumDelay
 	}
-	err := s.sendIMSKeepalive()
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-s.stop:
+		return false
+	case <-s.maintenanceWake:
+		return true
+	case <-timer.C:
+		return true
+	}
+}
+
+func (s *Service) computeNextIMSWakeTime(now time.Time) time.Time {
+	s.mu.RLock()
+	registered := s.regState == regRegistered
+	refreshAt := s.registrationRefreshAt
+	lastTrafficAt := s.lastPingAt
+	interval := s.keepaliveInterval
+	s.mu.RUnlock()
+
+	next := now.Add(imsMaintenancePollInterval)
+	if !registered {
+		return next
+	}
+	if !refreshAt.IsZero() && refreshAt.Before(next) {
+		next = refreshAt
+	}
+	keepaliveAt := lastTrafficAt.Add(interval)
+	if lastTrafficAt.IsZero() {
+		keepaliveAt = now
+	}
+	if keepaliveAt.Before(next) {
+		next = keepaliveAt
+	}
+	return next
+}
+
+func (s *Service) nextIMSMaintenanceAction(now time.Time) imsMaintenanceAction {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.regState != regRegistered {
+		return imsMaintenanceIdle
+	}
+	if s.registrationRefreshAt.IsZero() || !now.Before(s.registrationRefreshAt) {
+		return imsMaintenanceRefresh
+	}
+	if s.lastPingAt.IsZero() || !now.Before(s.lastPingAt.Add(s.keepaliveInterval)) {
+		return imsMaintenanceKeepalive
+	}
+	return imsMaintenanceIdle
+}
+
+func (s *Service) handleIMSKeepaliveTick() {
+	if !s.IsRegistered() {
+		return
+	}
+	s.recordIMSKeepaliveResult(s.sendIMSKeepalive(), time.Now())
+}
+
+func (s *Service) recordIMSKeepaliveResult(err error, completedAt time.Time) {
+	s.mu.Lock()
+	s.lastPingAt = completedAt
+	if err == nil {
+		s.keepaliveFailures = 0
+	} else {
+		s.keepaliveFailures++
+	}
+	failures := s.keepaliveFailures
+	limit := s.keepaliveFailureLimit
+	s.mu.Unlock()
 	if err == nil {
 		s.keepaliveSuccessOnce.Do(func() {
 			logging.Info("IMS SIP keepalive established", "device", s.DeviceID())
 		})
-		return 0
+		return
 	}
-
-	failures++
 	logging.WarnRate("ims-keepalive", "IMS SIP keepalive failed",
 		"device", s.DeviceID(), "attempt", failures, "err", err)
-	if failures < s.keepaliveFailureLimit {
-		return failures
+	if failures >= limit {
+		s.requestRuntimeReconnect(err)
 	}
-	return s.reconnectAfterKeepaliveFailure(err)
 }
 
-func (s *Service) reconnectAfterKeepaliveFailure(keepaliveErr error) int {
-	if err := s.TriggerRegisterImmediate(); err != nil {
-		s.reportRegistrationRuntimeError(fmt.Errorf(
-			"imscore: keepalive failed and registration recovery failed: %w",
-			errors.Join(keepaliveErr, err),
-		))
-		return s.keepaliveFailureLimit
+func (s *Service) requestRuntimeReconnect(keepaliveErr error) {
+	s.mu.Lock()
+	if s.regState != regRegistered {
+		s.mu.Unlock()
+		return
 	}
-	return 0
+	s.regState = regFailed
+	s.registrationRefreshAt = time.Time{}
+	s.keepaliveFailures = 0
+	s.mu.Unlock()
+	s.notifySMSReadiness()
+	err := fmt.Errorf("imscore: fast reconnect requested after %d keepalive failures: %w",
+		s.keepaliveFailureLimit, keepaliveErr)
+	logging.WarnRate("ims-fast-reconnect", "IMS SIP keepalive requested runtime rebuild",
+		"device", s.DeviceID(), "err", err)
+	s.reportRegistrationRuntimeError(err)
+}
+
+func (s *Service) signalIMSMaintenance() {
+	select {
+	case s.maintenanceWake <- struct{}{}:
+	default:
+	}
+}
+
+func registrationRefreshDelay(expires time.Duration) time.Duration {
+	if expires > imsRegistrationRefreshAdvance {
+		return expires - imsRegistrationRefreshAdvance
+	}
+	if expires > 0 && expires/2 > 0 {
+		return expires / 2
+	}
+	return time.Second
 }
 
 func (s *Service) sendIMSKeepalive() error {

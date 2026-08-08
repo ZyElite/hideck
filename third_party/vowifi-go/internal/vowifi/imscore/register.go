@@ -419,29 +419,18 @@ func contactExpires(contact string) int {
 }
 
 func (s *Service) scheduleRegistrationRefresh(expires time.Duration) {
-	delay := expires - expires/5
-	if delay <= 0 {
-		delay = expires / 2
-	}
-	if delay <= 0 {
-		delay = time.Second
-	}
+	delay := registrationRefreshDelay(expires)
 	s.mu.Lock()
-	if s.refreshTimer != nil {
-		s.refreshTimer.Stop()
-	}
-	s.refreshTimer = time.AfterFunc(delay, s.refreshRegistration)
+	s.registrationRefreshAt = time.Now().Add(delay)
 	s.mu.Unlock()
+	s.signalIMSMaintenance()
 }
 
 func (s *Service) refreshRegistration() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := s.Register(ctx); err != nil {
-		select {
-		case s.registerErrors <- fmt.Errorf("imscore: registration refresh failed: %w", err):
-		default:
-		}
+		s.reportRegistrationRuntimeError(fmt.Errorf("imscore: registration refresh failed: %w", err))
 	}
 }
 

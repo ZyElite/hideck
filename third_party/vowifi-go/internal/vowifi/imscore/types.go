@@ -57,6 +57,10 @@ type IMSConfig struct {
 	LocalPort int
 	// Expires is the registration interval.
 	Expires time.Duration
+	// KeepaliveInterval controls idle SIP OPTIONS probing after registration.
+	KeepaliveInterval time.Duration
+	// KeepaliveTimeout bounds one SIP OPTIONS transaction.
+	KeepaliveTimeout time.Duration
 	// AKAProvider computes AKA (RAND, AUTN) -> (RES, CK, IK).
 	AKAProvider AKAProvider
 	// IMSNetwork is the network surface.
@@ -209,13 +213,15 @@ type Service struct {
 	receiverMu               sync.Mutex
 	activeReceivers          int
 	networkDone              sync.WaitGroup
-	refreshTimer             *time.Timer
 	registerErrors           chan error
 	keepaliveOnce            sync.Once
 	keepaliveSuccessOnce     sync.Once
+	maintenanceWake          chan struct{}
+	registrationRefreshAt    time.Time
 	keepaliveInterval        time.Duration
 	keepaliveTimeout         time.Duration
 	keepaliveFailureLimit    int
+	keepaliveFailures        int
 
 	// Dialogs.
 	dialogs *dialogRegistry

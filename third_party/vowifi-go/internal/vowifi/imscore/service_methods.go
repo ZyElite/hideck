@@ -202,7 +202,13 @@ func (s *Service) UpdateLastPingAt(t time.Time) {
 	if s == nil {
 		return
 	}
+	if t.IsZero() {
+		t = time.Now()
+	}
 	s.mu.Lock()
-	s.lastPingAt = t
+	if s.lastPingAt.IsZero() || t.After(s.lastPingAt) {
+		s.lastPingAt = t
+	}
+	s.keepaliveFailures = 0
 	s.mu.Unlock()
 }
