@@ -1,6 +1,7 @@
 package e911
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -29,7 +30,8 @@ func TestCoordinatorDoesNotRunEntitlementProbes(t *testing.T) {
 
 func TestHTTPClientAdapterUsesConfiguredEntitlementClient(t *testing.T) {
 	client := &fakeEntitlementHTTPClient{
-		body: []byte(`[{"status":6004,"response-id":3}]`),
+		body:    []byte(`[{"status":6004,"response-id":3}]`),
+		headers: []runtimee911.HeaderPair{{Key: "X-Response", Value: "accepted"}},
 	}
 	adapter := httpClientAdapter{
 		deviceID: "dev-1",
@@ -37,8 +39,9 @@ func TestHTTPClientAdapterUsesConfiguredEntitlementClient(t *testing.T) {
 	}
 
 	resp, err := adapter.Do(&runtimee911.HTTPRequest{
-		Method: "POST",
-		URL:    "https://sentitlement2.mobile.att.net/",
+		Context: context.Background(),
+		Method:  "POST",
+		URL:     "https://sentitlement2.mobile.att.net/",
 		Headers: []runtimee911.HeaderPair{
 			{Key: "x-protocol-version", Value: "2"},
 		},
@@ -66,6 +69,9 @@ func TestHTTPClientAdapterUsesConfiguredEntitlementClient(t *testing.T) {
 	if string(resp.Body) != `[{"status":6004,"response-id":3}]` {
 		t.Fatalf("response body=%q", resp.Body)
 	}
+	if len(resp.Headers) != 1 || resp.Headers[0].Key != "X-Response" {
+		t.Fatalf("response headers=%+v", resp.Headers)
+	}
 }
 
 func TestBuildRuntimeE911IdentityIgnoresDebugCachedTokenEnv(t *testing.T) {
@@ -86,10 +92,15 @@ func TestBuildRuntimeE911IdentityIgnoresDebugCachedTokenEnv(t *testing.T) {
 
 type fakeEntitlementHTTPClient struct {
 	body     []byte
+	headers  []runtimee911.HeaderPair
 	requests []*runtimee911.HTTPRequest
 }
 
 func (f *fakeEntitlementHTTPClient) Do(req *runtimee911.HTTPRequest) (*runtimee911.HTTPResponse, error) {
 	f.requests = append(f.requests, req)
-	return &runtimee911.HTTPResponse{StatusCode: 200, Body: append([]byte(nil), f.body...)}, nil
+	return &runtimee911.HTTPResponse{
+		StatusCode: 200,
+		Headers:    append([]runtimee911.HeaderPair(nil), f.headers...),
+		Body:       append([]byte(nil), f.body...),
+	}, nil
 }

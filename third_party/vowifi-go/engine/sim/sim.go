@@ -17,9 +17,13 @@ type AKAProvider interface {
 	CalculateAKA(rand16, autn16 []byte) (AKAResult, error)
 }
 
-// ErrSyncFailure is returned when AUTN indicates a synchronisation failure;
-// the AUTS value is carried in AKAResult.AUTS.
-var ErrSyncFailure = errors.New("sim: AKA synchronisation failure")
+var (
+	// ErrSyncFailure reports an AUTN sequence mismatch. AKAResult.AUTS carries
+	// the resynchronisation token returned to the network.
+	ErrSyncFailure = errors.New("sim: AKA synchronisation failure")
+	// ErrAuthFailure reports that the SIM rejected the network authentication.
+	ErrAuthFailure = errors.New("sim: AKA authentication failure")
+)
 
 // ISIMAKAProvider computes AKA from the ISIM application (3GPP TS 31.103).
 type ISIMAKAProvider interface {

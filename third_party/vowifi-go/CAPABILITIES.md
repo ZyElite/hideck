@@ -8,7 +8,7 @@ perform their historical action with the arguments they expose.
 
 | Area | Runtime behavior |
 | --- | --- |
-| SWu | Establishes and tears down the IKE/IPsec tunnel through the selected ePDG. Authentication and transport errors are returned to the caller. |
+| SWu | Establishes and tears down the IKE/IPsec tunnel through the selected ePDG. Authentication and transport errors are returned to the caller. A failed established-session reauthentication terminates the runtime with its real error so the host can release and rebuild it. |
 | IMS registration | Sends REGISTER over the protected IMS transport, performs AKA, retains the route and security agreement, handles registration-event SUBSCRIBE/NOTIFY, refreshes before expiry, and reports terminal refresh errors. |
 | SIP transport | Correlates responses by Call-ID, CSeq, method, and top Via branch. TCP and UDP receivers dispatch requests and close their transactions and sockets during shutdown. |
 | SMS readiness | Becomes ready only when IMS registration, an inbound SIP receiver, and SMSC discovery are all ready. Losing any prerequisite clears readiness. |
@@ -17,6 +17,7 @@ perform their historical action with the arguments they expose.
 | Multipart SMS | Splits outbound text, reassembles inbound parts by sender/reference, rejects conflicting duplicates, expires incomplete groups, and persists delivery updates. |
 | USSI/USSD | Uses real INVITE, ACK, INFO, and BYE transactions and routes inbound INFO/BYE to the active session. |
 | Voice signaling and media | Uses real outbound and inbound INVITE/ACK/BYE/CANCEL transactions. New inbound calls are exposed through the runtime gateway, ring with `180`, can be answered or rejected over the retained network transaction, renegotiate SDP, and relay RTP in both directions with payload-type mapping. The legacy timed call allocates a non-zero IMS RTP endpoint and transmits 20 ms PCMU media until BYE. Dialogs, timers, sockets, and runtime bindings are released on failure, cancel, or hangup. |
+| E911 | Uses the carrier entitlement endpoint over real HTTP, propagates transport and HTTP failures, and executes multi-round TS.43 EAP-AKA/AKA' identity, challenge, notification, authentication-reject, synchronization, and reauthentication exchanges before opening the carrier websheet. |
 
 ## Explicit Capability Boundaries
 
@@ -45,6 +46,10 @@ perform their historical action with the arguments they expose.
 - The legacy global dataplane cleanup function lacks an owning session or
   interface identifier and therefore returns an explicit error. Production
   cleanup is performed by the runtime-owned SWu session during shutdown.
+- E911 entitlement requires a configured carrier endpoint and a real SIM AKA
+  provider when the carrier sends an authentication challenge. Unsupported or
+  incomplete challenges return an explicit error; they do not open a websheet
+  as though authentication succeeded.
 
 No SMS, registration, USSI, or voice transaction reports network success
 before receiving the corresponding final SIP response.

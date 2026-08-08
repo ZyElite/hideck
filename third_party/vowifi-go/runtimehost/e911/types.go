@@ -1,24 +1,28 @@
-// Package e911 implements the emergency-address (websheet) update flow for
-// VoWiFi e911.
-//
-// Reconstructed from the decompiled engine/runtimehost/e911.
+// Package e911 implements the emergency-address entitlement and websheet flow.
 package e911
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/engine/swu"
 )
 
-// Errors surfaced by the e911 flow.
+const defaultHTTPTimeout = 30 * time.Second
+
 var (
 	ErrUnsupportedProvider     = errors.New("e911: unsupported provider")
 	ErrChallengeNotImplemented = errors.New("e911: challenge not implemented")
 	ErrWebsheetUnavailable     = errors.New("e911: carrier websheet unavailable")
 )
 
-// Identity is the subscriber identity used for the e911 address update.
 type Identity struct {
 	IMSI        string
 	IMEI        string
@@ -29,140 +33,123 @@ type Identity struct {
 	CachedToken string
 }
 
-// HeaderPair is an HTTP header key/value pair.
 type HeaderPair struct {
 	Key   string
 	Value string
 }
 
-// HTTPRequest is an outbound HTTP request.
 type HTTPRequest struct {
+	Context context.Context
 	URL     string
 	Method  string
 	Headers []HeaderPair
 	Body    []byte
 }
 
-// HTTPResponse is an inbound HTTP response.
 type HTTPResponse struct {
 	StatusCode int
 	Headers    []HeaderPair
 	Body       []byte
 }
 
-// HTTPClient performs HTTP requests.
 type HTTPClient interface {
 	Do(req *HTTPRequest) (*HTTPResponse, error)
 }
 
-// NewDefaultHTTPClient returns a default HTTP client.
-func NewDefaultHTTPClient() HTTPClient {
-	return &httpClient{client: &http.Client{Timeout: 30 * time.Second}}
+type TraceSink interface {
+	Request(*HTTPRequest)
+	Response(*HTTPRequest, *HTTPResponse)
+	Error(*HTTPRequest, error)
 }
 
-type httpClient struct{ client *http.Client }
+func NewDefaultHTTPClient() HTTPClient {
+	return &httpClient{client: &http.Client{Timeout: defaultHTTPTimeout}}
+}
+
+type httpClient struct {
+	client *http.Client
+}
 
 func (c *httpClient) Do(req *HTTPRequest) (*HTTPResponse, error) {
-	// (recovered: performs the request and adapts the response)
-	return &HTTPResponse{}, nil
-}
-
-// Request is an e911 address-update request.
-type Request struct {
-	Carrier     interface{}
-	Identity    Identity
-	AKAProvider interface{}
-	Client      HTTPClient
-	Trace       interface{}
-	URL         string
-}
-
-// Response is the outcome of an e911 address update.
-type Response struct {
-	URL         string
-	UserData    string
-	ContentType string
-	Title       string
-}
-
-// StartEmergencyAddressUpdate begins the emergency-address update flow. It
-// performs the carrier's entitlement check over HTTP; without a reachable
-// carrier websheet it returns ErrWebsheetUnavailable.
-func StartEmergencyAddressUpdate(ctx context.Context, req Request) (Response, error) {
-	if req.URL == "" {
-		return Response{}, ErrWebsheetUnavailable
+	if req == nil {
+		return nil, errors.New("e911: nil HTTP request")
 	}
-	client := req.Client
-	if client == nil {
-		client = NewDefaultHTTPClient()
+	if err := validateHTTPURL(req.URL); err != nil {
+		return nil, err
 	}
-	// Drive the carrier websheet flow: POST the identity to the entitlement
-	// URL and surface the returned page.
-	resp, err := client.Do(&HTTPRequest{
-		URL:     req.URL,
-		Method:  "POST",
-		Headers: []HeaderPair{{Key: "Content-Type", Value: "application/json"}},
-		Body:    []byte(`{"action":"e911_address_update","imsi":"` + req.Identity.IMSI + `"}`),
-	})
+	ctx := req.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	method := strings.TrimSpace(req.Method)
+	if method == "" {
+		method = http.MethodGet
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, method, req.URL, bytes.NewReader(req.Body))
 	if err != nil {
-		return Response{}, err
+		return nil, fmt.Errorf("e911: build HTTP request: %w", err)
 	}
-	if resp.StatusCode >= 300 {
-		return Response{}, ErrWebsheetUnavailable
+	for _, header := range req.Headers {
+		httpReq.Header.Add(header.Key, header.Value)
 	}
-	return Response{URL: req.URL, ContentType: "text/html", Title: "e911"}, nil
-}
-
-// entitlementBackedHTTPClient performs HTTP through the entitlement session.
-type entitlementBackedHTTPClient struct {
-	client HTTPClient
-}
-
-// Do performs the request.
-func (c *entitlementBackedHTTPClient) Do(req *HTTPRequest) (*HTTPResponse, error) {
-	if c == nil || c.client == nil {
-		return nil, errors.New("e911: no client")
+	client := c.client
+	if client == nil {
+		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
-	return c.client.Do(req)
-}
-
-// entitlementHTTPClientAdapter adapts an http.Client to the HTTPClient surface.
-type entitlementHTTPClientAdapter struct {
-	client HTTPClient
-}
-
-// Do performs the request.
-func (c *entitlementHTTPClientAdapter) Do(req *HTTPRequest) (*HTTPResponse, error) {
-	if c == nil || c.client == nil {
-		return nil, errors.New("e911: no client")
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("e911: HTTP request failed: %w", err)
 	}
-	return c.client.Do(req)
-}
-
-// entitlementTraceAdapter records request/response traces.
-type entitlementTraceAdapter struct {
-	lastReq  *HTTPRequest
-	lastResp *HTTPResponse
-	lastErr  error
-}
-
-// Request records the outgoing request.
-func (t *entitlementTraceAdapter) Request(req *HTTPRequest) {
-	if t != nil {
-		t.lastReq = req
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("e911: read HTTP response: %w", err)
 	}
+	return &HTTPResponse{
+		StatusCode: resp.StatusCode,
+		Headers:    flattenHeaders(resp.Header),
+		Body:       body,
+	}, nil
 }
 
-// Response records the incoming response.
-func (t *entitlementTraceAdapter) Response(resp *HTTPResponse) {
-	if t != nil {
-		t.lastResp = resp
+func validateHTTPURL(rawURL string) error {
+	parsed, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Host == "" {
+		return fmt.Errorf("e911: invalid HTTP URL %q", rawURL)
 	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("e911: unsupported HTTP URL scheme %q", parsed.Scheme)
+	}
+	return nil
 }
 
-// Error records the error.
-func (t *entitlementTraceAdapter) Error(err error) {
-	if t != nil {
-		t.lastErr = err
+func flattenHeaders(headers http.Header) []HeaderPair {
+	var pairs []HeaderPair
+	for key, values := range headers {
+		for _, value := range values {
+			pairs = append(pairs, HeaderPair{Key: key, Value: value})
+		}
 	}
+	return pairs
+}
+
+type Request struct {
+	Carrier             interface{}
+	Identity            Identity
+	AKAProvider         interface{}
+	EAPReauthentication swu.EAPReauthenticationState
+	Client              HTTPClient
+	Trace               interface{}
+	Random              io.Reader
+	URL                 string
+}
+
+type Response struct {
+	URL                 string
+	UserData            string
+	ContentType         string
+	Title               string
+	EAPNextPseudonym    string
+	EAPNextReauthID     string
+	EAPReauthentication swu.EAPReauthenticationState
 }

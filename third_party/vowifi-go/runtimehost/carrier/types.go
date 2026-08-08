@@ -20,8 +20,10 @@ type EffectiveCarrierConfigInput struct {
 
 // E911Config describes the carrier's e911 (emergency address) service.
 type E911Config struct {
-	Enabled  bool
-	Provider string
+	Enabled             bool   `json:"enabled"`
+	Provider            string `json:"provider"`
+	Websheet            string `json:"websheet"`
+	EntitlementEndpoint string `json:"entitlement_endpoint"`
 }
 
 // IMSRegisterTemplate is the IMS registration template for the carrier.

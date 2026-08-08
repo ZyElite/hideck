@@ -2,6 +2,7 @@ package carrier
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -19,6 +20,8 @@ const (
 		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.msg," +
 		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.sms"
 	maxIMSExpiresSeconds = int64(1<<63-1) / int64(time.Second)
+	attE911Websheet      = "https://www.att.com/acctmgmt/wireless/e911"
+	attE911Endpoint      = "https://sentitlement2.mobile.att.net/WFC"
 )
 
 const (
@@ -43,9 +46,14 @@ func defaultCarrierConfig(input EffectiveCarrierConfigInput) EffectiveCarrierCon
 		IMS: defaultIMSRegisterTemplate(),
 	}
 	switch {
-	case samePLMN(cfg.MCC, cfg.MNC, "310", "280"):
+	case samePLMN(cfg.MCC, cfg.MNC, "310", "280"), samePLMN(cfg.MCC, cfg.MNC, "310", "410"):
 		cfg.PresetID = "att"
-		cfg.E911 = E911Config{Enabled: true, Provider: "att"}
+		cfg.E911 = E911Config{
+			Enabled:             true,
+			Provider:            "att-ts43",
+			Websheet:            attE911Websheet,
+			EntitlementEndpoint: attE911Endpoint,
+		}
 	case samePLMN(cfg.MCC, cfg.MNC, "234", "10"):
 		applyGiffgaffPreset(&cfg)
 	}
@@ -88,9 +96,12 @@ func applyCarrierOverride(cfg *EffectiveCarrierConfig, override CarrierOverride)
 	if override.ReauthIntervalSeconds != 0 {
 		cfg.ReauthIntervalSeconds = override.ReauthIntervalSeconds
 	}
-	if override.E911.Enabled || strings.TrimSpace(override.E911.Provider) != "" {
-		cfg.E911 = override.E911
+	if override.E911.Enabled {
+		cfg.E911.Enabled = true
 	}
+	setStringIfPresent(&cfg.E911.Provider, override.E911.Provider)
+	setStringIfPresent(&cfg.E911.Websheet, override.E911.Websheet)
+	setStringIfPresent(&cfg.E911.EntitlementEndpoint, override.E911.EntitlementEndpoint)
 	mergeIMSRegisterTemplate(&cfg.IMS, override.IMS)
 }
 
@@ -125,7 +136,28 @@ func ValidateEffectiveCarrierConfig(cfg EffectiveCarrierConfig) error {
 	if cfg.ReauthIntervalSeconds < 0 {
 		return fmt.Errorf("carrier: reauth interval must not be negative")
 	}
+	if err := validateE911Config(cfg.E911); err != nil {
+		return err
+	}
 	return validateIMSRegisterTemplate(cfg.IMS)
+}
+
+func validateE911Config(cfg E911Config) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(cfg.Provider) == "" {
+		return fmt.Errorf("carrier: enabled E911 has no provider")
+	}
+	for name, value := range map[string]string{
+		"websheet": cfg.Websheet, "entitlement endpoint": cfg.EntitlementEndpoint,
+	} {
+		parsed, err := url.ParseRequestURI(strings.TrimSpace(value))
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return fmt.Errorf("carrier: E911 %s must be an HTTP URL", name)
+		}
+	}
+	return nil
 }
 
 func validateIMSRegisterTemplate(template IMSRegisterTemplate) error {

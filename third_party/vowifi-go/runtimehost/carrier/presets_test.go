@@ -26,6 +26,29 @@ func TestResolveGiffgaffPreset(t *testing.T) {
 	}
 }
 
+func TestResolveATTE911PresetIncludesProductionEndpoints(t *testing.T) {
+	for _, mnc := range []string{"280", "410"} {
+		cfg := ResolveEffectiveCarrierConfig(EffectiveCarrierConfigInput{MCC: "310", MNC: mnc})
+		if !cfg.E911.Enabled || cfg.E911.Provider != "att-ts43" {
+			t.Fatalf("AT&T %s E911 identity = %+v", mnc, cfg.E911)
+		}
+		if cfg.E911.Websheet != attE911Websheet || cfg.E911.EntitlementEndpoint != attE911Endpoint {
+			t.Fatalf("AT&T %s E911 endpoints = %+v", mnc, cfg.E911)
+		}
+		if err := ValidateEffectiveCarrierConfig(cfg); err != nil {
+			t.Fatalf("ValidateEffectiveCarrierConfig(%s): %v", mnc, err)
+		}
+	}
+}
+
+func TestValidateEffectiveCarrierRejectsMissingE911Endpoint(t *testing.T) {
+	cfg := ResolveEffectiveCarrierConfig(EffectiveCarrierConfigInput{MCC: "310", MNC: "280"})
+	cfg.E911.EntitlementEndpoint = ""
+	if err := ValidateEffectiveCarrierConfig(cfg); err == nil || !strings.Contains(err.Error(), "entitlement endpoint") {
+		t.Fatalf("ValidateEffectiveCarrierConfig() error = %v", err)
+	}
+}
+
 func TestResolveCarrierReturnsIndependentSlices(t *testing.T) {
 	first := ResolveEffectiveCarrierConfig(EffectiveCarrierConfigInput{MCC: "234", MNC: "10"})
 	first.IMS.ContactOrder[0] = "changed"

@@ -73,6 +73,7 @@ func (c *Coordinator) StartWebsheet(ctx context.Context, deviceID string) (websh
 		AKAProvider: akaProvider,
 		Client:      entitlementClient,
 		Trace:       entitlementTraceSink{deviceID: deviceID},
+		URL:         cfg.E911.EntitlementEndpoint,
 	})
 	if err != nil {
 		switch {
@@ -135,6 +136,9 @@ type httpClientAdapter struct {
 }
 
 func (a httpClientAdapter) Do(req *runtimee911.HTTPRequest) (*runtimee911.HTTPResponse, error) {
+	if req == nil {
+		return nil, errors.New("e911 entitlement HTTP request is nil")
+	}
 	headers := make([]runtimee911.HeaderPair, len(req.Headers))
 	for i, h := range req.Headers {
 		headers[i] = runtimee911.HeaderPair{Key: h.Key, Value: h.Value}
@@ -145,6 +149,7 @@ func (a httpClientAdapter) Do(req *runtimee911.HTTPRequest) (*runtimee911.HTTPRe
 		client = runtimee911.NewDefaultHTTPClient()
 	}
 	resp, err := client.Do(&runtimee911.HTTPRequest{
+		Context: req.Context,
 		Method:  req.Method,
 		URL:     req.URL,
 		Headers: headers,
@@ -160,6 +165,7 @@ func (a httpClientAdapter) Do(req *runtimee911.HTTPRequest) (*runtimee911.HTTPRe
 	body := append([]byte(nil), resp.Body...)
 	return &runtimee911.HTTPResponse{
 		StatusCode: resp.StatusCode,
+		Headers:    append([]runtimee911.HeaderPair(nil), resp.Headers...),
 		Body:       body,
 	}, nil
 }
