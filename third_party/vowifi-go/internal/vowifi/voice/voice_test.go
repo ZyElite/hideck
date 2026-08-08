@@ -21,7 +21,11 @@ const testIMSAnswerSDP = "v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 1
 // newTestAgent builds an agent with a fake IMS service.
 func newTestAgent(t *testing.T) *Agent {
 	t.Helper()
-	registrar := startVoiceTestRegistrar(t)
+	return newVoiceTestAgent(t, startVoiceTestRegistrar(t))
+}
+
+func newVoiceTestAgent(t *testing.T, registrar *net.UDPConn) *Agent {
+	t.Helper()
 	cfg := &imscore.IMSConfig{
 		DeviceID:    "dev-1",
 		IMSI:        "310260123456789",
@@ -48,6 +52,10 @@ func startVoiceTestRegistrar(t *testing.T) *net.UDPConn {
 }
 
 func startVoiceTestRegistrarWithInviteStatus(t *testing.T, inviteStatus int) *net.UDPConn {
+	return startVoiceTestRegistrarWithAnswer(t, inviteStatus, testIMSAnswerSDP)
+}
+
+func startVoiceTestRegistrarWithAnswer(t *testing.T, inviteStatus int, answerSDP string) *net.UDPConn {
 	t.Helper()
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -73,7 +81,7 @@ func startVoiceTestRegistrarWithInviteStatus(t *testing.T, inviteStatus int) *ne
 				extra = "To: <sip:callee@ims.example.com>;tag=remote\r\n" +
 					"Contact: <sip:callee@ims.example.com>\r\n"
 				if status >= 200 && status < 300 {
-					body = testIMSAnswerSDP
+					body = answerSDP
 					extra += "Content-Type: application/sdp\r\n"
 				}
 			}
@@ -202,13 +210,49 @@ func TestAgentDialLifecycle(t *testing.T) {
 }
 
 func TestAgentSimulateCall(t *testing.T) {
-	agent := newTestAgent(t)
+	imsMedia, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer imsMedia.Close()
+	answer := fmt.Sprintf("v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP 0\r\n", imsMedia.LocalAddr().(*net.UDPAddr).Port)
+	agent := newVoiceTestAgent(t, startVoiceTestRegistrarWithAnswer(t, 200, answer))
 	if err := agent.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
-	if _, err := agent.SimulateCall("+8613800000000"); err == nil || !strings.Contains(err.Error(), "client SDP") {
-		t.Fatalf("SimulateCall error = %v", err)
+	call, err := agent.SimulateCall("+8613800000000")
+	if err != nil {
+		t.Fatalf("SimulateCall: %v", err)
+	}
+	relay := call.RTPRelay()
+	if relay == nil || relay.IMSPort() <= 0 {
+		t.Fatalf("relay = %+v", relay)
+	}
+	if offer := call.imsLocalSDPValue(); strings.Contains(offer, "m=audio 0 ") || !strings.Contains(offer, fmt.Sprintf("m=audio %d RTP/AVP", relay.IMSPort())) {
+		t.Fatalf("simulated call offer has no real relay endpoint: %q", offer)
+	}
+	packet := make([]byte, 256)
+	if err := imsMedia.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	n, remote, err := imsMedia.ReadFromUDP(packet)
+	if err != nil {
+		t.Fatalf("read simulated RTP: %v", err)
+	}
+	if n != 172 || packet[1]&0x7f != 0 || remote.Port != relay.IMSPort() {
+		t.Fatalf("RTP n=%d pt=%d remote=%v relay_port=%d", n, packet[1]&0x7f, remote, relay.IMSPort())
+	}
+	refresh := imscore.SIPResponse{
+		StatusCode: 200,
+		Headers:    map[string]string{"Content-Type": "application/sdp"},
+		Body:       []byte(answer),
+	}
+	if err := agent.updateRemoteMedia(call, refresh); err != nil {
+		t.Fatalf("simulated media refresh: %v", err)
+	}
+	if err := agent.Hangup(call.CallID()); err != nil {
+		t.Fatalf("Hangup: %v", err)
 	}
 }
 
@@ -246,6 +290,30 @@ func TestAgentStopReleasesCallWhenBYEFails(t *testing.T) {
 	case <-call.done:
 	default:
 		t.Fatal("call done channel remains open")
+	}
+}
+
+func TestAgentHangupReleasesCallWhenBYEFails(t *testing.T) {
+	agent := newTestAgent(t)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Stop()
+	call, err := agent.SimulateCall("+8613800000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.ims.Transport().SetSendFn(func(string) error { return errors.New("forced BYE write failure") })
+	if err := agent.Hangup(call.CallID()); err == nil || !strings.Contains(err.Error(), "forced BYE write failure") {
+		t.Fatalf("Hangup error = %v", err)
+	}
+	if agent.IsBusy() || agent.Snapshot().ActiveCall != nil {
+		t.Fatalf("failed BYE left active call: %+v", agent.Snapshot())
+	}
+	select {
+	case <-call.done:
+	default:
+		t.Fatal("failed BYE left call done channel open")
 	}
 }
 
@@ -487,8 +555,15 @@ func TestGatewayLifecycle(t *testing.T) {
 	if status["registered"] != true {
 		t.Errorf("status = %+v", status)
 	}
-	if _, err := gw.SimulateCall("+8613800000000"); err == nil || !strings.Contains(err.Error(), "client SDP") {
-		t.Fatalf("SimulateCall error = %v", err)
+	call, err := gw.SimulateCall("+8613800000000")
+	if err != nil {
+		t.Fatalf("SimulateCall: %v", err)
+	}
+	if call.RTPRelay() == nil || call.RTPRelay().IMSPort() <= 0 {
+		t.Fatalf("SimulateCall relay = %+v", call.RTPRelay())
+	}
+	if err := call.Hangup(); err != nil {
+		t.Fatalf("Hangup: %v", err)
 	}
 }
 

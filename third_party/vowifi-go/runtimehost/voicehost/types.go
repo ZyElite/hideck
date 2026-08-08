@@ -219,23 +219,36 @@ func (g *Gateway) SimulateCall(ctx context.Context, deviceID string, req Simulat
 	if req.OnConnected != nil {
 		req.OnConnected()
 	}
+	mediaErrors := callMediaErrors(call)
 	timer := time.NewTimer(time.Duration(hold) * time.Second)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		hangupErr := agent.HangupContext(cleanupCtx, callID)
-		cancel()
-		return SimulateCallResult{Success: false, Reason: errors.Join(ctx.Err(), hangupErr).Error()}, ctx.Err()
+		resultErr := errors.Join(ctx.Err(), hangupAgent(agent, callID))
+		return SimulateCallResult{Success: false, Reason: resultErr.Error()}, resultErr
+	case mediaErr := <-mediaErrors:
+		resultErr := errors.Join(mediaErr, hangupAgent(agent, callID))
+		return SimulateCallResult{Success: false, Reason: resultErr.Error()}, resultErr
 	case <-timer.C:
-		hangupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := agent.HangupContext(hangupCtx, callID)
-		cancel()
+		err := hangupAgent(agent, callID)
 		if err != nil {
 			return SimulateCallResult{Success: false, Reason: err.Error()}, err
 		}
 		return SimulateCallResult{Success: true, Message: "call completed", DurationMs: int64(hold) * 1000}, nil
 	}
+}
+
+func callMediaErrors(call interface{}) <-chan error {
+	if mediaCall, ok := call.(interface{ MediaErrors() <-chan error }); ok {
+		return mediaCall.MediaErrors()
+	}
+	return nil
+}
+
+func hangupAgent(agent voiceAgent, callID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return agent.HangupContext(ctx, callID)
 }
 
 // GetAgent returns the voice agent for a device.

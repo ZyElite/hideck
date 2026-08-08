@@ -6,11 +6,6 @@ import (
 	"time"
 )
 
-// timeAfter is a test-friendly wrapper around time.After.
-func timeAfter(d time.Duration) <-chan time.Time {
-	return time.After(d)
-}
-
 // packetConnAddrString returns the string form of a packet conn address.
 func packetConnAddrString(addr net.Addr) string {
 	if addr == nil {

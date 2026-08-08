@@ -2,6 +2,7 @@ package voicehost
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -27,6 +28,23 @@ func (f *fakeAgent) Stop() error  { return nil }
 type fakeCall struct{ id string }
 
 func (c fakeCall) CallID() string { return c.id }
+
+type fakeMediaCall struct {
+	fakeCall
+	errors <-chan error
+}
+
+func (c fakeMediaCall) MediaErrors() <-chan error { return c.errors }
+
+type fakeMediaErrorAgent struct {
+	fakeAgent
+	mediaErrors <-chan error
+}
+
+func (f *fakeMediaErrorAgent) DialContext(_ context.Context, number string) (interface{}, error) {
+	f.dialed = number
+	return fakeMediaCall{fakeCall: fakeCall{id: "call-media"}, errors: f.mediaErrors}, nil
+}
 
 type fakeIncomingAgent struct {
 	fakeAgent
@@ -76,6 +94,25 @@ func TestGatewayNoAgent(t *testing.T) {
 	g := NewGateway()
 	if _, err := g.SimulateCall(context.Background(), "dev-1", SimulateCallRequest{}); err == nil {
 		t.Error("should error without agent")
+	}
+}
+
+func TestGatewaySimulateCallReturnsMediaFailure(t *testing.T) {
+	mediaErrors := make(chan error, 1)
+	mediaErrors <- errors.New("RTP write failed")
+	agent := &fakeMediaErrorAgent{mediaErrors: mediaErrors}
+	gateway := NewGateway()
+	if err := gateway.SetAgent("dev-1", agent); err != nil {
+		t.Fatal(err)
+	}
+	result, err := gateway.SimulateCall(context.Background(), "dev-1", SimulateCallRequest{
+		Callee: "+8613800000000", HoldSeconds: 1,
+	})
+	if err == nil || result.Success || result.Reason != "RTP write failed" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if agent.hungup != "call-media" {
+		t.Fatalf("hung up = %q, want call-media", agent.hungup)
 	}
 }
 

@@ -29,7 +29,11 @@ func (stubAKA) CalculateAKA(rand16, autn16 []byte) (imscore.AKAResult, error) {
 // newTestService builds an imscore service for adapter tests.
 func newTestService(t *testing.T) *imscore.Service {
 	t.Helper()
-	registrar := startTestRegistrar(t)
+	return newTestServiceWithRegistrar(t, startTestRegistrar(t))
+}
+
+func newTestServiceWithRegistrar(t *testing.T, registrar *net.UDPConn) *imscore.Service {
+	t.Helper()
 	cfg := &imscore.IMSConfig{
 		DeviceID:    "dev-1",
 		IMSI:        "310260123456789",
@@ -162,6 +166,112 @@ func TestVoiceAgentAttachAndStopCleanup(t *testing.T) {
 	}
 	if gateway.GetAgent("dev-1") != nil {
 		t.Fatal("voice agent remained attached after runtime stop")
+	}
+}
+
+func TestVoiceGatewaySimulateCallUsesProductionAdapterAndRTP(t *testing.T) {
+	mediaConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mediaConn.Close()
+	requests := make(chan string, 16)
+	registrar := startVoiceAdapterRegistrar(t, mediaConn.LocalAddr().(*net.UDPAddr).Port, requests)
+	svc := newTestServiceWithRegistrar(t, registrar)
+	gateway := voicehost.NewGateway()
+	if err := gateway.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer gateway.Stop()
+	inst := &Instance{}
+	inst.setService(newServiceAdapter(svc))
+	if err := attachVoiceAgent(StartRequest{DeviceID: "dev-1", VoiceGateway: gateway}, inst, newServiceAdapter(svc)); err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Stop(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result, err := gateway.SimulateCall(ctx, "dev-1", voicehost.SimulateCallRequest{
+		Callee: "+8613800000000", HoldSeconds: 1,
+	})
+	if err != nil || !result.Success {
+		t.Fatalf("SimulateCall result=%+v err=%v", result, err)
+	}
+	assertProductionVoiceRTP(t, mediaConn)
+	assertProductionVoiceRequests(t, requests)
+	adapter := gateway.GetAgent("dev-1").(*voiceAgentAdapter)
+	if adapter.agent.IsBusy() || adapter.agent.Snapshot().ActiveCall != nil {
+		t.Fatalf("call remained active after timed BYE: %+v", adapter.agent.Snapshot())
+	}
+}
+
+func startVoiceAdapterRegistrar(t *testing.T, mediaPort int, requests chan<- string) *net.UDPConn {
+	t.Helper()
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	go func() {
+		buffer := make([]byte, 64*1024)
+		for {
+			n, remote, readErr := conn.ReadFromUDP(buffer)
+			if readErr != nil {
+				return
+			}
+			request := string(buffer[:n])
+			select {
+			case requests <- request:
+			default:
+			}
+			if strings.HasPrefix(request, "ACK ") {
+				continue
+			}
+			body, extra := "", ""
+			if strings.HasPrefix(request, "INVITE ") {
+				body = fmt.Sprintf("v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP 0\r\n", mediaPort)
+				extra = "To: <sip:callee@ims.example.com>;tag=voice-remote\r\nContact: <sip:callee@ims.example.com>\r\nContent-Type: application/sdp\r\n"
+			}
+			response := fmt.Sprintf("SIP/2.0 200 OK\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: %d\r\n\r\n%s",
+				testSIPHeader(request, "Via"), testSIPHeader(request, "Call-ID"), testSIPHeader(request, "CSeq"), extra, len(body), body)
+			_, _ = conn.WriteToUDP([]byte(response), remote)
+		}
+	}()
+	return conn
+}
+
+func assertProductionVoiceRTP(t *testing.T, mediaConn *net.UDPConn) {
+	t.Helper()
+	if err := mediaConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	packet := make([]byte, 256)
+	n, _, err := mediaConn.ReadFromUDP(packet)
+	if err != nil {
+		t.Fatalf("read production adapter RTP: %v", err)
+	}
+	if n != 172 || packet[1]&0x7f != 0 {
+		t.Fatalf("production adapter RTP n=%d pt=%d", n, packet[1]&0x7f)
+	}
+}
+
+func assertProductionVoiceRequests(t *testing.T, requests <-chan string) {
+	t.Helper()
+	seen := map[string]bool{}
+	for {
+		select {
+		case request := <-requests:
+			method := strings.Fields(request)[0]
+			seen[method] = true
+			if method == "INVITE" && (strings.Contains(request, "m=audio 0 ") || !strings.Contains(request, "RTP/AVP 104 114 9 8 0 101")) {
+				t.Fatalf("INVITE did not advertise the allocated production media endpoint: %q", request)
+			}
+		default:
+			if !seen["INVITE"] || !seen["ACK"] || !seen["BYE"] {
+				t.Fatalf("voice requests = %+v, want INVITE ACK BYE", seen)
+			}
+			return
+		}
 	}
 }
 

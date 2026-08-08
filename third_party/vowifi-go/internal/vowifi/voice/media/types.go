@@ -48,14 +48,21 @@ type Bridge struct {
 	relay    *RTPRelay
 }
 
-// ComfortNoiseGenerator generates comfort noise (RFC 3389) when media is
-// one-way or muted.
+// ComfortNoiseGenerator generates the legacy PCMU comfort stream used by
+// self-contained timed calls.
 type ComfortNoiseGenerator struct {
-	mu      sync.Mutex
-	conn    net.PacketConn
-	addr    *net.UDPAddr
-	stop    chan struct{}
-	started bool
+	mu          sync.Mutex
+	conn        net.PacketConn
+	addr        *net.UDPAddr
+	payloadType byte
+	sequence    uint16
+	timestamp   uint32
+	ssrc        uint32
+	randomState uint32
+	stop        chan struct{}
+	errors      chan error
+	wg          sync.WaitGroup
+	started     bool
 }
 
 // RTPMonitor tracks RTP packet flow to detect one-way media.

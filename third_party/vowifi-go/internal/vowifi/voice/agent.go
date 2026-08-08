@@ -119,7 +119,7 @@ func (a *Agent) Dial(number string) (*Call, error) {
 
 // DialContext starts an outbound call and waits for the final INVITE response.
 func (a *Agent) DialContext(ctx context.Context, number string) (*Call, error) {
-	return nil, errors.New("voice: client SDP is required; use HandleClientInvite")
+	return a.dialContext(ctx, number, "")
 }
 
 func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, error) {
@@ -248,7 +248,11 @@ func (a *Agent) HangupContext(ctx context.Context, callID string) error {
 	if call == nil {
 		return errors.New("voice: call not found")
 	}
-	return a.hangupCall(ctx, call)
+	err := a.hangupCall(ctx, call)
+	if err != nil {
+		a.forceReleaseCall(call, err)
+	}
+	return err
 }
 
 func (a *Agent) hangupCall(ctx context.Context, call *Call) error {

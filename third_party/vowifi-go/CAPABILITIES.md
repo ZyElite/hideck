@@ -16,7 +16,7 @@ perform their historical action with the arguments they expose.
 | Inbound SMS | Validates SIP MESSAGE and 3GPP payloads, decodes RP-DATA and SMS-DELIVER, responds over the inbound SIP path, publishes the message event, and sends RP acknowledgement or error. |
 | Multipart SMS | Splits outbound text, reassembles inbound parts by sender/reference, rejects conflicting duplicates, expires incomplete groups, and persists delivery updates. |
 | USSI/USSD | Uses real INVITE, ACK, INFO, and BYE transactions and routes inbound INFO/BYE to the active session. |
-| Voice signaling and media | Uses real outbound and inbound INVITE/ACK/BYE/CANCEL transactions. New inbound calls are exposed through the runtime gateway, ring with `180`, can be answered or rejected over the retained network transaction, renegotiate SDP, and relay RTP in both directions with payload-type mapping. Dialogs, timers, sockets, and runtime bindings are released on failure, cancel, or hangup. |
+| Voice signaling and media | Uses real outbound and inbound INVITE/ACK/BYE/CANCEL transactions. New inbound calls are exposed through the runtime gateway, ring with `180`, can be answered or rejected over the retained network transaction, renegotiate SDP, and relay RTP in both directions with payload-type mapping. The legacy timed call allocates a non-zero IMS RTP endpoint and transmits 20 ms PCMU media until BYE. Dialogs, timers, sockets, and runtime bindings are released on failure, cancel, or hangup. |
 
 ## Explicit Capability Boundaries
 
@@ -24,11 +24,12 @@ perform their historical action with the arguments they expose.
   `voicehost.Gateway.AnswerIncomingCall`. The gateway also exposes callbacks
   and polling for pending calls. Reject, no-answer, and CANCEL paths send an
   explicit final response to the original INVITE.
-- `Agent.Dial`, `Agent.DialContext`, and the legacy timed `SimulateCall` API do
-  not accept client media parameters. They now return an explicit
-  `client SDP is required` error instead of advertising `m=audio 0`. Local
-  client calls use `HandleClientInvite`, which allocates and injects the RTP
-  relay before sending the IMS INVITE.
+- `Agent.Dial`, `Agent.DialContext`, and the legacy timed `SimulateCall` API
+  preserve the old self-contained call mode: they allocate an RTP relay before
+  sending INVITE, advertise the relay's non-zero IMS port, require PCMU in the
+  network SDP answer, and send PCMU comfort media until hangup. Local client
+  calls use `HandleClientInvite`, which injects the client's SDP and relays RTP
+  in both directions.
 - The client side of the RTP relay is advertised on `127.0.0.1`; the media
   client therefore runs on the same host as the runtime. IMS-side media binds
   to the registered IMS address and uses ephemeral non-zero ports.

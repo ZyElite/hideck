@@ -1,9 +1,17 @@
 package media
 
 import (
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"time"
+)
+
+const (
+	comfortNoisePacketInterval = 20 * time.Millisecond
+	comfortNoiseSamples        = 160
+	comfortNoiseSSRC           = 0xdeadbeef
 )
 
 // NewMediaSessionManager creates a media session manager.
@@ -108,7 +116,11 @@ func (b *Bridge) IMSLocalIP() net.IP {
 
 // NewComfortNoiseGenerator creates a comfort noise generator.
 func NewComfortNoiseGenerator() *ComfortNoiseGenerator {
-	return &ComfortNoiseGenerator{stop: make(chan struct{})}
+	seed := uint32(time.Now().UnixNano())
+	return &ComfortNoiseGenerator{
+		payloadType: 0, timestamp: seed, ssrc: comfortNoiseSSRC, randomState: seed,
+		stop: make(chan struct{}), errors: make(chan error, 1),
+	}
 }
 
 // Start begins generating comfort noise to addr.
@@ -127,7 +139,9 @@ func (g *ComfortNoiseGenerator) Start(conn net.PacketConn, addr *net.UDPAddr) er
 	g.conn = conn
 	g.addr = addr
 	g.stop = make(chan struct{})
+	g.errors = make(chan error, 1)
 	g.started = true
+	g.wg.Add(1)
 	g.mu.Unlock()
 	go g.sendLoop()
 	return nil
@@ -139,72 +153,91 @@ func (g *ComfortNoiseGenerator) Stop() {
 		return
 	}
 	g.mu.Lock()
-	if !g.started {
-		g.mu.Unlock()
-		return
+	if g.started {
+		g.started = false
+		close(g.stop)
 	}
-	g.started = false
-	close(g.stop)
 	g.mu.Unlock()
+	g.wg.Wait()
+}
+
+// Errors reports the first asynchronous RTP write failure.
+func (g *ComfortNoiseGenerator) Errors() <-chan error {
+	if g == nil {
+		return nil
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.errors
 }
 
 // sendLoop emits comfort noise packets periodically.
 func (g *ComfortNoiseGenerator) sendLoop() {
+	defer g.wg.Done()
+	ticker := time.NewTicker(comfortNoisePacketInterval)
+	defer ticker.Stop()
 	for {
 		g.mu.Lock()
 		stop := g.stop
-		conn := g.conn
-		addr := g.addr
 		g.mu.Unlock()
 		select {
 		case <-stop:
 			return
-		default:
-		}
-		if conn != nil && addr != nil {
-			pkt := g.generateComfortNoiseUlaw()
-			_, _ = conn.WriteTo(pkt, addr)
-		}
-		select {
-		case <-stop:
-			return
-		case <-timeAfter(20 * time.Millisecond):
+		case <-ticker.C:
+			if err := g.sendOnePacket(); err != nil {
+				g.reportError(err)
+				return
+			}
 		}
 	}
 }
 
 // sendOnePacket emits a single comfort noise packet.
-func (g *ComfortNoiseGenerator) sendOnePacket() {
+func (g *ComfortNoiseGenerator) sendOnePacket() error {
 	if g == nil {
-		return
+		return errors.New("media: nil noise generator")
 	}
 	g.mu.Lock()
 	conn := g.conn
 	addr := g.addr
 	g.mu.Unlock()
-	if conn != nil && addr != nil {
-		_, _ = conn.WriteTo(g.generateComfortNoiseUlaw(), addr)
+	if conn == nil || addr == nil {
+		return errors.New("media: comfort-noise connection and destination are required")
+	}
+	_, err := conn.WriteTo(g.generateComfortNoiseUlaw(), addr)
+	return err
+}
+
+func (g *ComfortNoiseGenerator) reportError(err error) {
+	if err == nil {
+		return
+	}
+	g.mu.Lock()
+	errorsCh := g.errors
+	g.mu.Unlock()
+	select {
+	case errorsCh <- fmt.Errorf("media: write PCMU RTP: %w", err):
+	default:
 	}
 }
 
-// generateComfortNoiseUlaw builds a comfort noise RTP packet (RFC 3389,
-// payload type 13, u-law).
+// generateComfortNoiseUlaw builds one 20 ms PCMU RTP packet.
 func (g *ComfortNoiseGenerator) generateComfortNoiseUlaw() []byte {
-	// RTP header (12 bytes) + CN payload (1 byte level).
-	pkt := make([]byte, 13)
-	pkt[0] = 0x80 // version 2, no padding, no extension
-	pkt[1] = 13   // comfort noise PT
-	pkt[2] = 0    // sequence high
-	pkt[3] = 0    // sequence low
-	pkt[4] = 0    // timestamp high
-	pkt[5] = 0
-	pkt[6] = 0
-	pkt[7] = 0
-	pkt[8] = 0 // SSRC
-	pkt[9] = 0
-	pkt[10] = 0
-	pkt[11] = 0
-	pkt[12] = 0x20 // noise level (approx -40 dBov)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	pkt := make([]byte, 12+comfortNoiseSamples)
+	pkt[0] = 0x80
+	pkt[1] = g.payloadType
+	binary.BigEndian.PutUint16(pkt[2:4], g.sequence)
+	binary.BigEndian.PutUint32(pkt[4:8], g.timestamp)
+	binary.BigEndian.PutUint32(pkt[8:12], g.ssrc)
+	for i := 12; i < len(pkt); i++ {
+		g.randomState = g.randomState*1103515245 + 12345
+		sample := int16((g.randomState>>16)&0x1ff) - 0x100
+		pkt[i] = linearToUlaw(sample)
+	}
+	g.sequence++
+	g.timestamp += comfortNoiseSamples
 	return pkt
 }
 

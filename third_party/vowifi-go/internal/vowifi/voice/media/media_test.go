@@ -1,6 +1,7 @@
 package media
 
 import (
+	"encoding/binary"
 	"net"
 	"testing"
 	"time"
@@ -69,20 +70,58 @@ func TestComfortNoiseGenerator(t *testing.T) {
 	if err := g.Start(conn, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: conn.LocalAddr().(*net.UDPAddr).Port}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	// Read one comfort noise packet.
-	buf := make([]byte, 64)
+	defer g.Stop()
+	buf := make([]byte, 256)
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	n, _, err := conn.ReadFrom(buf)
 	if err != nil {
 		t.Fatalf("read comfort noise: %v", err)
 	}
-	if n != 13 {
-		t.Errorf("comfort noise len = %d, want 13", n)
+	if n != 172 {
+		t.Fatalf("comfort noise len = %d, want 172", n)
 	}
-	if buf[1] != 13 {
-		t.Errorf("payload type = %d, want 13 (CN)", buf[1])
+	if buf[1]&0x7f != 0 {
+		t.Errorf("payload type = %d, want 0 (PCMU)", buf[1]&0x7f)
 	}
-	g.Stop()
+	firstSequence := binary.BigEndian.Uint16(buf[2:4])
+	firstTimestamp := binary.BigEndian.Uint32(buf[4:8])
+	if got := binary.BigEndian.Uint32(buf[8:12]); got != comfortNoiseSSRC {
+		t.Errorf("SSRC = 0x%x, want 0x%x", got, comfortNoiseSSRC)
+	}
+	n, _, err = conn.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("read second comfort noise packet: %v", err)
+	}
+	if got := binary.BigEndian.Uint16(buf[2:4]); got != firstSequence+1 {
+		t.Errorf("sequence = %d, want %d", got, firstSequence+1)
+	}
+	if got := binary.BigEndian.Uint32(buf[4:8]); got != firstTimestamp+comfortNoiseSamples {
+		t.Errorf("timestamp = %d, want %d", got, firstTimestamp+comfortNoiseSamples)
+	}
+}
+
+func TestComfortNoiseGeneratorReportsWriteFailure(t *testing.T) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: conn.LocalAddr().(*net.UDPAddr).Port}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	generator := NewComfortNoiseGenerator()
+	if err := generator.Start(conn, remote); err != nil {
+		t.Fatal(err)
+	}
+	defer generator.Stop()
+	select {
+	case err := <-generator.Errors():
+		if err == nil {
+			t.Fatal("expected explicit RTP write error")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for RTP write error")
+	}
 }
 
 func TestLinearToUlaw(t *testing.T) {

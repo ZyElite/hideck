@@ -176,7 +176,7 @@ func generateBasicSDP(agent *Agent, call *Call) string {
 		return ""
 	}
 	sessionID := voiceSessID()
-	return fmt.Sprintf("v=0\r\no=- %d %d IN IP4 %s\r\ns=VoWiFi call\r\nc=IN IP4 %s\r\nt=0 0\r\nm=audio %d RTP/AVP 96 97 98\r\na=rtpmap:96 AMR-WB/16000/1\r\na=rtpmap:97 AMR/8000/1\r\na=rtpmap:98 telephone-event/8000\r\na=fmtp:96 mode-set=0,1,2,3,4,5,6,7\r\na=sendrecv\r\n", sessionID, sessionID, ip, ip, port)
+	return fmt.Sprintf("v=0\r\no=- %d %d IN IP4 %s\r\ns=VoHive Call\r\nc=IN IP4 %s\r\nt=0 0\r\nm=audio %d RTP/AVP 104 114 9 8 0 101\r\nb=AS:50\r\na=rtpmap:104 AMR-WB/16000\r\na=fmtp:104 octet-align=1; max-red=0\r\na=rtpmap:114 AMR/8000\r\na=fmtp:114 octet-align=1; max-red=0\r\na=rtpmap:9 G722/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=sendrecv\r\na=ptime:20\r\na=maxptime:20\r\n", sessionID, sessionID, ip, ip, port)
 }
 
 func (a *Agent) localAddr() string {

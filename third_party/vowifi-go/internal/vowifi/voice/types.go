@@ -59,6 +59,7 @@ type Call struct {
 	imsInvite         *imscore.InviteHandle
 	routeSet          []string
 	rtpRelay          *media.RTPRelay
+	comfortNoise      *media.ComfortNoiseGenerator
 	sipDialog         *voiceSIPDialog
 	inboundResponder  imscore.InboundVoiceResponder
 	remoteSDP         string

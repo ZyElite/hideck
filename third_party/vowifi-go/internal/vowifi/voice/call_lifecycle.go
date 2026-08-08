@@ -28,11 +28,22 @@ func (c *Call) StartMedia() error {
 	}
 	c.mu.RLock()
 	relay := c.rtpRelay
+	generator := c.comfortNoise
 	c.mu.RUnlock()
 	if relay == nil {
 		return errors.New("voice: no media relay")
 	}
-	return relay.Start()
+	if err := relay.Start(); err != nil {
+		return err
+	}
+	if generator == nil {
+		return nil
+	}
+	conn, remote := relay.GetIMSConnAndRemote()
+	if err := generator.Start(conn, remote); err != nil {
+		return errors.Join(err, relay.Stop())
+	}
+	return nil
 }
 
 // StopMedia stops the RTP relay for the call.
@@ -42,7 +53,11 @@ func (c *Call) StopMedia() error {
 	}
 	c.mu.RLock()
 	relay := c.rtpRelay
+	generator := c.comfortNoise
 	c.mu.RUnlock()
+	if generator != nil {
+		generator.Stop()
+	}
 	if relay == nil {
 		return nil
 	}

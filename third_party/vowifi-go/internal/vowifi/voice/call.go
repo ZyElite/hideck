@@ -246,6 +246,29 @@ func (c *Call) RTPRelay() *media.RTPRelay {
 	return c.rtpRelay
 }
 
+func (c *Call) setComfortNoise(g *media.ComfortNoiseGenerator) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.comfortNoise = g
+	c.mu.Unlock()
+}
+
+// MediaErrors reports asynchronous media generation failures.
+func (c *Call) MediaErrors() <-chan error {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	generator := c.comfortNoise
+	c.mu.RUnlock()
+	if generator == nil {
+		return nil
+	}
+	return generator.Errors()
+}
+
 // MarkACKSent records that the ACK was sent.
 func (c *Call) MarkACKSent() {
 	if c == nil {
