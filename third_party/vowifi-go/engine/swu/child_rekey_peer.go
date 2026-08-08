@@ -159,6 +159,10 @@ func (s *Session) handlePeerInformational(packet *ikev2.IKEPacket) error {
 	if err != nil {
 		return err
 	}
+	responsePayloads, err := s.peerMOBIKEResponse(payloads, retiredIKE)
+	if err != nil {
+		return err
+	}
 	var activeChildDelete, ikeDelete bool
 	var responseSPIs []uint32
 	for _, payload := range payloads {
@@ -176,7 +180,7 @@ func (s *Session) handlePeerInformational(packet *ikev2.IKEPacket) error {
 		activeChildDelete = activeChildDelete || s.deleteContainsCurrentChildSA(deletion.SPIs)
 		responseSPIs = append(responseSPIs, s.retireDeletedChildSAs(deletion.SPIs)...)
 	}
-	responsePayloads := childSADeleteResponse(responseSPIs)
+	responsePayloads = append(responsePayloads, childSADeleteResponse(responseSPIs)...)
 	var retiredResponse []byte
 	if retiredIKE {
 		retiredResponse, err = s.sendIKEContextResponse(packet, responsePayloads, context)

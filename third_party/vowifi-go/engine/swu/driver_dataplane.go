@@ -154,9 +154,10 @@ func (s *Session) innerSourceCIDRs() []string {
 }
 
 func (s *Session) startTUNDataPlaneLoop() {
+	transport := s.transport()
 	s.dataPlaneWG.Add(2)
-	go s.loopESPToTUN(s.socket, s.tun)
-	go s.loopTUNToESP(s.socket, s.tun)
+	go s.loopESPToTUN(transport, s.tun)
+	go s.loopTUNToESP(transport, s.tun)
 }
 
 func (s *Session) loopESPToTUN(transport ipsec.Transport, tun *driver.TUNDevice) {
@@ -167,7 +168,12 @@ func (s *Session) loopESPToTUN(transport ipsec.Transport, tun *driver.TUNDevice)
 			return
 		case raw, ok := <-transport.ESPPackets():
 			if !ok {
-				return
+				replacement := s.replacementTransport(transport)
+				if replacement == nil {
+					return
+				}
+				transport = replacement
+				continue
 			}
 			inner, err := s.decapsulateOuterESP(raw)
 			if err != nil {
@@ -204,7 +210,13 @@ func (s *Session) loopTUNToESP(transport ipsec.Transport, tun *driver.TUNDevice)
 		if err != nil {
 			continue
 		}
-		err = transport.SendESP(lease.data)
+		active := s.transport()
+		if active == nil {
+			lease.Release()
+			s.failDataPlane(errors.New("swu: active ESP transport disappeared"))
+			return
+		}
+		err = active.SendESP(lease.data)
 		lease.Release()
 		if err != nil {
 			s.failDataPlane(fmt.Errorf("swu: send ESP packet: %w", err))

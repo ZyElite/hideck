@@ -32,7 +32,7 @@ type childSARekeyRequest struct {
 func (s *Session) performChildSARekey(ctx context.Context) error {
 	s.ikeExchangeMu.Lock()
 	defer s.ikeExchangeMu.Unlock()
-	if s.socket == nil || s.ikeKeys == nil || s.State() != stateEstablished {
+	if s.transport() == nil || s.ikeKeys == nil || s.State() != stateEstablished {
 		return errors.New("swu: session not established")
 	}
 	ni, localSPI, err := s.newChildSAInitiatorMaterial()

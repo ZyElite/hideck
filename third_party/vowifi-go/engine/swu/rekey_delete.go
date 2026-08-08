@@ -16,7 +16,7 @@ func (s *Session) sendDeleteChildSA(spis []uint32) error {
 	if len(spis) > maxDeleteSPIs {
 		return fmt.Errorf("swu: too many CHILD_SA SPIs to delete: %d", len(spis))
 	}
-	if s.socket == nil || s.ikeKeys == nil {
+	if s.transport() == nil || s.ikeKeys == nil {
 		return errors.New("swu: session not established")
 	}
 	encodedSPIs := make([]byte, 0, 4*len(spis))
@@ -40,7 +40,7 @@ func (s *Session) sendDeleteChildSA(spis []uint32) error {
 }
 
 func (s *Session) sendDeleteIKE() error {
-	if s.socket == nil || s.ikeKeys == nil {
+	if s.transport() == nil || s.ikeKeys == nil {
 		return errors.New("swu: session not established")
 	}
 	request := &ikev2.IKEPacket{

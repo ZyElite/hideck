@@ -10,47 +10,6 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
-// UpdateAddresses handles a MOBIKE address update (RFC 4555): it records the
-// new local/remote addresses and sends an UPDATE_SA_ADDRESSES notification.
-func (s *Session) UpdateAddresses(oldIP, newIP net.IP) error {
-	if oldIP == nil || newIP == nil {
-		return errors.New("swu: MOBIKE requires old and new addresses")
-	}
-	return s.sendMOBIKEUpdate()
-}
-
-// sendMOBIKEUpdate sends a MOBIKE UPDATE_SA_ADDRESSES INFORMATIONAL request.
-func (s *Session) sendMOBIKEUpdate() error {
-	s.ikeExchangeMu.Lock()
-	defer s.ikeExchangeMu.Unlock()
-	if s.socket == nil || s.ikeKeys == nil {
-		return errors.New("swu: session not established")
-	}
-	pkt := &ikev2.IKEPacket{
-		Header: newIKEHeader(
-			s.SPIi, s.SPIr, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
-		),
-		Payloads: []ikev2.Payload{
-			&ikev2.EncryptedPayloadNotify{
-				ProtocolID: ikev2.ProtoIKE,
-				NotifyType: 16400, // UPDATE_SA_ADDRESSES
-			},
-		},
-	}
-	_, err := s.exchangeEstablishedIKE(s.ctx, pkt)
-	return err
-}
-
-// updateXFRMState updates the XFRM SA state after a MOBIKE update.
-func (s *Session) updateXFRMState() error {
-	return errors.New("swu: XFRM state update not wired")
-}
-
-// verifyCookie2Response verifies a COOKIE2 response (RFC 7296 §2.6).
-func (s *Session) verifyCookie2Response() error {
-	return errors.New("swu: COOKIE2 verification not wired")
-}
-
 // sendIkeAuthChildless sends an IKE_AUTH request without a CHILD_SA (used for
 // EAP-only authentication).
 func (s *Session) sendIkeAuthChildless() error {
@@ -59,27 +18,6 @@ func (s *Session) sendIkeAuthChildless() error {
 		return err
 	}
 	return s.sendIKEAuthRequest(payloads)
-}
-
-// startNetEventMonitor starts the network event monitor (MOBIKE triggers).
-func (s *Session) startNetEventMonitor() error {
-	if s.socket == nil {
-		return errors.New("swu: no transport")
-	}
-	go func() {
-		for {
-			select {
-			case <-s.ctx.Done():
-				return
-			case ev, ok := <-s.socket.NetEventsChan():
-				if !ok {
-					return
-				}
-				_ = ev
-			}
-		}
-	}()
-	return nil
 }
 
 // startXFRMExpireMonitor starts the XFRM SA expiry monitor.
@@ -144,11 +82,6 @@ func (s *Session) startUserspaceDataPlane() error {
 // parsePayloads parses a raw payload chain.
 func (s *Session) parsePayloads(raw []byte) ([]ikev2.Payload, error) {
 	return ikev2.DecodePayloadChain(raw)
-}
-
-// fillSAKeys fills the ESP SA keys from the negotiated transforms.
-func (s *Session) fillSAKeys() error {
-	return nil
 }
 
 // performSessionResumption attempts IKE session resumption.

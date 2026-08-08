@@ -97,11 +97,12 @@ func (s *Session) setupKernelXFRMDataPlane(keys *childSAKeys) error {
 	if err := validateXFRMTuple(localIP, remoteIP, localPort, remotePort); err != nil {
 		return err
 	}
-	transport, ok := s.socket.(*ipsec.SocketManager)
+	activeTransport := s.transport()
+	transport, ok := activeTransport.(*ipsec.SocketManager)
 	if !ok {
 		return errors.New("swu: XFRM requires a direct UDP transport")
 	}
-	if err := s.socket.SetUDPEncap(); err != nil {
+	if err := activeTransport.SetUDPEncap(); err != nil {
 		return fmt.Errorf("swu: enable UDP encapsulation for XFRM: %w", err)
 	}
 	plane := &xfrmDataPlane{

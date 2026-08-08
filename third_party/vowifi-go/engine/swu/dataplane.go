@@ -276,7 +276,7 @@ func (s *Session) deriveChildSAKeysForPFS(
 
 // startEstablishedDataPlane starts the data plane loops.
 func (s *Session) startEstablishedDataPlane() error {
-	if s.socket == nil {
+	if s.transport() == nil {
 		return errors.New("swu: data plane not ready")
 	}
 	if s.kernelDataPlane != nil {
@@ -315,7 +315,7 @@ func (s *Session) markDataPlaneStarted() bool {
 
 // startDataPlaneLoop runs the two data-plane loops: ESP → inner and inner → ESP.
 func (s *Session) startDataPlaneLoop() {
-	transport := s.socket
+	transport := s.transport()
 	endpoint := s.innerEndpoint
 	s.dataPlaneWG.Add(2)
 	go s.loopESPToInner(transport, endpoint)
@@ -332,7 +332,12 @@ func (s *Session) loopESPToInner(transport ipsec.Transport, endpoint *userspaceI
 			return
 		case raw, ok := <-transport.ESPPackets():
 			if !ok {
-				return
+				replacement := s.replacementTransport(transport)
+				if replacement == nil {
+					return
+				}
+				transport = replacement
+				continue
 			}
 			inner, err := s.decapsulateOuterESP(raw)
 			if err != nil {
@@ -362,7 +367,13 @@ func (s *Session) loopInnerToESP(transport ipsec.Transport, endpoint *userspaceI
 			if err != nil {
 				continue
 			}
-			err = transport.SendESP(lease.data)
+			active := s.transport()
+			if active == nil {
+				lease.Release()
+				s.failDataPlane(errors.New("swu: active ESP transport disappeared"))
+				return
+			}
+			err = active.SendESP(lease.data)
 			lease.Release()
 			if err != nil {
 				s.failDataPlane(fmt.Errorf("swu: send ESP packet: %w", err))
@@ -517,14 +528,15 @@ func (s *Session) setNr(nr []byte) {
 
 // resolveXFRMOuterTuple resolves the outer (local, remote) tuple for XFRM.
 func (s *Session) resolveXFRMOuterTuple() (net.IP, net.IP, uint16, uint16, error) {
-	if s.socket == nil {
+	transport := s.transport()
+	if transport == nil {
 		return nil, nil, 0, 0, errors.New("swu: no transport")
 	}
-	remotePort := s.socket.RemotePort()
+	remotePort := transport.RemotePort()
 	if remotePort < 0 || remotePort > int(^uint16(0)) {
 		return nil, nil, 0, 0, fmt.Errorf("swu: invalid remote UDP port %d", remotePort)
 	}
-	return s.socket.LocalIP(), s.socket.RemoteIP(), s.socket.LocalPort(), uint16(remotePort), nil
+	return transport.LocalIP(), transport.RemoteIP(), transport.LocalPort(), uint16(remotePort), nil
 }
 
 // selectOutgoingSA selects the outbound ESP SA (single-SA model).

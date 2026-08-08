@@ -34,7 +34,7 @@ type initiatedIKERekey struct {
 func (s *Session) performIKESARekey(ctx context.Context) error {
 	s.ikeExchangeMu.Lock()
 	defer s.ikeExchangeMu.Unlock()
-	if s.socket == nil || s.ikeKeys == nil || s.State() != stateEstablished {
+	if s.transport() == nil || s.ikeKeys == nil || s.State() != stateEstablished {
 		return errors.New("swu: session not established")
 	}
 	dh, initiatorSPI, nonce, err := s.newIKESARekeyMaterial()

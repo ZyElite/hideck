@@ -21,6 +21,9 @@ import (
 // ErrFreshRuntimeRequired tells the host to replace the current IKE runtime.
 var ErrFreshRuntimeRequired = errors.New("swu: full reauthentication requires a fresh runtime session")
 
+// Transport is the original injectable SWu network boundary.
+type Transport = ipsec.Transport
+
 // Config carries the SWu session configuration recovered from the decompiled
 // engine/swu. It is the input to NewSession.
 type Config struct {
@@ -44,6 +47,8 @@ type Config struct {
 	// ProxyAddr and Proxy route IKE/ESP through a SOCKS5 UDP associate.
 	ProxyAddr string
 	Proxy     *ipsec.Socks5Config
+	// TransportFactory restores the original injectable transport constructor.
+	TransportFactory func(local, remote string) (Transport, error)
 	// IMSI is the subscriber IMSI used for the EAP-AKA identity.
 	IMSI string
 	// MCC/MNC override the MCC/MNC derived from the IMSI in the NAI.
@@ -199,7 +204,8 @@ type Session struct {
 	cfg *Config
 
 	// --- transport ---
-	socket ipsec.Transport
+	transportMu sync.RWMutex
+	socket      ipsec.Transport
 
 	// --- IKE_AUTH state ---
 	stage                  ikeAuthStage
@@ -267,6 +273,8 @@ type Session struct {
 	controlMu         sync.RWMutex
 	controlWG         sync.WaitGroup
 	controlRequests   chan []byte
+	controlStop       chan struct{}
+	controlTransport  ipsec.Transport
 	controlRunning    bool
 	taskMgr           *TaskManager
 	ikeWaiters        map[ikeWaitKey]chan []byte
@@ -277,6 +285,10 @@ type Session struct {
 	dataPlaneStarted  bool
 	dataPlaneWG       sync.WaitGroup
 	rekeyTimerWG      sync.WaitGroup
+	netEventWG        sync.WaitGroup
+	netEventMu        sync.Mutex
+	netEventMonitors  map[<-chan ipsec.NetEvent]struct{}
+	netEventClosing   bool
 	startedAt         time.Time
 	lastPingAt        time.Time
 	lastDPDAt         time.Time
@@ -309,6 +321,7 @@ type Session struct {
 	negotiationFallbackCount int
 	sendCookie               bool
 	fragmentationSupported   bool
+	mobikeSupported          bool
 	ikeFragmentMTU           uint32
 	fragmentBuf              *fragmentBuffer
 }
@@ -338,6 +351,7 @@ func NewSession(cfg *Config) *Session {
 		ikeFragmentMTU:    defaultFragmentMTU,
 		espInboundSAs:     make(map[uint32]*ipsec.SecurityAssociation),
 		retiredChildSAs:   make(map[uint32]uint32),
+		netEventMonitors:  make(map[<-chan ipsec.NetEvent]struct{}),
 	}
 	if s.nonceLen <= 0 {
 		s.nonceLen = 32
@@ -468,6 +482,7 @@ func (s *Session) connectOnce(ctx context.Context) (err error) {
 	if err := s.buildTransport(); err != nil {
 		return fmt.Errorf("build transport: %w", err)
 	}
+	s.startNetEventMonitor()
 	// IKE_SA_INIT.
 	if err := s.runIKESAInit(ctx); err != nil {
 		return err
@@ -502,11 +517,11 @@ func (s *Session) connectOnce(ctx context.Context) (err error) {
 }
 
 func (s *Session) stopTransport() {
-	if s.socket == nil {
+	transport := s.takeTransport()
+	if transport == nil {
 		return
 	}
-	s.socket.Stop()
-	s.socket = nil
+	transport.Stop()
 }
 
 // runIKESAInit performs the IKE_SA_INIT exchange with COOKIE / INVALID_KE /
@@ -564,6 +579,29 @@ func (s *Session) buildTransport() error {
 	} else if s.cfg.EpDGPort != 0 {
 		port = fmt.Sprintf("%d", s.cfg.EpDGPort)
 	}
+	if s.cfg.TransportFactory != nil {
+		localIP := configuredLocalIP(s.cfg)
+		localHost := ""
+		if localIP != nil {
+			localHost = localIP.String()
+		}
+		localAddr := net.JoinHostPort(localHost, fmt.Sprintf("%d", s.cfg.LocalPort))
+		targetAddr := net.JoinHostPort(host, port)
+		transport, err := s.cfg.TransportFactory(localAddr, targetAddr)
+		if err != nil {
+			return fmt.Errorf("open injected IKE transport: %w", err)
+		}
+		if transport == nil {
+			return errors.New("swu: transport factory returned nil")
+		}
+		if err := transport.Start(); err != nil {
+			transport.Stop()
+			return fmt.Errorf("start injected IKE transport: %w", err)
+		}
+		s.setTransport(transport)
+		s.remoteIP, s.remotePort = transport.RemoteIP(), transport.RemotePort()
+		return nil
+	}
 	if strings.TrimSpace(s.cfg.ProxyAddr) != "" {
 		return s.buildProxyTransport(host, port)
 	}
@@ -585,7 +623,7 @@ func (s *Session) buildTransport() error {
 		sm.Stop()
 		return fmt.Errorf("start IKE socket: %w", err)
 	}
-	s.socket = sm
+	s.setTransport(sm)
 	s.remoteIP = sm.RemoteIP()
 	s.remotePort = sm.RemotePort()
 	return nil
@@ -609,7 +647,7 @@ func (s *Session) buildProxyTransport(host, port string) error {
 		transport.Stop()
 		return fmt.Errorf("start SOCKS5 IKE transport: %w", err)
 	}
-	s.socket = transport
+	s.setTransport(transport)
 	s.remoteIP = transport.RemoteIP()
 	s.remotePort = transport.RemotePort()
 	return nil
@@ -672,6 +710,7 @@ func (s *Session) Shutdown() {
 	s.mu.Unlock()
 
 	s.cancel()
+	s.closeNetEventLifecycle()
 	s.controlMu.RLock()
 	taskManager := s.taskMgr
 	s.controlMu.RUnlock()
@@ -686,6 +725,7 @@ func (s *Session) Shutdown() {
 	s.controlWG.Wait()
 	s.dataPlaneWG.Wait()
 	s.rekeyTimerWG.Wait()
+	s.netEventWG.Wait()
 	s.stopTransport()
 	s.clearIKEKeyMaterial()
 	if cleanupErr != nil {
@@ -864,13 +904,14 @@ func (s *Session) startNATKeepalive() {
 
 // sendNATKeepalive sends a NAT keepalive packet on the ESP transport.
 func (s *Session) sendNATKeepalive() error {
-	if s.socket == nil {
+	transport := s.transport()
+	if transport == nil {
 		return errors.New("swu: no IKE transport")
 	}
 	s.mu.Lock()
 	s.lastPingAt = time.Now()
 	s.mu.Unlock()
-	return s.socket.SendNATKeepalive()
+	return transport.SendNATKeepalive()
 }
 
 // startDPD arms the dead-peer-detection timer (RFC 7296 §1.4.2).
@@ -892,7 +933,7 @@ func (s *Session) startDPD() {
 func (s *Session) DPDProbe() error {
 	s.ikeExchangeMu.Lock()
 	defer s.ikeExchangeMu.Unlock()
-	if s.socket == nil {
+	if s.transport() == nil {
 		return errors.New("swu: no transport")
 	}
 	s.mu.Lock()

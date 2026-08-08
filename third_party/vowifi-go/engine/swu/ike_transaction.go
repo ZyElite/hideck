@@ -166,7 +166,8 @@ func (s *Session) sendEncryptedResponseWithMsgID(
 	exchangeType ikev2.ExchangeType,
 	msgID uint32,
 ) error {
-	if s.socket == nil {
+	transport := s.transport()
+	if transport == nil {
 		return errors.New("swu: no IKE transport")
 	}
 	if s.shouldFragmentWithFlags(payloads, s.localIKEFlags(true)) {
@@ -177,7 +178,7 @@ func (s *Session) sendEncryptedResponseWithMsgID(
 		if len(packets) == 0 {
 			return errors.New("swu: response fragmentation produced no SKF packets")
 		}
-		return sendIKEPacketSet(s.socket, packets)
+		return sendIKEPacketSet(transport, packets)
 	}
 	packet := &ikev2.IKEPacket{
 		Header: newIKEHeader(
@@ -189,7 +190,7 @@ func (s *Session) sendEncryptedResponseWithMsgID(
 	if err != nil {
 		return err
 	}
-	if err := s.socket.SendIKE(raw); err != nil {
+	if err := transport.SendIKE(raw); err != nil {
 		return fmt.Errorf("swu: send IKE response: %w", err)
 	}
 	return nil

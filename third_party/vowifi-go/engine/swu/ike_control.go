@@ -21,7 +21,8 @@ type ikeWaitKey struct {
 
 // startIKEControl starts the single IKE socket reader and peer-request worker.
 func (s *Session) startIKEControl() error {
-	if s.socket == nil {
+	transport := s.transport()
+	if transport == nil {
 		return errors.New("swu: no IKE transport")
 	}
 	if err := s.ctx.Err(); err != nil {
@@ -32,10 +33,12 @@ func (s *Session) startIKEControl() error {
 		s.controlMu.Unlock()
 		return nil
 	}
-	transport := s.socket
 	requests := make(chan []byte, ikeControlQueueSize)
+	stop := make(chan struct{})
 	taskManager := s.newSessionTaskManager(transport)
 	s.controlRequests = requests
+	s.controlStop = stop
+	s.controlTransport = transport
 	s.taskMgr = taskManager
 	s.controlRunning = true
 	s.controlWG.Add(2)
@@ -91,17 +94,19 @@ func (s *Session) startIKEControlLoop() {
 // ikeDispatchLoop restores the original no-argument socket-reader symbol.
 func (s *Session) ikeDispatchLoop() {
 	s.controlMu.RLock()
-	transport := s.socket
+	transport := s.controlTransport
 	taskManager := s.taskMgr
 	requests := s.controlRequests
+	stop := s.controlStop
 	s.controlMu.RUnlock()
-	s.runIKEDispatchLoop(transport, taskManager, requests)
+	s.runIKEDispatchLoop(transport, taskManager, requests, stop)
 }
 
 func (s *Session) runIKEDispatchLoop(
 	transport ipsec.Transport,
 	taskManager *TaskManager,
 	requests chan<- []byte,
+	stop <-chan struct{},
 ) {
 	defer s.controlWG.Done()
 	defer taskManager.Stop()
@@ -110,12 +115,15 @@ func (s *Session) runIKEDispatchLoop(
 		s.controlMu.Lock()
 		if s.taskMgr == taskManager {
 			s.controlRunning = false
+			s.controlTransport = nil
 		}
 		s.controlMu.Unlock()
 	}()
 	for {
 		select {
 		case <-s.ctx.Done():
+			return
+		case <-stop:
 			return
 		case raw, ok := <-transport.IKEPackets():
 			if !ok {

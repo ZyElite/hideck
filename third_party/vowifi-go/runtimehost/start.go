@@ -249,7 +249,9 @@ func newTunnel(req StartRequest, inst *Instance) (Tunnel, error) {
 	}
 	factory := req.TunnelFactory
 	if factory == nil {
-		factory = func(cfg *swu.Config) (Tunnel, error) { return swu.NewSession(cfg), nil }
+		factory = func(cfg *swu.Config) (Tunnel, error) {
+			return &swuTunnelAdapter{Session: swu.NewSession(cfg)}, nil
+		}
 	}
 	tunnel, err := factory(cfg)
 	if err != nil {

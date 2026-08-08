@@ -73,7 +73,7 @@ func (s *Session) sendIKEContextResponse(
 	if err != nil {
 		return nil, err
 	}
-	if err := sendIKEPacketSet(s.socket, [][]byte{raw}); err != nil {
+	if err := sendIKEPacketSet(s.transport(), [][]byte{raw}); err != nil {
 		return nil, err
 	}
 	return raw, nil
@@ -120,7 +120,7 @@ func (s *Session) resendRetiredIKEDelete(raw []byte) (bool, error) {
 	}
 	response := append([]byte(nil), receipt.response...)
 	s.mu.RUnlock()
-	return true, sendIKEPacketSet(s.socket, [][]byte{response})
+	return true, sendIKEPacketSet(s.transport(), [][]byte{response})
 }
 
 func ikeSPIUint64(spi [8]byte) uint64 {

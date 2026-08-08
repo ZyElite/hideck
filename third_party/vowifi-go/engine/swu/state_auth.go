@@ -547,6 +547,7 @@ func (s *Session) handleIKEAuthFinalPacket(resp *ikev2.IKEPacket) error {
 	if err := s.applyIKEAuthLifetime(payloads); err != nil {
 		return err
 	}
+	s.applyMOBIKENegotiation(payloads)
 	s.responderAuthenticated = true
 	assigned, err := parseAssignedInnerConfig(payloads)
 	if err != nil {
