@@ -3,6 +3,7 @@ package imscore
 import (
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,20 +185,40 @@ func TestServiceMethods(t *testing.T) {
 		t.Fatalf("Subscribe: %v", err)
 	}
 	h := &imscoreDialogHandle{callID: "call-1", fromTag: "f", toTag: "t"}
-	if err := svc.SendDialogRequest(h, "BYE", ""); err != nil {
-		t.Fatalf("SendDialogRequest: %v", err)
+	if err := svc.SendDialogRequest(h, "BYE", ""); err == nil {
+		t.Fatal("SendDialogRequest succeeded without a dialog target")
 	}
-	if err := svc.SendReliableProvisionalPRACK(h); err != nil {
-		t.Fatalf("PRACK: %v", err)
+	if err := svc.SendReliableProvisionalPRACK(h); err == nil {
+		t.Fatal("PRACK succeeded without reliable provisional context")
 	}
 	inv := &imscoreServerInviteHandle{callID: "call-in"}
-	if err := svc.RejectServerInvite(inv); err != nil {
-		t.Fatalf("RejectServerInvite: %v", err)
+	if err := svc.RejectServerInvite(inv); err == nil {
+		t.Fatal("RejectServerInvite succeeded without inbound request context")
 	}
 	if err := svc.TriggerFastReconnect(); err != nil {
 		t.Fatalf("TriggerFastReconnect: %v", err)
 	}
 	svc.UpdateLastPingAt(time.Now())
+}
+
+func TestSubscribeReturnsNetworkRejection(t *testing.T) {
+	svc, err := New(&IMSConfig{
+		IMSI: "310260123456789", IMPI: "310260123456789@ims.example.com",
+		Domain: "ims.example.com", AKAProvider: stubAKAProvider{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Transport().SetSendFn(func(request string) error {
+		svc.transport.DeliverResponse(registerResponseForRequest(request, 503, nil))
+		return nil
+	})
+	if err := svc.Subscribe("reg.example.com"); err == nil || !strings.Contains(err.Error(), "503") {
+		t.Fatalf("Subscribe error = %v, want status 503", err)
+	}
+	if err := svc.Subscribe("reg.example.com\r\nX-Injected: yes"); err == nil {
+		t.Fatal("Subscribe accepted a header-injection URI")
+	}
 }
 
 // testIdentity returns a carrier identity.

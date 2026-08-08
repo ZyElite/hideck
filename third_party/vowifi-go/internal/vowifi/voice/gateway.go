@@ -51,8 +51,17 @@ func (g *Gateway) Start() error {
 	}
 	g.started = true
 	g.mu.Unlock()
-	if g.agent != nil {
-		return g.agent.Start()
+	if g.agent == nil {
+		g.mu.Lock()
+		g.started = false
+		g.mu.Unlock()
+		return errors.New("voice: no agent")
+	}
+	if err := g.agent.Start(); err != nil {
+		g.mu.Lock()
+		g.started = false
+		g.mu.Unlock()
+		return err
 	}
 	return nil
 }
@@ -99,7 +108,7 @@ func (g *Gateway) DeviceStatus() map[string]interface{} {
 	return g.agent.deviceStatus()
 }
 
-// SimulateCall places a simulated call (for testing without a network).
+// SimulateCall preserves the legacy name while placing a real IMS call.
 func (g *Gateway) SimulateCall(number string) (*Call, error) {
 	if g == nil || g.agent == nil {
 		return nil, errors.New("voice: no agent")

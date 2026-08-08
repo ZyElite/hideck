@@ -28,6 +28,37 @@ type SIPResponse struct {
 	Body       []byte
 }
 
+// InboundVoiceRequest is a SIP request routed to the active voice agent.
+type InboundVoiceRequest struct {
+	Method      string
+	CallID      string
+	From        string
+	To          string
+	ContentType string
+	Body        []byte
+}
+
+// InboundVoiceResult controls the SIP response for a handled request.
+type InboundVoiceResult struct {
+	Handled    bool
+	StatusCode int
+}
+
+// VoiceRequestHandler consumes inbound IMS voice dialog requests.
+type VoiceRequestHandler interface {
+	HandleInboundVoiceRequest(InboundVoiceRequest) (InboundVoiceResult, error)
+}
+
+// SetVoiceRequestHandler installs or removes the active voice router.
+func (s *Service) SetVoiceRequestHandler(handler VoiceRequestHandler) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.voiceHandler = handler
+	s.mu.Unlock()
+}
+
 // RegisteredSIPDialogProfile returns the active IMS registration binding.
 func (s *Service) RegisteredSIPDialogProfile() (SIPDialogProfile, error) {
 	if s == nil || s.cfg == nil {
@@ -74,6 +105,35 @@ func (s *Service) EventBus() *EventBus {
 		return nil
 	}
 	return s.bus
+}
+
+func (s *Service) handleInboundVoice(raw string) (inboundSIPResult, bool, error) {
+	s.mu.RLock()
+	handler := s.voiceHandler
+	s.mu.RUnlock()
+	if handler == nil {
+		return inboundSIPResult{}, false, nil
+	}
+	body, err := rawSIPBody(raw)
+	if err != nil {
+		return inboundSIPResult{}, true, err
+	}
+	result, err := handler.HandleInboundVoiceRequest(InboundVoiceRequest{
+		Method: sipRequestMethod(raw), CallID: rawSIPHeaderValue(raw, "Call-ID"),
+		From: rawSIPHeaderValue(raw, "From"), To: rawSIPHeaderValue(raw, "To"),
+		ContentType: rawSIPHeaderValue(raw, "Content-Type"), Body: body,
+	})
+	if !result.Handled {
+		return inboundSIPResult{}, false, err
+	}
+	if result.StatusCode == 0 {
+		return inboundSIPResult{}, true, err
+	}
+	response, responseErr := buildSIPRequestResponse(raw, result.StatusCode)
+	if responseErr != nil {
+		return inboundSIPResult{}, true, responseErr
+	}
+	return inboundSIPResult{response: response}, true, err
 }
 
 func cloneSIPHeaders(headers map[string]string) map[string]string {

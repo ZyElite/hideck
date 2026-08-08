@@ -47,6 +47,11 @@ type Call struct {
 
 	startTime time.Time
 	endTime   time.Time
+	done      chan struct{}
+	doneOnce  sync.Once
+
+	noAnswerTimer *time.Timer
+	sessionTimer  *time.Timer
 
 	imsDialog *imscore.DialogHandle
 	imsInvite *imscore.InviteHandle

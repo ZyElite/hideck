@@ -14,22 +14,50 @@ import (
 type Bridge struct {
 	mu       sync.RWMutex
 	conn     net.PacketConn
+	remote   net.Addr
 	contact  string
 	localIP  net.IP
 	writeCh  chan []byte
 	stop     chan struct{}
 	started  bool
+	writeErr error
 	endpoint interface {
 		SendRawSIP(req string) error
 	}
 }
 
+// TransportConfig injects the LAN-side packet transport owned by the bridge.
+type TransportConfig struct {
+	Conn    net.PacketConn
+	Remote  net.Addr
+	Contact string
+	LocalIP net.IP
+}
+
 // NewBridge creates a client bridge.
 func NewBridge() *Bridge {
-	return &Bridge{
-		writeCh: make(chan []byte, 64),
-		stop:    make(chan struct{}),
+	return &Bridge{}
+}
+
+// ConfigureTransport configures the real client-facing packet path.
+func (b *Bridge) ConfigureTransport(config TransportConfig) error {
+	if b == nil {
+		return errors.New("client: nil bridge")
 	}
+	if config.Conn == nil || config.Remote == nil {
+		return errors.New("client: packet connection and remote address are required")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.started {
+		return errors.New("client: cannot replace transport while started")
+	}
+	b.conn = config.Conn
+	b.remote = config.Remote
+	b.contact = config.Contact
+	b.localIP = append(net.IP(nil), config.LocalIP...)
+	b.writeErr = nil
+	return nil
 }
 
 // SetEndpoint wires the IMS-side endpoint.
@@ -61,7 +89,7 @@ func (b *Bridge) LocalIP() net.IP {
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return b.localIP
+	return append(net.IP(nil), b.localIP...)
 }
 
 // ListenHostPort returns the local host:port.
@@ -82,10 +110,16 @@ func (b *Bridge) Start() error {
 		b.mu.Unlock()
 		return nil
 	}
+	if b.conn == nil || b.remote == nil {
+		b.mu.Unlock()
+		return errors.New("client: packet transport is not configured")
+	}
 	b.started = true
 	b.stop = make(chan struct{})
+	b.writeCh = make(chan []byte, 64)
+	writeCh, stop := b.writeCh, b.stop
 	b.mu.Unlock()
-	go b.runWriteWorker()
+	go b.runWriteWorker(writeCh, stop)
 	return nil
 }
 
@@ -102,6 +136,8 @@ func (b *Bridge) Stop() error {
 	b.started = false
 	close(b.stop)
 	conn := b.conn
+	b.conn = nil
+	b.remote = nil
 	b.mu.Unlock()
 	if conn != nil {
 		_ = conn.Close()
@@ -116,12 +152,13 @@ func (b *Bridge) WriteRequest(req []byte) error {
 	}
 	b.mu.RLock()
 	started := b.started
+	writeCh := b.writeCh
 	b.mu.RUnlock()
 	if !started {
 		return errors.New("client: bridge not started")
 	}
 	select {
-	case b.writeCh <- req:
+	case writeCh <- append([]byte(nil), req...):
 		return nil
 	default:
 		return errors.New("client: write queue full")
@@ -147,18 +184,32 @@ func (b *Bridge) SendPush(payload []byte) error {
 	return b.WriteRequest(payload)
 }
 
+// LastWriteError returns the most recent asynchronous packet write failure.
+func (b *Bridge) LastWriteError() error {
+	if b == nil {
+		return errors.New("client: nil bridge")
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.writeErr
+}
+
 // runWriteWorker drains the write queue.
-func (b *Bridge) runWriteWorker() {
+func (b *Bridge) runWriteWorker(writeCh <-chan []byte, stop <-chan struct{}) {
 	for {
 		select {
-		case <-b.stop:
+		case <-stop:
 			return
-		case req := <-b.writeCh:
+		case req := <-writeCh:
 			b.mu.RLock()
-			conn := b.conn
+			conn, remote := b.conn, b.remote
 			b.mu.RUnlock()
-			if conn != nil {
-				_, _ = conn.WriteTo(req, conn.LocalAddr())
+			if conn != nil && remote != nil {
+				if _, err := conn.WriteTo(req, remote); err != nil {
+					b.mu.Lock()
+					b.writeErr = err
+					b.mu.Unlock()
+				}
 			}
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
@@ -12,8 +13,9 @@ import (
 )
 
 const (
-	voiceInviteTimeout = 45 * time.Second
-	voiceHangupTimeout = 10 * time.Second
+	voiceInviteTimeout         = 45 * time.Second
+	voiceHangupTimeout         = 10 * time.Second
+	defaultVoiceSessionRefresh = 30 * time.Minute
 )
 
 // NewAgent creates a voice agent for a device.
@@ -51,9 +53,6 @@ func (a *Agent) Start() error {
 	a.started = true
 	a.mu.Unlock()
 	a.actor.Start(context.Background())
-	if a.bus != nil {
-		a.bus.Subscribe(a)
-	}
 	return nil
 }
 
@@ -76,11 +75,11 @@ func (a *Agent) Stop() error {
 	var stopErr error
 	if activeCall != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
-		stopErr = errors.Join(stopErr, a.hangupCall(ctx, activeCall))
+		if err := a.hangupCall(ctx, activeCall); err != nil {
+			stopErr = errors.Join(stopErr, err)
+			a.forceReleaseCall(activeCall, err)
+		}
 		cancel()
-	}
-	if a.bus != nil {
-		a.bus.Unsubscribe(a)
 	}
 	a.actor.Stop()
 	return stopErr
@@ -106,7 +105,7 @@ func (a *Agent) OnIMSEvent(ev events.Event) {
 		*events.EventCallAnswered, *events.EventCallEnded,
 		*events.EventCallFailed, *events.EventCallCanceled,
 		*events.EventCallMediaUpdated:
-		a.emit(ev)
+		a.notify(ev)
 	}
 }
 
@@ -119,6 +118,10 @@ func (a *Agent) Dial(number string) (*Call, error) {
 
 // DialContext starts an outbound call and waits for the final INVITE response.
 func (a *Agent) DialContext(ctx context.Context, number string) (*Call, error) {
+	return a.dialContext(ctx, number, "")
+}
+
+func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, error) {
 	if a == nil {
 		return nil, errors.New("voice: nil agent")
 	}
@@ -129,14 +132,29 @@ func (a *Agent) DialContext(ctx context.Context, number string) (*Call, error) {
 		return nil, errors.New("voice: IMS not registered")
 	}
 	a.mu.RLock()
-	busy := a.activeCall != nil && !a.activeCall.IsTerminalState()
+	started := a.started
 	a.mu.RUnlock()
-	if busy {
-		return nil, errors.New("voice: busy")
+	if !started {
+		return nil, errors.New("voice: agent not started")
 	}
+	call, err := a.startOutboundCall(number)
+	if err != nil {
+		return nil, err
+	}
+	invite := buildIMSInviteWithSDP(a, call, sdp)
+	response, err := a.ims.RoundTripSIP(ctx, invite)
+	if err != nil {
+		return nil, a.failOutboundCall(call, fmt.Errorf("voice: INVITE transaction failed: %w", err))
+	}
+	if err := a.completeOutboundInvite(call, response); err != nil {
+		return nil, a.failOutboundCall(call, err)
+	}
+	a.emitCallAnswered(call)
+	return call, nil
+}
 
-	callID := newVoiceCallID()
-	call := NewCall(a, callstate.DirectionOutbound, callID, number)
+func (a *Agent) startOutboundCall(number string) (*Call, error) {
+	call := NewCall(a, callstate.DirectionOutbound, newVoiceCallID(), number)
 	call.SetStartTime(time.Now())
 	if err := a.prepareVoiceDialog(call, number); err != nil {
 		return nil, err
@@ -144,35 +162,36 @@ func (a *Agent) DialContext(ctx context.Context, number string) (*Call, error) {
 	if err := call.Transition(callstate.StateDialing); err != nil {
 		return nil, err
 	}
-
 	a.mu.Lock()
-	a.calls[callID] = call
-	a.activeCall = call
-	a.mu.Unlock()
-
-	invite := BuildIMSInvite(a, call)
-	response, err := a.ims.RoundTripSIP(ctx, invite)
-	if err != nil {
-		return nil, a.failOutboundCall(call, fmt.Errorf("voice: INVITE transaction failed: %w", err))
+	defer a.mu.Unlock()
+	if a.activeCall != nil && !a.activeCall.IsTerminalState() {
+		return nil, errors.New("voice: busy")
 	}
+	a.calls[call.CallID()] = call
+	a.activeCall = call
+	return call, nil
+}
+
+func (a *Agent) completeOutboundInvite(call *Call, response imscore.SIPResponse) error {
 	call.MarkInviteFinalSeen()
 	call.learnVoiceDialog(response)
 	if err := a.sendIMSDialogRequest(buildIMSACKForStatus(a, call, response.StatusCode)); err != nil {
-		return nil, a.failOutboundCall(call, fmt.Errorf("voice: send INVITE ACK: %w", err))
+		return fmt.Errorf("voice: send INVITE ACK: %w", err)
 	}
 	call.MarkACKSent()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		reason := fmt.Errorf("voice: INVITE rejected: %d %s", response.StatusCode, response.Reason)
-		return nil, a.failOutboundCall(call, reason)
+		return fmt.Errorf("voice: INVITE rejected: %d %s", response.StatusCode, response.Reason)
 	}
 	if err := call.Transition(callstate.StateConnecting); err != nil {
-		return nil, a.failOutboundCall(call, err)
+		return err
 	}
 	if err := call.Transition(callstate.StateConnected); err != nil {
-		return nil, a.failOutboundCall(call, err)
+		return err
 	}
-	a.emitCallAnswered(call)
-	return call, nil
+	if err := call.StartSessionTimer(defaultVoiceSessionRefresh); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Answer answers the active inbound call.
@@ -189,14 +208,7 @@ func (a *Agent) Answer(callID string) error {
 	if call.Direction() != callstate.DirectionInbound {
 		return errors.New("voice: not an inbound call")
 	}
-	if err := call.Transition(callstate.StateConnecting); err != nil {
-		return err
-	}
-	if err := call.Transition(callstate.StateConnected); err != nil {
-		return err
-	}
-	a.emit(&events.EventCallAnswered{DevID: a.deviceID, CallID: callID, Time: time.Now()})
-	return nil
+	return errors.New("voice: inbound answer requires the original SIP request context")
 }
 
 // Hangup ends a call.
@@ -246,6 +258,8 @@ func (a *Agent) finishLocalHangup(call *Call) error {
 		return err
 	}
 	_ = call.StopMedia()
+	_ = call.EnsureTimerStopped()
+	_ = call.CloseDone()
 	a.emitCallEnded(call)
 	a.finalizeActiveCall(call)
 	return nil
@@ -254,9 +268,40 @@ func (a *Agent) finishLocalHangup(call *Call) error {
 func (a *Agent) failOutboundCall(call *Call, cause error) error {
 	_ = call.Transition(callstate.StateFailed)
 	_ = call.StopMedia()
+	_ = call.EnsureTimerStopped()
+	_ = call.CloseDone()
 	a.emitCallFailed(call, cause.Error())
 	a.finalizeActiveCall(call)
 	return cause
+}
+
+func (a *Agent) forceReleaseCall(call *Call, cause error) {
+	if call == nil {
+		return
+	}
+	_ = call.Transition(callstate.StateFailed)
+	_ = call.StopMedia()
+	_ = call.EnsureTimerStopped()
+	_ = call.CloseDone()
+	if cause != nil {
+		a.emitCallFailed(call, cause.Error())
+	}
+	a.finalizeActiveCall(call)
+}
+
+func (a *Agent) refreshVoiceSession(ctx context.Context, call *Call) error {
+	response, err := a.ims.RoundTripSIP(ctx, buildIMSReinvite(a, call))
+	if err != nil {
+		return fmt.Errorf("voice: session refresh failed: %w", err)
+	}
+	call.learnVoiceDialog(response)
+	if err := a.sendIMSDialogRequest(buildIMSACKForStatus(a, call, response.StatusCode)); err != nil {
+		return fmt.Errorf("voice: send refresh ACK: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("voice: session refresh rejected: %d %s", response.StatusCode, response.Reason)
+	}
+	return nil
 }
 
 // Ready reports whether the agent can start an IMS voice transaction.
@@ -268,6 +313,65 @@ func (a *Agent) Ready() bool {
 	started := a.started
 	a.mu.RUnlock()
 	return started && a.ims.IsRegistered()
+}
+
+// HandleInboundVoiceRequest handles requests for established voice dialogs.
+func (a *Agent) HandleInboundVoiceRequest(request imscore.InboundVoiceRequest) (imscore.InboundVoiceResult, error) {
+	if a == nil {
+		return imscore.InboundVoiceResult{Handled: true, StatusCode: 500}, errors.New("voice: nil agent")
+	}
+	method := strings.ToUpper(strings.TrimSpace(request.Method))
+	call := a.callByID(request.CallID)
+	switch method {
+	case "INVITE":
+		if call != nil {
+			if len(request.Body) > 0 {
+				return imscore.InboundVoiceResult{Handled: true, StatusCode: 488}, nil
+			}
+			if call.GetState() != callstate.StateConnected {
+				return imscore.InboundVoiceResult{Handled: true, StatusCode: 491}, nil
+			}
+			return imscore.InboundVoiceResult{Handled: true, StatusCode: 200}, a.OnIMSUpdate(request.CallID)
+		}
+		return imscore.InboundVoiceResult{Handled: true, StatusCode: 486}, nil
+	case "BYE":
+		if call == nil {
+			return imscore.InboundVoiceResult{Handled: true, StatusCode: 481}, nil
+		}
+		return imscore.InboundVoiceResult{Handled: true, StatusCode: 200}, a.OnIMSBye(request.CallID)
+	case "CANCEL":
+		if call == nil {
+			return imscore.InboundVoiceResult{Handled: true, StatusCode: 481}, nil
+		}
+		return imscore.InboundVoiceResult{Handled: true, StatusCode: 200}, a.OnIMSCancel(request.CallID)
+	case "ACK":
+		if call != nil {
+			call.MarkACKSent()
+		}
+		return imscore.InboundVoiceResult{Handled: true}, nil
+	case "PRACK":
+		if call == nil {
+			return imscore.InboundVoiceResult{Handled: true, StatusCode: 481}, nil
+		}
+		call.MarkReliableProvisional()
+		return imscore.InboundVoiceResult{Handled: true, StatusCode: 200}, nil
+	case "UPDATE":
+		if call == nil {
+			return imscore.InboundVoiceResult{Handled: true, StatusCode: 481}, nil
+		}
+		if call.GetState() != callstate.StateConnected {
+			return imscore.InboundVoiceResult{Handled: true, StatusCode: 491}, nil
+		}
+		return imscore.InboundVoiceResult{Handled: true, StatusCode: 200}, a.OnIMSUpdate(request.CallID)
+	default:
+		return imscore.InboundVoiceResult{}, nil
+	}
+}
+
+func (a *Agent) callByID(callID string) *Call {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.calls[strings.TrimSpace(callID)]
 }
 
 // IsBusy reports whether the agent has an active call.
@@ -381,9 +485,19 @@ func (a *Agent) emitIncomingCall(c *Call) {
 	a.emit(&events.EventIncomingCall{DevID: a.deviceID, Caller: c.Peer(), Callee: a.deviceID, Time: time.Now()})
 }
 
-// emit forwards an event to the notifier.
+// emit publishes a locally-created event and notifies the local callback.
 func (a *Agent) emit(ev events.Event) {
 	if a == nil {
+		return
+	}
+	if a.bus != nil {
+		a.bus.Publish(ev)
+	}
+	a.notify(ev)
+}
+
+func (a *Agent) notify(ev events.Event) {
+	if a == nil || ev == nil {
 		return
 	}
 	a.mu.RLock()

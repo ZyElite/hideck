@@ -35,13 +35,6 @@ func packetConnUDPAddr(conn net.PacketConn) *net.UDPAddr {
 	return packetConnAddrToUDPAddr(conn.LocalAddr())
 }
 
-// setDSCP sets the DSCP field on a UDP socket (best effort; no-op on error).
-func setDSCP(conn net.PacketConn, dscp int) {
-	// DSCP marking requires platform-specific socket options; the relay
-	// works without it, so this is intentionally a no-op fallback.
-	_ = dscp
-}
-
 // tryListenLANPortRange binds a UDP socket on the first free port in the
 // range [start, start+count).
 func tryListenLANPortRange(ip net.IP, start, count int) (net.PacketConn, int, error) {
@@ -109,16 +102,6 @@ func (r *RTPRelay) handleIMSPacket(pkt []byte) {
 // handleLANPacket processes one LAN-side RTP packet.
 func (r *RTPRelay) handleLANPacket(pkt []byte) {
 	r.applyLANPayloadTypeMapping(pkt)
-	r.writePCAPPacket(pkt)
-}
-
-// handleIMSRTCPPacket processes an IMS-side RTCP packet (no-op relay).
-func (r *RTPRelay) handleIMSRTCPPacket(pkt []byte) {
-	r.writePCAPPacket(pkt)
-}
-
-// handleLANRTCPPacket processes a LAN-side RTCP packet (no-op relay).
-func (r *RTPRelay) handleLANRTCPPacket(pkt []byte) {
 	r.writePCAPPacket(pkt)
 }
 

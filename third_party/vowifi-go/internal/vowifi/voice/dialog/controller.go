@@ -109,32 +109,50 @@ func (c *Controller) SendDialogRequestWithHandle(req string) error {
 
 // AnswerServerInvite answers a server-side INVITE.
 func (c *Controller) AnswerServerInvite() error {
-	return nil
+	return errors.New("dialog: inbound INVITE request context is unavailable")
 }
 
 // RejectServerInvite rejects a server-side INVITE.
 func (c *Controller) RejectServerInvite() error {
-	return nil
+	return errors.New("dialog: inbound INVITE request context is unavailable")
 }
 
 // CancelClientInvite cancels a client-side INVITE.
 func (c *Controller) CancelClientInvite() error {
-	return nil
+	return errors.New("dialog: client INVITE transaction context is unavailable")
 }
 
 // CloseDialog closes the dialog.
 func (c *Controller) CloseDialog() error {
+	if c == nil {
+		return errors.New("dialog: nil controller")
+	}
+	c.mu.Lock()
+	c.endpoint = nil
+	c.toTag = ""
+	c.mu.Unlock()
 	return nil
 }
 
 // SendReliableProvisionalPRACK sends a PRACK for a reliable provisional.
 func (c *Controller) SendReliableProvisionalPRACK() error {
-	return nil
+	return errors.New("dialog: reliable provisional response context is unavailable")
 }
 
 // endpointLocalIP returns the local IP of a SIP endpoint.
 func endpointLocalIP(ep interface {
 	SendRawSIP(req string) error
 }) net.IP {
-	return nil
+	if ep == nil {
+		return nil
+	}
+	provider, ok := ep.(interface{ GetLocalIMSAddr() string })
+	if !ok {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(provider.GetLocalIMSAddr())
+	if err != nil {
+		return net.ParseIP(provider.GetLocalIMSAddr())
+	}
+	return net.ParseIP(host)
 }

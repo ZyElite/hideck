@@ -78,3 +78,9 @@ func TestBuildSWUConfigRejectsUnknownCarrierProposal(t *testing.T) {
 		t.Fatal("BuildSWUConfig() error=nil, want unsupported proposal")
 	}
 }
+
+func TestCleanupDataplaneInterfaceRequiresOwner(t *testing.T) {
+	if err := CleanupDataplaneInterface(); err == nil {
+		t.Fatal("CleanupDataplaneInterface reported success without an owning session")
+	}
+}

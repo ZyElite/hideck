@@ -1,5 +1,5 @@
-// Package voicehost defines the voice gateway surface used to simulate and
-// drive VoWiFi calls.
+// Package voicehost defines the voice gateway surface used to drive VoWiFi
+// calls.
 //
 // Reconstructed from the decompiled engine/runtimehost/voicehost.
 package voicehost
@@ -22,20 +22,20 @@ type voiceAgent interface {
 	Stop() error
 }
 
-// DefaultSimulateCallHoldSeconds is the default hold time for simulated calls.
+// DefaultSimulateCallHoldSeconds is the default hold time for the legacy call command.
 const DefaultSimulateCallHoldSeconds = 10
 
-// MaxSimulateCallHoldSeconds bounds the simulated call hold time.
+// MaxSimulateCallHoldSeconds bounds the legacy call command hold time.
 const MaxSimulateCallHoldSeconds = 60
 
-// SimulateCallRequest describes a simulated VoWiFi call.
+// SimulateCallRequest describes the legacy timed VoWiFi call command.
 type SimulateCallRequest struct {
 	Callee      string
 	HoldSeconds int
 	OnConnected func()
 }
 
-// SimulateCallResult is the outcome of a simulated call.
+// SimulateCallResult is the outcome of the legacy timed call command.
 type SimulateCallResult struct {
 	Success    bool
 	Message    string
@@ -322,11 +322,21 @@ func (g *Gateway) SetEventDispatcher(d interface{ Dispatch(interface{}) }) {
 	g.dispatcher = d
 }
 
-// StartPCAP starts packet capture for a device.
-func (g *Gateway) StartPCAP(deviceID string) error { return nil }
+// StartPCAP reports that the legacy API lacks the required output target.
+func (g *Gateway) StartPCAP(deviceID string) error {
+	if g == nil || g.GetAgent(deviceID) == nil {
+		return errors.New("voicehost: no agent for device " + deviceID)
+	}
+	return errors.New("voicehost: packet capture output is not configured")
+}
 
-// StopPCAP stops packet capture for a device.
-func (g *Gateway) StopPCAP(deviceID string) error { return nil }
+// StopPCAP reports that no capture can be addressed by the legacy API.
+func (g *Gateway) StopPCAP(deviceID string) error {
+	if g == nil || g.GetAgent(deviceID) == nil {
+		return errors.New("voicehost: no agent for device " + deviceID)
+	}
+	return errors.New("voicehost: packet capture output is not configured")
+}
 
 // eventDispatcherAdapter adapts an event dispatcher.
 type eventDispatcherAdapter struct {
@@ -350,6 +360,9 @@ func (a *lifecycleAdapter) AttachDevice(deviceID string) error {
 	if a == nil || a.gateway == nil {
 		return errors.New("voicehost: no gateway")
 	}
+	if a.gateway.GetAgent(deviceID) == nil {
+		return errors.New("voicehost: no agent for device " + deviceID)
+	}
 	return nil
 }
 
@@ -358,5 +371,5 @@ func (a *lifecycleAdapter) DetachDevice(deviceID string) error {
 	if a == nil || a.gateway == nil {
 		return errors.New("voicehost: no gateway")
 	}
-	return nil
+	return a.gateway.RemoveAgent(deviceID)
 }

@@ -201,22 +201,15 @@ func StartAndWaitEPDG(addr string) error {
 	return nil
 }
 
-// CleanupDataplaneInterface cleans up the data-plane network interface.
+// CleanupDataplaneInterface preserves the legacy API while exposing that the
+// function has no interface ownership information with which to clean up.
 func CleanupDataplaneInterface() error {
-	return nil
+	return errors.New("runtimecore: dataplane cleanup requires an owning session")
 }
 
 // NewUserspaceIMSNetwork creates the user-space IMS network.
 func NewUserspaceIMSNetwork(innerIP net.IP, prefixLen int, dns []string) *netstack.Network {
 	return netstack.NewNetwork(innerIP, prefixLen, dns)
-}
-
-// applyRedirectOverride applies a redirect target to the session.
-func applyRedirectOverride(session *swu.Session, target string) {
-	if session == nil || target == "" {
-		return
-	}
-	_ = target
 }
 
 // defaultSessionStarter returns the default session start function.
@@ -502,7 +495,6 @@ func (r *Runtime) Stop() {
 	r.mu.Lock()
 	r.started = false
 	r.mu.Unlock()
-	_ = CleanupDataplaneInterface()
 }
 
 // Prepared returns the prepared session.

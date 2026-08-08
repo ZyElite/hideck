@@ -8,6 +8,10 @@ import (
 
 // BuildIMSInvite builds the initial IMS INVITE with the registered route.
 func BuildIMSInvite(agent *Agent, call *Call) string {
+	return buildIMSInviteWithSDP(agent, call, "")
+}
+
+func buildIMSInviteWithSDP(agent *Agent, call *Call, sdp string) string {
 	if agent == nil || call == nil {
 		return ""
 	}
@@ -16,7 +20,9 @@ func BuildIMSInvite(agent *Agent, call *Call) string {
 		dialog = fallbackVoiceDialog(agent, call)
 		call.setVoiceDialog(&dialog)
 	}
-	sdp := generateBasicSDP(agent, call)
+	if strings.TrimSpace(sdp) == "" {
+		sdp = generateBasicSDP(agent, call)
+	}
 	var request strings.Builder
 	fmt.Fprintf(&request, "INVITE %s SIP/2.0\r\n", dialog.remoteURI)
 	writeVoiceDialogHeaders(&request, dialog, call.CallID(), "INVITE", dialog.inviteBranch)
@@ -37,6 +43,14 @@ func BuildIMSBye(agent *Agent, call *Call) string {
 	ensureBuilderVoiceDialog(agent, call)
 	dialog := call.advanceVoiceCSeq()
 	return buildVoiceRequest(dialog, call.CallID(), "BYE", voiceBranch(), "")
+}
+
+func buildIMSReinvite(agent *Agent, call *Call) string {
+	if agent == nil || call == nil {
+		return ""
+	}
+	dialog := call.advanceVoiceCSeq()
+	return buildVoiceRequest(dialog, call.CallID(), "INVITE", voiceBranch(), generateBasicSDP(agent, call))
 }
 
 // BuildIMSACK builds the ACK for the final INVITE response.

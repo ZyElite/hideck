@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 
@@ -349,10 +350,9 @@ func ResolveIMSIdentitySource(pref string, hasISIM, hasUSIM bool) string {
 	}
 }
 
-// LogEPDGSnapshot logs an ePDG selection snapshot (no-op; retained for the
-// recovered logging surface).
+// LogEPDGSnapshot logs an ePDG selection snapshot.
 func LogEPDGSnapshot(deviceID, epdg, source string) {
-	_ = fmt.Sprintf("%s epdg=%s source=%s", deviceID, epdg, source)
+	logging.Info("ePDG selection", "device", deviceID, "epdg", epdg, "source", source)
 }
 
 // mccMncFromIdentity derives MCC/MNC from an IMSI in an identity.

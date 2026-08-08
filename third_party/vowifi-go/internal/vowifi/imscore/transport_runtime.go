@@ -82,6 +82,17 @@ func (s *Service) handleInboundSIP(ctx context.Context, raw string) (inboundSIPR
 		if handled {
 			return result, err
 		}
+		result, handled, err = s.handleInboundVoice(raw)
+		if handled {
+			return result, err
+		}
+		response, responseErr := buildSIPRequestResponse(raw, 405)
+		return inboundSIPResult{response: response}, responseErr
+	case "INVITE", "CANCEL", "ACK", "PRACK", "UPDATE":
+		result, handled, err := s.handleInboundVoice(raw)
+		if handled {
+			return result, err
+		}
 		response, responseErr := buildSIPRequestResponse(raw, 405)
 		return inboundSIPResult{response: response}, responseErr
 	default:

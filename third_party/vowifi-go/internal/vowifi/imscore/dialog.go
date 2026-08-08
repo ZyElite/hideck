@@ -1,6 +1,7 @@
 package imscore
 
 import (
+	"errors"
 	"sync"
 )
 
@@ -169,18 +170,24 @@ func inboundDialogCandidateIDs(callID string) []string {
 
 // AnswerServerInvite answers a server-side INVITE.
 func (s *Service) AnswerServerInvite(handle *imscoreServerInviteHandle) error {
-	return nil
+	if s == nil || handle == nil {
+		return errors.New("imscore: server INVITE handle is required")
+	}
+	return errors.New("imscore: server INVITE request context is unavailable")
 }
 
 // CancelClientInvite cancels a client-side INVITE.
 func (s *Service) CancelClientInvite(handle *imscoreInviteHandle) error {
-	return nil
+	if s == nil || handle == nil {
+		return errors.New("imscore: client INVITE handle is required")
+	}
+	return errors.New("imscore: client INVITE transaction context is unavailable")
 }
 
 // CloseDialog closes a dialog.
 func (s *Service) CloseDialog(handle *imscoreDialogHandle) error {
 	if s == nil || s.dialogs == nil || handle == nil {
-		return nil
+		return errors.New("imscore: dialog handle is required")
 	}
 	s.dialogs.delete(handle.DialogID())
 	return nil
@@ -191,9 +198,12 @@ func (s *Service) NextCSeq(handle *imscoreDialogHandle) int {
 	if s == nil || handle == nil || s.dialogs == nil {
 		return 1
 	}
-	d := s.dialogs.load(handle.DialogID())
+	s.dialogs.mu.Lock()
+	defer s.dialogs.mu.Unlock()
+	d := s.dialogs.dialogs[handle.DialogID()]
 	if d == nil {
 		return 1
 	}
+	d.cseq++
 	return d.cseq
 }

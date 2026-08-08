@@ -1,7 +1,6 @@
 package imscore
 
 import (
-	"errors"
 	"time"
 )
 
@@ -74,37 +73,4 @@ func (p *registerRetryPolicy) nextDelay() time.Duration {
 	default:
 		return 15 * time.Second
 	}
-}
-
-// noopDeliveryStore is a delivery store that discards all writes.
-type noopDeliveryStore struct{}
-
-// CreateSMSDelivery discards the write.
-func (noopDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, at time.Time) error {
-	return nil
-}
-
-// UpsertSMSDeliveryPart discards the write.
-func (noopDeliveryStore) UpsertSMSDeliveryPart(messageID string, partNo int, callID string, rpMR int, state string, sentAt time.Time) error {
-	return nil
-}
-
-// MarkSMSDeliveryPartReport reports no match.
-func (noopDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID string, rpMR int, state string, sipCode int, rpCause int, errText string, at time.Time) (DeliveryPartMatch, error) {
-	return DeliveryPartMatch{MessageID: inReplyTo, PartNo: rpMR, State: state, Matched: false}, nil
-}
-
-// RecomputeSMSDelivery is a no-op.
-func (noopDeliveryStore) RecomputeSMSDelivery(messageID string, at time.Time) error {
-	return nil
-}
-
-// UpdateSMSDeliveryState is a no-op.
-func (noopDeliveryStore) UpdateSMSDeliveryState(messageID, state, lastError string, acks int, at time.Time) error {
-	return nil
-}
-
-// GetSMSDeliveryStatus reports that no delivery exists.
-func (noopDeliveryStore) GetSMSDeliveryStatus(messageID string) (*DeliveryStatus, error) {
-	return nil, errors.New("imscore: no delivery record")
 }

@@ -2,6 +2,7 @@ package voice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -193,6 +194,10 @@ func TestAgentDialLifecycle(t *testing.T) {
 
 func TestAgentSimulateCall(t *testing.T) {
 	agent := newTestAgent(t)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Stop()
 	call, err := agent.SimulateCall("+8613800000000")
 	if err != nil {
 		t.Fatalf("SimulateCall: %v", err)
@@ -220,7 +225,138 @@ func TestAgentDialRejectionClearsActiveCall(t *testing.T) {
 	}
 }
 
-func TestAgentInboundAnswer(t *testing.T) {
+func TestAgentStopReleasesCallWhenBYEFails(t *testing.T) {
+	agent := newTestAgent(t)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	call, err := agent.Dial("+8613800000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.ims.Transport().SetSendFn(func(string) error { return errors.New("forced write failure") })
+	if err := agent.Stop(); err == nil || !strings.Contains(err.Error(), "forced write failure") {
+		t.Fatalf("Stop error = %v", err)
+	}
+	if agent.IsBusy() || call.noAnswerTimer != nil || call.sessionTimer != nil {
+		t.Fatalf("call was not released: state=%s busy=%t", call.GetState(), agent.IsBusy())
+	}
+	select {
+	case <-call.done:
+	default:
+		t.Fatal("call done channel remains open")
+	}
+}
+
+func TestAgentHandlesRemoteBYE(t *testing.T) {
+	agent := newTestAgent(t)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Stop()
+	call, err := agent.Dial("+8613800000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := agent.HandleInboundVoiceRequest(imscore.InboundVoiceRequest{
+		Method: "BYE", CallID: call.CallID(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Handled || result.StatusCode != 200 || agent.IsBusy() || call.GetState() != callstate.StateEnded {
+		t.Fatalf("result=%+v state=%s busy=%t", result, call.GetState(), agent.IsBusy())
+	}
+}
+
+func TestAgentHandlesEstablishedReinvite(t *testing.T) {
+	agent := newTestAgent(t)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Stop()
+	call, err := agent.Dial("+8613800000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := agent.HandleInboundVoiceRequest(imscore.InboundVoiceRequest{
+		Method: "INVITE", CallID: call.CallID(), ContentType: "application/sdp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Handled || result.StatusCode != 200 || call.GetState() != callstate.StateConnected {
+		t.Fatalf("result=%+v state=%s", result, call.GetState())
+	}
+}
+
+func TestAgentRejectsReinviteOfferWithoutMediaAnswer(t *testing.T) {
+	agent := newTestAgent(t)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Stop()
+	call, err := agent.Dial("+8613800000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := agent.HandleInboundVoiceRequest(imscore.InboundVoiceRequest{
+		Method: "INVITE", CallID: call.CallID(), ContentType: "application/sdp", Body: []byte("v=0\r\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Handled || result.StatusCode != 488 || call.GetState() != callstate.StateConnected {
+		t.Fatalf("result=%+v state=%s", result, call.GetState())
+	}
+}
+
+func TestAgentInboundBusEventDoesNotRepublish(t *testing.T) {
+	bus := imscore.NewEventBus()
+	agent := NewAgent("dev-1", nil, bus)
+	bus.Subscribe(agent)
+	notified := 0
+	agent.SetNotifier(func(events.Event) { notified++ })
+	bus.Publish(&events.EventCallEnded{DevID: "dev-1", CallID: "call-1", Time: time.Now()})
+	if notified != 1 {
+		t.Fatalf("notifier calls = %d, want 1", notified)
+	}
+}
+
+func TestCallTimersStopAndDoneCloseOnce(t *testing.T) {
+	agent := newTestAgent(t)
+	call := NewCall(agent, callstate.DirectionOutbound, "call-timers", "+8613800000000")
+	for _, state := range []callstate.State{callstate.StateDialing, callstate.StateConnecting, callstate.StateConnected} {
+		if err := call.Transition(state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := call.StartOutboundNoAnswerTimer(time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := call.StartSessionTimer(time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := call.EnsureTimerStopped(); err != nil {
+		t.Fatal(err)
+	}
+	if call.noAnswerTimer != nil || call.sessionTimer != nil {
+		t.Fatal("call timers remain installed after cleanup")
+	}
+	if err := call.CloseDone(); err != nil {
+		t.Fatal(err)
+	}
+	if err := call.CloseDone(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-call.done:
+	default:
+		t.Fatal("call done channel remains open")
+	}
+}
+
+func TestAgentInboundAnswerRequiresRequestContext(t *testing.T) {
 	agent := newTestAgent(t)
 	call := NewCall(agent, callstate.DirectionInbound, "call-in", "+8613800000000")
 	if err := call.Transition(callstate.StateAlerting); err != nil {
@@ -231,11 +367,33 @@ func TestAgentInboundAnswer(t *testing.T) {
 	agent.activeCall = call
 	agent.mu.Unlock()
 
-	if err := agent.Answer(call.CallID()); err != nil {
-		t.Fatalf("Answer: %v", err)
+	if err := agent.Answer(call.CallID()); err == nil || !strings.Contains(err.Error(), "request context") {
+		t.Fatalf("Answer error = %v", err)
 	}
-	if call.GetState() != callstate.StateConnected {
-		t.Errorf("state = %s, want Connected", call.GetState())
+	if call.GetState() != callstate.StateAlerting {
+		t.Errorf("state = %s, want Alerting", call.GetState())
+	}
+}
+
+func TestHandleClientInviteUsesRealTransaction(t *testing.T) {
+	agent := newTestAgent(t)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Stop()
+	sdp := "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=client\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 32000 RTP/AVP 0\r\n"
+	call, err := agent.HandleClientInvite("+8613800000000", sdp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.GetState() != callstate.StateConnected || !call.HasInviteFinalSeen() || !call.IsACKSent() {
+		t.Fatalf("state=%s final=%t ack=%t", call.GetState(), call.HasInviteFinalSeen(), call.IsACKSent())
+	}
+}
+
+func TestGatewayStartRequiresAgent(t *testing.T) {
+	if err := NewGateway(nil).Start(); err == nil {
+		t.Fatal("gateway started without an agent")
 	}
 }
 

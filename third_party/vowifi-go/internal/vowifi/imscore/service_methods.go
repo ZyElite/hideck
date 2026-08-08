@@ -3,6 +3,8 @@ package imscore
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
@@ -101,17 +103,17 @@ func (s *Service) VoiceProfile() VoiceProfile {
 // RejectServerInvite rejects a server-side INVITE (486 Busy Here).
 func (s *Service) RejectServerInvite(handle *imscoreServerInviteHandle) error {
 	if s == nil || handle == nil {
-		return nil
+		return errors.New("imscore: server INVITE handle is required")
 	}
-	return s.respondStatus(handle.callID, 486)
+	return errors.New("imscore: cannot reject INVITE without its inbound request context")
 }
 
 // RespondInboundRequest responds to an inbound request with the given status.
 func (s *Service) RespondInboundRequest(handle *imscoreInboundRequestHandle, status int) error {
 	if s == nil || handle == nil {
-		return nil
+		return errors.New("imscore: inbound request handle is required")
 	}
-	return s.respondStatus(handle.callID, status)
+	return errors.New("imscore: cannot respond without the inbound request context")
 }
 
 // SendDialogRequest sends a request within a dialog.
@@ -119,42 +121,70 @@ func (s *Service) SendDialogRequest(handle *imscoreDialogHandle, method string, 
 	if s == nil || handle == nil {
 		return errors.New("imscore: no dialog")
 	}
-	req := buildDialogRequest(handle, method, body, s.cfg)
-	return s.sendSIP(req)
+	return errors.New("imscore: dialog target is unavailable on compatibility handle")
 }
 
 // SendReliableProvisionalPRACK sends a PRACK for a reliable provisional.
 func (s *Service) SendReliableProvisionalPRACK(handle *imscoreDialogHandle) error {
 	if s == nil || handle == nil {
-		return nil
+		return errors.New("imscore: no dialog for PRACK")
 	}
-	req := buildDialogRequest(handle, "PRACK", "", s.cfg)
-	return s.sendSIP(req)
+	return errors.New("imscore: reliable provisional context is unavailable")
 }
 
 // StartClientInvite starts a client-side INVITE transaction.
 func (s *Service) StartClientInvite(handle *imscoreInviteHandle, invite string) error {
-	if s == nil {
-		return errors.New("imscore: nil service")
+	if s == nil || handle == nil {
+		return errors.New("imscore: client INVITE handle is required")
+	}
+	if strings.TrimSpace(invite) == "" || !strings.EqualFold(sipRequestMethod(invite), "INVITE") {
+		return errors.New("imscore: valid INVITE request is required")
+	}
+	if callID := rawSIPHeaderValue(invite, "Call-ID"); callID == "" || callID != handle.callID {
+		return errors.New("imscore: INVITE Call-ID does not match handle")
 	}
 	return s.sendSIP(invite)
 }
 
-// Subscribe sends a SUBSCRIBE request (registration event package).
+// Subscribe sends a registration event SUBSCRIBE and waits for its final response.
 func (s *Service) Subscribe(uri string) error {
 	if s == nil || s.cfg == nil {
 		return errors.New("imscore: not configured")
 	}
-	req := "SUBSCRIBE sip:" + uri + " SIP/2.0\r\n" +
+	uri = strings.TrimSpace(uri)
+	if uri == "" || strings.ContainsAny(uri, "\r\n") {
+		return errors.New("imscore: valid SUBSCRIBE URI is required")
+	}
+	if !strings.HasPrefix(strings.ToLower(uri), "sip:") && !strings.HasPrefix(strings.ToLower(uri), "sips:") {
+		uri = "sip:" + uri
+	}
+	if s.transport == nil {
+		return errors.New("imscore: no SIP transport")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), registrationSubscriptionTimeout)
+	defer cancel()
+	if s.hasProtectedRegistrationTransport() {
+		return s.sendSubscribeReg(ctx)
+	}
+	publicID := primaryPublicIdentity(s.cfg)
+	callID := newCallID()
+	req := "SUBSCRIBE " + uri + " SIP/2.0\r\n" +
 		"Via: SIP/2.0/UDP " + formatHostPort(s.cfg.LocalIP) + ";branch=z9hG4bK" + newBranch() + "\r\n" +
-		"From: <sip:" + s.cfg.IMPI + "@" + s.cfg.Domain + ">;tag=" + newTag() + "\r\n" +
-		"To: <sip:" + uri + ">\r\n" +
-		"Call-ID: " + newCallID() + "\r\n" +
+		"From: <" + publicID + ">;tag=" + newTag() + "\r\n" +
+		"To: <" + uri + ">\r\n" +
+		"Call-ID: " + callID + "\r\n" +
 		"CSeq: 1 SUBSCRIBE\r\n" +
 		"Event: reg\r\n" +
 		"Expires: 3600\r\n" +
 		"Content-Length: 0\r\n\r\n"
-	return s.sendSIP(req)
+	response, err := s.transport.RoundTrip(ctx, req)
+	if err != nil {
+		return fmt.Errorf("imscore: SUBSCRIBE transaction: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("imscore: SUBSCRIBE rejected: %d %s", response.StatusCode, response.Reason)
+	}
+	return nil
 }
 
 // SMSReceiverTransport returns a snapshot of the real SIP receiver.
@@ -175,84 +205,4 @@ func (s *Service) UpdateLastPingAt(t time.Time) {
 	s.mu.Lock()
 	s.lastPingAt = t
 	s.mu.Unlock()
-}
-
-// respondStatus sends a synthetic status response for a call ID.
-func (s *Service) respondStatus(callID string, status int) error {
-	if s == nil || s.transport == nil {
-		return errors.New("imscore: no transport")
-	}
-	resp := &sipResponse{
-		StatusCode: status,
-		CallID:     callID,
-		Headers: map[string]string{
-			"SIP/2.0": SIPStatusText(status),
-		},
-	}
-	s.transport.DeliverResponse(resp)
-	return nil
-}
-
-// buildDialogRequest builds an in-dialog request.
-func buildDialogRequest(handle *imscoreDialogHandle, method, body string, cfg *IMSConfig) string {
-	domain := cfg.Domain
-	if domain == "" {
-		domain = "ims.mnc000.mcc000.3gppnetwork.org"
-	}
-	impi := cfg.IMPI
-	uri := "sip:" + impi
-	if i := stringsIndexByte(impi, '@'); i >= 0 {
-		uri = "sip:" + impi[i+1:]
-	}
-	fromTag := ""
-	toTag := ""
-	if handle != nil {
-		fromTag = handle.fromTag
-		toTag = handle.toTag
-	}
-	if fromTag == "" {
-		fromTag = newTag()
-	}
-	contentLen := len(body)
-	return "METHOD sip:" + domain + " SIP/2.0\r\n" +
-		"Via: SIP/2.0/UDP " + formatHostPort(cfg.LocalIP) + ";branch=z9hG4bK" + newBranch() + ";rport\r\n" +
-		"From: <" + uri + ">;tag=" + fromTag + "\r\n" +
-		"To: <" + uri + ">;tag=" + toTag + "\r\n" +
-		"Call-ID: " + handle.callID + "\r\n" +
-		"CSeq: 1 " + method + "\r\n" +
-		"Max-Forwards: 70\r\n" +
-		"Content-Length: " + itoa(contentLen) + "\r\n\r\n" + body
-}
-
-// stringsIndexByte finds a byte in a string.
-func stringsIndexByte(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
-		}
-	}
-	return -1
-}
-
-// itoa converts an int to a string.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
 }

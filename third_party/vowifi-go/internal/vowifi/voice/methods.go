@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -43,14 +44,15 @@ func (c *Call) MarkErrorACKSent() {
 	c.mu.Unlock()
 }
 
-// CancelOutboundInviteTimer cancels the no-answer timer (no-op; the timer
-// self-terminates).
-func (c *Call) CancelOutboundInviteTimer() error { return nil }
+// CancelOutboundInviteTimer cancels the no-answer timer.
+func (c *Call) CancelOutboundInviteTimer() error { return c.StopOutboundNoAnswerTimer() }
 
-// StartPrackRuntimeRetransmission starts PRACK retransmission (no-op).
-func (c *Call) StartPrackRuntimeRetransmission() error { return nil }
+// StartPrackRuntimeRetransmission requires a stored reliable response context.
+func (c *Call) StartPrackRuntimeRetransmission() error {
+	return errors.New("voice: PRACK retransmission context is unavailable")
+}
 
-// StopPrackTimer stops the PRACK retransmission timer (no-op).
+// StopPrackTimer is idempotent when no reliable provisional is active.
 func (c *Call) StopPrackTimer() error { return nil }
 
 // --- Call constructors ---
@@ -123,17 +125,12 @@ func (a *Agent) HandleClientInvite(peer string, sdp string) (*Call, error) {
 	if a == nil {
 		return nil, errors.New("voice: nil agent")
 	}
-	call := NewCall(a, callstate.DirectionOutbound, newVoiceCallID(), peer)
-	call.SetStartTime(time.Now())
-	if err := call.Transition(callstate.StateDialing); err != nil {
+	if _, err := ProcessOutgoingClientSDP(sdp); err != nil {
 		return nil, err
 	}
-	_, _ = ProcessOutgoingClientSDP(sdp)
-	a.mu.Lock()
-	a.calls[call.CallID()] = call
-	a.activeCall = call
-	a.mu.Unlock()
-	return call, nil
+	ctx, cancel := context.WithTimeout(context.Background(), voiceInviteTimeout)
+	defer cancel()
+	return a.dialContext(ctx, peer, sdp)
 }
 
 // HandleClientBye handles a client BYE.
@@ -159,10 +156,21 @@ func (a *Agent) HandleClientCancel(callID string) error {
 	call := a.calls[callID]
 	a.mu.RUnlock()
 	if call == nil {
-		return nil
+		return errors.New("voice: call not found")
 	}
+	if call.GetState() == callstate.StateConnected {
+		return errors.New("voice: connected call must be ended with BYE")
+	}
+	if err := a.sendIMSDialogRequest(BuildIMSCancel(a, call)); err != nil {
+		return fmt.Errorf("voice: send CANCEL: %w", err)
+	}
+	call.MarkLocalCancelSent()
 	call.SetOutboundCancelReason("local_cancel")
-	_ = call.Transition(callstate.StateFailed)
+	if err := call.Transition(callstate.StateFailed); err != nil {
+		return err
+	}
+	_ = call.EnsureTimerStopped()
+	_ = call.CloseDone()
 	a.emitCallCanceled(call)
 	a.finalizeActiveCall(call)
 	return nil
@@ -177,7 +185,7 @@ func (a *Agent) HandleClientAck(callID string) error {
 	call := a.calls[callID]
 	a.mu.RUnlock()
 	if call == nil {
-		return nil
+		return errors.New("voice: call not found")
 	}
 	call.MarkACKSent()
 	return nil
@@ -192,10 +200,9 @@ func (a *Agent) HandleClientPrack(callID string) error {
 	call := a.calls[callID]
 	a.mu.RUnlock()
 	if call == nil {
-		return nil
+		return errors.New("voice: call not found")
 	}
-	call.MarkReliableProvisional()
-	return nil
+	return errors.New("voice: PRACK requires the reliable provisional response context")
 }
 
 // --- IMS event handlers ---
@@ -218,10 +225,12 @@ func (a *Agent) OnIMSBye(callID string) error {
 	call := a.calls[callID]
 	a.mu.RUnlock()
 	if call == nil {
-		return nil
+		return errors.New("voice: call not found")
 	}
 	_ = call.Transition(callstate.StateDisconnected)
 	_ = call.Transition(callstate.StateEnded)
+	_ = call.EnsureTimerStopped()
+	_ = call.CloseDone()
 	a.emitCallEnded(call)
 	a.finalizeActiveCall(call)
 	return nil
@@ -236,9 +245,11 @@ func (a *Agent) OnIMSCancel(callID string) error {
 	call := a.calls[callID]
 	a.mu.RUnlock()
 	if call == nil {
-		return nil
+		return errors.New("voice: call not found")
 	}
 	_ = call.Transition(callstate.StateFailed)
+	_ = call.EnsureTimerStopped()
+	_ = call.CloseDone()
 	a.emitCallCanceled(call)
 	a.finalizeActiveCall(call)
 	return nil
@@ -253,11 +264,16 @@ func (a *Agent) OnIMSUpdate(callID string) error {
 	call := a.calls[callID]
 	a.mu.RUnlock()
 	if call == nil {
-		return nil
+		return errors.New("voice: call not found")
 	}
-	// A re-INVITE returns a connected call to Connecting for renegotiation.
-	if call.GetState() == callstate.StateConnected {
-		_ = call.Transition(callstate.StateConnecting)
+	if call.GetState() != callstate.StateConnected {
+		return errors.New("voice: call is not connected")
+	}
+	if err := call.Transition(callstate.StateConnecting); err != nil {
+		return err
+	}
+	if err := call.Transition(callstate.StateConnected); err != nil {
+		return err
 	}
 	a.emitCallMediaUpdated(call)
 	return nil
@@ -272,8 +288,20 @@ func (a *Agent) HandleIMSCancelEvent(callID string) error { return a.OnIMSCancel
 // HandleIMSUpdateEvent handles an IMS UPDATE event.
 func (a *Agent) HandleIMSUpdateEvent(callID string) error { return a.OnIMSUpdate(callID) }
 
-// HandleOutboundInvite handles the outbound INVITE response flow.
-func (a *Agent) HandleOutboundInvite(callID string) error { return nil }
+// HandleOutboundInvite verifies that the synchronous INVITE flow completed.
+func (a *Agent) HandleOutboundInvite(callID string) error {
+	if a == nil {
+		return errors.New("voice: nil agent")
+	}
+	call := a.callByID(callID)
+	if call == nil {
+		return errors.New("voice: call not found")
+	}
+	if !call.HasInviteFinalSeen() {
+		return errors.New("voice: INVITE final response not received")
+	}
+	return nil
+}
 
 // HandleOutboundACK handles the outbound ACK for a 2xx response.
 func (a *Agent) HandleOutboundACK(callID string) error {
@@ -284,9 +312,11 @@ func (a *Agent) HandleOutboundACK(callID string) error {
 	call := a.calls[callID]
 	a.mu.RUnlock()
 	if call == nil {
-		return nil
+		return errors.New("voice: call not found")
 	}
-	call.MarkACKSent()
+	if !call.IsACKSent() {
+		return errors.New("voice: outbound ACK has not been sent")
+	}
 	return nil
 }
 

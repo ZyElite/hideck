@@ -17,6 +17,7 @@ func NewCall(agent *Agent, direction callstate.Direction, callID, peer string) *
 		direction: direction,
 		callID:    callID,
 		peer:      peer,
+		done:      make(chan struct{}),
 	}
 }
 

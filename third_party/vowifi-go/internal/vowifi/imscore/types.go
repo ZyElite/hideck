@@ -217,6 +217,9 @@ type Service struct {
 	// USSD.
 	ussd *ussi.Service
 
+	// Voice request routing.
+	voiceHandler VoiceRequestHandler
+
 	// Delivery store.
 	delivery DeliveryStore
 

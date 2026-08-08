@@ -116,6 +116,9 @@ func (g *ComfortNoiseGenerator) Start(conn net.PacketConn, addr *net.UDPAddr) er
 	if g == nil {
 		return errors.New("media: nil noise generator")
 	}
+	if conn == nil || addr == nil {
+		return errors.New("media: comfort-noise connection and destination are required")
+	}
 	g.mu.Lock()
 	if g.started {
 		g.mu.Unlock()

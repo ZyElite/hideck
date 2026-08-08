@@ -69,7 +69,11 @@ func attachVoiceAgent(req StartRequest, inst *Instance, lifecycle IMSLifecycle) 
 		_ = agent.Stop()
 		return err
 	}
-	inst.setVoiceDetach(func() error { return req.VoiceGateway.RemoveAgent(req.DeviceID) })
+	adapter.svc.SetVoiceRequestHandler(agent.agent)
+	inst.setVoiceDetach(func() error {
+		adapter.svc.SetVoiceRequestHandler(nil)
+		return req.VoiceGateway.RemoveAgent(req.DeviceID)
+	})
 	return nil
 }
 
