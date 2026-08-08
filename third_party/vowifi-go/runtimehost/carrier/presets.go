@@ -13,7 +13,6 @@ const (
 	defaultIMSAccessType      = "wlan1"
 	giffgaffPresetID          = "giffgaff_23410"
 	giffgaffDeviceModel       = "rmx3366"
-	giffgaffReauthSeconds     = 180
 	defaultIMSSupportedHeader = "path,sec-agree"
 	defaultIMSAllowHeader     = "OPTIONS, REGISTER, SUBSCRIBE, NOTIFY, PUBLISH, INVITE, ACK, BYE, CANCEL, UPDATE, PRACK, REFER, INFO, MESSAGE"
 	defaultIMSICSIRef         = "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel," +
@@ -74,7 +73,6 @@ func applyGiffgaffPreset(cfg *EffectiveCarrierConfig) {
 	cfg.DeviceModel = giffgaffDeviceModel
 	cfg.IKEProposals = []string{IKEProposalAES256SHA512PRFSHA512MODP2048}
 	cfg.ESPProposals = []string{ESPProposalAES256SHA512}
-	cfg.ReauthIntervalSeconds = giffgaffReauthSeconds
 	cfg.IMS.ContactOrder = append([]string(nil), giffgaffContactOrder...)
 	cfg.IMS.IncludePANIAuthenticated = true
 	cfg.IMS.StrictSecurityServerOffer = true

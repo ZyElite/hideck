@@ -14,7 +14,7 @@ func TestResolveGiffgaffPreset(t *testing.T) {
 		t.Fatalf("giffgaff identity = %+v", cfg)
 	}
 	if !reflect.DeepEqual(cfg.IKEProposals, []string{"aes256-sha512-prfsha512-modp2048"}) ||
-		!reflect.DeepEqual(cfg.ESPProposals, []string{"aes256-sha512"}) || cfg.ReauthIntervalSeconds != 180 {
+		!reflect.DeepEqual(cfg.ESPProposals, []string{"aes256-sha512"}) || cfg.ReauthIntervalSeconds != 0 {
 		t.Fatalf("giffgaff tunnel policy = %+v", cfg)
 	}
 	wantOrder := []string{
@@ -26,6 +26,14 @@ func TestResolveGiffgaffPreset(t *testing.T) {
 	}
 	if cfg.IMS.Transport != "auto" {
 		t.Fatalf("giffgaff IMS transport = %q, want auto", cfg.IMS.Transport)
+	}
+}
+
+func TestGiffgaffReauthIntervalRequiresExplicitOverride(t *testing.T) {
+	cfg := ResolveEffectiveCarrierConfig(EffectiveCarrierConfigInput{MCC: "234", MNC: "10"})
+	applyCarrierOverride(&cfg, CarrierOverride{ReauthIntervalSeconds: 240})
+	if cfg.ReauthIntervalSeconds != 240 {
+		t.Fatalf("giffgaff reauth interval = %d, want 240", cfg.ReauthIntervalSeconds)
 	}
 }
 
