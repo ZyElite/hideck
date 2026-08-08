@@ -1045,6 +1045,7 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 		}
 		messageID = strings.TrimSpace(outcome.MessageID)
 		if err != nil {
+			deliveryState = "failed"
 			_ = device.RecordVoWiFiSMSSendFailure(s.pool, deviceID, req.Phone, req.Message, time.Now())
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":         "error",

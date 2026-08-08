@@ -211,6 +211,11 @@ type Service struct {
 	networkDone              sync.WaitGroup
 	refreshTimer             *time.Timer
 	registerErrors           chan error
+	keepaliveOnce            sync.Once
+	keepaliveSuccessOnce     sync.Once
+	keepaliveInterval        time.Duration
+	keepaliveTimeout         time.Duration
+	keepaliveFailureLimit    int
 
 	// Dialogs.
 	dialogs *dialogRegistry
@@ -246,12 +251,13 @@ type Service struct {
 
 // SMSReadiness describes the independently verifiable IMS SMS prerequisites.
 type SMSReadiness struct {
-	Registered    bool
-	ProfileReady  bool
-	ReceiverReady bool
-	SMSCPresent   bool
-	Ready         bool
-	Reason        string
+	Registered     bool
+	ProfileReady   bool
+	TransportReady bool
+	ReceiverReady  bool
+	SMSCPresent    bool
+	Ready          bool
+	Reason         string
 }
 
 // ServiceStatus is a snapshot of the IMS service state.

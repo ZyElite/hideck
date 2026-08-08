@@ -41,6 +41,9 @@ func New(cfg *IMSConfig) (*Service, error) {
 		smsReassembler:        smscodec.NewReassembler(),
 		smsTransactionTimeout: outboundSMSTransactionTimeout,
 		smsReportTimeout:      defaultSMSDeliveryReportTimeout,
+		keepaliveInterval:     imsKeepaliveInterval,
+		keepaliveTimeout:      imsKeepaliveTransactionTimeout,
+		keepaliveFailureLimit: imsKeepaliveFailureLimit,
 	}
 	return s, nil
 }

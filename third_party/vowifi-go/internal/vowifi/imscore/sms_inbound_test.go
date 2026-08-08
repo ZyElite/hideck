@@ -118,6 +118,7 @@ func newInboundSMSTestService(t *testing.T) (*Service, *captureIMSEventSubscribe
 	}
 	service.mu.Lock()
 	service.regState = regRegistered
+	service.externalTransport = true
 	service.regSession = &registerSession{
 		contactUser: "registered-contact", cseq: 3,
 		publicID: "sip:+447840844894@o2.co.uk", serviceRoute: "<sip:pcscf.ims.example;lr>",

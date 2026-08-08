@@ -63,6 +63,7 @@ type registeredSIPRoute struct {
 	serviceRoute   string
 	securityVerify string
 	transport      string
+	live           bool
 }
 
 func (s *Service) registeredSIPRouteLocked() registeredSIPRoute {
@@ -89,7 +90,19 @@ func (s *Service) registeredSIPRouteLocked() registeredSIPRoute {
 			route.securityVerify = strings.TrimSpace(s.regSession.security.verifyHeader)
 		}
 	}
+	route.live = s.registeredSIPTransportReadyLocked()
 	return route
+}
+
+func (s *Service) registeredSIPTransportReadyLocked() bool {
+	if s.externalTransport {
+		return true
+	}
+	if s.regSession != nil && s.regSession.security != nil &&
+		strings.TrimSpace(s.regSession.security.verifyHeader) != "" {
+		return s.registrationTCP != nil && s.registrationTCPProtected
+	}
+	return s.registrationTCP != nil || s.registrationIO != nil
 }
 
 func (s *Service) smsMessageRoute() (clientAddress, serverAddress, route, securityVerify, transport string) {

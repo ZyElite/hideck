@@ -211,7 +211,7 @@ func runtimeTestRequest(prepared *identity.PreparedSession, tunnel *lifecycleTun
 		},
 		IMSFactory: func(req StartRequest, _ Tunnel) (IMSLifecycle, error) {
 			return &lifecycleIMS{deviceID: req.DeviceID, sms: SMSReadiness{
-				Registered: true, ReceiverReady: true, SMSCPresent: true,
+				Registered: true, ProfileReady: true, TransportReady: true, ReceiverReady: true, SMSCPresent: true,
 				Ready: true, Reason: "IMS SMS receiver ready",
 			}}, nil
 		},
@@ -237,7 +237,7 @@ func TestStartSMSReadyTracksReportedPrerequisites(t *testing.T) {
 		t.Fatalf("initial SMS state = %+v", state)
 	}
 	ims.setSMSReadiness(SMSReadiness{
-		Registered: true, ReceiverReady: true, SMSCPresent: true,
+		Registered: true, ProfileReady: true, TransportReady: true, ReceiverReady: true, SMSCPresent: true,
 		Ready: true, Reason: "IMS SMS receiver ready",
 	})
 	if state := inst.State(); !state.SMSReady || state.SMSReadyReason != "IMS SMS receiver ready" {

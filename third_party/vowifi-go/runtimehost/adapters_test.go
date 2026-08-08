@@ -149,6 +149,19 @@ func TestServiceAdapterNoService(t *testing.T) {
 	}
 }
 
+func TestAdaptSMSSendOutcomePreservesFailureIdentity(t *testing.T) {
+	wantErr := errors.New("transaction failed")
+	out := adaptSMSSendOutcome(&imscore.SMSSendOutcome{
+		Ref: "sms-1", Err: wantErr, MessageID: "sms-1", PartsTotal: 1, State: "failed",
+	})
+	if out.MessageID != "sms-1" || out.Ref != "sms-1" || out.PartsTotal != 1 {
+		t.Fatalf("delivery identity = %+v", out)
+	}
+	if out.DeliveryState != "failed" || !errors.Is(out.Err, wantErr) {
+		t.Fatalf("delivery failure = %+v", out)
+	}
+}
+
 func TestVoiceAgentAttachAndStopCleanup(t *testing.T) {
 	svc := newTestService(t)
 	gateway := voicehost.NewGateway()

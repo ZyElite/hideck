@@ -118,6 +118,7 @@ func (s *Service) activateInitialRegistrationTransport(
 
 func (s *Service) activateInitialSendAndReceive(opened *initialRegistrationTransport) {
 	if opened.stream != nil {
+		configureTCPKeepalive(opened.stream)
 		s.transport.SetSendFn(func(request string) error {
 			return s.writeSIPStream(opened.stream, request)
 		})

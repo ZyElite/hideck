@@ -138,9 +138,12 @@ func TestSendOutboundSMSRejectsNon2xxWithoutSuccessEvent(t *testing.T) {
 		service.transport.DeliverResponse(response)
 		return nil
 	})
-	_, err := service.SendSMSWithResult(context.Background(), "+447700900123", "hello")
+	outcome, err := service.SendSMSWithResult(context.Background(), "+447700900123", "hello")
 	if err == nil || !strings.Contains(err.Error(), "503") {
 		t.Fatalf("send error = %v", err)
+	}
+	if outcome == nil || outcome.MessageID == "" || outcome.State != smsDeliveryStateFailed {
+		t.Fatalf("failed send outcome = %+v", outcome)
 	}
 	select {
 	case event := <-subscriber.events:
@@ -223,6 +226,7 @@ func newOutboundSMSTestService(t *testing.T) (*Service, *captureIMSEventSubscrib
 	}
 	service.mu.Lock()
 	service.regState = regRegistered
+	service.externalTransport = true
 	service.smsReceiverReady = true
 	service.regSession = &registerSession{
 		contactUser: "registered-contact", cseq: 3,

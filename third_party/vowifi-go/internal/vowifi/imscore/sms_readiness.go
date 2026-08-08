@@ -6,6 +6,7 @@ const (
 	smsReadyReasonReady             = "IMS SMS receiver ready"
 	smsReadyReasonNotRegistered     = "IMS registration is not ready"
 	smsReadyReasonProfileNotReady   = "IMS registered identity is not ready"
+	smsReadyReasonTransportNotReady = "IMS registered signaling transport is not ready"
 	smsReadyReasonReceiverNotReady  = "IMS SMS receiver is not ready"
 	smsReadyReasonSMSCNotConfigured = "IMS SMSC is not configured"
 )
@@ -13,20 +14,21 @@ const (
 // SMSReadiness returns a consistent snapshot of the SMS prerequisites.
 func (s *Service) SMSReadiness() SMSReadiness {
 	if s == nil {
-		return evaluateSMSReadiness(false, false, false, "")
+		return evaluateSMSReadiness(false, false, false, false, "")
 	}
 	s.mu.RLock()
 	registered := s.regState == regRegistered
 	profileReady := registered && s.regSession != nil &&
 		strings.TrimSpace(s.regSession.publicID) != "" &&
 		strings.TrimSpace(s.regSession.contactUser) != ""
+	transportReady := registered && s.registeredSIPTransportReadyLocked()
 	receiverReady := s.smsReceiverReady
 	smsc := ""
 	if s.cfg != nil {
 		smsc = s.cfg.SMSC
 	}
 	s.mu.RUnlock()
-	return evaluateSMSReadiness(registered, profileReady, receiverReady, smsc)
+	return evaluateSMSReadiness(registered, profileReady, transportReady, receiverReady, smsc)
 }
 
 // SetOnSMSReadinessChanged installs the readiness observer and immediately
@@ -69,18 +71,21 @@ func (s *Service) notifySMSReadiness() {
 	}
 }
 
-func evaluateSMSReadiness(registered, profileReady, receiverReady bool, smsc string) SMSReadiness {
+func evaluateSMSReadiness(registered, profileReady, transportReady, receiverReady bool, smsc string) SMSReadiness {
 	readiness := SMSReadiness{
-		Registered:    registered,
-		ProfileReady:  profileReady,
-		ReceiverReady: receiverReady,
-		SMSCPresent:   strings.TrimSpace(smsc) != "",
+		Registered:     registered,
+		ProfileReady:   profileReady,
+		TransportReady: transportReady,
+		ReceiverReady:  receiverReady,
+		SMSCPresent:    strings.TrimSpace(smsc) != "",
 	}
 	switch {
 	case !readiness.Registered:
 		readiness.Reason = smsReadyReasonNotRegistered
 	case !readiness.ProfileReady:
 		readiness.Reason = smsReadyReasonProfileNotReady
+	case !readiness.TransportReady:
+		readiness.Reason = smsReadyReasonTransportNotReady
 	case !readiness.ReceiverReady:
 		readiness.Reason = smsReadyReasonReceiverNotReady
 	case !readiness.SMSCPresent:

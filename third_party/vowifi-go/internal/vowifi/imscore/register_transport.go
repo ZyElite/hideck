@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
@@ -142,6 +143,7 @@ func (s *Service) protectedTransportState() (external, connected bool) {
 }
 
 func (s *Service) activateProtectedRegistrationTCP(conn net.Conn) {
+	configureTCPKeepalive(conn)
 	s.mu.Lock()
 	previous := s.registrationTCP
 	s.registrationTCP = conn
@@ -150,10 +152,10 @@ func (s *Service) activateProtectedRegistrationTCP(conn net.Conn) {
 	}
 	s.registrationTCPProtected = true
 	s.registrationTransport = "tcp"
-	s.mu.Unlock()
 	s.transport.SetSendFn(func(request string) error {
 		return s.writeSIPStream(conn, request)
 	})
+	s.mu.Unlock()
 	s.networkDone.Add(1)
 	go s.readRegistrationStream(conn)
 }
@@ -203,6 +205,7 @@ func (s *Service) acceptProtectedSIP(listener net.Listener) {
 			_ = conn.Close()
 			return
 		}
+		configureTCPKeepalive(conn)
 		s.networkDone.Add(1)
 		go s.serveProtectedSIPConnection(conn)
 	}
@@ -235,28 +238,46 @@ func (s *Service) untrackProtectedConnection(conn net.Conn) {
 
 func (s *Service) readRegistrationStream(conn net.Conn) {
 	defer s.networkDone.Done()
-	defer s.clearClosedRegistrationTCP(conn)
 	s.receiverStarted()
 	defer s.receiverStopped()
-	s.readRegistrationStreamSync(conn)
+	readErr := s.readRegistrationStreamSync(conn)
+	s.clearClosedRegistrationTCP(conn, readErr)
 }
 
-func (s *Service) clearClosedRegistrationTCP(conn net.Conn) {
+func (s *Service) clearClosedRegistrationTCP(conn net.Conn, readErr error) {
 	_ = conn.Close()
+	stopped := s.stopped()
 	s.mu.Lock()
-	if s.registrationTCP == conn {
+	current := s.registrationTCP == conn
+	if current {
 		s.registrationTCP = nil
 		s.registrationTCPProtected = false
+		if !stopped {
+			s.regState = regFailed
+			s.transport.SetSendFn(func(string) error {
+				return errors.New("imscore: registered SIP transport is not connected")
+			})
+		}
 	}
 	s.mu.Unlock()
+	if !current || stopped {
+		return
+	}
+	s.notifySMSReadiness()
+	if readErr == nil {
+		readErr = io.EOF
+	}
+	err := fmt.Errorf("imscore: registration SIP stream closed: %w", readErr)
+	logging.WarnRate("ims-registration-stream", "IMS registration SIP stream closed", "err", err)
+	s.reportRegistrationRuntimeError(err)
 }
 
-func (s *Service) readRegistrationStreamSync(conn net.Conn) {
+func (s *Service) readRegistrationStreamSync(conn net.Conn) error {
 	reader := bufio.NewReader(conn)
 	for {
 		raw, err := readSIPStreamMessage(reader)
 		if err != nil {
-			return
+			return err
 		}
 		if err := s.dispatchInboundSIP(raw, func(response string) error {
 			return s.writeSIPStream(conn, response)
@@ -264,6 +285,20 @@ func (s *Service) readRegistrationStreamSync(conn net.Conn) {
 			logging.WarnRate("ims-tcp-inbound", "IMS TCP inbound handling failed", "err", err)
 		}
 	}
+}
+
+type tcpKeepaliveConn interface {
+	SetKeepAlive(bool) error
+	SetKeepAlivePeriod(time.Duration) error
+}
+
+func configureTCPKeepalive(conn net.Conn) {
+	keepalive, ok := conn.(tcpKeepaliveConn)
+	if !ok {
+		return
+	}
+	_ = keepalive.SetKeepAlive(true)
+	_ = keepalive.SetKeepAlivePeriod(30 * time.Second)
 }
 
 func readSIPStreamMessage(reader *bufio.Reader) (string, error) {

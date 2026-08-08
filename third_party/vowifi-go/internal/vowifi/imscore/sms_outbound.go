@@ -46,17 +46,20 @@ func (s *Service) sendOutboundSMS(ctx context.Context, to, text string, opts SMS
 	if err := s.createOutboundDelivery(messageID, recipient, text, len(parts)); err != nil {
 		return nil, err
 	}
+	outcome := &SMSSendOutcome{
+		Ref: messageID, MessageID: messageID,
+		PartsTotal: len(parts), State: smsDeliveryStatePending,
+	}
 	for _, part := range parts {
 		if err := s.sendOutboundSMSPart(ctx, messageID, part); err != nil {
-			return nil, err
+			outcome.Err = err
+			outcome.State = smsDeliveryStateFailed
+			return outcome, err
 		}
 	}
 	s.publishOutboundSMS(recipient, text, len(parts))
 	s.scheduleSMSDeliveryTimeout(messageID, parts)
-	return &SMSSendOutcome{
-		Ref: messageID, MessageID: messageID,
-		PartsTotal: len(parts), State: smsDeliveryStatePending,
-	}, nil
+	return outcome, nil
 }
 
 func (s *Service) buildOutboundSMSParts(recipient, text string, opts SMSSendOptions) ([]outboundSMSPart, error) {

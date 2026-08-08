@@ -19,7 +19,7 @@ func TestRegisteredSIPDialogProfileUsesNegotiatedIdentityAndBinding(t *testing.T
 				AccessType: "wlan1", ContactOrder: []string{"access_type", "sip_instance", "audio"},
 			},
 		},
-		regState: regRegistered, registrationTCP: client,
+		regState: regRegistered, registrationTCP: client, registrationTCPProtected: true,
 		protectedClientPort: 50309, protectedServerPort: 48554,
 		regSession: &registerSession{
 			contactUser: "binding-uuid", cseq: 3,

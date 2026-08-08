@@ -169,8 +169,8 @@ func (a *serviceAdapter) SetOnSMSReadinessChanged(fn func(SMSReadiness)) {
 func adaptSMSReadiness(readiness imscore.SMSReadiness) SMSReadiness {
 	return SMSReadiness{
 		Registered: readiness.Registered, ProfileReady: readiness.ProfileReady,
-		ReceiverReady: readiness.ReceiverReady,
-		SMSCPresent:   readiness.SMSCPresent, Ready: readiness.Ready, Reason: readiness.Reason,
+		TransportReady: readiness.TransportReady, ReceiverReady: readiness.ReceiverReady,
+		SMSCPresent: readiness.SMSCPresent, Ready: readiness.Ready, Reason: readiness.Reason,
 	}
 }
 
@@ -183,16 +183,7 @@ func (a *serviceAdapter) SendSMSWithOptions(ctx context.Context, to, text string
 		SuppressSendTGSuccess: opts.SuppressSendTGSuccess,
 		Encoding:              opts.Encoding,
 	})
-	if err != nil {
-		return messaging.SendOutcome{}, err
-	}
-	return messaging.SendOutcome{
-		Ref:           out.Ref,
-		Err:           out.Err,
-		MessageID:     out.MessageID,
-		PartsTotal:    out.PartsTotal,
-		DeliveryState: out.State,
-	}, nil
+	return adaptSMSSendOutcome(out), err
 }
 
 // SendSMSWithResult sends an SMS.
@@ -201,8 +192,12 @@ func (a *serviceAdapter) SendSMSWithResult(ctx context.Context, to, text string)
 		return messaging.SendOutcome{}, errNoService
 	}
 	out, err := a.svc.SendSMSWithResult(ctx, to, text)
-	if err != nil {
-		return messaging.SendOutcome{}, err
+	return adaptSMSSendOutcome(out), err
+}
+
+func adaptSMSSendOutcome(out *imscore.SMSSendOutcome) messaging.SendOutcome {
+	if out == nil {
+		return messaging.SendOutcome{}
 	}
 	return messaging.SendOutcome{
 		Ref:           out.Ref,
@@ -210,7 +205,7 @@ func (a *serviceAdapter) SendSMSWithResult(ctx context.Context, to, text string)
 		MessageID:     out.MessageID,
 		PartsTotal:    out.PartsTotal,
 		DeliveryState: out.State,
-	}, nil
+	}
 }
 
 // GetSMSDeliveryStatus returns the delivery status of an SMS.

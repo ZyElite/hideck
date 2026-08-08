@@ -123,6 +123,7 @@ func newDeliveryReportTestService(t *testing.T) (*Service, *captureIMSEventSubsc
 	}
 	service.mu.Lock()
 	service.regState, service.smsReceiverReady = regRegistered, true
+	service.externalTransport = true
 	service.regSession = &registerSession{
 		contactUser: "registered-contact", cseq: 3,
 		publicID: "sip:+447840844894@o2.co.uk", serviceRoute: "<sip:pcscf.ims.example;lr>",

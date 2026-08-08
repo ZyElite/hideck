@@ -111,6 +111,9 @@ func (s *Service) reserveRegisteredSIPProfile() (SIPDialogProfile, error) {
 		return SIPDialogProfile{}, errors.New("imscore: registered Contact identity is unavailable")
 	}
 	route := s.registeredSIPRouteLocked()
+	if !route.live {
+		return SIPDialogProfile{}, errors.New("imscore: registered SIP transport is not connected")
+	}
 	if route.clientAddress == "" || route.serverAddress == "" {
 		return SIPDialogProfile{}, errors.New("imscore: registered SIP transport is unavailable")
 	}

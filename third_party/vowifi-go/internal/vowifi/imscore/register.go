@@ -61,6 +61,7 @@ func (s *Service) Register(ctx context.Context) error {
 	s.notifySMSReadiness()
 	s.scheduleRegistrationRefresh(expires)
 	s.startRegistrationSubscription()
+	s.startIMSKeepalive()
 	return nil
 }
 
