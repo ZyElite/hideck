@@ -544,11 +544,20 @@ func (s *Session) handleIKEAuthFinalPacket(resp *ikev2.IKEPacket) error {
 	if err := s.verifyEAPResponderAuth(payloads); err != nil {
 		return err
 	}
+	if err := s.applyFinalIKEAuthPayloads(payloads); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.responderAuthenticated = true
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Session) applyFinalIKEAuthPayloads(payloads []ikev2.Payload) error {
 	if err := s.applyIKEAuthLifetime(payloads); err != nil {
 		return err
 	}
 	s.applyMOBIKENegotiation(payloads)
-	s.responderAuthenticated = true
 	assigned, err := parseAssignedInnerConfig(payloads)
 	if err != nil {
 		return err
@@ -575,7 +584,7 @@ func (s *Session) handleIKEAuthFinalPacket(resp *ikev2.IKEPacket) error {
 		s.childDHSecret = append([]byte(nil), sharedSecret...)
 		s.childTSi, s.childTSr = selection.tsi, selection.tsr
 	}
-	return nil
+	return s.captureSessionTicket(payloads)
 }
 
 func (s *Session) applyIKEAuthLifetime(payloads []ikev2.Payload) error {

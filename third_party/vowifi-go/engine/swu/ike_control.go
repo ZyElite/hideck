@@ -29,6 +29,10 @@ func (s *Session) startIKEControl() error {
 		return err
 	}
 	s.controlMu.Lock()
+	if s.controlStopping {
+		s.controlMu.Unlock()
+		return errors.New("swu: IKE control plane is stopping")
+	}
 	if s.controlRunning {
 		s.controlMu.Unlock()
 		return nil
@@ -183,6 +187,9 @@ func (s *Session) validateEstablishedIKEEnvelope(header *ikev2.IKEHeader, raw []
 	if header.Length != uint32(len(raw)) {
 		return fmt.Errorf("swu: IKE length %d does not match datagram %d", header.Length, len(raw))
 	}
+	if s.validBootstrapIKEResponse(header) {
+		return nil
+	}
 	context, retired, err := s.ikeContextForHeader(header)
 	if err != nil {
 		if s.matchesRetiredIKEDelete(raw) {
@@ -194,6 +201,19 @@ func (s *Session) validateEstablishedIKEEnvelope(header *ikev2.IKEHeader, raw []
 		return errors.New("swu: retired IKE SA only accepts INFORMATIONAL cleanup")
 	}
 	return validateIKEContextRole(context, header)
+}
+
+func (s *Session) validBootstrapIKEResponse(header *ikev2.IKEHeader) bool {
+	if header == nil || header.Flags&ikeResponseFlag == 0 || header.Flags&ikeInitiatorFlag != 0 ||
+		header.MessageID != 0 || header.SPIr == 0 {
+		return false
+	}
+	if header.ExchangeType != ikev2.IKE_SA_INIT && header.ExchangeType != ikev2.IKE_SESSION_RESUME {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.SPIr == ([8]byte{}) && s.ikeKeys == nil && header.SPIi == ikeSPIUint64(s.SPIi)
 }
 
 func (s *Session) dispatchIKEResponse(

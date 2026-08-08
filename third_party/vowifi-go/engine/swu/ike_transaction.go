@@ -79,6 +79,14 @@ func (s *Session) sendEncryptedWithRetry(
 	payloads []ikev2.Payload,
 	exchangeType ikev2.ExchangeType,
 ) ([]byte, error) {
+	return s.sendEncryptedWithRetryContext(s.ctx, payloads, exchangeType)
+}
+
+func (s *Session) sendEncryptedWithRetryContext(
+	ctx context.Context,
+	payloads []ikev2.Payload,
+	exchangeType ikev2.ExchangeType,
+) ([]byte, error) {
 	if s.shouldFragment(payloads) {
 		packets, err := s.fragmentMessage(payloads, exchangeType)
 		if err != nil {
@@ -92,7 +100,7 @@ func (s *Session) sendEncryptedWithRetry(
 			return nil, err
 		}
 		request := &ikev2.IKEPacket{Header: header, Payloads: payloads}
-		return s.exchangeEstablishedRaw(s.ctx, request, packets)
+		return s.exchangeEstablishedRaw(ctx, request, packets)
 	}
 	packet := &ikev2.IKEPacket{
 		Header: newIKEHeader(
@@ -104,7 +112,7 @@ func (s *Session) sendEncryptedWithRetry(
 	if err != nil {
 		return nil, err
 	}
-	return s.exchangeEstablishedRaw(s.ctx, packet, [][]byte{raw})
+	return s.exchangeEstablishedRaw(ctx, packet, [][]byte{raw})
 }
 
 func (s *Session) exchangeEstablishedRaw(

@@ -78,6 +78,11 @@ type Config struct {
 	FastReauthKEncr []byte
 	// OnFastReauthUpdate persists a newly issued reauthentication identity.
 	OnFastReauthUpdate func(reauthID string, mk, kAut, kEncr []byte)
+	// ResumeTicket and ResumeOldSKd restore the RFC 5723 cross-session
+	// credential. OnTicketUpdate persists replacement or invalidation.
+	ResumeTicket   []byte
+	ResumeOldSKd   []byte
+	OnTicketUpdate func(ticket, skd []byte)
 	// AlgorithmPolicy selects the IKE/ESP algorithm offer policy.
 	AlgorithmPolicy string
 	// IKEProposals and ESPProposals are ordered legacy proposal strings. Empty
@@ -276,6 +281,7 @@ type Session struct {
 	controlStop       chan struct{}
 	controlTransport  ipsec.Transport
 	controlRunning    bool
+	controlStopping   bool
 	taskMgr           *TaskManager
 	ikeWaiters        map[ikeWaitKey]chan []byte
 	ikePending        map[ikeWaitKey][]byte
@@ -322,6 +328,9 @@ type Session struct {
 	sendCookie               bool
 	fragmentationSupported   bool
 	mobikeSupported          bool
+	sessionResumed           bool
+	resumeTicket             []byte
+	resumeOldSKd             []byte
 	ikeFragmentMTU           uint32
 	fragmentBuf              *fragmentBuffer
 }
@@ -352,6 +361,8 @@ func NewSession(cfg *Config) *Session {
 		espInboundSAs:     make(map[uint32]*ipsec.SecurityAssociation),
 		retiredChildSAs:   make(map[uint32]uint32),
 		netEventMonitors:  make(map[<-chan ipsec.NetEvent]struct{}),
+		resumeTicket:      append([]byte(nil), cfg.ResumeTicket...),
+		resumeOldSKd:      append([]byte(nil), cfg.ResumeOldSKd...),
 	}
 	if s.nonceLen <= 0 {
 		s.nonceLen = 32
@@ -473,7 +484,7 @@ func (s *Session) connectOnce(ctx context.Context) (err error) {
 	}
 	defer func() {
 		if err != nil {
-			s.stopDataPlane()
+			err = errors.Join(err, s.stopDataPlane(), s.stopIKEControl())
 			s.stopTransport()
 		}
 	}()
@@ -483,14 +494,17 @@ func (s *Session) connectOnce(ctx context.Context) (err error) {
 		return fmt.Errorf("build transport: %w", err)
 	}
 	s.startNetEventMonitor()
-	// IKE_SA_INIT.
-	if err := s.runIKESAInit(ctx); err != nil {
-		return err
+	resumed, resumeErr := s.trySessionResumption(ctx)
+	if resumeErr != nil && (ctx.Err() != nil || s.ctx.Err() != nil) {
+		return resumeErr
 	}
-
-	// IKE_AUTH (EAP-AKA).
-	if err := s.runIKEAuthLoop(ctx); err != nil {
-		return err
+	if !resumed {
+		if err := s.runIKESAInit(ctx); err != nil {
+			return joinSessionResumeFallbackError(resumeErr, err)
+		}
+		if err := s.runIKEAuthLoop(ctx); err != nil {
+			return joinSessionResumeFallbackError(resumeErr, err)
+		}
 	}
 
 	// Some ePDGs establish the first CHILD_SA in IKE_AUTH. If the responder did
@@ -728,6 +742,7 @@ func (s *Session) Shutdown() {
 	s.netEventWG.Wait()
 	s.stopTransport()
 	s.clearIKEKeyMaterial()
+	s.clearSessionResumptionMemory()
 	if cleanupErr != nil {
 		s.mu.Lock()
 		if s.terminalErr == nil {

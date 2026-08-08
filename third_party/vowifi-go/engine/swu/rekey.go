@@ -10,16 +10,6 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
-// sendIkeAuthChildless sends an IKE_AUTH request without a CHILD_SA (used for
-// EAP-only authentication).
-func (s *Session) sendIkeAuthChildless() error {
-	payloads, err := s.buildIKEAuthFinalPayloads()
-	if err != nil {
-		return err
-	}
-	return s.sendIKEAuthRequest(payloads)
-}
-
 // startXFRMExpireMonitor starts the XFRM SA expiry monitor.
 func (s *Session) startXFRMExpireMonitor() error {
 	return nil
@@ -82,16 +72,6 @@ func (s *Session) startUserspaceDataPlane() error {
 // parsePayloads parses a raw payload chain.
 func (s *Session) parsePayloads(raw []byte) ([]ikev2.Payload, error) {
 	return ikev2.DecodePayloadChain(raw)
-}
-
-// performSessionResumption attempts IKE session resumption.
-func (s *Session) performSessionResumption() error {
-	return errors.New("swu: session resumption not wired")
-}
-
-// handleIkeSessionResumeResp processes a session resumption response.
-func (s *Session) handleIkeSessionResumeResp() error {
-	return errors.New("swu: session resumption response not wired")
 }
 
 // logSessionStats is defined in session.go.
