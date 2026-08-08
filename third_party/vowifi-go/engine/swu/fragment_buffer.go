@@ -1,98 +1,164 @@
 package swu
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sync"
+
+	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
-// fragmentBuffer reassembles IKEv2 fragmented messages (RFC 7383). Each IKE
-// message identifier has its own fragment set; fragments are numbered 1..N.
+const maxFragmentedMessageSize = 64 * 1024
+
+// fragmentBuffer preserves the original Message-ID keyed reassembly layout.
 type fragmentBuffer struct {
-	mu        sync.Mutex
-	fragments map[uint32]*fragmentSet
+	mu    sync.Mutex
+	frags map[uint32]*fragmentSet
 }
 
-// fragmentSet holds the fragments received for a single IKE message id.
 type fragmentSet struct {
-	total uint16            // total fragment count declared by the sender
-	frags map[uint16][]byte // fragment number → payload bytes
-	size  int               // accumulated payload bytes (overflow guard)
+	total    uint16
+	received map[uint16][]byte
+	totalLen int
+
+	firstPayload    ikev2.PayloadType
+	hasFirstPayload bool
+	envelope        fragmentEnvelope
+	hasEnvelope     bool
 }
 
-// maxFragmentedMessageSize bounds a reassembled IKE message (the decompiled
-// implementation rejects a running size >= 0x10001).
-const maxFragmentedMessageSize = 0x10000
+type fragmentEnvelope struct {
+	initiatorSPI uint64
+	responderSPI uint64
+	exchangeType ikev2.ExchangeType
+	flags        uint8
+	version      uint8
+}
 
-// newFragmentBuffer constructs an empty fragment buffer.
+type receivedFragment struct {
+	messageID    uint32
+	number       uint16
+	total        uint16
+	firstPayload ikev2.PayloadType
+	plaintext    []byte
+	envelope     *fragmentEnvelope
+}
+
 func newFragmentBuffer() *fragmentBuffer {
-	return &fragmentBuffer{fragments: make(map[uint32]*fragmentSet)}
+	return &fragmentBuffer{frags: make(map[uint32]*fragmentSet)}
 }
 
-// addFragment stores a fragment for the given IKE message id. It returns true
-// when the message is complete (all fragments received). A fragment total
-// larger than the previously recorded total resets the set; a mismatched
-// (smaller) total, a duplicate fragment or an oversized message is rejected.
-func (f *fragmentBuffer) addFragment(messageID uint32, fragNum, total uint16, data []byte) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+// addFragment restores the original buffer API.
+func (fb *fragmentBuffer) addFragment(
+	msgID uint32,
+	fragNum uint16,
+	totalFrags uint16,
+	plaintext []byte,
+) (bool, error) {
+	return fb.addReceivedFragment(receivedFragment{
+		messageID: msgID, number: fragNum, total: totalFrags, plaintext: plaintext,
+	})
+}
 
-	set, ok := f.fragments[messageID]
-	if !ok {
-		set = &fragmentSet{total: total, frags: make(map[uint16][]byte)}
-		f.fragments[messageID] = set
+func (fb *fragmentBuffer) addReceivedFragment(fragment receivedFragment) (bool, error) {
+	if fragment.number == 0 || fragment.total == 0 ||
+		fragment.number > fragment.total || fragment.total > maxFragments {
+		return false, fmt.Errorf("invalid IKE fragment %d/%d", fragment.number, fragment.total)
 	}
-	if set.total < total {
-		// The sender declared a larger total than we recorded: restart.
-		set.total = total
-		set.frags = make(map[uint16][]byte)
-		set.size = 0
-	} else if total != set.total {
-		return false, fmt.Errorf("fragment total mismatch: have %d, got %d", set.total, total)
+	if fragment.number > 1 && fragment.firstPayload != ikev2.NoNextPayload {
+		return false, errors.New("non-initial IKE fragment declares a next payload")
 	}
-
-	if _, dup := set.frags[fragNum]; dup {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	set := fb.frags[fragment.messageID]
+	if set == nil {
+		set = newFragmentSet(fragment.total)
+		fb.frags[fragment.messageID] = set
+	}
+	if fragment.total > set.total {
+		set = newFragmentSet(fragment.total)
+		fb.frags[fragment.messageID] = set
+	} else if fragment.total != set.total {
+		return false, fmt.Errorf("fragment total mismatch: have %d, got %d", set.total, fragment.total)
+	}
+	if err := set.acceptMetadata(fragment); err != nil {
+		return false, err
+	}
+	if existing, duplicate := set.received[fragment.number]; duplicate {
+		if !bytes.Equal(existing, fragment.plaintext) {
+			return false, fmt.Errorf(
+				"conflicting duplicate IKE fragment %d/%d", fragment.number, fragment.total,
+			)
+		}
 		return false, nil
 	}
-
-	if set.size+len(data) > maxFragmentedMessageSize {
-		delete(f.fragments, messageID)
-		return false, fmt.Errorf("fragmented message %d exceeds maximum size %d", messageID, maxFragmentedMessageSize)
+	if set.totalLen+len(fragment.plaintext) > maxFragmentedMessageSize {
+		delete(fb.frags, fragment.messageID)
+		return false, fmt.Errorf(
+			"fragmented message %d exceeds maximum size %d",
+			fragment.messageID, maxFragmentedMessageSize,
+		)
 	}
-
-	set.frags[fragNum] = append([]byte{}, data...)
-	set.size += len(data)
-
-	return len(set.frags) == int(set.total), nil
+	set.received[fragment.number] = append([]byte(nil), fragment.plaintext...)
+	set.totalLen += len(fragment.plaintext)
+	return len(set.received) == int(set.total), nil
 }
 
-// reassemble concatenates the fragments of a complete message in order and
-// removes the set from the buffer. It errors if the message is unknown or
-// incomplete.
-func (f *fragmentBuffer) reassemble(messageID uint32) ([]byte, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	set, ok := f.fragments[messageID]
-	if !ok {
-		return nil, errors.New("no fragments for message")
-	}
-
-	out := make([]byte, 0, set.size)
-	for i := uint16(1); i <= set.total; i++ {
-		frag, ok := set.frags[i]
-		if !ok {
-			return nil, fmt.Errorf("missing fragment %d of %d for message %d", i, set.total, messageID)
+func (set *fragmentSet) acceptMetadata(fragment receivedFragment) error {
+	if fragment.envelope != nil {
+		if set.hasEnvelope && set.envelope != *fragment.envelope {
+			return errors.New("IKE fragment envelope does not match its fragment set")
 		}
-		out = append(out, frag...)
+		set.envelope, set.hasEnvelope = *fragment.envelope, true
 	}
-	delete(f.fragments, messageID)
-	return out, nil
+	if fragment.number != 1 {
+		return nil
+	}
+	if set.hasFirstPayload && set.firstPayload != fragment.firstPayload {
+		return errors.New("first IKE fragment declares a conflicting next payload")
+	}
+	set.firstPayload, set.hasFirstPayload = fragment.firstPayload, true
+	return nil
 }
 
-// drop removes any partial fragment set for the message (e.g. on abort).
-func (f *fragmentBuffer) drop(messageID uint32) {
-	f.mu.Lock()
-	delete(f.fragments, messageID)
-	f.mu.Unlock()
+func newFragmentSet(total uint16) *fragmentSet {
+	return &fragmentSet{total: total, received: make(map[uint16][]byte)}
+}
+
+// reassemble restores the original ordered, consuming API.
+func (fb *fragmentBuffer) reassemble(msgID uint32) ([]byte, error) {
+	data, _, err := fb.reassembleWithFirst(msgID)
+	return data, err
+}
+
+func (fb *fragmentBuffer) reassembleWithFirst(msgID uint32) ([]byte, ikev2.PayloadType, error) {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	set := fb.frags[msgID]
+	if set == nil {
+		return nil, 0, errors.New("no fragments for message")
+	}
+	result := make([]byte, 0, set.totalLen)
+	for number := uint16(1); number <= set.total; number++ {
+		fragment, ok := set.received[number]
+		if !ok {
+			return nil, 0, fmt.Errorf("missing fragment %d of %d for message %d", number, set.total, msgID)
+		}
+		result = append(result, fragment...)
+	}
+	delete(fb.frags, msgID)
+	return result, set.firstPayload, nil
+}
+
+func (fb *fragmentBuffer) drop(msgID uint32) {
+	fb.mu.Lock()
+	delete(fb.frags, msgID)
+	fb.mu.Unlock()
+}
+
+func (fb *fragmentBuffer) clear() {
+	fb.mu.Lock()
+	clear(fb.frags)
+	fb.mu.Unlock()
 }

@@ -353,19 +353,39 @@ func TestSessionManager(t *testing.T) {
 
 func TestFragmentMessage(t *testing.T) {
 	s := NewSession(&Config{})
-	raw := bytes.Repeat([]byte{0xaa}, 3000)
-	if !s.shouldFragment(raw) {
+	s.ikeKeys = testIKEKeys()
+	s.mu.Lock()
+	s.fragmentationSupported = true
+	s.mu.Unlock()
+	payload := &ikev2.RawPayload{PType: ikev2.V, Data: bytes.Repeat([]byte{0xaa}, 3000)}
+	if !s.shouldFragment([]ikev2.Payload{payload}) {
 		t.Error("3000-byte message should fragment")
 	}
-	parts, err := s.fragmentMessage(raw)
+	parts, err := s.fragmentMessage([]ikev2.Payload{payload}, ikev2.IKE_AUTH)
 	if err != nil {
 		t.Fatalf("fragmentMessage: %v", err)
 	}
-	var joined []byte
-	for _, p := range parts {
-		joined = append(joined, p...)
+	var normalized []byte
+	for index, part := range parts {
+		var complete bool
+		normalized, complete, err = s.normalizeInboundIKE(part)
+		if err != nil {
+			t.Fatalf("normalize fragment %d: %v", index+1, err)
+		}
+		if complete != (index == len(parts)-1) {
+			t.Fatalf("fragment %d complete=%t", index+1, complete)
+		}
 	}
-	if !bytes.Equal(joined, raw) {
-		t.Error("fragments do not reassemble")
+	packet, err := ikev2.DecodePacket(normalized)
+	if err != nil {
+		t.Fatalf("decode normalized packet: %v", err)
+	}
+	payloads, err := s.decryptAndParse(packet)
+	if err != nil || len(payloads) != 1 {
+		t.Fatalf("decrypt normalized payloads=%d err=%v", len(payloads), err)
+	}
+	got, ok := payloads[0].(*ikev2.RawPayload)
+	if !ok || !bytes.Equal(got.Data, payload.Data) {
+		t.Fatal("fragments did not preserve the payload")
 	}
 }

@@ -143,6 +143,18 @@ func (s *Session) dispatchIKEPacket(
 	if err := s.validateEstablishedIKEEnvelope(header, len(raw)); err != nil {
 		return err
 	}
+	normalized, complete, err := s.normalizeInboundIKE(raw)
+	if err != nil {
+		return fmt.Errorf("swu: process inbound IKE fragment: %w", err)
+	}
+	if !complete {
+		return nil
+	}
+	raw = normalized
+	header, err = ikev2.DecodeHeader(raw)
+	if err != nil {
+		return fmt.Errorf("swu: decode normalized IKE header: %w", err)
+	}
 	if header.Flags&ikeResponseFlag != 0 {
 		return s.dispatchIKEResponse(header, raw, taskManager)
 	}

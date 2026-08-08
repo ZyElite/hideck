@@ -273,6 +273,16 @@ func (s *Session) advanceIKEAuthStage() error {
 
 // sendIKEAuthRequest encrypts and sends an IKE_AUTH request.
 func (s *Session) sendIKEAuthRequest(payloads []ikev2.Payload) error {
+	if s.shouldFragment(payloads) {
+		packets, err := s.fragmentMessage(payloads, ikev2.IKE_AUTH)
+		if err != nil {
+			return err
+		}
+		if len(packets) == 0 {
+			return errors.New("swu: fragmentation selected but produced no SKF packets")
+		}
+		return s.sendIKERequestPackets(packets)
+	}
 	pkt := &ikev2.IKEPacket{
 		Header:   newIKEHeader(s.SPIi, s.SPIr, ikev2.IKE_AUTH, ikev2.FlagInitiator, s.nextMessageID()),
 		Payloads: payloads,

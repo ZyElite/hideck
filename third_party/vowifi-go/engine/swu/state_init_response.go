@@ -127,7 +127,9 @@ func (s *Session) applyIKEInitNotify(payload ikev2.Payload, result *ikeInitRespo
 	case notifyNATDestination:
 		result.natDestination = append([]byte(nil), data...)
 	case notifyFragmentation:
+		s.mu.Lock()
 		s.fragmentationSupported = true
+		s.mu.Unlock()
 	case uint16(ikev2.NO_PROPOSAL_CHOSEN):
 		return &NegotiationError{
 			Class:  ErrClassAlgorithmCapabilityMismatch,

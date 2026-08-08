@@ -79,6 +79,21 @@ func (s *Session) sendEncryptedWithRetry(
 	payloads []ikev2.Payload,
 	exchangeType ikev2.ExchangeType,
 ) ([]byte, error) {
+	if s.shouldFragment(payloads) {
+		packets, err := s.fragmentMessage(payloads, exchangeType)
+		if err != nil {
+			return nil, err
+		}
+		if len(packets) == 0 {
+			return nil, errors.New("swu: fragmentation selected but produced no SKF packets")
+		}
+		header, err := ikev2.DecodeHeader(packets[0])
+		if err != nil {
+			return nil, err
+		}
+		request := &ikev2.IKEPacket{Header: header, Payloads: payloads}
+		return s.exchangeEstablishedRaw(s.ctx, request, packets)
+	}
 	packet := &ikev2.IKEPacket{
 		Header: newIKEHeader(
 			s.SPIi, s.SPIr, exchangeType, s.localIKEFlags(false), s.nextMessageID(),
@@ -109,6 +124,7 @@ func (s *Session) exchangeEstablishedRaw(
 	header := packetIKEHeader(request)
 	s.mu.Lock()
 	s.lastIKERequest = append(s.lastIKERequest[:0], packets[0]...)
+	s.lastIKERequestSet = clonePacketSet(packets)
 	s.mu.Unlock()
 	s.controlMu.RLock()
 	taskManager := s.taskMgr
@@ -120,9 +136,14 @@ func (s *Session) exchangeEstablishedRaw(
 	select {
 	case <-ctx.Done():
 		taskManager.cancelRequest(header.MessageID, ctx.Err())
+		s.fragmentBuf.drop(header.MessageID)
 		return nil, ctx.Err()
 	case result := <-message.resultCh:
-		return s.acceptEstablishedResult(result)
+		response, err := s.acceptEstablishedResult(result)
+		if err != nil {
+			s.fragmentBuf.drop(header.MessageID)
+		}
+		return response, err
 	}
 }
 
@@ -147,6 +168,16 @@ func (s *Session) sendEncryptedResponseWithMsgID(
 ) error {
 	if s.socket == nil {
 		return errors.New("swu: no IKE transport")
+	}
+	if s.shouldFragmentWithFlags(payloads, s.localIKEFlags(true)) {
+		packets, err := s.fragmentResponse(payloads, exchangeType, msgID)
+		if err != nil {
+			return err
+		}
+		if len(packets) == 0 {
+			return errors.New("swu: response fragmentation produced no SKF packets")
+		}
+		return sendIKEPacketSet(s.socket, packets)
 	}
 	packet := &ikev2.IKEPacket{
 		Header: newIKEHeader(

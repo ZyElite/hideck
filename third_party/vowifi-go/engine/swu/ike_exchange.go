@@ -12,26 +12,62 @@ import (
 // sendIKE records the request that receiveIKE must retransmit while waiting
 // for the matching response.
 func (s *Session) sendIKE(raw []byte) error {
+	return s.sendIKERequestPackets([][]byte{raw})
+}
+
+func (s *Session) sendIKERequestPackets(packets [][]byte) error {
 	if s.socket == nil {
 		return errors.New("swu: no IKE transport")
 	}
-	_, err := ikev2.DecodePacket(raw)
-	if err != nil {
-		return fmt.Errorf("swu: encode IKE request: %w", err)
+	if len(packets) == 0 {
+		return errors.New("swu: empty IKE request packet set")
+	}
+	if _, err := validateIKERequestPacketSet(packets); err != nil {
+		return err
 	}
 	s.mu.Lock()
-	s.lastIKERequest = append(s.lastIKERequest[:0], raw...)
+	s.lastIKERequest = append(s.lastIKERequest[:0], packets[0]...)
+	s.lastIKERequestSet = clonePacketSet(packets)
 	s.mu.Unlock()
-	if err := s.socket.SendIKE(raw); err != nil {
-		return fmt.Errorf("swu: send IKE request: %w", err)
+	if err := sendIKEPacketSet(s.socket, packets); err != nil {
+		return err
 	}
 	return nil
+}
+
+func validateIKERequestPacketSet(packets [][]byte) (*ikev2.IKEHeader, error) {
+	var first *ikev2.IKEHeader
+	for index, raw := range packets {
+		header, err := ikev2.DecodeHeader(raw)
+		if err != nil {
+			return nil, fmt.Errorf("swu: invalid IKE request packet %d: %w", index, err)
+		}
+		if header.Length != uint32(len(raw)) {
+			return nil, fmt.Errorf(
+				"swu: IKE request packet %d length %d does not match %d",
+				index, header.Length, len(raw),
+			)
+		}
+		if header.Flags&ikeResponseFlag != 0 {
+			return nil, fmt.Errorf("swu: IKE request packet %d has response flag", index)
+		}
+		if first == nil {
+			first = header
+			continue
+		}
+		if header.SPIi != first.SPIi || header.SPIr != first.SPIr ||
+			header.ExchangeType != first.ExchangeType || header.MessageID != first.MessageID ||
+			header.Flags != first.Flags {
+			return nil, errors.New("swu: IKE request packet set has inconsistent headers")
+		}
+	}
+	return first, nil
 }
 
 // receiveIKE waits for the response matching the most recent request and
 // retransmits that exact request according to the recovered RFC 7296 policy.
 func (s *Session) receiveIKE(ctx context.Context) (*ikev2.IKEPacket, error) {
-	request, expected, err := s.pendingIKERequest()
+	requests, expected, err := s.pendingIKERequest()
 	if err != nil {
 		return nil, err
 	}
@@ -43,30 +79,31 @@ func (s *Session) receiveIKE(ctx context.Context) (*ikev2.IKEPacket, error) {
 			return packet, err
 		}
 		if retries >= policy.MaxRetries {
+			s.fragmentBuf.drop(packetIKEHeader(expected).MessageID)
 			return nil, ErrTaskTimeout
 		}
-		if err := s.socket.SendIKE(request); err != nil {
-			return nil, fmt.Errorf("swu: retransmit IKE request: %w", err)
+		if err := sendIKEPacketSet(s.socket, requests); err != nil {
+			return nil, fmt.Errorf("swu: retransmit IKE request set: %w", err)
 		}
 		delay = time.Duration(float64(delay) * policy.Backoff)
 	}
 }
 
-func (s *Session) pendingIKERequest() ([]byte, *ikev2.IKEPacket, error) {
+func (s *Session) pendingIKERequest() ([][]byte, *ikev2.IKEPacket, error) {
 	if s.socket == nil {
 		return nil, nil, errors.New("swu: no IKE transport")
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if len(s.lastIKERequest) == 0 {
+	if len(s.lastIKERequestSet) == 0 {
 		return nil, nil, errors.New("swu: no pending IKE request")
 	}
-	raw := append([]byte(nil), s.lastIKERequest...)
-	request, err := ikev2.DecodePacket(raw)
+	packets := clonePacketSet(s.lastIKERequestSet)
+	header, err := ikev2.DecodeHeader(packets[0])
 	if err != nil {
 		return nil, nil, fmt.Errorf("swu: decode pending IKE request: %w", err)
 	}
-	return raw, request, nil
+	return packets, &ikev2.IKEPacket{Header: header}, nil
 }
 
 func (s *Session) waitForIKEResponse(ctx context.Context, expected *ikev2.IKEPacket, delay time.Duration) (*ikev2.IKEPacket, bool, error) {
@@ -86,13 +123,27 @@ func (s *Session) waitForIKEResponse(ctx context.Context, expected *ikev2.IKEPac
 			if !ok {
 				return nil, false, errors.New("swu: IKE transport closed")
 			}
-			packet, err := ikev2.DecodePacket(raw)
+			header, err := ikev2.DecodeHeader(raw)
+			if err != nil {
+				return nil, false, err
+			}
+			if !validIKEResponseHeaderFields(header, packetIKEHeader(expected)) {
+				continue
+			}
+			normalized, complete, err := s.normalizeInboundIKE(raw)
+			if err != nil {
+				return nil, false, err
+			}
+			if !complete {
+				continue
+			}
+			packet, err := ikev2.DecodePacket(normalized)
 			if err != nil {
 				return nil, false, err
 			}
 			if validIKEResponseHeader(packet, expected) {
 				s.mu.Lock()
-				s.lastIKEResponse = append(s.lastIKEResponse[:0], raw...)
+				s.lastIKEResponse = append(s.lastIKEResponse[:0], normalized...)
 				s.mu.Unlock()
 				return packet, false, nil
 			}
@@ -137,14 +188,18 @@ func validIKEResponseHeader(packet, request *ikev2.IKEPacket) bool {
 	}
 	packetHeader := packetIKEHeader(packet)
 	requestHeader := packetIKEHeader(request)
-	if packetHeader.MessageID != requestHeader.MessageID || packetHeader.ExchangeType != requestHeader.ExchangeType {
+	return validIKEResponseHeaderFields(packetHeader, requestHeader)
+}
+
+func validIKEResponseHeaderFields(packetHeader, requestHeader *ikev2.IKEHeader) bool {
+	if packetHeader == nil || requestHeader == nil ||
+		packetHeader.MessageID != requestHeader.MessageID ||
+		packetHeader.ExchangeType != requestHeader.ExchangeType {
 		return false
 	}
 	if packetHeader.Flags&ikeResponseFlag == 0 ||
-		packetHeader.Flags&ikeInitiatorFlag == requestHeader.Flags&ikeInitiatorFlag {
-		return false
-	}
-	if packetHeader.SPIi != requestHeader.SPIi {
+		packetHeader.Flags&ikeInitiatorFlag == requestHeader.Flags&ikeInitiatorFlag ||
+		packetHeader.SPIi != requestHeader.SPIi {
 		return false
 	}
 	return requestHeader.SPIr == 0 || packetHeader.SPIr == requestHeader.SPIr

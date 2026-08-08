@@ -265,25 +265,6 @@ func (s *Session) sendIkeAuthChildless() error {
 	return s.sendIKEAuthRequest(payloads)
 }
 
-// shouldFragment reports whether an IKE message needs fragmentation.
-func (s *Session) shouldFragment(raw []byte) bool {
-	return len(raw) > 1280
-}
-
-// fragmentMessage fragments an IKE message (RFC 7383).
-func (s *Session) fragmentMessage(raw []byte) ([][]byte, error) {
-	const fragSize = 1200
-	var out [][]byte
-	for len(raw) > fragSize {
-		out = append(out, raw[:fragSize])
-		raw = raw[fragSize:]
-	}
-	if len(raw) > 0 {
-		out = append(out, raw)
-	}
-	return out, nil
-}
-
 // startNetEventMonitor starts the network event monitor (MOBIKE triggers).
 func (s *Session) startNetEventMonitor() error {
 	if s.socket == nil {

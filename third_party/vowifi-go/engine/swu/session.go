@@ -254,28 +254,29 @@ type Session struct {
 	done     chan struct{}
 	doneOnce sync.Once
 
-	mu               sync.RWMutex
-	childSAMu        sync.RWMutex
-	ikeExchangeMu    sync.Mutex
-	controlMu        sync.RWMutex
-	controlWG        sync.WaitGroup
-	controlRequests  chan []byte
-	controlRunning   bool
-	taskMgr          *TaskManager
-	ikeWaiters       map[ikeWaitKey]chan []byte
-	ikePending       map[ikeWaitKey][]byte
-	terminalErr      error
-	initErr          error
-	state            string
-	dataPlaneStarted bool
-	dataPlaneWG      sync.WaitGroup
-	startedAt        time.Time
-	lastPingAt       time.Time
-	lastDPDAt        time.Time
-	rekeyResetCh     chan struct{}
-	lastIKERequest   []byte
-	lastIKEResponse  []byte
-	nextOutboundID   uint32
+	mu                sync.RWMutex
+	childSAMu         sync.RWMutex
+	ikeExchangeMu     sync.Mutex
+	controlMu         sync.RWMutex
+	controlWG         sync.WaitGroup
+	controlRequests   chan []byte
+	controlRunning    bool
+	taskMgr           *TaskManager
+	ikeWaiters        map[ikeWaitKey]chan []byte
+	ikePending        map[ikeWaitKey][]byte
+	terminalErr       error
+	initErr           error
+	state             string
+	dataPlaneStarted  bool
+	dataPlaneWG       sync.WaitGroup
+	startedAt         time.Time
+	lastPingAt        time.Time
+	lastDPDAt         time.Time
+	rekeyResetCh      chan struct{}
+	lastIKERequest    []byte
+	lastIKERequestSet [][]byte
+	lastIKEResponse   []byte
+	nextOutboundID    uint32
 
 	// --- timers ---
 	timersMu        sync.Mutex
@@ -296,6 +297,8 @@ type Session struct {
 	negotiationFallbackCount int
 	sendCookie               bool
 	fragmentationSupported   bool
+	ikeFragmentMTU           uint32
+	fragmentBuf              *fragmentBuffer
 }
 
 // NewSession builds a SWu session from the configuration.
@@ -318,6 +321,8 @@ func NewSession(cfg *Config) *Session {
 		nextOutboundID:    1,
 		localIKEInitiator: true,
 		fastReauthCtx:     initFastReauthContext(cfg),
+		fragmentBuf:       newFragmentBuffer(),
+		ikeFragmentMTU:    defaultFragmentMTU,
 	}
 	if s.nonceLen <= 0 {
 		s.nonceLen = 32
@@ -659,6 +664,9 @@ func (s *Session) Shutdown() {
 		taskManager.Stop()
 	}
 	s.stopTimers()
+	if s.fragmentBuf != nil {
+		s.fragmentBuf.clear()
+	}
 	cleanupErr := s.stopDataPlane()
 	s.controlWG.Wait()
 	s.dataPlaneWG.Wait()
