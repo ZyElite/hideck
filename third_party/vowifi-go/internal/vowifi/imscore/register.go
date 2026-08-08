@@ -301,12 +301,8 @@ func registerSecurityHeaders(session *registerSession) string {
 	return builder.String()
 }
 
-func (s *Service) registerLocalAddress(session *registerSession) string {
-	port := s.cfg.LocalPort
-	if registerUsesProtectedTransport(session) && session.security.client.PortC != 0 {
-		port = int(session.security.client.PortC)
-	}
-	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(port))
+func (s *Service) registerLocalAddress(_ *registerSession) string {
+	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(s.cfg.LocalPort))
 }
 
 func (s *Service) registerContactAddress(session *registerSession) string {

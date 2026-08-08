@@ -38,6 +38,9 @@ func (s *Service) openInitialRegistrationTransport(
 	if err != nil {
 		return err
 	}
+	if s.cfg.IPSec3GPPEnabled && isAutoRegisterTransport(s.cfg.Transport) {
+		candidates = []string{"udp", "tcp"}
+	}
 	var failures []error
 	for _, candidate := range candidates {
 		opened, openErr := s.openRegisterCandidate(ctx, candidate)
@@ -49,6 +52,11 @@ func (s *Service) openInitialRegistrationTransport(
 		return nil
 	}
 	return fmt.Errorf("imscore: open REGISTER transport: %w", errors.Join(failures...))
+}
+
+func isAutoRegisterTransport(configured string) bool {
+	value := strings.ToLower(strings.TrimSpace(configured))
+	return value == "" || value == "auto"
 }
 
 func (s *Service) openRegisterCandidate(ctx context.Context, transport string) (*initialRegistrationTransport, error) {

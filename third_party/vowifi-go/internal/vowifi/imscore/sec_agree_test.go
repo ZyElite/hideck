@@ -83,7 +83,7 @@ func TestRegisterSwitchesFromInitialUDPToProtectedTCP(t *testing.T) {
 	svc, err := New(&IMSConfig{
 		DeviceID: "dev-sec-tcp", IMEI: "860349055895064", IMSI: "234102356143376",
 		IMPI: "234102356143376@ims.example", IMPU: []string{"sip:234102356143376@ims.example"},
-		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp",
+		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "auto",
 		Registrar: udpServer.LocalAddr().String(), IMSNetwork: network,
 		AKAProvider: stubAKAProvider{}, IPSec3GPPEnabled: true,
 	})
@@ -225,6 +225,11 @@ func serveUDPChallengeThenTCPSuccess(udpServer *net.UDPConn, tcpServer *net.TCPL
 		return
 	}
 	initial := string(buffer[:n])
+	initialSentBy := sipViaSentBy(sipHeaderValue(initial, "Via"))
+	if initialSentBy == "" || !strings.HasPrefix(sipHeaderValue(initial, "Via"), "SIP/2.0/UDP ") {
+		result <- errors.New("IPsec auto registration did not start on UDP")
+		return
+	}
 	client, err := parseSecurityMechanism(splitSecurityMechanisms(sipHeaderValue(initial, "Security-Client"))[0])
 	if err != nil {
 		result <- err
@@ -257,8 +262,8 @@ func serveUDPChallengeThenTCPSuccess(udpServer *net.UDPConn, tcpServer *net.TCPL
 		result <- err
 		return
 	}
-	if via := sipHeaderValue(authenticated, "Via"); !strings.Contains(via, fmt.Sprintf(":%d;", client.PortC)) {
-		result <- fmt.Errorf("protected Via = %q, want client port %d", via, client.PortC)
+	if via := sipHeaderValue(authenticated, "Via"); sipViaSentBy(via) != initialSentBy {
+		result <- fmt.Errorf("protected Via sent-by = %q, want initial sent-by %q", sipViaSentBy(via), initialSentBy)
 		return
 	}
 	if sipHeaderValue(authenticated, "Security-Verify") != serverHeader || strings.Contains(sipHeaderValue(authenticated, "Authorization"), "qop=") {
@@ -282,6 +287,15 @@ func serveUDPChallengeThenTCPSuccess(udpServer *net.UDPConn, tcpServer *net.TCPL
 	}
 	_, err = conn.Write([]byte(registerWireResponse(subscribe, 200, "")))
 	result <- err
+}
+
+func sipViaSentBy(via string) string {
+	fields := strings.Fields(via)
+	if len(fields) < 2 {
+		return ""
+	}
+	sentBy, _, _ := strings.Cut(fields[1], ";")
+	return sentBy
 }
 
 func assertRecoveredRegistrationSubscription(request, securityVerify string, client securityMechanism) error {
