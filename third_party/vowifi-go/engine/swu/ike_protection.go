@@ -17,16 +17,24 @@ const (
 )
 
 func (s *Session) ikeProtectionKeys(fromResponder bool) (encryption, integrity []byte) {
+	return ikeProtectionKeysFor(s.ikeKeys, fromResponder)
+}
+
+func ikeProtectionKeysFor(keys *IKEKeys, fromResponder bool) (encryption, integrity []byte) {
 	if fromResponder {
-		return s.ikeKeys.SK_er, s.ikeKeys.SK_ar
+		return keys.SK_er, keys.SK_ar
 	}
-	return s.ikeKeys.SK_ei, s.ikeKeys.SK_ai
+	return keys.SK_ei, keys.SK_ai
 }
 
 func (s *Session) localIKEFlags(response bool) byte {
 	s.mu.RLock()
 	initiator := s.localIKEInitiator
 	s.mu.RUnlock()
+	return ikeFlagsFor(initiator, response)
+}
+
+func ikeFlagsFor(initiator, response bool) byte {
 	var flags byte
 	if initiator {
 		flags |= ikeInitiatorFlag

@@ -77,7 +77,46 @@ func buildESPProposals(cfg *Config, spi []byte) ([]*ikev2.Proposal, error) {
 	if len(result) == 0 {
 		return nil, fmt.Errorf("ESP 提议经过能力过滤后为空")
 	}
+	if _, err := commonESPProposalDHGroup(result); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func commonESPProposalDHGroup(proposals []*ikev2.Proposal) (uint16, error) {
+	var selected uint16
+	var hasPFS, hasNoPFS bool
+	for _, proposal := range proposals {
+		group := proposalDHGroup(proposal)
+		if group == 0 {
+			hasNoPFS = true
+			continue
+		}
+		hasPFS = true
+		if selected == 0 {
+			selected = group
+			continue
+		}
+		if group != selected {
+			return 0, fmt.Errorf("ESP proposals use inconsistent PFS groups %d and %d", selected, group)
+		}
+	}
+	if hasPFS && hasNoPFS {
+		return 0, fmt.Errorf("ESP proposals mix PFS and non-PFS transforms")
+	}
+	return selected, nil
+}
+
+func proposalDHGroup(proposal *ikev2.Proposal) uint16 {
+	if proposal == nil {
+		return 0
+	}
+	for _, transform := range proposal.Transforms {
+		if transform != nil && transform.Type == ikev2.TransformTypeDH {
+			return uint16(transform.ID)
+		}
+	}
+	return 0
 }
 
 func configuredESPProposals(cfg *Config, spi []byte, plan algorithmPlan) ([]*ikev2.Proposal, error) {
@@ -198,10 +237,24 @@ func firstDHGroupFromProposals(proposals []*ikev2.Proposal) ikev2.AlgorithmType 
 // buildIKEProposalsForSession builds the single already-negotiated proposal
 // used by IKE SA rekey. Initial negotiation uses buildIKEProposals instead.
 func buildIKEProposalsForSession(session *Session) []*ikev2.Proposal {
-	return ikev2.CreateIKEProposals(ikev2.IKEProposalAlgorithms{
+	proposals := ikev2.CreateIKEProposals(ikev2.IKEProposalAlgorithms{
 		Encryption: session.encrAlg, EncryptionKeyBits: session.encKeyBits,
 		PRF: session.prfAlg, Integrity: session.integAlg, DH: session.dhGroup,
 	})
+	if !session.aead {
+		return proposals
+	}
+	for _, proposal := range proposals {
+		transforms := proposal.Transforms[:0]
+		for _, transform := range proposal.Transforms {
+			if transform.Type != ikev2.TransformTypeInteg {
+				transforms = append(transforms, transform)
+			}
+		}
+		proposal.Transforms = transforms
+		proposal.NumTransforms = uint8(len(transforms))
+	}
+	return proposals
 }
 
 // buildESPProposalsForSession builds the single already-negotiated proposal

@@ -19,6 +19,7 @@ type kernelDataPlane interface {
 	Close() error
 	DeviceName() string
 	EnsureIPv6Enabled() error
+	Rekey(*Session, *childSARuntime) error
 }
 
 func normalizeDataplaneMode(mode string) (string, error) {

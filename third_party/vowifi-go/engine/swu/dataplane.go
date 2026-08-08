@@ -2,6 +2,7 @@ package swu
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -178,6 +179,7 @@ func (s *Session) setupDataPlane() error {
 	s.childSAMu.Lock()
 	s.espOutboundSA = outbound
 	s.espInboundSA = inbound
+	s.espInboundSAs[s.espLocalSPI] = inbound
 	s.espKey = append([]byte{}, childKeys.initiator.enc...)
 	s.espIntegKey = append([]byte{}, childKeys.initiator.integ...)
 	s.childSAMu.Unlock()
@@ -219,17 +221,31 @@ type childDirectionKeys struct {
 // deriveChildSAKeys derives the CHILD_SA encryption/integrity keys from SK_d
 // (RFC 7296 §2.17): prf+(SK_d, Ni | Nr).
 func (s *Session) deriveChildSAKeys() (*childSAKeys, error) {
-	return s.deriveChildSAKeysFor(s.childNi, s.childNr)
+	return s.deriveChildSAKeysForPFS(s.childNi, s.childNr, s.childDHSecret)
 }
 
 func (s *Session) deriveChildSAKeysFor(initiatorNonce, responderNonce []byte) (*childSAKeys, error) {
+	return s.deriveChildSAKeysForPFS(initiatorNonce, responderNonce, nil)
+}
+
+func (s *Session) deriveChildSAKeysForPFS(
+	initiatorNonce []byte,
+	responderNonce []byte,
+	sharedSecret []byte,
+) (*childSAKeys, error) {
 	if s.prf == nil {
 		return nil, errors.New("swu: no PRF for child SA keys")
+	}
+	if s.ikeKeys == nil || len(s.ikeKeys.SK_d) == 0 {
+		return nil, errors.New("swu: no IKE SK_d for child SA keys")
 	}
 	if len(initiatorNonce) == 0 || len(responderNonce) == 0 {
 		return nil, errors.New("swu: child SA nonces are incomplete")
 	}
-	seed := append(append([]byte{}, initiatorNonce...), responderNonce...)
+	seed := append([]byte(nil), sharedSecret...)
+	seed = append(seed, initiatorNonce...)
+	seed = append(seed, responderNonce...)
+	defer crypto.Wipe(seed)
 	encLen := s.espEncKeyLen
 	integLen := s.espIntegKeyLen
 	if encLen <= 0 {
@@ -241,9 +257,10 @@ func (s *Session) deriveChildSAKeysFor(initiatorNonce, responderNonce []byte) (*
 		return nil, err
 	}
 	if len(km) < 2*directionLen {
+		crypto.Wipe(km)
 		return nil, errors.New("swu: prf+ produced insufficient child SA keys")
 	}
-	return &childSAKeys{
+	keys := &childSAKeys{
 		initiator: childDirectionKeys{
 			enc:   append([]byte{}, km[:encLen]...),
 			integ: append([]byte{}, km[encLen:directionLen]...),
@@ -252,7 +269,9 @@ func (s *Session) deriveChildSAKeysFor(initiatorNonce, responderNonce []byte) (*
 			enc:   append([]byte{}, km[directionLen:directionLen+encLen]...),
 			integ: append([]byte{}, km[directionLen+encLen:2*directionLen]...),
 		},
-	}, nil
+	}
+	crypto.Wipe(km)
+	return keys, nil
 }
 
 // startEstablishedDataPlane starts the data plane loops.
@@ -391,12 +410,20 @@ func (s *Session) encapsulateInnerPacketLease(inner []byte) (*packetLease, error
 
 // decapsulateOuterESP unwraps an ESP packet into the inner IP packet.
 func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, error) {
+	if len(esp) < 4 {
+		return nil, errors.New("swu: ESP packet is too short for SPI")
+	}
+	spi := binary.BigEndian.Uint32(esp[:4])
 	s.childSAMu.RLock()
 	defer s.childSAMu.RUnlock()
-	if s.espInboundSA == nil {
+	inbound := s.espInboundSAs[spi]
+	if inbound == nil && s.espInboundSA != nil && s.espInboundSA.SPI == spi {
+		inbound = s.espInboundSA
+	}
+	if inbound == nil {
 		return nil, errors.New("swu: no ESP SA")
 	}
-	inner, err := ipsec.Decapsulate(esp, s.espInboundSA)
+	inner, err := ipsec.Decapsulate(esp, inbound)
 	if err != nil {
 		return nil, err
 	}
@@ -436,8 +463,22 @@ func (s *Session) stopDataPlane() error {
 		s.kernelDataPlane = nil
 	}
 	s.childSAMu.Lock()
+	wipeESPAssociation(s.espOutboundSA)
+	for _, association := range s.espInboundSAs {
+		wipeESPAssociation(association)
+	}
+	crypto.Wipe(s.espKey)
+	crypto.Wipe(s.espIntegKey)
+	crypto.Wipe(s.childDHSecret)
+	if s.childDH != nil {
+		crypto.Wipe(s.childDH.SharedKey)
+	}
 	s.espOutboundSA = nil
 	s.espInboundSA = nil
+	s.espKey, s.espIntegKey = nil, nil
+	s.childDH, s.childDHSecret = nil, nil
+	clear(s.espInboundSAs)
+	clear(s.retiredChildSAs)
 	s.childSAMu.Unlock()
 	s.mu.Lock()
 	s.dataPlaneStarted = false

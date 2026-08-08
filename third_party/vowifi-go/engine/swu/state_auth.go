@@ -2,11 +2,13 @@ package swu
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
 	"strings"
 
+	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
@@ -323,6 +325,10 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 		return nil, err
 	}
 	sa2 := &ikev2.EncryptedPayloadSA{Proposals: espProposals}
+	childKE, err := s.prepareInitialChildDH(espProposals)
+	if err != nil {
+		return nil, err
+	}
 
 	// TSi / TSr and Configuration request.
 	tsi, tsr := buildTrafficSelectorsForIPStack(nil)
@@ -339,14 +345,40 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	initialContact := &ikev2.EncryptedPayloadNotify{NotifyType: ikev2.INITIAL_CONTACT}
 	s.eapOnlyRequested = true
 
-	payloads := []ikev2.Payload{
-		idi, idr, cp, sa2, tsi, tsr, eapOnly, mobike, ticket, initialContact,
+	payloads := []ikev2.Payload{idi, idr, cp, sa2}
+	if childKE != nil {
+		payloads = append(payloads, childKE)
 	}
+	payloads = append(payloads, tsi, tsr, eapOnly, mobike, ticket, initialContact)
 	devicePayloads, err := s.deviceIdentityPayloads()
 	if err != nil {
 		return nil, err
 	}
 	return append(payloads, devicePayloads...), nil
+}
+
+func (s *Session) prepareInitialChildDH(proposals []*ikev2.Proposal) (*ikev2.EncryptedPayloadKE, error) {
+	group, err := commonESPProposalDHGroup(proposals)
+	if err != nil {
+		return nil, err
+	}
+	if group == 0 {
+		s.childDH = nil
+		s.childDHSecret = nil
+		return nil, nil
+	}
+	dh, err := crypto.NewDiffieHellman(group)
+	if err != nil {
+		return nil, fmt.Errorf("swu: create initial CHILD_SA PFS group %d: %w", group, err)
+	}
+	if err := dh.GenerateKey(); err != nil {
+		return nil, fmt.Errorf("swu: generate initial CHILD_SA PFS key: %w", err)
+	}
+	s.childDH = dh
+	s.childDHSecret = nil
+	return &ikev2.EncryptedPayloadKE{
+		DHGroup: ikev2.AlgorithmType(group), KEData: dh.PublicKeyBytes(),
+	}, nil
 }
 
 func (s *Session) initialIKEIdentity() (string, error) {
@@ -512,6 +544,9 @@ func (s *Session) handleIKEAuthFinalPacket(resp *ikev2.IKEPacket) error {
 	if err := s.verifyEAPResponderAuth(payloads); err != nil {
 		return err
 	}
+	if err := s.applyIKEAuthLifetime(payloads); err != nil {
+		return err
+	}
 	s.responderAuthenticated = true
 	assigned, err := parseAssignedInnerConfig(payloads)
 	if err != nil {
@@ -520,7 +555,7 @@ func (s *Session) handleIKEAuthFinalPacket(resp *ikev2.IKEPacket) error {
 	offerTSi, offerTSr := buildTrafficSelectorsForIPStack(nil)
 	selection, err := validateChildSAResponse(payloads, childSAOffer{
 		encryption: s.espCipher, encryptionKeyBits: s.espEncKeyBits, integrity: s.espInteg,
-		tsi: offerTSi, tsr: offerTSr, localIPs: assigned.ips(),
+		dhGroup: childDHGroup(s.childDH), tsi: offerTSi, tsr: offerTSr, localIPs: assigned.ips(),
 	})
 	if err != nil {
 		return err
@@ -529,10 +564,31 @@ func (s *Session) handleIKEAuthFinalPacket(resp *ikev2.IKEPacket) error {
 	s.innerPrefix, s.innerIPv6Prefix = assigned.ipv4Prefix, assigned.ipv6Prefix
 	s.dnsServers, s.pcscfServers = assigned.dns, assigned.pcscf
 	if selection != nil {
+		sharedSecret, err := childRekeySharedSecret(payloads, s.childDH)
+		if err != nil {
+			return err
+		}
 		s.espRemoteSPI = selection.remoteSPI
 		s.espCipher, s.espInteg = selection.encryption, selection.integrity
 		s.childNi, s.childNr = append([]byte(nil), s.Ni...), s.Nr()
+		s.childDHSecret = append([]byte(nil), sharedSecret...)
 		s.childTSi, s.childTSr = selection.tsi, selection.tsr
+	}
+	return nil
+}
+
+func (s *Session) applyIKEAuthLifetime(payloads []ikev2.Payload) error {
+	for _, payload := range payloads {
+		notify, ok := payload.(*ikev2.EncryptedPayloadNotify)
+		if !ok || notify.NotifyType != ikev2.AUTH_LIFETIME {
+			continue
+		}
+		if len(notify.NotifyData) < 4 {
+			return fmt.Errorf("swu: AUTH_LIFETIME has invalid length %d", len(notify.NotifyData))
+		}
+		s.mu.Lock()
+		s.authLifetime = binary.BigEndian.Uint32(notify.NotifyData)
+		s.mu.Unlock()
 	}
 	return nil
 }

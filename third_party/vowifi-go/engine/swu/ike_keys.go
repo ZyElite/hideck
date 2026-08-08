@@ -24,6 +24,39 @@ type IKEKeys struct {
 	SK_pr    []byte
 }
 
+func wipeIKEKeys(keys *IKEKeys) {
+	if keys == nil {
+		return
+	}
+	crypto.Wipe(keys.SKEYSEED)
+	crypto.Wipe(keys.SK_d)
+	crypto.Wipe(keys.SK_ai)
+	crypto.Wipe(keys.SK_ar)
+	crypto.Wipe(keys.SK_ei)
+	crypto.Wipe(keys.SK_er)
+	crypto.Wipe(keys.SK_pi)
+	crypto.Wipe(keys.SK_pr)
+}
+
+func (s *Session) clearIKEKeyMaterial() {
+	s.mu.Lock()
+	active, retired := s.ikeKeys, s.retiredIKESA
+	dh, dhSecret := s.dh, s.dhSharedSecret
+	prfKey := s.prfKey
+	s.ikeKeys, s.retiredIKESA, s.retiredIKEDelete = nil, nil, nil
+	s.dh, s.dhSharedSecret, s.prfKey = nil, nil, nil
+	s.mu.Unlock()
+	wipeIKEKeys(active)
+	if retired != nil && retired.keys != active {
+		wipeIKEKeys(retired.keys)
+	}
+	crypto.Wipe(dhSecret)
+	crypto.Wipe(prfKey)
+	if dh != nil {
+		crypto.Wipe(dh.SharedKey)
+	}
+}
+
 // GenerateIKESAKeys derives the IKE SA keys from the IKE_SA_INIT exchange.
 // responderNonce is Nr (the responder's nonce); the DH shared secret (g^ir)
 // must already be stored on the session.
@@ -54,11 +87,13 @@ func (s *Session) GenerateIKESAKeys(responderNonce []byte) error {
 	skeyseedKey := append(append([]byte{}, ni...), nr...)
 	skeyseed := s.prf.Compute(skeyseedKey, s.dhSharedSecret)
 	crypto.Wipe(skeyseedKey)
+	defer crypto.Wipe(skeyseed)
 
 	// prf+ seed = full Ni | Nr | SPIi | SPIr.
 	seed := append(append([]byte{}, s.Ni...), responderNonce...)
 	seed = append(seed, s.SPIi[:]...)
 	seed = append(seed, s.SPIr[:]...)
+	defer crypto.Wipe(seed)
 
 	keys, err := s.deriveIKEKeys(skeyseed, seed, prfOut)
 	if err != nil {
@@ -68,10 +103,25 @@ func (s *Session) GenerateIKESAKeys(responderNonce []byte) error {
 	return nil
 }
 
-// GenerateIKESARekeyKeys derives a fresh IKE SA's keys during an IKE SA rekey
-// (RFC 7296 §2.14): SKEYSEED = prf(SK_d, Ni | Nr), using the rekey nonces and
-// the new SPIs. The previous IKE SA's SK_d must be present.
-func (s *Session) GenerateIKESARekeyKeys(initiatorNonce, responderNonce []byte) error {
+// GenerateIKESARekeyKeys restores the original explicit IKE rekey derivation
+// API. It returns new key material without mutating the active IKE SA.
+func (s *Session) GenerateIKESARekeyKeys(
+	oldSKd []byte,
+	newDHSecret []byte,
+	initiatorNonce []byte,
+	responderNonce []byte,
+	newSPIi uint64,
+	newSPIr uint64,
+) (*IKEKeys, error) {
+	return s.deriveIKESARekeyKeys(
+		oldSKd, newDHSecret, initiatorNonce, responderNonce,
+		ikeSPIBytes(newSPIi), ikeSPIBytes(newSPIr),
+	)
+}
+
+// RegenerateIKESARekeyKeys retains the additive in-place helper used by the
+// current session API.
+func (s *Session) RegenerateIKESARekeyKeys(initiatorNonce, responderNonce []byte) error {
 	if s.ikeKeys == nil || len(s.ikeKeys.SK_d) == 0 {
 		return errors.New("no previous IKE SA keys for rekey")
 	}
@@ -97,27 +147,26 @@ func (s *Session) deriveIKESARekeyKeys(
 	if len(oldSKd) == 0 || len(sharedSecret) == 0 {
 		return nil, errors.New("incomplete IKE SA rekey key material")
 	}
-	prfOut := crypto.PRFOutputSize(s.prf)
-	ni, nr := initiatorNonce, responderNonce
-	if prfOut == 16 {
-		if len(ni) > 8 {
-			ni = ni[:8]
-		}
-		if len(nr) > 8 {
-			nr = nr[:8]
-		}
+	if len(initiatorNonce) == 0 || len(responderNonce) == 0 {
+		return nil, errors.New("incomplete IKE SA rekey nonces")
 	}
+	if s.prf == nil {
+		return nil, errors.New("no PRF configured")
+	}
+	prfOut := crypto.PRFOutputSize(s.prf)
 
 	// SKEYSEED_rekey = prf(SK_d(old), g^ir(new) | Ni | Nr).
 	rekeyData := append([]byte{}, sharedSecret...)
-	rekeyData = append(rekeyData, ni...)
-	rekeyData = append(rekeyData, nr...)
+	rekeyData = append(rekeyData, initiatorNonce...)
+	rekeyData = append(rekeyData, responderNonce...)
 	skeyseed := s.prf.Compute(oldSKd, rekeyData)
 	crypto.Wipe(rekeyData)
+	defer crypto.Wipe(skeyseed)
 
 	seed := append(append([]byte{}, initiatorNonce...), responderNonce...)
 	seed = append(seed, initiatorSPI[:]...)
 	seed = append(seed, responderSPI[:]...)
+	defer crypto.Wipe(seed)
 
 	return s.deriveIKEKeys(skeyseed, seed, prfOut)
 }
@@ -130,8 +179,10 @@ func (s *Session) deriveIKEKeys(skeyseed, seed []byte, prfOut int) (*IKEKeys, er
 		return nil, err
 	}
 	if len(km) < total {
+		crypto.Wipe(km)
 		return nil, errors.New("prf+ produced insufficient key material")
 	}
+	defer crypto.Wipe(km)
 
 	keys := &IKEKeys{SKEYSEED: append([]byte{}, skeyseed...)}
 	off := 0

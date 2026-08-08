@@ -2,7 +2,6 @@ package swu
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 
@@ -140,7 +139,10 @@ func (s *Session) dispatchIKEPacket(
 	if err != nil {
 		return fmt.Errorf("swu: decode established IKE header: %w", err)
 	}
-	if err := s.validateEstablishedIKEEnvelope(header, len(raw)); err != nil {
+	if err := s.validateEstablishedIKEEnvelope(header, raw); err != nil {
+		return err
+	}
+	if handled, err := s.resendRetiredIKEDelete(raw); handled || err != nil {
 		return err
 	}
 	normalized, complete, err := s.normalizeInboundIKE(raw)
@@ -166,26 +168,24 @@ func (s *Session) dispatchIKEPacket(
 	}
 }
 
-func (s *Session) validateEstablishedIKEEnvelope(header *ikev2.IKEHeader, rawLength int) error {
+func (s *Session) validateEstablishedIKEEnvelope(header *ikev2.IKEHeader, raw []byte) error {
 	if header.Version>>4 != 2 {
 		return fmt.Errorf("swu: unsupported IKE version 0x%02x", header.Version)
 	}
-	if header.Length != uint32(rawLength) {
-		return fmt.Errorf("swu: IKE length %d does not match datagram %d", header.Length, rawLength)
+	if header.Length != uint32(len(raw)) {
+		return fmt.Errorf("swu: IKE length %d does not match datagram %d", header.Length, len(raw))
 	}
-	s.mu.RLock()
-	initiatorSPI := binary.BigEndian.Uint64(s.SPIi[:])
-	responderSPI := binary.BigEndian.Uint64(s.SPIr[:])
-	localInitiator := s.localIKEInitiator
-	s.mu.RUnlock()
-	if header.SPIi != initiatorSPI || header.SPIr != responderSPI {
-		return errors.New("swu: established IKE packet has unexpected SPIs")
+	context, retired, err := s.ikeContextForHeader(header)
+	if err != nil {
+		if s.matchesRetiredIKEDelete(raw) {
+			return nil
+		}
+		return err
 	}
-	peerInitiator := header.Flags&ikeInitiatorFlag != 0
-	if peerInitiator == localInitiator {
-		return errors.New("swu: established IKE packet has invalid initiator flag")
+	if retired && header.ExchangeType != ikev2.ExchangeInformational {
+		return errors.New("swu: retired IKE SA only accepts INFORMATIONAL cleanup")
 	}
-	return nil
+	return validateIKEContextRole(context, header)
 }
 
 func (s *Session) dispatchIKEResponse(

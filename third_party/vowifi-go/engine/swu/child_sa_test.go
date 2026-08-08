@@ -55,6 +55,30 @@ func TestDeriveChildSAKeysUsesFreshNoncesAndBothDirections(t *testing.T) {
 	}
 }
 
+func TestDeriveChildSAKeysIncludesPFSSecret(t *testing.T) {
+	session := NewSession(&Config{})
+	session.ikeKeys = &IKEKeys{SK_d: bytes.Repeat([]byte{0x31}, 20)}
+	ni, nr := bytes.Repeat([]byte{0x41}, 32), bytes.Repeat([]byte{0x51}, 32)
+	shared := bytes.Repeat([]byte{0x61}, 128)
+	keys, err := session.deriveChildSAKeysForPFS(ni, nr, shared)
+	if err != nil {
+		t.Fatalf("deriveChildSAKeysForPFS: %v", err)
+	}
+	directionLen := session.espEncKeyLen + session.espIntegKeyLen
+	seed := append(append(append([]byte{}, shared...), ni...), nr...)
+	want, err := enginecrypto.PrfPlus(session.prf, session.ikeKeys.SK_d, seed, 2*directionLen)
+	if err != nil {
+		t.Fatalf("PrfPlus: %v", err)
+	}
+	if !bytes.Equal(keys.initiator.enc, want[:session.espEncKeyLen]) {
+		t.Fatal("PFS CHILD_SA keys do not use g^ir | Ni | Nr seed order")
+	}
+	withoutPFS, err := session.deriveChildSAKeysFor(ni, nr)
+	if err != nil || bytes.Equal(keys.initiator.enc, withoutPFS.initiator.enc) {
+		t.Fatal("PFS secret did not change CHILD_SA keys")
+	}
+}
+
 func TestDataPlaneUsesIndependentInboundAndOutboundSPI(t *testing.T) {
 	s := NewSession(&Config{})
 	s.ikeKeys = &IKEKeys{SK_d: bytes.Repeat([]byte{0x61}, 20)}

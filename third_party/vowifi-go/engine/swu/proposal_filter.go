@@ -113,6 +113,9 @@ func filterESPProposal(proposal *ikev2.Proposal) (*ikev2.Proposal, bool) {
 			_, err := crypto.GetIntegrityAlgorithm(uint16(transform.ID))
 			supported = err == nil
 			hasIntegrity = hasIntegrity || supported
+		case ikev2.TransformTypeDH:
+			_, err := crypto.NewDiffieHellman(uint16(transform.ID))
+			supported = err == nil
 		}
 		if supported {
 			transforms = append(transforms, cloneTransform(transform))

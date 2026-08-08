@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 
 	"github.com/iniwex5/netlink"
 	"github.com/iniwex5/vowifi-go/engine/driver"
@@ -16,18 +17,46 @@ import (
 const defaultXFRMInterface = "ipsec0"
 
 type xfrmDataPlane struct {
+	mu              sync.Mutex
 	manager         *driver.XFRMManager
 	network         *driver.NetTxn
 	name            string
 	disableUDPEncap func() error
+	localIP         net.IP
+	remoteIP        net.IP
+	localPort       uint16
+	remotePort      uint16
+	ifID            uint32
+	outbound        driver.XFRMSAConfig
+	inbound         driver.XFRMSAConfig
+	retiredInbound  map[uint32]driver.XFRMSAConfig
+}
+
+type xfrmInstallSpec struct {
+	plane                 *xfrmDataPlane
+	keys                  *childSAKeys
+	localIP, remoteIP     net.IP
+	localPort, remotePort uint16
+	underlyingIndex       int
 }
 
 func (x *xfrmDataPlane) DeviceName() string { return x.name }
+
+func (x *xfrmDataPlane) CurrentSPIs() (uint32, uint32) {
+	if x == nil {
+		return 0, 0
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.outbound.SPI, x.inbound.SPI
+}
 
 func (x *xfrmDataPlane) EnsureIPv6Enabled() error {
 	if x == nil || x.network == nil || x.name == "" {
 		return errors.New("swu: XFRM network transaction is not initialized")
 	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
 	return x.network.EnsureIPv6Enabled(x.name)
 }
 
@@ -35,6 +64,8 @@ func (x *xfrmDataPlane) Close() error {
 	if x == nil {
 		return nil
 	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
 	var networkErr, managerErr, socketErr error
 	if x.network != nil {
 		networkErr = x.network.Rollback()
@@ -66,20 +97,22 @@ func (s *Session) setupKernelXFRMDataPlane(keys *childSAKeys) error {
 	if err := validateXFRMTuple(localIP, remoteIP, localPort, remotePort); err != nil {
 		return err
 	}
-	if err := s.socket.SetUDPEncap(); err != nil {
-		return fmt.Errorf("swu: enable UDP encapsulation for XFRM: %w", err)
-	}
 	transport, ok := s.socket.(*ipsec.SocketManager)
 	if !ok {
 		return errors.New("swu: XFRM requires a direct UDP transport")
 	}
+	if err := s.socket.SetUDPEncap(); err != nil {
+		return fmt.Errorf("swu: enable UDP encapsulation for XFRM: %w", err)
+	}
 	plane := &xfrmDataPlane{
 		manager: driver.NewXFRMManager(), network: driver.NewNetTools().Begin(),
 		disableUDPEncap: transport.DisableUDPEncap,
+		retiredInbound:  make(map[uint32]driver.XFRMSAConfig),
 	}
-	if err := s.installXFRMDataPlane(
-		plane, keys, localIP, remoteIP, localPort, remotePort, underlyingIndex,
-	); err != nil {
+	if err := s.installXFRMDataPlane(xfrmInstallSpec{
+		plane: plane, keys: keys, localIP: localIP, remoteIP: remoteIP,
+		localPort: localPort, remotePort: remotePort, underlyingIndex: underlyingIndex,
+	}); err != nil {
 		return errors.Join(err, plane.Close())
 	}
 	s.kernelDataPlane = plane
@@ -132,37 +165,41 @@ func validateXFRMTuple(localIP, remoteIP net.IP, localPort, remotePort uint16) e
 	return nil
 }
 
-func (s *Session) installXFRMDataPlane(
-	plane *xfrmDataPlane,
-	keys *childSAKeys,
-	localIP, remoteIP net.IP,
-	localPort, remotePort uint16,
-	underlyingIndex int,
-) error {
+func (s *Session) installXFRMDataPlane(spec xfrmInstallSpec) error {
 	name, ifID := s.xfrmInterfaceIdentity()
 	if ifID == 0 || s.espRemoteSPI == 0 || s.espLocalSPI == 0 {
 		return errors.New("swu: XFRM requires non-zero interface ID and ESP SPIs")
 	}
-	plane.name = name
-	if err := plane.manager.AddXFRMInterface(name, ifID, underlyingIndex); err != nil {
+	spec.plane.name = name
+	if err := spec.plane.manager.AddXFRMInterface(name, ifID, spec.underlyingIndex); err != nil {
 		return err
 	}
-	outbound, inbound, err := s.xfrmSAConfigs(keys, localIP, remoteIP, localPort, remotePort, ifID)
+	outbound, inbound, err := s.xfrmSAConfigsFor(xfrmSAConfigSpec{
+		keys: spec.keys, localIP: spec.localIP, remoteIP: spec.remoteIP,
+		localPort: spec.localPort, remotePort: spec.remotePort, ifID: ifID,
+		localSPI: s.espLocalSPI, remoteSPI: s.espRemoteSPI,
+	})
 	if err != nil {
 		return err
 	}
-	if err := plane.manager.AddSA(outbound); err != nil {
+	if err := spec.plane.manager.AddSA(outbound); err != nil {
 		return err
 	}
-	if err := plane.manager.AddSA(inbound); err != nil {
+	if err := spec.plane.manager.AddSA(inbound); err != nil {
 		return err
 	}
-	if err := installXFRMPolicies(plane.manager, outbound, inbound, ifID); err != nil {
+	policySet := xfrmPolicySet{outbound: outbound, inbound: inbound, ifID: ifID}
+	if err := installXFRMPolicies(spec.plane.manager, policySet); err != nil {
 		return err
 	}
-	if err := s.configureNetworkInterface(plane.network, name); err != nil {
+	if err := s.configureNetworkInterface(spec.plane.network, name); err != nil {
 		return fmt.Errorf("swu: configure XFRM interface: %w", err)
 	}
+	spec.plane.localIP = append(net.IP(nil), spec.localIP...)
+	spec.plane.remoteIP = append(net.IP(nil), spec.remoteIP...)
+	spec.plane.localPort, spec.plane.remotePort = spec.localPort, spec.remotePort
+	spec.plane.ifID = ifID
+	spec.plane.outbound, spec.plane.inbound = outbound, inbound
 	return nil
 }
 
@@ -203,98 +240,4 @@ func interfaceIndexForIP(ip net.IP) (int, error) {
 		return 0, fmt.Errorf("swu: inspect interfaces for XFRM source %s: %w", ip, addressErrors)
 	}
 	return 0, fmt.Errorf("swu: no interface owns XFRM source address %s", ip)
-}
-
-func (s *Session) xfrmSAConfigs(
-	keys *childSAKeys,
-	localIP, remoteIP net.IP,
-	localPort, remotePort uint16,
-	ifID uint32,
-) (driver.XFRMSAConfig, driver.XFRMSAConfig, error) {
-	outbound := s.baseXFRMSA(localIP, remoteIP, localPort, remotePort, s.espRemoteSPI, ifID, netlink.XFRM_SA_DIR_OUT)
-	inbound := s.baseXFRMSA(remoteIP, localIP, remotePort, localPort, s.espLocalSPI, ifID, netlink.XFRM_SA_DIR_IN)
-	if err := s.applyXFRMAlgorithms(&outbound, keys.initiator); err != nil {
-		return outbound, inbound, err
-	}
-	if err := s.applyXFRMAlgorithms(&inbound, keys.responder); err != nil {
-		return outbound, inbound, err
-	}
-	return outbound, inbound, nil
-}
-
-func (s *Session) baseXFRMSA(
-	source, destination net.IP,
-	sourcePort, destinationPort uint16,
-	spi, ifID uint32,
-	direction netlink.SADir,
-) driver.XFRMSAConfig {
-	return driver.XFRMSAConfig{
-		Src: source, Dst: destination, SPI: spi, Proto: netlink.XFRM_PROTO_ESP,
-		Mode: netlink.XFRM_MODE_TUNNEL, IsAEAD: driver.IsAEADAlgorithm(s.espCipher),
-		EncapType: netlink.XFRM_ENCAP_ESPINUDP, EncapSrcPort: int(sourcePort),
-		EncapDstPort: int(destinationPort), Ifid: int(ifID), ReplayWindow: s.cfg.ReplayWindow,
-		SADir: direction, ESN: s.cfg.EnableESN,
-	}
-}
-
-func (s *Session) applyXFRMAlgorithms(config *driver.XFRMSAConfig, keys childDirectionKeys) error {
-	if config.IsAEAD {
-		algorithm, err := driver.IKEv2AlgToXFRMAead(s.espCipher, int(s.espEncKeyBits))
-		if err != nil {
-			return err
-		}
-		config.AeadAlgoName, config.AeadKey, config.AeadICVLen = algorithm.Name, keys.enc, algorithm.ICVBits
-		return validateXFRMKeyLength("AEAD", keys.enc, algorithm.KeyBits)
-	}
-	crypt, err := driver.IKEv2AlgToXFRMCrypt(s.espCipher, int(s.espEncKeyBits))
-	if err != nil {
-		return err
-	}
-	auth, err := driver.IKEv2AlgToXFRMAuth(s.espInteg)
-	if err != nil {
-		return err
-	}
-	config.CryptAlgoName, config.CryptKey = crypt.Name, keys.enc
-	config.AuthAlgoName, config.AuthKey, config.AuthTruncLen = auth.Name, keys.integ, auth.TruncateBits
-	return errors.Join(
-		validateXFRMKeyLength("encryption", keys.enc, crypt.KeyBits),
-		validateXFRMKeyLength("authentication", keys.integ, auth.KeyBits),
-	)
-}
-
-func validateXFRMKeyLength(kind string, key []byte, expectedBits int) error {
-	if len(key)*8 != expectedBits {
-		return fmt.Errorf("swu: XFRM %s key has %d bits, want %d", kind, len(key)*8, expectedBits)
-	}
-	return nil
-}
-
-func installXFRMPolicies(
-	manager *driver.XFRMManager,
-	outbound, inbound driver.XFRMSAConfig,
-	ifID uint32,
-) error {
-	allIPv4 := &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}
-	allIPv6 := &net.IPNet{IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)}
-	for _, network := range []*net.IPNet{allIPv4, allIPv6} {
-		policies := []driver.XFRMSPConfig{
-			xfrmPolicy(network, netlink.XFRM_DIR_OUT, outbound, ifID),
-			xfrmPolicy(network, netlink.XFRM_DIR_IN, inbound, ifID),
-			xfrmPolicy(network, netlink.XFRM_DIR_FWD, inbound, ifID),
-		}
-		for _, policy := range policies {
-			if err := manager.AddSP(policy); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func xfrmPolicy(network *net.IPNet, direction netlink.Dir, state driver.XFRMSAConfig, ifID uint32) driver.XFRMSPConfig {
-	return driver.XFRMSPConfig{
-		Src: network, Dst: network, Dir: direction, TmplSrc: state.Src, TmplDst: state.Dst,
-		TmplProto: netlink.XFRM_PROTO_ESP, TmplMode: netlink.XFRM_MODE_TUNNEL,
-		TmplSPI: int(state.SPI), Ifid: int(ifID),
-	}
 }

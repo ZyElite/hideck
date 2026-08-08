@@ -20,10 +20,18 @@ func (s *Session) encryptAndWrap(pkt *ikev2.IKEPacket) ([]byte, error) {
 // encryptAndWrapWithMsgID encrypts the payload chain with an explicit message
 // ID (used for retransmissions and rekey exchanges).
 func (s *Session) encryptAndWrapWithMsgID(pkt *ikev2.IKEPacket, msgID uint32) ([]byte, error) {
-	if s.ikeKeys == nil {
+	return s.encryptAndWrapWithKeys(pkt, msgID, s.ikeKeys)
+}
+
+func (s *Session) encryptAndWrapWithKeys(
+	pkt *ikev2.IKEPacket,
+	msgID uint32,
+	keys *IKEKeys,
+) ([]byte, error) {
+	if keys == nil {
 		return nil, errors.New("swu: no IKE SA keys")
 	}
-	encKey, integKey := s.ikeProtectionKeys(packetIKEHeader(pkt).Flags&ikeInitiatorFlag == 0)
+	encKey, integKey := ikeProtectionKeysFor(keys, packetIKEHeader(pkt).Flags&ikeInitiatorFlag == 0)
 	cipher, err := crypto.PrepareCipher(s.encrAlg, encKey)
 	if err != nil {
 		return nil, fmt.Errorf("prepare cipher: %w", err)
@@ -63,7 +71,11 @@ func (s *Session) encryptAndWrapWithMsgID(pkt *ikev2.IKEPacket, msgID uint32) ([
 // decryptAndParse decrypts and parses an incoming IKE message. The packet must
 // carry a single Encrypted payload; the decrypted payload chain is returned.
 func (s *Session) decryptAndParse(pkt *ikev2.IKEPacket) ([]ikev2.Payload, error) {
-	if s.ikeKeys == nil {
+	return s.decryptAndParseWithKeys(pkt, s.ikeKeys)
+}
+
+func (s *Session) decryptAndParseWithKeys(pkt *ikev2.IKEPacket, keys *IKEKeys) ([]ikev2.Payload, error) {
+	if keys == nil {
 		return nil, errors.New("swu: no IKE SA keys")
 	}
 	if len(pkt.Payloads) != 1 {
@@ -73,7 +85,7 @@ func (s *Session) decryptAndParse(pkt *ikev2.IKEPacket) ([]ikev2.Payload, error)
 	if !ok {
 		return nil, errors.New("swu: payload is not Encrypted")
 	}
-	encKey, integKey := s.ikeProtectionKeys(packetIKEHeader(pkt).Flags&ikeInitiatorFlag == 0)
+	encKey, integKey := ikeProtectionKeysFor(keys, packetIKEHeader(pkt).Flags&ikeInitiatorFlag == 0)
 	cipher, err := crypto.PrepareCipher(s.encrAlg, encKey)
 	if err != nil {
 		return nil, fmt.Errorf("prepare cipher: %w", err)

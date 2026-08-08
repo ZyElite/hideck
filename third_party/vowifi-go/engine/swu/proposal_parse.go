@@ -89,8 +89,8 @@ func parseESPProposal(
 		return nil, fmt.Errorf("empty ESP proposal")
 	}
 	parts := strings.Split(normalized, "-")
-	if len(parts) < 1 || len(parts) > 2 {
-		return nil, fmt.Errorf("invalid ESP proposal %q, expected 1 or 2 parts", raw)
+	if len(parts) < 1 || len(parts) > 3 {
+		return nil, fmt.Errorf("invalid ESP proposal %q, expected 1 to 3 parts", raw)
 	}
 	encryption, err := parseEncr(parts[0])
 	if err != nil {
@@ -111,6 +111,17 @@ func parseESPProposal(
 			return nil, fmt.Errorf("invalid ESP proposal %q: %w", raw, err)
 		}
 		proposal.AddTransform(ikev2.TransformTypeInteg, integrity, 0)
+	}
+	dhIndex := 1
+	if !encryption.aead {
+		dhIndex = 2
+	}
+	if len(parts) > dhIndex {
+		dh, err := parseDH(parts[dhIndex])
+		if err != nil {
+			return nil, fmt.Errorf("invalid ESP proposal %q: %w", raw, err)
+		}
+		proposal.AddTransform(ikev2.TransformTypeDH, dh, 0)
 	}
 	proposal.AddTransform(ikev2.TransformTypeESN, 0, 0)
 	return proposal, nil

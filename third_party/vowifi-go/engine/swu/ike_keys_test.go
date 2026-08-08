@@ -154,7 +154,7 @@ func TestGenerateIKESARekeyKeys(t *testing.T) {
 
 	ni2 := bytes.Repeat([]byte{0xe1}, 16)
 	nr2 := bytes.Repeat([]byte{0xe2}, 16)
-	if err := s.GenerateIKESARekeyKeys(ni2, nr2); err != nil {
+	if err := s.RegenerateIKESARekeyKeys(ni2, nr2); err != nil {
 		t.Fatalf("rekey: %v", err)
 	}
 	// SKEYSEED_rekey = prf(SK_d, g^ir(new)|Ni|Nr).
@@ -168,6 +168,24 @@ func TestGenerateIKESARekeyKeys(t *testing.T) {
 	// Rekey produced a fresh SK_d.
 	if bytes.Equal(s.ikeKeys.SK_d, oldSKd) {
 		t.Error("rekey did not produce a new SK_d")
+	}
+}
+
+func TestGenerateIKESARekeyKeysDoesNotTruncateXCBCNonces(t *testing.T) {
+	session := &Session{
+		prf: crypto.NewPRF(4), integKeyLen: 12, encKeyLen: 16,
+	}
+	oldSKd := bytes.Repeat([]byte{0x31}, 16)
+	shared := bytes.Repeat([]byte{0x41}, 32)
+	ni, nr := bytes.Repeat([]byte{0x51}, 32), bytes.Repeat([]byte{0x61}, 32)
+	keys, err := session.GenerateIKESARekeyKeys(oldSKd, shared, ni, nr, 1, 2)
+	if err != nil {
+		t.Fatalf("GenerateIKESARekeyKeys: %v", err)
+	}
+	data := append(append(append([]byte{}, shared...), ni...), nr...)
+	want := session.prf.Compute(oldSKd, data)
+	if !bytes.Equal(keys.SKEYSEED, want) {
+		t.Fatal("IKE rekey truncated AES-XCBC nonces")
 	}
 }
 

@@ -178,8 +178,10 @@ type Session struct {
 	espIntegKeyLen int
 	espAEAD        bool
 
-	dhSharedSecret []byte
-	ikeKeys        *IKEKeys
+	dhSharedSecret   []byte
+	ikeKeys          *IKEKeys
+	retiredIKESA     *ikeSAContext
+	retiredIKEDelete *retiredIKEDeleteReceipt
 
 	dh       *crypto.DiffieHellman
 	dhGroup  uint16
@@ -229,10 +231,14 @@ type Session struct {
 	kernelDataPlane kernelDataPlane
 	espOutboundSA   *ipsec.SecurityAssociation
 	espInboundSA    *ipsec.SecurityAssociation
+	espInboundSAs   map[uint32]*ipsec.SecurityAssociation
+	retiredChildSAs map[uint32]uint32
 	espLocalSPI     uint32
 	espRemoteSPI    uint32
 	childNi         []byte
 	childNr         []byte
+	childDH         *crypto.DiffieHellman
+	childDHSecret   []byte
 	childTSi        *ikev2.EncryptedPayloadTS
 	childTSr        *ikev2.EncryptedPayloadTS
 	espCipher       uint16
@@ -257,6 +263,7 @@ type Session struct {
 	mu                sync.RWMutex
 	childSAMu         sync.RWMutex
 	ikeExchangeMu     sync.Mutex
+	rekeyMu           sync.Mutex
 	controlMu         sync.RWMutex
 	controlWG         sync.WaitGroup
 	controlRequests   chan []byte
@@ -269,10 +276,15 @@ type Session struct {
 	state             string
 	dataPlaneStarted  bool
 	dataPlaneWG       sync.WaitGroup
+	rekeyTimerWG      sync.WaitGroup
 	startedAt         time.Time
 	lastPingAt        time.Time
 	lastDPDAt         time.Time
 	rekeyResetCh      chan struct{}
+	childRekeyResetCh chan struct{}
+	lastRekeyTime     time.Time
+	lastIKERekeyTime  time.Time
+	authLifetime      uint32
 	lastIKERequest    []byte
 	lastIKERequestSet [][]byte
 	lastIKEResponse   []byte
@@ -315,6 +327,7 @@ func NewSession(cfg *Config) *Session {
 		state:             stateIdle,
 		startedAt:         time.Now(),
 		rekeyResetCh:      make(chan struct{}, 1),
+		childRekeyResetCh: make(chan struct{}, 1),
 		ikeWaiters:        make(map[ikeWaitKey]chan []byte),
 		ikePending:        make(map[ikeWaitKey][]byte),
 		nonceLen:          cfg.NonceLen,
@@ -323,6 +336,8 @@ func NewSession(cfg *Config) *Session {
 		fastReauthCtx:     initFastReauthContext(cfg),
 		fragmentBuf:       newFragmentBuffer(),
 		ikeFragmentMTU:    defaultFragmentMTU,
+		espInboundSAs:     make(map[uint32]*ipsec.SecurityAssociation),
+		retiredChildSAs:   make(map[uint32]uint32),
 	}
 	if s.nonceLen <= 0 {
 		s.nonceLen = 32
@@ -427,9 +442,9 @@ func (s *Session) Connect(ctx context.Context) error {
 }
 
 func (s *Session) resetForRedirect() {
+	s.clearIKEKeyMaterial()
 	s.SPIi, s.SPIr = [8]byte{}, [8]byte{}
 	s.Ni, s.nr, s.cookie = nil, nil, nil
-	s.dh, s.ikeKeys, s.dhSharedSecret = nil, nil, nil
 	s.sendCookie = false
 	s.ikeProfileOffset = 0
 }
@@ -670,7 +685,9 @@ func (s *Session) Shutdown() {
 	cleanupErr := s.stopDataPlane()
 	s.controlWG.Wait()
 	s.dataPlaneWG.Wait()
+	s.rekeyTimerWG.Wait()
 	s.stopTransport()
+	s.clearIKEKeyMaterial()
 	if cleanupErr != nil {
 		s.mu.Lock()
 		if s.terminalErr == nil {
@@ -782,8 +799,9 @@ func (s *Session) InnerPacketEndpoint() *userspaceInnerPacketEndpoint {
 // startTimers arms the rekey / reauth / keepalive / DPD timers.
 func (s *Session) startTimers() {
 	s.startIKEReauthTimer()
-	s.startIKESARekeyTimer()
-	s.startChildSARekeyTimer()
+	ikeInterval, childInterval := s.rekeyIntervals()
+	s.startIKESARekeyTimer(ikeInterval)
+	s.startChildSARekeyTimer(childInterval)
 	s.startNATKeepalive()
 	s.startDPD()
 }
@@ -826,36 +844,6 @@ func (s *Session) startIKEReauthTimer() {
 			return
 		}
 		s.startIKEReauthTimer()
-	})
-}
-
-// startIKESARekeyTimer arms the IKE SA rekey timer.
-func (s *Session) startIKESARekeyTimer() {
-	every := s.cfg.RekeyIKESeconds
-	if every <= 0 {
-		every = 8 * time.Hour
-	}
-	s.armTimer(&s.ikeRekeyTimer, every, func() {
-		if err := s.RekeyIKESA(); err != nil {
-			s.failEstablishedControl(fmt.Errorf("swu: IKE SA rekey failed: %w", err))
-			return
-		}
-		s.startIKESARekeyTimer()
-	})
-}
-
-// startChildSARekeyTimer arms the CHILD_SA rekey timer.
-func (s *Session) startChildSARekeyTimer() {
-	every := s.cfg.RekeyChildSeconds
-	if every <= 0 {
-		every = 1 * time.Hour
-	}
-	s.armTimer(&s.childRekeyTimer, every, func() {
-		if err := s.RekeyChildSA(); err != nil {
-			s.failEstablishedControl(fmt.Errorf("swu: CHILD_SA rekey failed: %w", err))
-			return
-		}
-		s.startChildSARekeyTimer()
 	})
 }
 

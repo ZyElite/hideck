@@ -9,12 +9,26 @@ import (
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 type ikeSARekeySelection struct {
 	responderSPI [8]byte
 	nonce        []byte
 	peerKey      []byte
+}
+
+type initiatedIKERekey struct {
+	ctx          context.Context
+	payloads     []ikev2.Payload
+	nonce        []byte
+	dh           *enginecrypto.DiffieHellman
+	initiatorSPI [8]byte
+	oldSKd       []byte
+	oldSPIi      [8]byte
+	oldSPIr      [8]byte
+	oldInitiator bool
 }
 
 func (s *Session) performIKESARekey(ctx context.Context) error {
@@ -28,53 +42,102 @@ func (s *Session) performIKESARekey(ctx context.Context) error {
 		return err
 	}
 	proposals := buildIKEProposalsForSession(s)
+	if len(proposals) == 0 || proposals[0] == nil {
+		return errors.New("swu: no IKE proposal available for rekey")
+	}
 	proposals[0].SPI = append([]byte(nil), initiatorSPI[:]...)
-	request := &ikev2.IKEPacket{
-		Header: newIKEHeader(
-			s.SPIi, s.SPIr, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false), s.nextMessageID(),
-		),
-		Payloads: []ikev2.Payload{
-			&ikev2.EncryptedPayloadSA{Proposals: proposals},
-			&ikev2.EncryptedPayloadNonce{NonceData: append([]byte(nil), nonce...)},
-			&ikev2.EncryptedPayloadKE{DHGroup: ikev2.AlgorithmType(s.dhGroup), KEData: dh.PublicKeyBytes()},
-		},
+	payloads := []ikev2.Payload{
+		&ikev2.EncryptedPayloadSA{Proposals: proposals},
+		&ikev2.EncryptedPayloadNonce{NonceData: append([]byte(nil), nonce...)},
+		&ikev2.EncryptedPayloadKE{DHGroup: ikev2.AlgorithmType(s.dhGroup), KEData: dh.PublicKeyBytes()},
 	}
-	payloads, err := s.exchangeEstablishedIKE(ctx, request)
+	s.mu.RLock()
+	oldSPIi, oldSPIr := s.SPIi, s.SPIr
+	oldSKd := append([]byte(nil), s.ikeKeys.SK_d...)
+	s.mu.RUnlock()
+	defer enginecrypto.Wipe(oldSKd)
+	response, err := s.sendEncryptedWithRetry(payloads, ikev2.CREATE_CHILD_SA)
 	if err != nil {
 		return err
 	}
-	selection, err := s.validateIKESARekeyResponse(payloads)
+	return s.handleRekeyIKESAResp(
+		response, nonce, dh, binary.BigEndian.Uint64(initiatorSPI[:]), oldSKd,
+		binary.BigEndian.Uint64(oldSPIi[:]), binary.BigEndian.Uint64(oldSPIr[:]),
+	)
+}
+
+func (s *Session) completeInitiatedIKESARekey(rekey initiatedIKERekey) error {
+	installed := false
+	defer func() {
+		if !installed && rekey.dh != nil {
+			enginecrypto.Wipe(rekey.dh.SharedKey)
+		}
+	}()
+	selection, err := s.validateIKESARekeyResponse(rekey.payloads)
 	if err != nil {
 		return err
 	}
-	sharedSecret, err := dh.ComputeSharedSecret(selection.peerKey)
+	sharedSecret, err := rekey.dh.ComputeSharedSecret(selection.peerKey)
 	if err != nil {
 		return fmt.Errorf("swu: compute IKE rekey DH secret: %w", err)
 	}
-	newKeys, err := s.deriveIKESARekeyKeys(
-		s.ikeKeys.SK_d, sharedSecret, nonce, selection.nonce,
-		initiatorSPI, selection.responderSPI,
+	newKeys, err := s.GenerateIKESARekeyKeys(
+		rekey.oldSKd, sharedSecret, rekey.nonce, selection.nonce,
+		binary.BigEndian.Uint64(rekey.initiatorSPI[:]),
+		binary.BigEndian.Uint64(selection.responderSPI[:]),
 	)
 	if err != nil {
 		return fmt.Errorf("swu: derive rekeyed IKE SA keys: %w", err)
 	}
-	if err := s.deleteOldIKESA(ctx); err != nil {
-		return fmt.Errorf("swu: delete old IKE SA: %w", err)
+	deleteErr := s.deleteOldIKESA(rekey.ctx)
+	if deleteErr != nil {
+		logger.Warn("IKE SA rekey switched but old SA delete failed", zap.Error(deleteErr))
 	}
 	s.mu.Lock()
-	s.SPIi, s.SPIr = initiatorSPI, selection.responderSPI
+	if s.SPIi != rekey.oldSPIi || s.SPIr != rekey.oldSPIr {
+		s.mu.Unlock()
+		wipeIKEKeys(newKeys)
+		return errors.New("swu: active IKE SA changed during rekey")
+	}
+	oldKeys := s.ikeKeys
+	oldDH := s.dh
+	oldDHSecret := s.dhSharedSecret
+	var displaced *ikeSAContext
+	if deleteErr != nil {
+		displaced = s.retiredIKESA
+		s.retiredIKEDelete = nil
+		s.retiredIKESA = &ikeSAContext{
+			spiI: rekey.oldSPIi, spiR: rekey.oldSPIr,
+			keys: oldKeys, localInitiator: rekey.oldInitiator,
+		}
+	}
+	s.SPIi, s.SPIr = rekey.initiatorSPI, selection.responderSPI
 	s.localIKEInitiator = true
 	s.ikeKeys = newKeys
-	s.dh = dh
+	s.dh = rekey.dh
 	s.dhSharedSecret = append([]byte(nil), sharedSecret...)
-	s.Ni = append([]byte(nil), nonce...)
+	s.Ni = append([]byte(nil), rekey.nonce...)
 	s.nr = append([]byte(nil), selection.nonce...)
 	s.nextOutboundID = 0
 	s.mu.Unlock()
+	s.fragmentBuf.clear()
+	if deleteErr == nil {
+		wipeIKEKeys(oldKeys)
+	}
+	if displaced != nil && displaced.keys != oldKeys {
+		wipeIKEKeys(displaced.keys)
+	}
+	enginecrypto.Wipe(oldDHSecret)
+	if oldDH != nil && oldDH != rekey.dh {
+		enginecrypto.Wipe(oldDH.SharedKey)
+	}
+	s.markIKERekeyComplete()
+	installed = true
 	return nil
 }
 
 func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2.Payload) error {
+	requestHeader := packetIKEHeader(packet)
 	selection, err := s.validateIKESARekeyResponse(payloads)
 	if err != nil {
 		return err
@@ -83,18 +146,38 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 	if err != nil {
 		return err
 	}
+	installed := false
+	defer func() {
+		if !installed {
+			enginecrypto.Wipe(dh.SharedKey)
+		}
+	}()
 	sharedSecret, err := dh.ComputeSharedSecret(selection.peerKey)
 	if err != nil {
 		return fmt.Errorf("swu: compute peer IKE rekey DH secret: %w", err)
 	}
-	newKeys, err := s.deriveIKESARekeyKeys(
-		s.ikeKeys.SK_d, sharedSecret, selection.nonce, responderNonce,
-		selection.responderSPI, responderSPI,
+	s.mu.RLock()
+	oldKeys := s.ikeKeys
+	if oldKeys == nil || len(oldKeys.SK_d) == 0 {
+		s.mu.RUnlock()
+		return errors.New("swu: peer IKE SA rekey requires active key material")
+	}
+	oldSKd := append([]byte(nil), oldKeys.SK_d...)
+	s.mu.RUnlock()
+	defer enginecrypto.Wipe(oldSKd)
+	newKeys, err := s.GenerateIKESARekeyKeys(
+		oldSKd, sharedSecret, selection.nonce, responderNonce,
+		binary.BigEndian.Uint64(selection.responderSPI[:]),
+		binary.BigEndian.Uint64(responderSPI[:]),
 	)
 	if err != nil {
 		return fmt.Errorf("swu: derive peer-rekeyed IKE SA keys: %w", err)
 	}
 	proposals := buildIKEProposalsForSession(s)
+	if len(proposals) == 0 || proposals[0] == nil {
+		wipeIKEKeys(newKeys)
+		return errors.New("swu: no IKE proposal available for peer rekey")
+	}
 	proposals[0].SPI = append([]byte(nil), responderSPI[:]...)
 	responsePayloads := []ikev2.Payload{
 		&ikev2.EncryptedPayloadSA{Proposals: proposals},
@@ -102,9 +185,27 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 		&ikev2.EncryptedPayloadKE{DHGroup: ikev2.AlgorithmType(s.dhGroup), KEData: dh.PublicKeyBytes()},
 	}
 	if err := s.sendEstablishedIKEResponse(packet, responsePayloads); err != nil {
+		wipeIKEKeys(newKeys)
+		enginecrypto.Wipe(dh.SharedKey)
 		return err
 	}
 	s.mu.Lock()
+	if binary.BigEndian.Uint64(s.SPIi[:]) != requestHeader.SPIi ||
+		binary.BigEndian.Uint64(s.SPIr[:]) != requestHeader.SPIr {
+		s.mu.Unlock()
+		wipeIKEKeys(newKeys)
+		enginecrypto.Wipe(dh.SharedKey)
+		return errors.New("swu: active IKE SA changed while answering peer rekey")
+	}
+	oldDH := s.dh
+	oldDHSecret := s.dhSharedSecret
+	oldContext := &ikeSAContext{
+		spiI: s.SPIi, spiR: s.SPIr, keys: oldKeys,
+		localInitiator: s.localIKEInitiator,
+	}
+	displaced := s.retiredIKESA
+	s.retiredIKEDelete = nil
+	s.retiredIKESA = oldContext
 	s.SPIi, s.SPIr = selection.responderSPI, responderSPI
 	s.localIKEInitiator = false
 	s.ikeKeys = newKeys
@@ -114,6 +215,16 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 	s.nr = append([]byte(nil), responderNonce...)
 	s.nextOutboundID = 0
 	s.mu.Unlock()
+	s.fragmentBuf.clear()
+	if displaced != nil && displaced.keys != oldKeys {
+		wipeIKEKeys(displaced.keys)
+	}
+	enginecrypto.Wipe(oldDHSecret)
+	if oldDH != nil && oldDH != dh {
+		enginecrypto.Wipe(oldDH.SharedKey)
+	}
+	s.markIKERekeyComplete()
+	installed = true
 	return nil
 }
 
@@ -139,77 +250,6 @@ func (s *Session) newIKESARekeyMaterial() (*enginecrypto.DiffieHellman, [8]byte,
 		return nil, [8]byte{}, nil, err
 	}
 	return dh, spi, nonce, nil
-}
-
-func (s *Session) validateIKESARekeyResponse(payloads []ikev2.Payload) (*ikeSARekeySelection, error) {
-	var sa *ikev2.EncryptedPayloadSA
-	var nonce, peerKey []byte
-	for _, payload := range payloads {
-		switch payload.Type() {
-		case ikev2.PayloadSA:
-			var ok bool
-			sa, ok = payload.(*ikev2.EncryptedPayloadSA)
-			if !ok {
-				return nil, errors.New("swu: invalid IKE rekey SA payload")
-			}
-		case ikev2.PayloadNi:
-			nonce = childSANonceData(payload)
-		case ikev2.PayloadKE:
-			group, key, err := parseKEPayload(payload)
-			if err != nil || group != s.dhGroup {
-				return nil, fmt.Errorf("swu: invalid IKE rekey DH group %d: %w", group, err)
-			}
-			peerKey = append([]byte(nil), key...)
-		}
-	}
-	if sa == nil || len(sa.Proposals) != 1 || len(nonce) == 0 || len(peerKey) == 0 {
-		return nil, errors.New("swu: IKE rekey response missing SA, nonce, or KE")
-	}
-	proposal := sa.Proposals[0]
-	if err := s.validateIKERekeyProposal(proposal); err != nil {
-		return nil, err
-	}
-	var responderSPI [8]byte
-	copy(responderSPI[:], proposal.SPI)
-	return &ikeSARekeySelection{
-		responderSPI: responderSPI,
-		nonce:        append([]byte(nil), nonce...),
-		peerKey:      peerKey,
-	}, nil
-}
-
-func (s *Session) validateIKERekeyProposal(proposal *ikev2.Proposal) error {
-	if proposal == nil || proposal.ProtocolID != ikev2.ProtoIKE || len(proposal.SPI) != 8 {
-		return errors.New("swu: invalid IKE rekey proposal")
-	}
-	expected := map[ikev2.TransformType]ikev2.AlgorithmType{
-		ikev2.TransformTypeEncr:  ikev2.AlgorithmType(s.encrAlg),
-		ikev2.TransformTypePRF:   ikev2.AlgorithmType(s.prfAlg),
-		ikev2.TransformTypeInteg: ikev2.AlgorithmType(s.integAlg),
-		ikev2.TransformTypeDH:    ikev2.AlgorithmType(s.dhGroup),
-	}
-	seen := make(map[ikev2.TransformType]bool, len(expected))
-	for _, transform := range proposal.Transforms {
-		if transform == nil {
-			return errors.New("swu: IKE rekey proposal contains a nil transform")
-		}
-		want, ok := expected[transform.Type]
-		if !ok || seen[transform.Type] || transform.ID != want {
-			return fmt.Errorf("swu: unexpected IKE rekey transform type=%d id=%d", transform.Type, transform.ID)
-		}
-		if transform.Type == ikev2.TransformTypeEncr {
-			if err := validateEncryptionKeyLength(transform, s.encKeyBits); err != nil {
-				return err
-			}
-		} else if len(transform.Attributes) != 0 {
-			return errors.New("swu: non-encryption IKE rekey transform has attributes")
-		}
-		seen[transform.Type] = true
-	}
-	if len(seen) != len(expected) || binary.BigEndian.Uint64(proposal.SPI) == 0 {
-		return errors.New("swu: incomplete IKE rekey proposal")
-	}
-	return nil
 }
 
 func (s *Session) deleteOldIKESA(ctx context.Context) error {
