@@ -30,7 +30,9 @@ func buildIMSInviteWithSDP(agent *Agent, call *Call, sdp string) string {
 	request.WriteString("P-Preferred-Service: urn:urn-7:3gpp-service.ims.icsi.mmtel\r\n")
 	request.WriteString("Accept-Contact: *;+g.3gpp.icsi-ref=\"urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel\"\r\n")
 	request.WriteString("Supported: 100rel, timer\r\n")
-	request.WriteString("Content-Type: application/sdp\r\n")
+	if sdp != "" {
+		request.WriteString("Content-Type: application/sdp\r\n")
+	}
 	fmt.Fprintf(&request, "Content-Length: %d\r\n\r\n%s", len(sdp), sdp)
 	return request.String()
 }
@@ -50,7 +52,11 @@ func buildIMSReinvite(agent *Agent, call *Call) string {
 		return ""
 	}
 	dialog := call.advanceVoiceCSeq()
-	return buildVoiceRequest(dialog, call.CallID(), "INVITE", voiceBranch(), generateBasicSDP(agent, call))
+	sdp := call.imsLocalSDPValue()
+	if strings.TrimSpace(sdp) == "" {
+		sdp = generateBasicSDP(agent, call)
+	}
+	return buildVoiceRequest(dialog, call.CallID(), "INVITE", voiceBranch(), sdp)
 }
 
 // BuildIMSACK builds the ACK for the final INVITE response.
@@ -166,6 +172,9 @@ func generateBasicSDP(agent *Agent, call *Call) string {
 		ip = "0.0.0.0"
 	}
 	port := agent.mediaPort()
+	if port <= 0 {
+		return ""
+	}
 	sessionID := voiceSessID()
 	return fmt.Sprintf("v=0\r\no=- %d %d IN IP4 %s\r\ns=VoWiFi call\r\nc=IN IP4 %s\r\nt=0 0\r\nm=audio %d RTP/AVP 96 97 98\r\na=rtpmap:96 AMR-WB/16000/1\r\na=rtpmap:97 AMR/8000/1\r\na=rtpmap:98 telephone-event/8000\r\na=fmtp:96 mode-set=0,1,2,3,4,5,6,7\r\na=sendrecv\r\n", sessionID, sessionID, ip, ip, port)
 }

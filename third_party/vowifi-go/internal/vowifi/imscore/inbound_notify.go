@@ -1,7 +1,6 @@
 package imscore
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -35,25 +34,7 @@ func sipRequestMethod(raw string) string {
 }
 
 func buildSIPRequestResponse(request string, status int) (string, error) {
-	if sipRequestMethod(request) == "" {
-		return "", errors.New("imscore: invalid inbound SIP request line")
-	}
-	required := []string{"Via", "From", "To", "Call-ID", "CSeq"}
-	headers := make(map[string]string, len(required))
-	for _, name := range required {
-		headers[name] = rawSIPHeaderValue(request, name)
-		if headers[name] == "" {
-			return "", fmt.Errorf("imscore: inbound SIP request missing %s", name)
-		}
-	}
-	to := headers["To"]
-	if !strings.Contains(strings.ToLower(to), ";tag=") {
-		to += ";tag=" + newTag()
-	}
-	return fmt.Sprintf(
-		"SIP/2.0 %d %s\r\nVia: %s\r\nFrom: %s\r\nTo: %s\r\nCall-ID: %s\r\nCSeq: %s\r\nContent-Length: 0\r\n\r\n",
-		status, SIPStatusText(status), headers["Via"], headers["From"], to, headers["Call-ID"], headers["CSeq"],
-	), nil
+	return buildSIPVoiceResponse(request, newTag(), InboundVoiceResponse{StatusCode: status})
 }
 
 func rawSIPHeaderValue(message, name string) string {

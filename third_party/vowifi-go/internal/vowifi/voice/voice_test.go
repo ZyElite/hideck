@@ -14,6 +14,10 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
+const testClientSDP = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=client\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 32000 RTP/AVP 0\r\n"
+
+const testIMSAnswerSDP = "v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 33000 RTP/AVP 0\r\n"
+
 // newTestAgent builds an agent with a fake IMS service.
 func newTestAgent(t *testing.T) *Agent {
 	t.Helper()
@@ -62,15 +66,20 @@ func startVoiceTestRegistrarWithInviteStatus(t *testing.T, inviteStatus int) *ne
 				continue
 			}
 			extra := ""
+			body := ""
 			status := 200
 			if strings.HasPrefix(request, "INVITE ") {
 				status = inviteStatus
 				extra = "To: <sip:callee@ims.example.com>;tag=remote\r\n" +
 					"Contact: <sip:callee@ims.example.com>\r\n"
+				if status >= 200 && status < 300 {
+					body = testIMSAnswerSDP
+					extra += "Content-Type: application/sdp\r\n"
+				}
 			}
-			response := fmt.Sprintf("SIP/2.0 %d %s\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: 0\r\n\r\n",
+			response := fmt.Sprintf("SIP/2.0 %d %s\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: %d\r\n\r\n%s",
 				status, imscore.SIPStatusText(status), voiceTestHeader(request, "Via"),
-				voiceTestHeader(request, "Call-ID"), voiceTestHeader(request, "CSeq"), extra)
+				voiceTestHeader(request, "Call-ID"), voiceTestHeader(request, "CSeq"), extra, len(body), body)
 			_, _ = conn.WriteToUDP([]byte(response), remote)
 		}
 	}()
@@ -171,7 +180,7 @@ func TestAgentDialLifecycle(t *testing.T) {
 		got = append(got, ev.Type())
 	})
 
-	call, err := agent.Dial("+8613800000000")
+	call, err := agent.HandleClientInvite("+8613800000000", testClientSDP)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -198,16 +207,8 @@ func TestAgentSimulateCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
-	call, err := agent.SimulateCall("+8613800000000")
-	if err != nil {
-		t.Fatalf("SimulateCall: %v", err)
-	}
-	if call.GetState() != callstate.StateConnected {
-		t.Errorf("state = %s, want Connected", call.GetState())
-	}
-	snap := agent.Snapshot()
-	if snap.ActiveCall == nil || snap.ActiveCall.State != "Connected" {
-		t.Errorf("snapshot active = %+v", snap.ActiveCall)
+	if _, err := agent.SimulateCall("+8613800000000"); err == nil || !strings.Contains(err.Error(), "client SDP") {
+		t.Fatalf("SimulateCall error = %v", err)
 	}
 }
 
@@ -217,7 +218,7 @@ func TestAgentDialRejectionClearsActiveCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
-	if _, err := agent.Dial("+8613800000000"); err == nil || !strings.Contains(err.Error(), "486") {
+	if _, err := agent.HandleClientInvite("+8613800000000", testClientSDP); err == nil || !strings.Contains(err.Error(), "486") {
 		t.Fatalf("Dial error = %v", err)
 	}
 	if agent.IsBusy() || agent.Snapshot().ActiveCall != nil {
@@ -230,7 +231,7 @@ func TestAgentStopReleasesCallWhenBYEFails(t *testing.T) {
 	if err := agent.Start(); err != nil {
 		t.Fatal(err)
 	}
-	call, err := agent.Dial("+8613800000000")
+	call, err := agent.HandleClientInvite("+8613800000000", testClientSDP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +255,7 @@ func TestAgentHandlesRemoteBYE(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
-	call, err := agent.Dial("+8613800000000")
+	call, err := agent.HandleClientInvite("+8613800000000", testClientSDP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +276,7 @@ func TestAgentHandlesEstablishedReinvite(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
-	call, err := agent.Dial("+8613800000000")
+	call, err := agent.HandleClientInvite("+8613800000000", testClientSDP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +297,7 @@ func TestAgentRejectsReinviteOfferWithoutMediaAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
-	call, err := agent.Dial("+8613800000000")
+	call, err := agent.HandleClientInvite("+8613800000000", testClientSDP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +368,7 @@ func TestAgentInboundAnswerRequiresRequestContext(t *testing.T) {
 	agent.activeCall = call
 	agent.mu.Unlock()
 
-	if err := agent.Answer(call.CallID()); err == nil || !strings.Contains(err.Error(), "request context") {
+	if err := agent.Answer(call.CallID()); err == nil || !strings.Contains(err.Error(), "client SDP") {
 		t.Fatalf("Answer error = %v", err)
 	}
 	if call.GetState() != callstate.StateAlerting {
@@ -381,13 +382,15 @@ func TestHandleClientInviteUsesRealTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
-	sdp := "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=client\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 32000 RTP/AVP 0\r\n"
-	call, err := agent.HandleClientInvite("+8613800000000", sdp)
+	call, err := agent.HandleClientInvite("+8613800000000", testClientSDP)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if call.GetState() != callstate.StateConnected || !call.HasInviteFinalSeen() || !call.IsACKSent() {
 		t.Fatalf("state=%s final=%t ack=%t", call.GetState(), call.HasInviteFinalSeen(), call.IsACKSent())
+	}
+	if strings.Contains(call.ClientSDP(), "m=audio 0 ") || call.RTPRelay() == nil {
+		t.Fatalf("client SDP or relay is invalid: %q", call.ClientSDP())
 	}
 }
 
@@ -453,11 +456,8 @@ func TestBuildIMSInvite(t *testing.T) {
 	if !strings.Contains(invite, "Call-ID: call-1") {
 		t.Errorf("invite missing Call-ID: %q", invite)
 	}
-	if !strings.Contains(invite, "Content-Type: application/sdp") {
-		t.Errorf("invite missing SDP content type: %q", invite)
-	}
-	if !strings.Contains(invite, "m=audio") {
-		t.Errorf("invite missing SDP body: %q", invite)
+	if strings.Contains(invite, "m=audio 0 ") || !strings.Contains(invite, "Content-Length: 0") {
+		t.Errorf("builder exposed an unusable media endpoint: %q", invite)
 	}
 }
 
@@ -487,12 +487,8 @@ func TestGatewayLifecycle(t *testing.T) {
 	if status["registered"] != true {
 		t.Errorf("status = %+v", status)
 	}
-	call, err := gw.SimulateCall("+8613800000000")
-	if err != nil {
-		t.Fatalf("SimulateCall: %v", err)
-	}
-	if call.GetState() != callstate.StateConnected {
-		t.Errorf("state = %s", call.GetState())
+	if _, err := gw.SimulateCall("+8613800000000"); err == nil || !strings.Contains(err.Error(), "client SDP") {
+		t.Fatalf("SimulateCall error = %v", err)
 	}
 }
 

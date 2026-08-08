@@ -16,23 +16,24 @@ perform their historical action with the arguments they expose.
 | Inbound SMS | Validates SIP MESSAGE and 3GPP payloads, decodes RP-DATA and SMS-DELIVER, responds over the inbound SIP path, publishes the message event, and sends RP acknowledgement or error. |
 | Multipart SMS | Splits outbound text, reassembles inbound parts by sender/reference, rejects conflicting duplicates, expires incomplete groups, and persists delivery updates. |
 | USSI/USSD | Uses real INVITE, ACK, INFO, and BYE transactions and routes inbound INFO/BYE to the active session. |
-| Voice signaling | Uses real outbound INVITE/ACK/BYE/CANCEL transactions, routes established-dialog requests, refreshes sessions with re-INVITE, and tears down call timers and runtime bindings. |
+| Voice signaling and media | Uses real outbound and inbound INVITE/ACK/BYE/CANCEL transactions. New inbound calls are exposed through the runtime gateway, ring with `180`, can be answered or rejected over the retained network transaction, renegotiate SDP, and relay RTP in both directions with payload-type mapping. Dialogs, timers, sockets, and runtime bindings are released on failure, cancel, or hangup. |
 
 ## Explicit Capability Boundaries
 
-- A new inbound voice INVITE is rejected with `486 Busy Here`. The current
-  public runtime has no local client request object with which to deliver and
-  answer a new incoming call.
-- An established-dialog re-INVITE carrying an SDP offer is rejected with
-  `488 Not Acceptable Here` because the runtime cannot construct a negotiated
-  media answer without a configured RTP bridge. Header-only refresh requests
-  and UPDATE remain supported.
-- Voice signaling is implemented, but the default SDP advertises a disabled
-  audio port until an RTP relay is configured by a caller. This is not a claim
-  of end-to-end audio readiness.
-- Compatibility handles that contain only a Call-ID cannot answer an inbound
-  request, address an in-dialog request, or retransmit PRACK. These methods
-  return explicit context errors instead of reporting success.
+- Inbound voice consumers must provide a real client SDP answer through
+  `voicehost.Gateway.AnswerIncomingCall`. The gateway also exposes callbacks
+  and polling for pending calls. Reject, no-answer, and CANCEL paths send an
+  explicit final response to the original INVITE.
+- `Agent.Dial`, `Agent.DialContext`, and the legacy timed `SimulateCall` API do
+  not accept client media parameters. They now return an explicit
+  `client SDP is required` error instead of advertising `m=audio 0`. Local
+  client calls use `HandleClientInvite`, which allocates and injects the RTP
+  relay before sending the IMS INVITE.
+- The client side of the RTP relay is advertised on `127.0.0.1`; the media
+  client therefore runs on the same host as the runtime. IMS-side media binds
+  to the registered IMS address and uses ephemeral non-zero ports.
+- Compatibility handles that contain only a Call-ID cannot retransmit PRACK.
+  They return an explicit context error instead of reporting success.
 - The legacy gateway packet-capture methods have no output target parameter.
   They return an explicit configuration error; per-call capture remains
   available when the caller supplies a writable output.

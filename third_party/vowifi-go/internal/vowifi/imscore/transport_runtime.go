@@ -55,6 +55,10 @@ func (s *Service) receiverStatus() SMSReceiverStatus {
 }
 
 func (s *Service) handleInboundSIP(ctx context.Context, raw string) (inboundSIPResult, error) {
+	return s.handleInboundSIPWithReply(ctx, raw, nil)
+}
+
+func (s *Service) handleInboundSIPWithReply(ctx context.Context, raw string, reply func(string) error) (inboundSIPResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -82,14 +86,14 @@ func (s *Service) handleInboundSIP(ctx context.Context, raw string) (inboundSIPR
 		if handled {
 			return result, err
 		}
-		result, handled, err = s.handleInboundVoice(raw)
+		result, handled, err = s.handleInboundVoice(raw, reply)
 		if handled {
 			return result, err
 		}
 		response, responseErr := buildSIPRequestResponse(raw, 405)
 		return inboundSIPResult{response: response}, responseErr
 	case "INVITE", "CANCEL", "ACK", "PRACK", "UPDATE":
-		result, handled, err := s.handleInboundVoice(raw)
+		result, handled, err := s.handleInboundVoice(raw, reply)
 		if handled {
 			return result, err
 		}
@@ -108,7 +112,7 @@ func (s *Service) dispatchInboundSIP(raw string, reply func(string) error) error
 		return nil
 	}
 	s.transport.DeliverRequest(raw)
-	result, err := s.handleInboundSIP(context.Background(), raw)
+	result, err := s.handleInboundSIPWithReply(context.Background(), raw, reply)
 	if result.response == "" {
 		return err
 	}

@@ -24,10 +24,12 @@ type Agent struct {
 	bus      *imscore.EventBus
 	actor    *callstate.Actor
 
-	calls      map[string]*Call // keyed by call ID
-	activeCall *Call
-	notifier   func(events.Event)
-	started    bool
+	calls           map[string]*Call // keyed by call ID
+	activeCall      *Call
+	notifier        func(events.Event)
+	incomingHandler func(IncomingCall)
+	newMediaRelay   func(string) (*media.RTPRelay, error)
+	started         bool
 
 	clientAdapter   interface{}
 	eventDispatcher interface{ Dispatch(interface{}) }
@@ -53,11 +55,17 @@ type Call struct {
 	noAnswerTimer *time.Timer
 	sessionTimer  *time.Timer
 
-	imsDialog *imscore.DialogHandle
-	imsInvite *imscore.InviteHandle
-	routeSet  []string
-	rtpRelay  *media.RTPRelay
-	sipDialog *voiceSIPDialog
+	imsDialog         *imscore.DialogHandle
+	imsInvite         *imscore.InviteHandle
+	routeSet          []string
+	rtpRelay          *media.RTPRelay
+	sipDialog         *voiceSIPDialog
+	inboundResponder  imscore.InboundVoiceResponder
+	remoteSDP         string
+	clientRemoteSDP   string
+	clientLocalSDP    string
+	imsLocalSDP       string
+	inboundDecisionMu sync.Mutex
 
 	ackSent              bool
 	inviteFinalSeen      bool
@@ -128,6 +136,25 @@ type AgentSnapshot struct {
 	ActiveCall *CallSnapshot
 	Calls      []*CallSnapshot
 	Busy       bool
+}
+
+// IncomingCall is the business-facing view of a pending IMS call. OfferSDP
+// points at the client side of the allocated RTP relay.
+type IncomingCall struct {
+	DeviceID   string
+	CallID     string
+	Caller     string
+	Callee     string
+	OfferSDP   string
+	ReceivedAt time.Time
+	State      string
+}
+
+// InboundAnswer describes the established inbound call.
+type InboundAnswer struct {
+	CallID   string
+	OfferSDP string
+	State    string
 }
 
 // Go runs fn in the fire pool with a bounded concurrency semaphore.

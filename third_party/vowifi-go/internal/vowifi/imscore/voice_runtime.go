@@ -34,8 +34,29 @@ type InboundVoiceRequest struct {
 	CallID      string
 	From        string
 	To          string
+	Contact     string
+	RecordRoute string
+	CSeq        string
 	ContentType string
 	Body        []byte
+	Responder   InboundVoiceResponder
+}
+
+// InboundVoiceResponse is one provisional or final response to an inbound
+// voice request.
+type InboundVoiceResponse struct {
+	StatusCode  int
+	ContentType string
+	Body        []byte
+	Contact     string
+	ToTag       string
+}
+
+// InboundVoiceResponder retains the network transaction used by an inbound
+// voice request. Provisional responses may precede exactly one final response.
+type InboundVoiceResponder interface {
+	Respond(InboundVoiceResponse) error
+	LocalTag() string
 }
 
 // InboundVoiceResult controls the SIP response for a handled request.
@@ -107,7 +128,7 @@ func (s *Service) EventBus() *EventBus {
 	return s.bus
 }
 
-func (s *Service) handleInboundVoice(raw string) (inboundSIPResult, bool, error) {
+func (s *Service) handleInboundVoice(raw string, reply func(string) error) (inboundSIPResult, bool, error) {
 	s.mu.RLock()
 	handler := s.voiceHandler
 	s.mu.RUnlock()
@@ -121,7 +142,9 @@ func (s *Service) handleInboundVoice(raw string) (inboundSIPResult, bool, error)
 	result, err := handler.HandleInboundVoiceRequest(InboundVoiceRequest{
 		Method: sipRequestMethod(raw), CallID: rawSIPHeaderValue(raw, "Call-ID"),
 		From: rawSIPHeaderValue(raw, "From"), To: rawSIPHeaderValue(raw, "To"),
-		ContentType: rawSIPHeaderValue(raw, "Content-Type"), Body: body,
+		Contact: rawSIPHeaderValue(raw, "Contact"), RecordRoute: rawSIPHeaderValue(raw, "Record-Route"),
+		CSeq: rawSIPHeaderValue(raw, "CSeq"), ContentType: rawSIPHeaderValue(raw, "Content-Type"),
+		Body: body, Responder: newInboundVoiceResponder(raw, reply),
 	})
 	if !result.Handled {
 		return inboundSIPResult{}, false, err

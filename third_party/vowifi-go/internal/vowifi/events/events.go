@@ -88,6 +88,7 @@ type EventUSSDResult struct {
 // EventIncomingCall is published on an incoming call.
 type EventIncomingCall struct {
 	DevID string
+	CallID string
 	Caller   string
 	Callee   string
 	Time     time.Time

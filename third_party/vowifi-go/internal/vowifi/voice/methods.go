@@ -227,8 +227,18 @@ func (a *Agent) OnIMSBye(callID string) error {
 	if call == nil {
 		return errors.New("voice: call not found")
 	}
+	call.inboundDecisionMu.Lock()
+	defer call.inboundDecisionMu.Unlock()
+	if call.IsTerminalState() {
+		return nil
+	}
+	return a.finishRemoteBye(call)
+}
+
+func (a *Agent) finishRemoteBye(call *Call) error {
 	_ = call.Transition(callstate.StateDisconnected)
 	_ = call.Transition(callstate.StateEnded)
+	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	_ = call.CloseDone()
 	a.emitCallEnded(call)
@@ -248,6 +258,7 @@ func (a *Agent) OnIMSCancel(callID string) error {
 		return errors.New("voice: call not found")
 	}
 	_ = call.Transition(callstate.StateFailed)
+	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	_ = call.CloseDone()
 	a.emitCallCanceled(call)
@@ -266,6 +277,12 @@ func (a *Agent) OnIMSUpdate(callID string) error {
 	if call == nil {
 		return errors.New("voice: call not found")
 	}
+	call.inboundDecisionMu.Lock()
+	defer call.inboundDecisionMu.Unlock()
+	return a.applyIMSUpdate(call)
+}
+
+func (a *Agent) applyIMSUpdate(call *Call) error {
 	if call.GetState() != callstate.StateConnected {
 		return errors.New("voice: call is not connected")
 	}

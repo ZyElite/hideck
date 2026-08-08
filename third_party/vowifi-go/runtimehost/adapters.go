@@ -10,6 +10,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
+	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 )
 
 // serviceAdapter adapts an imscore.Service to the runtimehost.Service surface.
@@ -51,6 +52,56 @@ func (a *voiceAgentAdapter) Stop() error {
 		return nil
 	}
 	return a.agent.Stop()
+}
+
+func (a *voiceAgentAdapter) SetIncomingCallHandler(handler func(voicehost.IncomingCall)) {
+	if a == nil || a.agent == nil {
+		return
+	}
+	a.agent.SetIncomingCallHandler(func(call voice.IncomingCall) {
+		if handler != nil {
+			handler(adaptIncomingCall(call))
+		}
+	})
+}
+
+func (a *voiceAgentAdapter) IncomingCalls() []voicehost.IncomingCall {
+	if a == nil || a.agent == nil {
+		return nil
+	}
+	calls := a.agent.IncomingCalls()
+	result := make([]voicehost.IncomingCall, 0, len(calls))
+	for _, call := range calls {
+		result = append(result, adaptIncomingCall(call))
+	}
+	return result
+}
+
+func (a *voiceAgentAdapter) AnswerIncomingCall(ctx context.Context, callID, sdp string) (voicehost.AnswerResult, error) {
+	if a == nil || a.agent == nil {
+		return voicehost.AnswerResult{}, errors.New("runtimehost: voice agent is unavailable")
+	}
+	select {
+	case <-ctx.Done():
+		return voicehost.AnswerResult{}, ctx.Err()
+	default:
+	}
+	answer, err := a.agent.AnswerWithSDP(callID, sdp)
+	return voicehost.AnswerResult{CallID: answer.CallID, OfferSDP: answer.OfferSDP, State: answer.State}, err
+}
+
+func (a *voiceAgentAdapter) RejectIncomingCall(callID string, statusCode int) error {
+	if a == nil || a.agent == nil {
+		return errors.New("runtimehost: voice agent is unavailable")
+	}
+	return a.agent.Reject(callID, statusCode)
+}
+
+func adaptIncomingCall(call voice.IncomingCall) voicehost.IncomingCall {
+	return voicehost.IncomingCall{
+		DeviceID: call.DeviceID, CallID: call.CallID, Caller: call.Caller, Callee: call.Callee,
+		OfferSDP: call.OfferSDP, ReceivedAt: call.ReceivedAt, State: call.State,
+	}
 }
 
 func attachVoiceAgent(req StartRequest, inst *Instance, lifecycle IMSLifecycle) error {

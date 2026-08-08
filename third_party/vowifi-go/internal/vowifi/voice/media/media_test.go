@@ -121,6 +121,64 @@ func TestPTMapping(t *testing.T) {
 	}
 }
 
+func TestRTPRelayAppliesPTMappingOnNetworkPath(t *testing.T) {
+	imsRelay := listenMediaUDP(t)
+	lanRelay := listenMediaUDP(t)
+	imsPeer := listenMediaUDP(t)
+	lanPeer := listenMediaUDP(t)
+	relay := NewRTPRelay(imsRelay, lanRelay)
+	relay.SetRemoteAddr(imsPeer.LocalAddr().(*net.UDPAddr))
+	relay.SetClientAddr(lanPeer.LocalAddr().(*net.UDPAddr))
+	relay.SetPTMapping(map[int]int{8: 96})
+	if err := relay.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = relay.Stop() })
+
+	writeMediaRTP(t, lanPeer, relay.LANPort(), 8)
+	if got := readMediaRTP(t, imsPeer); got != 96 {
+		t.Fatalf("LAN->IMS payload type = %d, want 96", got)
+	}
+	writeMediaRTP(t, imsPeer, relay.IMSPort(), 96)
+	if got := readMediaRTP(t, lanPeer); got != 8 {
+		t.Fatalf("IMS->LAN payload type = %d, want 8", got)
+	}
+}
+
+func listenMediaUDP(t *testing.T) *net.UDPConn {
+	t.Helper()
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+func writeMediaRTP(t *testing.T, conn *net.UDPConn, port, payloadType int) {
+	t.Helper()
+	packet := []byte{0x80, byte(payloadType), 0, 1, 0, 0, 0, 0, 0, 0, 0, 1}
+	if _, err := conn.WriteToUDP(packet, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readMediaRTP(t *testing.T, conn *net.UDPConn) int {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	packet := make([]byte, 64)
+	n, _, err := conn.ReadFromUDP(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 2 {
+		t.Fatalf("short RTP packet: %d bytes", n)
+	}
+	return int(packet[1] & 0x7f)
+}
+
 func TestMediaSessionManager(t *testing.T) {
 	m := NewMediaSessionManager()
 	r, err := m.CreateRelay("call-1", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})

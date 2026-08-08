@@ -214,6 +214,7 @@ func (r *RTPRelay) loopIMS() {
 		}
 		pkt := make([]byte, n)
 		copy(pkt, buf[:n])
+		r.handleIMSPacket(pkt)
 		_, _ = lan.WriteTo(pkt, lanRemote)
 		r.monitor.UpdateIMS()
 		_ = addr
@@ -243,6 +244,7 @@ func (r *RTPRelay) loopLAN() {
 		}
 		pkt := make([]byte, n)
 		copy(pkt, buf[:n])
+		r.handleLANPacket(pkt)
 		_, _ = ims.WriteTo(pkt, imsRemote)
 		r.monitor.UpdateLAN()
 	}

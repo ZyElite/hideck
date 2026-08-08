@@ -56,12 +56,13 @@ type Profile struct {
 
 // Gateway drives VoWiFi calls on a device.
 type Gateway struct {
-	mu         sync.RWMutex
-	notifier   Notifier
-	client     ClientAdapter
-	dispatcher interface{ Dispatch(interface{}) }
-	agents     map[string]voiceAgent
-	started    bool
+	mu              sync.RWMutex
+	notifier        Notifier
+	client          ClientAdapter
+	dispatcher      interface{ Dispatch(interface{}) }
+	agents          map[string]voiceAgent
+	incomingHandler func(IncomingCall)
+	started         bool
 }
 
 // NewGateway returns a Gateway.
@@ -143,6 +144,7 @@ func (g *Gateway) SetAgent(deviceID string, a voiceAgent) error {
 		return errors.New("voicehost: device and agent are required")
 	}
 	deviceID = strings.TrimSpace(deviceID)
+	g.bindIncomingHandler(a)
 	g.mu.RLock()
 	started := g.started
 	previous := g.agents[deviceID]
