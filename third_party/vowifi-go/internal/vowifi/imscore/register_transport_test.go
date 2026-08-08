@@ -1,6 +1,7 @@
 package imscore
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -68,6 +69,92 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("registrar did not receive REGISTER")
 	}
+}
+
+func TestRegisterAutoPrefersTCP(t *testing.T) {
+	registrar, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registrar.Close()
+	requestSeen := make(chan string, 1)
+	serverResult := make(chan error, 1)
+	go serveTCPRegisterStatus(registrar, requestSeen, serverResult)
+
+	svc, err := New(registerTransportTestConfig("auto", registrar.Addr().String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	request := <-requestSeen
+	if !strings.HasPrefix(sipHeaderValue(request, "Via"), "SIP/2.0/TCP ") ||
+		!strings.Contains(sipHeaderValue(request, "Contact"), ";transport=tcp>") {
+		t.Fatalf("auto REGISTER did not select TCP: %q", request)
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegisterAutoFallsBackToUDPWhenTCPConnectFails(t *testing.T) {
+	registrar, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registrar.Close()
+	requestSeen := make(chan string, 1)
+	go serveRegisterStatus(registrar, 200, requestSeen)
+
+	svc, err := New(registerTransportTestConfig("auto", registrar.LocalAddr().String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	request := <-requestSeen
+	if !strings.HasPrefix(sipHeaderValue(request, "Via"), "SIP/2.0/UDP ") ||
+		!strings.Contains(sipHeaderValue(request, "Contact"), ";transport=udp>") {
+		t.Fatalf("auto REGISTER did not fall back to UDP: %q", request)
+	}
+}
+
+func registerTransportTestConfig(transport, registrar string) *IMSConfig {
+	return &IMSConfig{
+		DeviceID: "dev-auto", IMEI: "356938035643809", IMSI: "310260123456789",
+		IMPI: "310260123456789@ims.example", IMPU: []string{"sip:310260123456789@ims.example"},
+		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: transport,
+		Registrar: registrar, IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)),
+		AKAProvider: stubAKAProvider{},
+		RegisterTemplate: IMSRegisterTemplate{
+			AccessType: "wlan1", ContactOrder: []string{"access_type"},
+		},
+	}
+}
+
+func serveTCPRegisterStatus(listener *net.TCPListener, seen chan<- string, result chan<- error) {
+	conn, err := listener.AcceptTCP()
+	if err != nil {
+		result <- err
+		return
+	}
+	defer conn.Close()
+	request, err := readSIPStreamMessage(bufio.NewReader(conn))
+	if err != nil {
+		result <- err
+		return
+	}
+	seen <- request
+	_, err = conn.Write([]byte(registerWireResponse(request, 200, "")))
+	result <- err
 }
 
 func TestRegisterContactUsesRecoveredCarrierTemplate(t *testing.T) {

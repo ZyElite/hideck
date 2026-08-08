@@ -24,6 +24,9 @@ func TestResolveGiffgaffPreset(t *testing.T) {
 	if !reflect.DeepEqual(cfg.IMS.ContactOrder, wantOrder) {
 		t.Fatalf("giffgaff Contact order = %+v", cfg.IMS.ContactOrder)
 	}
+	if cfg.IMS.Transport != "auto" {
+		t.Fatalf("giffgaff IMS transport = %q, want auto", cfg.IMS.Transport)
+	}
 }
 
 func TestResolveATTE911PresetIncludesProductionEndpoints(t *testing.T) {
@@ -76,6 +79,15 @@ func TestValidateEffectiveCarrierRejectsInvalidIMSExpiry(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "expiry must be positive") {
 			t.Fatalf("ExpiresSeconds=%d error = %v", expires, err)
 		}
+	}
+}
+
+func TestValidateEffectiveCarrierRejectsUnknownIMSTransport(t *testing.T) {
+	cfg := ResolveEffectiveCarrierConfig(EffectiveCarrierConfigInput{MCC: "234", MNC: "10"})
+	cfg.IMS.Transport = "sctp"
+	err := ValidateEffectiveCarrierConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "unsupported IMS transport") {
+		t.Fatalf("ValidateEffectiveCarrierConfig() error = %v", err)
 	}
 }
 

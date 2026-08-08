@@ -27,6 +27,7 @@ func imsRegisterConfigForPrepared(prepared *identity.PreparedSession) (imscore.I
 	template := carrierConfig.IMS
 	registerTemplate := imscore.IMSRegisterTemplate{
 		Expires:                   time.Duration(template.ExpiresSeconds) * time.Second,
+		Transport:                 strings.ToLower(strings.TrimSpace(template.Transport)),
 		SupportedHeader:           strings.TrimSpace(template.SupportedHeader),
 		AllowHeader:               strings.TrimSpace(template.AllowHeader),
 		ContactMode:               strings.TrimSpace(template.ContactMode),

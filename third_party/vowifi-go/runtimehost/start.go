@@ -355,7 +355,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		EPDGAddr:         req.Prepared.EPDGAddr,
 		LocalIP:          innerIP,
 		Registrar:        registrar,
-		Transport:        "udp",
+		Transport:        registerTemplate.Transport,
 		Expires:          registerTemplate.Expires,
 		TraceID:          req.TraceID,
 		AKAProvider:      req.SIM.AKAProvider(),

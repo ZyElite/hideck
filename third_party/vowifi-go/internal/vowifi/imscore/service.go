@@ -295,6 +295,8 @@ func (s *Service) Stop() {
 	clientPortReserve := s.clientPortReserve
 	s.registrationIO = nil
 	s.registrationTCP = nil
+	s.registrationTCPProtected = false
+	s.registrationTransport = ""
 	s.securityServerIO = nil
 	s.clientPortReserve = nil
 	s.mu.Unlock()

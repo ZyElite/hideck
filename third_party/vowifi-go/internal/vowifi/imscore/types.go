@@ -49,7 +49,7 @@ type IMSConfig struct {
 	EPDGAddr string
 	// LocalIP is the local SIP address.
 	LocalIP net.IP
-	// Transport is the SIP transport ("udp"/"tcp").
+	// Transport is the SIP transport ("auto"/"tcp"/"udp").
 	Transport string
 	// Registrar is the registrar host:port.
 	Registrar string
@@ -84,6 +84,7 @@ type IMSConfig struct {
 // IMSRegisterTemplate is the carrier-specific REGISTER wire policy.
 type IMSRegisterTemplate struct {
 	Expires                   time.Duration
+	Transport                 string
 	SupportedHeader           string
 	AllowHeader               string
 	ContactMode               string
@@ -190,23 +191,25 @@ type Service struct {
 	spiPairs   [][2]uint32
 
 	// SIP transport.
-	transport           *sipTransport
-	registrationIO      net.PacketConn
-	registrationTCP     net.Conn
-	securityServerIO    net.Listener
-	clientPortReserve   net.Listener
-	registrationRemote  *net.UDPAddr
-	protectedClientPort int
-	protectedServerPort int
-	externalTransport   bool
-	protectedConnMu     sync.Mutex
-	protectedConns      map[net.Conn]struct{}
-	sipWriteMu          sync.Mutex
-	receiverMu          sync.Mutex
-	activeReceivers     int
-	networkDone         sync.WaitGroup
-	refreshTimer        *time.Timer
-	registerErrors      chan error
+	transport                *sipTransport
+	registrationIO           net.PacketConn
+	registrationTCP          net.Conn
+	registrationTCPProtected bool
+	registrationTransport    string
+	securityServerIO         net.Listener
+	clientPortReserve        net.Listener
+	registrationRemote       *net.UDPAddr
+	protectedClientPort      int
+	protectedServerPort      int
+	externalTransport        bool
+	protectedConnMu          sync.Mutex
+	protectedConns           map[net.Conn]struct{}
+	sipWriteMu               sync.Mutex
+	receiverMu               sync.Mutex
+	activeReceivers          int
+	networkDone              sync.WaitGroup
+	refreshTimer             *time.Timer
+	registerErrors           chan error
 
 	// Dialogs.
 	dialogs *dialogRegistry

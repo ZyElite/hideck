@@ -62,7 +62,7 @@ func defaultCarrierConfig(input EffectiveCarrierConfigInput) EffectiveCarrierCon
 
 func defaultIMSRegisterTemplate() IMSRegisterTemplate {
 	return IMSRegisterTemplate{
-		ExpiresSeconds: defaultIMSExpiresSeconds, SupportedHeader: defaultIMSSupportedHeader,
+		ExpiresSeconds: defaultIMSExpiresSeconds, Transport: "auto", SupportedHeader: defaultIMSSupportedHeader,
 		AllowHeader: defaultIMSAllowHeader, ContactMode: defaultIMSContactMode,
 		AccessType: defaultIMSAccessType, ICSIRef: defaultIMSICSIRef,
 		ContactOrder: append([]string(nil), defaultContactOrder...),
@@ -109,6 +109,7 @@ func mergeIMSRegisterTemplate(target *IMSRegisterTemplate, override IMSRegisterT
 	if override.expiresSet || override.ExpiresSeconds != 0 {
 		target.ExpiresSeconds = override.ExpiresSeconds
 	}
+	setStringIfPresent(&target.Transport, override.Transport)
 	setStringIfPresent(&target.SupportedHeader, override.SupportedHeader)
 	setStringIfPresent(&target.AllowHeader, override.AllowHeader)
 	setStringIfPresent(&target.ContactMode, override.ContactMode)
@@ -166,6 +167,11 @@ func validateIMSRegisterTemplate(template IMSRegisterTemplate) error {
 	}
 	if int64(template.ExpiresSeconds) > maxIMSExpiresSeconds {
 		return fmt.Errorf("carrier: IMS registration expiry %d seconds overflows duration", template.ExpiresSeconds)
+	}
+	switch strings.ToLower(strings.TrimSpace(template.Transport)) {
+	case "auto", "tcp", "udp":
+	default:
+		return fmt.Errorf("carrier: unsupported IMS transport %q", template.Transport)
 	}
 	if strings.TrimSpace(template.ContactMode) != defaultIMSContactMode {
 		return fmt.Errorf("carrier: unsupported IMS Contact mode %q", template.ContactMode)

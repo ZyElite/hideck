@@ -199,7 +199,7 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	expires := registerExpires(cfg)
 	authenticated := strings.TrimSpace(authHeader) != ""
 	protected := registerUsesProtectedTransport(session)
-	transport := registerRequestTransport(cfg, protected)
+	transport := s.registerRequestTransport(protected)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("REGISTER sip:%s SIP/2.0\r\n", cfg.Domain))
 	localAddress := s.registerLocalAddress(session)
@@ -301,7 +301,11 @@ func registerSecurityHeaders(session *registerSession) string {
 }
 
 func (s *Service) registerLocalAddress(session *registerSession) string {
-	return sipLocalAddress(s.cfg)
+	port := s.cfg.LocalPort
+	if registerUsesProtectedTransport(session) && session.security.client.PortC != 0 {
+		port = int(session.security.client.PortC)
+	}
+	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(port))
 }
 
 func (s *Service) registerContactAddress(session *registerSession) string {
@@ -311,11 +315,21 @@ func (s *Service) registerContactAddress(session *registerSession) string {
 	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(int(session.security.client.PortS)))
 }
 
-func registerRequestTransport(cfg *IMSConfig, protected bool) string {
+func (s *Service) registerRequestTransport(protected bool) string {
 	if protected {
 		return "tcp"
 	}
-	return cfg.Transport
+	s.mu.RLock()
+	transport := s.registrationTransport
+	s.mu.RUnlock()
+	if transport != "" {
+		return transport
+	}
+	candidates, err := registerTransportCandidates(s.cfg.Transport)
+	if err != nil || len(candidates) == 0 {
+		return "tcp"
+	}
+	return candidates[0]
 }
 
 func registerViaAlias(protected bool) string {

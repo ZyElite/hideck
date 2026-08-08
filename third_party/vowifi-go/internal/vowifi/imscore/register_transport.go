@@ -23,9 +23,14 @@ func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 		return s.dialProtectedRegistrationTCP(ctx, client, server)
 	}
 	if s.transport.hasSendFn() {
+		candidates, err := registerTransportCandidates(s.cfg.Transport)
+		if err != nil {
+			return err
+		}
 		s.mu.Lock()
 		if s.registrationIO == nil && s.registrationTCP == nil {
 			s.externalTransport = true
+			s.registrationTransport = candidates[0]
 		}
 		s.mu.Unlock()
 		return nil
@@ -33,50 +38,13 @@ func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 	if s.cfg.IMSNetwork == nil {
 		return errors.New("imscore: no IMS network")
 	}
-	remote, err := s.resolveRegistrar(ctx)
-	if err != nil {
-		return err
-	}
-	local := &net.UDPAddr{IP: s.cfg.LocalIP, Port: 0}
-	conn, err := s.cfg.IMSNetwork.ListenPacket("udp", local)
-	if err != nil {
-		return fmt.Errorf("imscore: listen on IMS network: %w", err)
-	}
-	if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
-		s.cfg.LocalPort = addr.Port
-	}
 	serverListener, clientReservation, err := s.reserveProtectedTCPPorts()
 	if err != nil {
-		_ = conn.Close()
 		return err
 	}
-	s.mu.Lock()
-	s.registrationIO = conn
-	s.securityServerIO = serverListener
-	s.clientPortReserve = clientReservation
-	s.registrationRemote = cloneUDPAddr(remote)
-	if serverListener != nil {
-		s.protectedServerPort = tcpPort(serverListener.Addr())
-	}
-	if clientReservation != nil {
-		s.protectedClientPort = tcpPort(clientReservation.Addr())
-	}
-	s.mu.Unlock()
-	s.transport.SetSendFn(func(request string) error {
-		remote := s.currentRegistrationRemote()
-		if remote == nil {
-			return errors.New("imscore: registrar address is unavailable")
-		}
-		if _, err := conn.WriteTo([]byte(request), remote); err != nil {
-			return fmt.Errorf("imscore: send REGISTER datagram: %w", err)
-		}
-		return nil
-	})
-	s.networkDone.Add(1)
-	go s.readRegistrationResponses(conn)
-	if serverListener != nil {
-		s.networkDone.Add(1)
-		go s.acceptProtectedSIP(serverListener)
+	if err := s.openInitialRegistrationTransport(ctx, serverListener, clientReservation); err != nil {
+		closeRegistrationReservations(serverListener, clientReservation)
+		return err
 	}
 	return nil
 }
@@ -159,7 +127,7 @@ func (s *Service) dialProtectedRegistrationTCP(ctx context.Context, client, serv
 func (s *Service) protectedReconnectParameters() (bool, securityMechanism, securityMechanism) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.externalTransport || s.registrationTCP != nil || s.regSession == nil || s.regSession.security == nil || s.regSession.security.server == nil {
+	if s.externalTransport || (s.registrationTCP != nil && s.registrationTCPProtected) || s.regSession == nil || s.regSession.security == nil || s.regSession.security.server == nil {
 		return false, securityMechanism{}, securityMechanism{}
 	}
 	return true, s.regSession.security.client, *s.regSession.security.server
@@ -168,52 +136,24 @@ func (s *Service) protectedReconnectParameters() (bool, securityMechanism, secur
 func (s *Service) protectedTransportState() (external, connected bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.externalTransport, s.registrationTCP != nil
+	return s.externalTransport, s.registrationTCP != nil && s.registrationTCPProtected
 }
 
 func (s *Service) activateProtectedRegistrationTCP(conn net.Conn) {
 	s.mu.Lock()
+	previous := s.registrationTCP
 	s.registrationTCP = conn
+	s.registrationTCPProtected = true
+	s.registrationTransport = "tcp"
 	s.mu.Unlock()
 	s.transport.SetSendFn(func(request string) error {
 		return s.writeSIPStream(conn, request)
 	})
 	s.networkDone.Add(1)
 	go s.readRegistrationStream(conn)
-}
-
-func (s *Service) resolveRegistrar(ctx context.Context) (*net.UDPAddr, error) {
-	target := strings.TrimSpace(s.cfg.Registrar)
-	if target == "" {
-		target = s.discoverRegistrar(ctx)
+	if previous != nil && previous != conn {
+		_ = previous.Close()
 	}
-	host, portText, err := net.SplitHostPort(target)
-	if err != nil {
-		return nil, fmt.Errorf("imscore: parse registrar %q: %w", target, err)
-	}
-	ip, err := s.cfg.IMSNetwork.ResolveIP(ctx, host)
-	if err != nil {
-		return nil, fmt.Errorf("imscore: resolve registrar %s: %w", host, err)
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil {
-		return nil, fmt.Errorf("imscore: parse registrar port %q: %w", portText, err)
-	}
-	return &net.UDPAddr{IP: ip, Port: port}, nil
-}
-
-func (s *Service) discoverRegistrar(ctx context.Context) string {
-	domain := strings.TrimSpace(s.cfg.Domain)
-	type srvResolver interface {
-		LookupSRV(context.Context, string, string, string) (string, uint16, error)
-	}
-	if resolver, ok := s.cfg.IMSNetwork.(srvResolver); ok {
-		host, port, err := resolver.LookupSRV(ctx, "sip", "udp", domain)
-		if err == nil && strings.TrimSpace(host) != "" && port != 0 {
-			return net.JoinHostPort(strings.TrimSpace(host), strconv.Itoa(int(port)))
-		}
-	}
-	return net.JoinHostPort(domain, strconv.Itoa(defaultSIPPort))
 }
 
 func (s *Service) readRegistrationResponses(conn net.PacketConn) {
@@ -294,6 +234,7 @@ func (s *Service) clearClosedRegistrationTCP(conn net.Conn) {
 	s.mu.Lock()
 	if s.registrationTCP == conn {
 		s.registrationTCP = nil
+		s.registrationTCPProtected = false
 	}
 	s.mu.Unlock()
 }

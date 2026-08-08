@@ -29,6 +29,7 @@ type E911Config struct {
 // IMSRegisterTemplate is the IMS registration template for the carrier.
 type IMSRegisterTemplate struct {
 	ExpiresSeconds            int
+	Transport                 string
 	SupportedHeader           string
 	AllowHeader               string
 	ContactMode               string

@@ -143,6 +143,10 @@ func serveUDPChallengeThenTCPSuccess(udpServer *net.UDPConn, tcpServer *net.TCPL
 		result <- err
 		return
 	}
+	if via := sipHeaderValue(authenticated, "Via"); !strings.Contains(via, fmt.Sprintf(":%d;", client.PortC)) {
+		result <- fmt.Errorf("protected Via = %q, want client port %d", via, client.PortC)
+		return
+	}
 	if sipHeaderValue(authenticated, "Security-Verify") != serverHeader || strings.Contains(sipHeaderValue(authenticated, "Authorization"), "qop=") {
 		result <- errors.New("authenticated REGISTER did not preserve recovered security or Digest shape")
 		return
