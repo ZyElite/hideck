@@ -26,7 +26,6 @@ import (
 
 const (
 	imsNICID        tcpip.NICID = 1
-	imsMTU                      = 1400
 	packetQueueSize             = 1024
 )
 
@@ -60,7 +59,7 @@ func newGVisorNetwork(innerIP net.IP, prefixLen int, dns []string, packetIO Pack
 			tcp.NewProtocol, udp.NewProtocol, icmp.NewProtocol4, icmp.NewProtocol6,
 		},
 	})
-	g.link = channel.New(packetQueueSize, imsMTU, "")
+	g.link = channel.New(packetQueueSize, imsLinkMTU(protocol), "")
 	if err := g.stack.CreateNIC(imsNICID, g.link); err != nil {
 		g.stack.Close()
 		return nil, gvisorError("create IMS NIC", err)
@@ -155,7 +154,7 @@ func (g *gvisorNetwork) DialContext(ctx context.Context, network, addr string) (
 		return gonet.DialUDP(g.stack, nil, &remote, protocol)
 	}
 	if strings.HasPrefix(strings.ToLower(network), "tcp") {
-		return gonet.DialContextTCP(ctx, g.stack, remote, protocol)
+		return dialTCPWithMSS(ctx, g.stack, tcpDialConfig{remote: remote, protocol: protocol})
 	}
 	return nil, fmt.Errorf("netstack: unsupported network %q", network)
 }
@@ -172,7 +171,9 @@ func (g *gvisorNetwork) DialTCPContext(ctx context.Context, local, remote *net.T
 	if localProtocol != remoteProtocol {
 		return nil, errors.New("netstack: TCP local and remote address families differ")
 	}
-	return gonet.DialTCPWithBind(ctx, g.stack, localAddress, remoteAddress, localProtocol)
+	return dialTCPWithMSS(ctx, g.stack, tcpDialConfig{
+		local: localAddress, remote: remoteAddress, protocol: localProtocol,
+	})
 }
 
 func (g *gvisorNetwork) ListenTCP(addr *net.TCPAddr) (net.Listener, error) {
@@ -180,7 +181,7 @@ func (g *gvisorNetwork) ListenTCP(addr *net.TCPAddr) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	return gonet.ListenTCP(g.stack, full, protocol)
+	return listenTCPWithMSS(g.stack, full, protocol)
 }
 
 func (g *gvisorNetwork) ListenPacket(network string, addr *net.UDPAddr) (net.PacketConn, error) {

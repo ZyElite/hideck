@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
+	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
 )
@@ -91,6 +93,48 @@ func TestTunnelNetworkSendsIPv6UDPThroughPacketIO(t *testing.T) {
 		assertIPv6UDPPacket(t, packet, destination, payload)
 	case <-time.After(time.Second):
 		t.Fatal("IPv6 UDP packet did not reach SWu packet IO")
+	}
+}
+
+func TestTunnelNetworkAdvertisesOriginalIPSecTCPMSS(t *testing.T) {
+	packetIO := newChannelPacketIO()
+	network, err := NewTunnelNetwork(net.IPv4(10, 0, 0, 2), 32, nil, packetIO)
+	if err != nil {
+		t.Fatalf("NewTunnelNetwork: %v", err)
+	}
+	defer network.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	dialDone := make(chan error, 1)
+	go func() {
+		_, dialErr := network.DialTCPContext(ctx,
+			&net.TCPAddr{IP: net.IPv4(10, 0, 0, 2), Port: 21100},
+			&net.TCPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 6060})
+		dialDone <- dialErr
+	}()
+
+	select {
+	case packet := <-packetIO.outbound:
+		ipHeaderLength := int(packet[0]&0x0f) * 4
+		tcpHeader := header.TCP(packet[ipHeaderLength:])
+		if got := header.ParseSynOptions(tcpHeader.Options(), false).MSS; got != imsTCPMSS {
+			t.Fatalf("advertised MSS = %d, want %d", got, imsTCPMSS)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("TCP SYN did not reach SWu packet IO")
+	}
+	cancel()
+	if err := <-dialDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("DialTCPContext error = %v, want context canceled", err)
+	}
+}
+
+func TestIMSLinkMTUClampsIPv4TCPSegments(t *testing.T) {
+	if got := imsLinkMTU(ipv4.ProtocolNumber); got != imsTCPMSS+header.IPv4MinimumSize+header.TCPMinimumSize {
+		t.Fatalf("IPv4 IMS link MTU = %d", got)
+	}
+	if got := imsLinkMTU(ipv6.ProtocolNumber); got < header.IPv6MinimumMTU {
+		t.Fatalf("IPv6 IMS link MTU = %d, below IPv6 minimum", got)
 	}
 }
 
