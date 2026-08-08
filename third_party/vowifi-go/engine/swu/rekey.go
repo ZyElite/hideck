@@ -64,11 +64,6 @@ func (s *Session) setupXFRMDataPlane() error {
 	return s.setupKernelXFRMDataPlane(keys)
 }
 
-// startUserspaceDataPlane starts the user-space data plane.
-func (s *Session) startUserspaceDataPlane() error {
-	return s.startEstablishedDataPlane()
-}
-
 // parsePayloads parses a raw payload chain.
 func (s *Session) parsePayloads(raw []byte) ([]ikev2.Payload, error) {
 	return ikev2.DecodePayloadChain(raw)

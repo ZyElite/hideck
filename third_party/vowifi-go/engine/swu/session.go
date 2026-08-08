@@ -236,6 +236,7 @@ type Session struct {
 	ikeSAInitResponse      []byte
 
 	// --- data plane ---
+	innerEndpointMu sync.RWMutex
 	innerEndpoint   *userspaceInnerPacketEndpoint
 	tun             *driver.TUNDevice
 	networkTxn      *driver.NetTxn
@@ -823,9 +824,11 @@ func (s *Session) primaryInnerIP() net.IP {
 
 // InnerPacketIO returns the packet boundary for the user-space IMS stack.
 func (s *Session) InnerPacketIO() InnerPacketIO {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.innerEndpoint
+	endpoint := s.currentInnerPacketEndpoint()
+	if endpoint == nil {
+		return nil
+	}
+	return endpoint
 }
 
 func cloneIPs(in []net.IP) []net.IP {
@@ -844,11 +847,6 @@ func (s *Session) NextSequenceNumber() uint32 {
 		return 0
 	}
 	return s.espOutboundSA.NextSequenceNumber()
-}
-
-// InnerPacketEndpoint returns the user-space inner packet endpoint.
-func (s *Session) InnerPacketEndpoint() *userspaceInnerPacketEndpoint {
-	return s.innerEndpoint
 }
 
 // startTimers arms the rekey / reauth / keepalive / DPD timers.
@@ -992,10 +990,11 @@ func (s *Session) logSessionStats() {
 
 // logDataPlaneStats logs inner-packet counters.
 func (s *Session) logDataPlaneStats() {
-	if s.debug == nil || s.innerEndpoint == nil {
+	endpoint := s.currentInnerPacketEndpoint()
+	if s.debug == nil || endpoint == nil {
 		return
 	}
-	s.debug.LogRaw(s.innerEndpoint.Snapshot())
+	s.debug.LogRaw(fmt.Sprintf("userspace inner packet %+v", endpoint.Snapshot()))
 }
 
 // StartDPD starts the dead-peer-detection timer (RFC 7296 §1.4.2).

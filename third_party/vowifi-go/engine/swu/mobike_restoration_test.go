@@ -108,7 +108,7 @@ func TestMOBIKEUpdateMigratesProductionControlPlane(t *testing.T) {
 func assertMigratedUserspaceDataPlane(t *testing.T, session *Session, transport *testIKETransport) {
 	t.Helper()
 	outbound := testIPv4Flow(session.innerIP, net.IPv4(8, 8, 8, 8))
-	if err := session.innerEndpoint.WritePacket(outbound); err != nil {
+	if err := session.innerEndpoint.WritePacket(context.Background(), outbound); err != nil {
 		t.Fatalf("write migrated outbound packet: %v", err)
 	}
 	select {
@@ -124,7 +124,7 @@ func assertMigratedUserspaceDataPlane(t *testing.T, session *Session, transport 
 	transport.esp <- esp
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	read, err := session.innerEndpoint.ReadPacketContext(ctx)
+	read, err := session.innerEndpoint.ReadPacket(ctx)
 	if err != nil || !bytes.Equal(read, inbound) {
 		t.Fatalf("migrated inbound packet = %x err=%v", read, err)
 	}

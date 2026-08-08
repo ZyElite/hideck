@@ -103,9 +103,12 @@ func TestDataPlaneUsesIndependentInboundAndOutboundSPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build inbound packet: %v", err)
 	}
-	decoded, err := s.decapsulateOuterESP(inbound)
+	decoded, spi, err := s.decapsulateOuterESP(inbound)
 	if err != nil {
 		t.Fatalf("decapsulateOuterESP: %v", err)
+	}
+	if spi != s.espLocalSPI {
+		t.Fatalf("decapsulated SPI = %08x, want %08x", spi, s.espLocalSPI)
 	}
 	if !bytes.Equal(decoded, inner) {
 		t.Fatal("inbound ESP plaintext mismatch")
@@ -139,6 +142,7 @@ func TestDataPlaneEncapsulationLeaseReleasesPooledBuffer(t *testing.T) {
 	if !bytes.Equal(decoded, inner) {
 		t.Fatal("leased ESP plaintext mismatch")
 	}
+	lease.Release()
 	lease.Release()
 	if lease.data != nil || lease.buffer.Bytes() != nil {
 		t.Fatal("packet lease retained data after Release")

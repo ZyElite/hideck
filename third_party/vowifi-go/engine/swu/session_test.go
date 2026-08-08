@@ -116,31 +116,21 @@ func TestExtractDstTuple(t *testing.T) {
 	}
 }
 
-func TestInnerEndpointKeepsNetworkAndHostDirectionsSeparate(t *testing.T) {
-	endpoint := newUserspaceInnerPacketEndpoint(1, 1)
+func TestInnerEndpointContextAliasesPreserveInboundOwnership(t *testing.T) {
+	session := NewSession(&Config{})
+	endpoint := newUserspaceInnerPacketEndpoint(session, newTestIKETransport(), 1)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	networkPacket := []byte("from-network")
-	if err := endpoint.deliverNetworkPacket(ctx, networkPacket); err != nil {
-		t.Fatalf("deliverNetworkPacket: %v", err)
-	}
+	endpoint.inbound <- append([]byte(nil), networkPacket...)
 	got, err := endpoint.ReadPacketContext(ctx)
 	if err != nil || !bytes.Equal(got, networkPacket) {
 		t.Fatalf("network packet = %q, %v", got, err)
 	}
-
-	hostPacket := []byte("from-host")
-	if err := endpoint.WritePacketContext(ctx, hostPacket); err != nil {
-		t.Fatalf("WritePacketContext: %v", err)
-	}
-	select {
-	case got = <-endpoint.hostPackets:
-		if !bytes.Equal(got, hostPacket) {
-			t.Fatalf("host packet = %q", got)
-		}
-	case <-ctx.Done():
-		t.Fatal("host packet did not reach outbound queue")
+	got[0] = 'X'
+	if bytes.Equal(got, networkPacket) {
+		t.Fatal("ReadPacketContext returned endpoint-owned storage")
 	}
 }
 
@@ -306,7 +296,6 @@ func TestConnectReportsAlgorithmInitializationFailure(t *testing.T) {
 func TestStartEstablishedDataPlaneMarksRunning(t *testing.T) {
 	s := NewSession(&Config{})
 	s.socket = newTestIKETransport()
-	s.innerEndpoint = newUserspaceInnerPacketEndpoint(1, 1)
 	if err := s.startEstablishedDataPlane(); err != nil {
 		t.Fatalf("startEstablishedDataPlane() error = %v", err)
 	}
@@ -322,7 +311,6 @@ func TestStartEstablishedDataPlaneMarksRunning(t *testing.T) {
 func TestShutdownWaitsForDataPlaneBeforeClearingTransport(t *testing.T) {
 	s := NewSession(&Config{})
 	s.socket = newTestIKETransport()
-	s.innerEndpoint = newUserspaceInnerPacketEndpoint(1, 1)
 	if err := s.startEstablishedDataPlane(); err != nil {
 		t.Fatalf("startEstablishedDataPlane() error = %v", err)
 	}

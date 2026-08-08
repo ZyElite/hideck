@@ -1,148 +1,15 @@
 package swu
 
 import (
-	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
-	"sync"
-	"sync/atomic"
 
 	"github.com/iniwex5/vowifi-go/engine/bufferpool"
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
 )
-
-// dataPlaneRuntimeStats tracks inner-packet data-plane counters.
-type dataPlaneRuntimeStats struct {
-	innerRx atomic.Uint64 // inner packets received from the host stack
-	innerTx atomic.Uint64 // inner packets sent to the host stack
-	espRx   atomic.Uint64 // ESP packets received from the network
-	espTx   atomic.Uint64 // ESP packets sent to the network
-}
-
-// snapshot returns a copy of the counters.
-func (s *dataPlaneRuntimeStats) snapshot() map[string]uint64 {
-	return map[string]uint64{
-		"inner_rx": s.innerRx.Load(),
-		"inner_tx": s.innerTx.Load(),
-		"esp_rx":   s.espRx.Load(),
-		"esp_tx":   s.espTx.Load(),
-	}
-}
-
-// innerPacketSnapshot returns the inner-packet counters as a string.
-func (s *dataPlaneRuntimeStats) innerPacketSnapshot() string {
-	return fmt.Sprintf("inner rx=%d tx=%d esp rx=%d tx=%d",
-		s.innerRx.Load(), s.innerTx.Load(), s.espRx.Load(), s.espTx.Load())
-}
-
-// userspaceInnerPacketEndpoint is the user-space TUN-like endpoint that
-// exchanges inner IP packets with the host stack. It is backed by a channel
-// pair: the host stack reads from innerPackets and writes to hostPackets.
-type userspaceInnerPacketEndpoint struct {
-	innerPackets chan []byte // inner IP packets from the network (ESP-decapsulated)
-	hostPackets  chan []byte // inner IP packets from the host stack (to be ESP-encapsulated)
-	closed       chan struct{}
-	closeOnce    sync.Once
-	stats        dataPlaneRuntimeStats
-}
-
-// InnerPacketIO is the packet boundary consumed by the user-space IMS stack.
-type InnerPacketIO interface {
-	ReadPacketContext(context.Context) ([]byte, error)
-	WritePacketContext(context.Context, []byte) error
-}
-
-// newUserspaceInnerPacketEndpoint creates the endpoint with the given buffer
-// sizes.
-func newUserspaceInnerPacketEndpoint(innerBuf, hostBuf int) *userspaceInnerPacketEndpoint {
-	if innerBuf <= 0 {
-		innerBuf = 64
-	}
-	if hostBuf <= 0 {
-		hostBuf = 64
-	}
-	return &userspaceInnerPacketEndpoint{
-		innerPackets: make(chan []byte, innerBuf),
-		hostPackets:  make(chan []byte, hostBuf),
-		closed:       make(chan struct{}),
-	}
-}
-
-// start begins the endpoint (no-op; the channels are live on construction).
-func (e *userspaceInnerPacketEndpoint) start() error {
-	return nil
-}
-
-// isClosed reports whether the endpoint has been closed.
-func (e *userspaceInnerPacketEndpoint) isClosed() bool {
-	select {
-	case <-e.closed:
-		return true
-	default:
-		return false
-	}
-}
-
-// Close shuts the endpoint down.
-func (e *userspaceInnerPacketEndpoint) Close() error {
-	e.closeOnce.Do(func() { close(e.closed) })
-	return nil
-}
-
-// ReadPacket returns the next inner packet from the network.
-func (e *userspaceInnerPacketEndpoint) ReadPacket() ([]byte, error) {
-	return e.ReadPacketContext(context.Background())
-}
-
-// ReadPacketContext returns the next inner packet or the context error.
-func (e *userspaceInnerPacketEndpoint) ReadPacketContext(ctx context.Context) ([]byte, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-e.closed:
-		return nil, errors.New("swu: inner endpoint closed")
-	case pkt := <-e.innerPackets:
-		e.stats.innerTx.Add(1)
-		return pkt, nil
-	}
-}
-
-// WritePacket queues an inner packet from the host stack for ESP encapsulation.
-func (e *userspaceInnerPacketEndpoint) WritePacket(pkt []byte) error {
-	return e.WritePacketContext(context.Background(), pkt)
-}
-
-// WritePacketContext queues an inner packet or returns the context error.
-func (e *userspaceInnerPacketEndpoint) WritePacketContext(ctx context.Context, pkt []byte) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-e.closed:
-		return errors.New("swu: inner endpoint closed")
-	case e.hostPackets <- pkt:
-		e.stats.innerRx.Add(1)
-		return nil
-	}
-}
-
-func (e *userspaceInnerPacketEndpoint) deliverNetworkPacket(ctx context.Context, pkt []byte) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-e.closed:
-		return errors.New("swu: inner endpoint closed")
-	case e.innerPackets <- pkt:
-		return nil
-	}
-}
-
-// Snapshot returns the endpoint counters.
-func (e *userspaceInnerPacketEndpoint) Snapshot() string {
-	return e.stats.innerPacketSnapshot()
-}
 
 // setupDataPlane builds the ESP SA and the inner packet endpoint after the
 // CREATE_CHILD_SA exchange.
@@ -187,7 +54,6 @@ func (s *Session) setupDataPlane() error {
 	if mode == DataplaneModeTUN {
 		return s.setupTUNDataPlane()
 	}
-	s.innerEndpoint = newUserspaceInnerPacketEndpoint(0, 0)
 	return nil
 }
 
@@ -290,17 +156,7 @@ func (s *Session) startEstablishedDataPlane() error {
 		s.startTUNDataPlaneLoop()
 		return nil
 	}
-	if s.innerEndpoint == nil {
-		return errors.New("swu: data plane not ready")
-	}
-	if err := s.innerEndpoint.start(); err != nil {
-		return fmt.Errorf("swu: start inner endpoint: %w", err)
-	}
-	if !s.markDataPlaneStarted() {
-		return nil
-	}
-	s.startDataPlaneLoop()
-	return nil
+	return s.startUserspaceDataPlane()
 }
 
 func (s *Session) markDataPlaneStarted() bool {
@@ -313,87 +169,21 @@ func (s *Session) markDataPlaneStarted() bool {
 	return true
 }
 
-// startDataPlaneLoop runs the two data-plane loops: ESP → inner and inner → ESP.
-func (s *Session) startDataPlaneLoop() {
-	transport := s.transport()
-	endpoint := s.innerEndpoint
-	s.dataPlaneWG.Add(2)
-	go s.loopESPToInner(transport, endpoint)
-	go s.loopInnerToESP(transport, endpoint)
-}
-
-// loopESPToInner reads ESP packets from the socket and delivers the inner
-// packets to the endpoint.
-func (s *Session) loopESPToInner(transport ipsec.Transport, endpoint *userspaceInnerPacketEndpoint) {
-	defer s.dataPlaneWG.Done()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case raw, ok := <-transport.ESPPackets():
-			if !ok {
-				replacement := s.replacementTransport(transport)
-				if replacement == nil {
-					return
-				}
-				transport = replacement
-				continue
-			}
-			inner, err := s.decapsulateOuterESP(raw)
-			if err != nil {
-				continue
-			}
-			if endpoint != nil {
-				if err := endpoint.deliverNetworkPacket(s.ctx, inner); err != nil {
-					return
-				}
-			}
-		}
-	}
-}
-
-// loopInnerToESP reads inner packets from the endpoint and sends them as ESP.
-func (s *Session) loopInnerToESP(transport ipsec.Transport, endpoint *userspaceInnerPacketEndpoint) {
-	defer s.dataPlaneWG.Done()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case pkt, ok := <-endpoint.hostPackets:
-			if !ok {
-				return
-			}
-			lease, err := s.encapsulateInnerPacketLease(pkt)
-			if err != nil {
-				continue
-			}
-			active := s.transport()
-			if active == nil {
-				lease.Release()
-				s.failDataPlane(errors.New("swu: active ESP transport disappeared"))
-				return
-			}
-			err = active.SendESP(lease.data)
-			lease.Release()
-			if err != nil {
-				s.failDataPlane(fmt.Errorf("swu: send ESP packet: %w", err))
-				return
-			}
-		}
-	}
-}
-
 // encapsulateInnerPacket wraps an inner IP packet in ESP (RFC 4303).
 func (s *Session) encapsulateInnerPacket(inner []byte) ([]byte, error) {
 	s.childSAMu.RLock()
 	defer s.childSAMu.RUnlock()
 	if s.espOutboundSA == nil {
-		return nil, errors.New("swu: no ESP SA")
+		return nil, errInnerPacketSAMissing
 	}
 	if !matchSelectors(inner, s.childTSi, s.childTSr) {
 		return nil, errors.New("swu: outbound inner packet is outside negotiated traffic selectors")
 	}
-	return ipsec.Encapsulate(inner, s.espOutboundSA)
+	esp, err := ipsec.Encapsulate(inner, s.espOutboundSA)
+	if err != nil {
+		return nil, fmt.Errorf("encapsulate inner packet: %w", err)
+	}
+	return esp, nil
 }
 
 // encapsulateInnerPacketLease wraps an inner packet using a buffer-pool lease.
@@ -401,65 +191,54 @@ func (s *Session) encapsulateInnerPacketLease(inner []byte) (*packetLease, error
 	s.childSAMu.RLock()
 	defer s.childSAMu.RUnlock()
 	if s.espOutboundSA == nil {
-		return nil, errors.New("swu: no ESP SA")
+		return nil, errInnerPacketSAMissing
 	}
 	if !matchSelectors(inner, s.childTSi, s.childTSr) {
 		return nil, errors.New("swu: outbound inner packet is outside negotiated traffic selectors")
 	}
 	total, _, err := ipsec.EncapsulationLayout(len(inner), s.espOutboundSA)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("plan inner packet encapsulation: %w", err)
 	}
 	buffer := bufferpool.Get(total)
 	esp, err := ipsec.EncapsulateInto(buffer.Bytes()[:0], inner, s.espOutboundSA)
 	if err != nil {
 		buffer.Release()
-		return nil, err
+		return nil, fmt.Errorf("encapsulate inner packet: %w", err)
 	}
 	return &packetLease{data: esp, buffer: buffer}, nil
 }
 
-// decapsulateOuterESP unwraps an ESP packet into the inner IP packet.
-func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, error) {
+// decapsulateOuterESP returns the plaintext and parsed SPI for diagnostics.
+func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, uint32, error) {
 	if len(esp) < 4 {
-		return nil, errors.New("swu: ESP packet is too short for SPI")
+		return nil, 0, errors.New("ESP packet too short for SPI")
 	}
 	spi := binary.BigEndian.Uint32(esp[:4])
 	s.childSAMu.RLock()
-	defer s.childSAMu.RUnlock()
 	inbound := s.espInboundSAs[spi]
 	if inbound == nil && s.espInboundSA != nil && s.espInboundSA.SPI == spi {
 		inbound = s.espInboundSA
 	}
+	s.childSAMu.RUnlock()
 	if inbound == nil {
-		return nil, errors.New("swu: no ESP SA")
+		return nil, spi, fmt.Errorf("%w: spi=%08x", errInnerPacketSAMissing, spi)
 	}
 	inner, err := ipsec.Decapsulate(esp, inbound)
 	if err != nil {
-		return nil, err
+		return nil, spi, fmt.Errorf("decapsulate ESP packet: %w", err)
 	}
 	if !matchInboundSelectors(inner, s.childTSi, s.childTSr) {
-		return nil, errors.New("swu: inbound inner packet is outside negotiated traffic selectors")
+		return nil, spi, errors.New("swu: inbound inner packet is outside negotiated traffic selectors")
 	}
-	return inner, nil
-}
-
-// handleOuterESP processes an inbound ESP packet (alias for decapsulateOuterESP).
-func (e *userspaceInnerPacketEndpoint) handleOuterESP(esp []byte) ([]byte, error) {
-	return nil, errors.New("swu: handleOuterESP requires a session")
-}
-
-// readOuterESP reads the next ESP packet from the socket.
-func (e *userspaceInnerPacketEndpoint) readOuterESP() ([]byte, error) {
-	return nil, errors.New("swu: readOuterESP requires a session")
+	return inner, spi, nil
 }
 
 // stopDataPlane tears down the data plane.
 func (s *Session) stopDataPlane() error {
 	var cleanupErr error
-	if s.innerEndpoint != nil {
-		cleanupErr = errors.Join(cleanupErr, s.innerEndpoint.Close())
-		s.innerEndpoint = nil
+	if endpoint := s.swapInnerPacketEndpoint(nil); endpoint != nil {
+		cleanupErr = errors.Join(cleanupErr, endpoint.Close())
 	}
 	if s.networkTxn != nil {
 		cleanupErr = errors.Join(cleanupErr, s.networkTxn.Rollback())
@@ -473,6 +252,7 @@ func (s *Session) stopDataPlane() error {
 		cleanupErr = errors.Join(cleanupErr, s.kernelDataPlane.Close())
 		s.kernelDataPlane = nil
 	}
+	s.dataPlaneWG.Wait()
 	s.childSAMu.Lock()
 	wipeESPAssociation(s.espOutboundSA)
 	for _, association := range s.espInboundSAs {

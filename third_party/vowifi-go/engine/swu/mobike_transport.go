@@ -80,8 +80,10 @@ func (s *Session) migrateMOBIKETransport(spec mobikeAddressSpec) error {
 		return errors.Join(err, s.resumeIKEControlAfterMobility(control))
 	}
 	s.setTransport(replacement)
+	s.rebindUserspaceTransport(replacement)
 	if err := s.resumeIKEControlAfterMobility(control); err != nil {
 		s.setTransport(previous)
+		s.rebindUserspaceTransport(previous)
 		kernelErr := s.updateKernelMOBIKETransport(previous)
 		controlErr := s.resumeIKEControlAfterMobility(control)
 		return errors.Join(fmt.Errorf("swu: start migrated IKE control plane: %w", err), kernelErr, controlErr)

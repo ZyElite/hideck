@@ -175,7 +175,7 @@ func (s *Session) loopESPToTUN(transport ipsec.Transport, tun *driver.TUNDevice)
 				transport = replacement
 				continue
 			}
-			inner, err := s.decapsulateOuterESP(raw)
+			inner, _, err := s.decapsulateOuterESP(raw)
 			if err != nil {
 				continue
 			}
