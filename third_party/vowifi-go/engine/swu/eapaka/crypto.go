@@ -114,6 +114,29 @@ func BuildChallengeResponse(identity string, request Packet, aka sim.AKAResult) 
 }
 
 func BuildChallengeResponseWithCheckcode(identity string, request Packet, aka sim.AKAResult, identityPackets [][]byte) (Packet, Keys, error) {
+	return buildChallengeResponse(identity, request, aka, identityPackets, true)
+}
+
+// BuildChallengeResponseWithoutMACValidation retains the original SWu
+// diagnostic escape hatch. It is intentionally explicit: callers still parse
+// the complete challenge and derive real keys, but do not authenticate the
+// request AT_MAC. Production should use BuildChallengeResponseWithCheckcode.
+func BuildChallengeResponseWithoutMACValidation(
+	identity string,
+	request Packet,
+	aka sim.AKAResult,
+	identityPackets [][]byte,
+) (Packet, Keys, error) {
+	return buildChallengeResponse(identity, request, aka, identityPackets, false)
+}
+
+func buildChallengeResponse(
+	identity string,
+	request Packet,
+	aka sim.AKAResult,
+	identityPackets [][]byte,
+	validateMAC bool,
+) (Packet, Keys, error) {
 	if request.Code != CodeRequest || request.Subtype != SubtypeChallenge {
 		return Packet{}, Keys{}, fmt.Errorf("%w: not an AKA challenge", ErrInvalidAKAChallenge)
 	}
@@ -128,8 +151,10 @@ func BuildChallengeResponseWithCheckcode(identity string, request Packet, aka si
 	if err != nil {
 		return Packet{}, Keys{}, err
 	}
-	if err := verifyChallengeMAC(request.Type, keys.KAut, requestRaw); err != nil {
-		return Packet{}, Keys{}, err
+	if validateMAC {
+		if err := verifyChallengeMAC(request.Type, keys.KAut, requestRaw); err != nil {
+			return Packet{}, Keys{}, err
+		}
 	}
 	includeCheckcode, err := verifyChallengeCheckcode(request, identityPackets)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	engineeap "github.com/iniwex5/vowifi-go/engine/eap"
+	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/swu/eapaka"
 )
 
@@ -30,36 +31,36 @@ func (s *Session) captureFastReauthentication(request eapaka.Packet, keys eapaka
 	return nil
 }
 
-func (s *Session) handleLegacyFastReauthentication(packet eapaka.Packet, raw []byte) error {
+func (s *Session) handleLegacyFastReauthentication(packet eapaka.Packet, raw []byte) ([]ikev2.Payload, error) {
 	if s.fastReauthCtx == nil || !s.fastReauthCtx.CanUseReauth() {
-		return errors.New("swu: fast reauthentication context not available")
+		return nil, errors.New("swu: fast reauthentication context not available")
 	}
 	framed, err := engineeap.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("swu: parse reauthentication packet: %w", err)
+		return nil, fmt.Errorf("swu: parse reauthentication packet: %w", err)
 	}
 	attributes, err := engineeap.ParseAttributes(framed.Data)
 	if err != nil {
-		return fmt.Errorf("swu: parse reauthentication attributes: %w", err)
+		return nil, fmt.Errorf("swu: parse reauthentication attributes: %w", err)
 	}
 	nonce, counter, err := reauthenticationInputs(attributes)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := verifyLegacyReauthenticationMAC(packet.Type, s.fastReauthCtx.KAut, raw); err != nil {
-		return err
+		return nil, err
 	}
 	counterTooSmall := counter < s.fastReauthCtx.Counter
 	responseData, err := s.fastReauthCtx.BuildReauthResponse(nonce, counter, counterTooSmall)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	response, err := signLegacyReauthentication(packet, responseData, s.fastReauthCtx.KAut)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	s.installLegacyReauthenticationKeys(packet.Type, counterTooSmall)
-	return s.sendEAPBytes(response)
+	return eapBytesPayload(response), nil
 }
 
 func reauthenticationInputs(attributes map[uint8]*engineeap.Attribute) ([]byte, uint16, error) {
@@ -90,19 +91,9 @@ func verifyLegacyReauthenticationMAC(eapType uint8, key, raw []byte) error {
 		return errors.New("swu: reauthentication request missing MAC value")
 	}
 	received := macAttribute.Value[len(macAttribute.Value)-16:]
-	var calculated []byte
-	if eapType == eapaka.TypeAKAPrime {
-		calculated, err = eapaka.CalculateAKAPrimeMAC(key, raw, nil)
-	} else {
-		calculated, err = eapaka.CalculateMAC(key, raw, nil)
-	}
-	if err != nil {
-		return fmt.Errorf("swu: verify reauthentication MAC: %w", err)
-	}
-	if !hmac.Equal(calculated, received) {
-		return errors.New("swu: reauthentication MAC mismatch")
-	}
-	return nil
+	return verifyEAPReauthMAC(
+		raw, framed.Data, key, received, eapType == eapaka.TypeAKAPrime,
+	)
 }
 
 func signLegacyReauthentication(request eapaka.Packet, data, key []byte) ([]byte, error) {

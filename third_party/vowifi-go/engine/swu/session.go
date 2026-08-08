@@ -51,6 +51,21 @@ type Config struct {
 	MNC string
 	// AKAProvider computes AKA from the network challenge (RAND, AUTN).
 	AKAProvider AKAProvider
+	// SIM and IPStackType retain the original configuration fields. AKAProvider
+	// and IPStack are current aliases kept for source compatibility.
+	SIM         AKAProvider
+	IPStackType string
+	IPStack     string
+	// The following fields retain the original IKE_AUTH/EAP identity and
+	// interoperability policy. DisableEAPMACValidation is an explicit unsafe
+	// diagnostic switch and is never enabled by default.
+	DisableEAPMACValidation   bool
+	EnableDeviceIdentitySpoof bool
+	DeviceIdentityIMEI        string
+	IKEIdentityMode           string
+	AKAChallengeMode          string
+	AKAIdentityMode           string
+	AKAPrimePreferred         bool
 	// Fast reauthentication material can be restored by the runtime host.
 	FastReauthID    string
 	FastReauthMK    []byte
@@ -188,6 +203,10 @@ type Session struct {
 	eapType                byte // negotiated EAP method (AKA / AKA')
 	eapKeys                eapaka.Keys
 	fastReauthCtx          *engineeap.FastReauthContext
+	ikeIdentity            string
+	eapIdentity            string
+	eapIdentitySet         bool
+	eapTranscript          [][]byte
 	eapIdentityTranscript  [][]byte
 	eapResultIndicated     bool
 	eapResultConfirmed     bool

@@ -17,7 +17,9 @@ import (
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/logger"
 	"github.com/iniwex5/vowifi-go/engine/swu/eapaka"
+	"go.uber.org/zap"
 )
 
 const ikev2KeyPad = "Key Pad for IKEv2"
@@ -29,7 +31,7 @@ func (s *Session) computeEAPInitiatorAuth() (*ikev2.EncryptedPayloadAuth, error)
 	if len(s.eapKeys.MSK) == 0 {
 		return nil, errors.New("swu: no EAP MSK for initiator AUTH")
 	}
-	idType, idData := s.currentIKEIdentity()
+	idType, idData := s.currentIKEIdentityPayload()
 	signed, err := s.initiatorSignedOctets(idType, idData)
 	if err != nil {
 		return nil, err
@@ -93,7 +95,7 @@ func (s *Session) authenticateInitialResponder(payloads []ikev2.Payload) (bool, 
 	}
 	idType, idData, hasID := responderIdentity(payloads)
 	if hasPayloadType(payloads, ikev2.PayloadAuth) {
-		if err := s.verifyResponderCertificateAuth(payloads); err != nil {
+		if err := s.verifyResponderAuth(payloads); err != nil {
 			return false, err
 		}
 		s.responderIDType = idType
@@ -116,7 +118,7 @@ func (s *Session) authenticateInitialResponder(payloads []ikev2.Payload) (bool, 
 	// omits its own IDr in the EAP-only response, bind the final MSK AUTH to
 	// the configured endpoint identity instead of treating the APN as IDr.
 	if !hasID {
-		idType, idData, hasID = configuredEPDGIdentity(s.cfg.EPDGAddr)
+		idType, idData, hasID = configuredEPDGIdentity(configuredEPDGAddress(s.cfg))
 	}
 	if !hasID {
 		return false, fmt.Errorf(
@@ -167,9 +169,18 @@ func (s *Session) verifyEAPResponderAuth(payloads []ikev2.Payload) error {
 	sharedKey := s.prf.Compute(s.eapKeys.MSK, []byte(ikev2KeyPad))
 	expected := s.prf.Compute(sharedKey, signed)
 	if !hmac.Equal(auth.AuthData, expected) {
+		s.logResponderAuthMismatch(expected, auth.AuthData)
 		return errors.New("swu: EAP responder MSK AUTH verification failed")
 	}
 	return nil
+}
+
+func (s *Session) logResponderAuthMismatch(expected, received []byte) {
+	logger.Warn("IKE responder AUTH verification failed",
+		zap.String("expected", eapAttrDigest(expected)),
+		zap.String("received", eapAttrDigest(received)),
+		zap.String("responder_id", eapAttrDigest(s.responderID)),
+	)
 }
 
 func responderIdentity(payloads []ikev2.Payload) (byte, []byte, bool) {

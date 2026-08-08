@@ -12,56 +12,119 @@ import (
 
 // requiredConfiguredIMSI returns the configured IMSI or an error.
 func requiredConfiguredIMSI(cfg *Config) (string, error) {
-	if cfg == nil || strings.TrimSpace(cfg.IMSI) == "" {
+	if cfg == nil {
 		return "", errors.New("swu: no IMSI configured for EAP-AKA")
 	}
-	return cfg.IMSI, nil
+	imsi := strings.TrimSpace(cfg.IMSI)
+	if imsi == "" {
+		return "", errors.New("swu: no IMSI configured for EAP-AKA")
+	}
+	return imsi, nil
 }
 
-// normalizeAKAChallengeMode maps the AKA challenge mode string to a canonical
-// value ("aka" or "aka'").
+// normalizeAKAChallengeMode maps legacy aliases to the four challenge modes.
 func normalizeAKAChallengeMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "aka'", "akaprime", "aka-prime":
-		return "aka'"
+	case "", "minimal":
+		return "minimal"
+	case "off", "none", "omit", "no_checkcode":
+		return "off"
+	case "echo", "checkcode":
+		return "checkcode"
+	case "recalc", "recompute":
+		return "recompute"
 	default:
-		return "aka"
+		return strings.ToLower(strings.TrimSpace(mode))
 	}
 }
 
-// currentIKEIdentity returns the IKE IDi payload (type + data) used for the
-// AUTH computation (RFC 7296 §2.15).
-func (s *Session) currentIKEIdentity() (byte, []byte) {
-	// The 3GPP NAI is encoded as ID_RFC822_ADDR (RFC 7296 section 3.5).
-	return ikev2.IDTypeRFC822Addr, []byte(s.currentEAPIdentity())
+func unexpectedEAPMethodError(expected string, actual byte) error {
+	method := fmt.Sprintf("unknown(%d)", actual)
+	if actual == 23 {
+		method = "aka"
+	} else if actual == 50 {
+		method = "aka_prime"
+	}
+	return fmt.Errorf("swu: unexpected EAP method: expected %s, got %s", expected, method)
+}
+
+// currentIKEIdentity returns the exact NAI cached in the first IKE_AUTH.
+func (s *Session) currentIKEIdentity() string {
+	if s.ikeIdentity != "" {
+		return s.ikeIdentity
+	}
+	if s.cfg != nil && s.cfg.FastReauthID != "" {
+		return s.cfg.FastReauthID
+	}
+	imsi, _ := requiredConfiguredIMSI(s.cfg)
+	if strings.TrimSpace(imsi) == "" {
+		return ""
+	}
+	return buildNAI(strings.TrimSpace(imsi), s.cfg)
+}
+
+func (s *Session) currentIKEIdentityPayload() (byte, []byte) {
+	return ikev2.IDTypeRFC822Addr, []byte(s.currentIKEIdentity())
 }
 
 // currentEAPIdentity returns the EAP identity (NAI) for the session.
 func (s *Session) currentEAPIdentity() string {
-	if s.fastReauthCtx != nil && s.fastReauthCtx.CanUseReauth() {
-		return s.fastReauthCtx.ReauthID
+	if s.eapIdentitySet {
+		return s.eapIdentity
 	}
-	imsi := ""
-	if s.cfg != nil {
-		imsi = s.cfg.IMSI
+	if s.cfg != nil && s.cfg.FastReauthID != "" {
+		return s.cfg.FastReauthID
 	}
-	return buildNAI(imsi, s.cfg)
+	imsi, _ := requiredConfiguredIMSI(s.cfg)
+	if strings.TrimSpace(imsi) == "" {
+		return ""
+	}
+	return buildNAI(strings.TrimSpace(imsi), s.cfg)
+}
+
+func (s *Session) currentEAPIdentityForKeyDerivation() string {
+	if identity := strings.TrimSpace(s.currentEAPIdentity()); identity != "" {
+		return identity
+	}
+	imsi, _ := requiredConfiguredIMSI(s.cfg)
+	if strings.TrimSpace(imsi) == "" {
+		return ""
+	}
+	return buildNAI(strings.TrimSpace(imsi), s.cfg)
 }
 
 // buildCPRequestPayload builds the Configuration payload requesting an inner
 // IPv4 or IPv6 address (RFC 7296 section 3.15).
 func (s *Session) buildCPRequestPayload() *ikev2.EncryptedPayloadCP {
-	return &ikev2.EncryptedPayloadCP{
-		CFGType: ikev2.CFG_REQUEST,
-		Attributes: []*ikev2.CPAttribute{
-			{Type: ikev2.CPAttrIP4Address},
-			{Type: ikev2.CPAttrIP4DNS},
-			{Type: ikev2.CPAttrPCSCFIP4},
-			{Type: ikev2.CPAttrIP6Address},
-			{Type: ikev2.CPAttrIP6DNS},
-			{Type: ikev2.CPAttrPCSCFIP6},
-		},
+	ipv4 := []*ikev2.CPAttribute{
+		{Type: ikev2.CPAttrIP4Address},
+		{Type: ikev2.CPAttrIP4DNS},
+		{Type: ikev2.CPAttrPCSCFIP4},
 	}
+	ipv6Address := make([]byte, net.IPv6len+1)
+	ipv6Address[net.IPv6len] = 64
+	ipv6 := []*ikev2.CPAttribute{
+		{Type: ikev2.CPAttrIP6Address, Value: ipv6Address},
+		{Type: ikev2.CPAttrIP6DNS},
+		{Type: ikev2.CPAttrPCSCFIP6},
+		{Type: ikev2.ASSIGNED_PCSCF_IP6_ADDRESS},
+	}
+	attributes := ipv4
+	mode := ""
+	if s.cfg != nil {
+		mode = s.cfg.IPStackType
+		if strings.TrimSpace(mode) == "" {
+			mode = s.cfg.IPStack
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "ipv4":
+	case "ipv6":
+		attributes = ipv6
+	default:
+		attributes = append(attributes, ipv6...)
+	}
+	return &ikev2.EncryptedPayloadCP{CFGType: ikev2.CFG_REQUEST, Attributes: attributes}
 }
 
 // buildTrafficSelectorsForIPStack builds the TSi/TSr traffic selectors for the
@@ -103,24 +166,16 @@ func anyIPv6Selector() *ikev2.TrafficSelector {
 
 // spoofAppleIMEI returns an IMEI string that passes the Luhn check, derived
 // from the configured IMEI (recovered from the decompiled spoofAppleIMEI).
-func spoofAppleIMEI(imei string) string {
-	digits := make([]byte, 0, 15)
-	for _, c := range imei {
-		if c >= '0' && c <= '9' {
-			digits = append(digits, byte(c-'0'))
-		}
-		if len(digits) == 14 {
-			break
-		}
+func spoofAppleIMEI(imsi string) string {
+	const appleTAC = "35898336"
+	serial := "123456"
+	if len(imsi) >= 6 {
+		serial = imsi[len(imsi)-6:]
 	}
-	if len(digits) < 14 {
-		return imei
-	}
-	// Compute the Luhn check digit over the first 14 digits: double every
-	// second digit starting from the rightmost (index 13, 11, ...).
+	base := appleTAC + serial
 	sum := 0
 	for i := 0; i < 14; i++ {
-		d := int(digits[i])
+		d := int(base[i] - '0')
 		if i%2 == 1 {
 			d *= 2
 			if d > 9 {
@@ -130,12 +185,7 @@ func spoofAppleIMEI(imei string) string {
 		sum += d
 	}
 	check := (10 - sum%10) % 10
-	out := make([]byte, 15)
-	for i := 0; i < 14; i++ {
-		out[i] = digits[i] + '0'
-	}
-	out[14] = byte(check) + '0'
-	return string(out)
+	return fmt.Sprintf("%s%d", base, check)
 }
 
 // runIKEAuthLoop drives the IKE_AUTH exchange (RFC 7296 §2.9) including the
@@ -193,7 +243,11 @@ func (s *Session) runIKEAuthLoop(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			return s.handleIKEAuthFinalResp(resp)
+			raw, err := resp.Encode()
+			if err != nil {
+				return fmt.Errorf("swu: encode final IKE_AUTH response: %w", err)
+			}
+			return s.handleIKEAuthFinalResp(raw)
 		}
 	}
 }
@@ -233,19 +287,16 @@ func (s *Session) sendIKEAuthRequest(payloads []ikev2.Payload) error {
 // buildIKEAuthInitPayloads builds the initial EAP IKE_AUTH request. RFC 7296
 // section 2.16 requires the initiator to omit AUTH until EAP succeeds.
 func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
-	imsi, err := requiredConfiguredIMSI(s.cfg)
+	identity, err := s.initialIKEIdentity()
 	if err != nil {
 		return nil, err
 	}
-	_ = imsi
-
-	// IDi (ID_NAI).
-	idType, idData := s.currentIKEIdentity()
-	idi := &ikev2.EncryptedPayloadID{IDType: idType, IDData: idData, IsInitiator: true}
-	payloads := []ikev2.Payload{idi}
-	if apn := strings.TrimSpace(s.cfg.APN); apn != "" {
-		idr := &ikev2.EncryptedPayloadID{IDType: ikev2.ID_FQDN, IDData: []byte(apn)}
-		payloads = append(payloads, idr)
+	s.ikeIdentity = identity
+	idi := &ikev2.EncryptedPayloadID{
+		IDType: ikev2.IDTypeRFC822Addr, IDData: []byte(identity), IsInitiator: true,
+	}
+	idr := &ikev2.EncryptedPayloadID{
+		IDType: ikev2.ID_FQDN, IDData: []byte(s.cfg.APN), IsInitiator: false,
 	}
 
 	if s.espLocalSPI == 0 {
@@ -263,19 +314,87 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	}
 	sa2 := &ikev2.EncryptedPayloadSA{Proposals: espProposals}
 
-	// TSi / TSr.
+	// TSi / TSr and Configuration request.
 	tsi, tsr := buildTrafficSelectorsForIPStack(nil)
+	cp := s.buildCPRequestPayload()
 
 	// CP (request inner address) and RFC 5998 EAP-only authentication. EAP-AKA
 	// and EAP-AKA' are mutually authenticating, key-generating methods; the
 	// responder's final AUTH is still mandatory and is verified with the MSK.
-	cp := s.buildCPRequestPayload()
 	eapOnly := &ikev2.EncryptedPayloadNotify{
-		NotifyType: ikev2.NotifyTypeEAPOnlyAuthentication,
+		ProtocolID: ikev2.ProtoIKE, NotifyType: ikev2.NotifyTypeEAPOnlyAuthentication,
 	}
+	mobike := &ikev2.EncryptedPayloadNotify{NotifyType: ikev2.MOBIKE_SUPPORTED}
+	ticket := &ikev2.EncryptedPayloadNotify{NotifyType: ikev2.TICKET_REQUEST}
+	initialContact := &ikev2.EncryptedPayloadNotify{NotifyType: ikev2.INITIAL_CONTACT}
 	s.eapOnlyRequested = true
 
-	return append(payloads, sa2, tsi, tsr, eapOnly, cp), nil
+	payloads := []ikev2.Payload{
+		idi, idr, cp, sa2, tsi, tsr, eapOnly, mobike, ticket, initialContact,
+	}
+	devicePayloads, err := s.deviceIdentityPayloads()
+	if err != nil {
+		return nil, err
+	}
+	return append(payloads, devicePayloads...), nil
+}
+
+func (s *Session) initialIKEIdentity() (string, error) {
+	if s.cfg != nil && s.cfg.FastReauthID != "" {
+		return s.cfg.FastReauthID, nil
+	}
+	imsi, err := requiredConfiguredIMSI(s.cfg)
+	if err != nil {
+		return "", fmt.Errorf("swu: build IKE identity: %w", err)
+	}
+	return buildNAI(imsi, s.cfg), nil
+}
+
+func (s *Session) deviceIdentityPayloads() ([]ikev2.Payload, error) {
+	imei := strings.TrimSpace(s.cfg.DeviceIdentityIMEI)
+	if imei == "" && s.cfg.EnableDeviceIdentitySpoof {
+		imsi, err := requiredConfiguredIMSI(s.cfg)
+		if err != nil {
+			return nil, err
+		}
+		imei = spoofAppleIMEI(imsi)
+	}
+	if imei == "" {
+		return nil, nil
+	}
+	encoded, err := encodeIMEITBCD(imei)
+	if err != nil {
+		return nil, err
+	}
+	data := append([]byte{1, byte(len(encoded))}, encoded...)
+	return []ikev2.Payload{
+		&ikev2.EncryptedPayloadNotify{
+			ProtocolID: ikev2.ProtoIKE, NotifyType: ikev2.DEVICE_IDENTITY_3GPP, NotifyData: data,
+		},
+		&ikev2.EncryptedPayloadNotify{
+			ProtocolID: ikev2.ProtoIKE, NotifyType: ikev2.DEVICE_IDENTITY, NotifyData: append([]byte(nil), data...),
+		},
+	}, nil
+}
+
+func encodeIMEITBCD(imei string) ([]byte, error) {
+	if len(imei) != 15 {
+		return nil, fmt.Errorf("swu: DEVICE_IDENTITY IMEI must contain 15 digits, got %d", len(imei))
+	}
+	digits := imei + "F"
+	encoded := make([]byte, 8)
+	for index := range encoded {
+		low, high := digits[index*2], digits[index*2+1]
+		if low < '0' || low > '9' || high != 'F' && (high < '0' || high > '9') {
+			return nil, errors.New("swu: DEVICE_IDENTITY IMEI contains a non-digit")
+		}
+		highValue := byte(0x0f)
+		if high != 'F' {
+			highValue = high - '0'
+		}
+		encoded[index] = highValue<<4 | (low - '0')
+	}
+	return encoded, nil
 }
 
 // computeInitiatorAuth computes the EAP-only initiator AUTH from the MSK and
@@ -314,11 +433,18 @@ func (s *Session) applyEAPHandlingResult(payloads []ikev2.Payload) (string, erro
 			if !ok {
 				return "", errors.New("swu: invalid EAP payload")
 			}
-			if err := s.handleRFCEAP(eapData); err != nil {
+			response, err := s.handleEAP(eapData)
+			if err != nil {
 				return "", err
 			}
 			if s.stage == stageFinal {
 				return "final", nil
+			}
+			if len(response) == 0 {
+				return "", errors.New("swu: EAP request produced no response payload")
+			}
+			if err := s.sendIKEAuthRequest(response); err != nil {
+				return "", err
 			}
 			return "eap", nil
 		}
@@ -350,7 +476,15 @@ func (s *Session) buildIKEAuthFinalPayloads() ([]ikev2.Payload, error) {
 
 // handleIKEAuthFinalResp processes the final IKE_AUTH response (AUTH, SA, TS,
 // CP) and verifies the responder AUTH.
-func (s *Session) handleIKEAuthFinalResp(resp *ikev2.IKEPacket) error {
+func (s *Session) handleIKEAuthFinalResp(data []byte) error {
+	resp, err := ikev2.DecodePacket(data)
+	if err != nil {
+		return fmt.Errorf("swu: decode final IKE_AUTH response: %w", err)
+	}
+	return s.handleIKEAuthFinalPacket(resp)
+}
+
+func (s *Session) handleIKEAuthFinalPacket(resp *ikev2.IKEPacket) error {
 	payloads, err := s.decryptAndParse(resp)
 	if err != nil {
 		return err

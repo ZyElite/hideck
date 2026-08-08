@@ -38,7 +38,7 @@ func TestRFCChallengePassesExactSIMInputsAndStoresMSK(t *testing.T) {
 	session.ikeKeys = testIKEKeys()
 
 	challenge := signedAKAChallenge(t, session.currentEAPIdentity(), rand16, autn16, result)
-	if err := session.handleRFCChallenge(challenge); err != nil {
+	if _, err := session.handleRFCChallenge(challenge); err != nil {
 		t.Fatalf("handleRFCChallenge: %v", err)
 	}
 	if !bytes.Equal(provider.rand, rand16) || !bytes.Equal(provider.autn, autn16) {
@@ -93,13 +93,16 @@ func TestRFCResultIndicationWaitsForAuthenticatedNotificationAndSuccess(t *testi
 		CK:  bytes.Repeat([]byte{0x11}, 16),
 		IK:  bytes.Repeat([]byte{0x22}, 16),
 	}
-	session := NewSession(&Config{IMSI: "234102356143376", AKAProvider: &recordingAKAProvider{result: result}})
+	session := NewSession(&Config{
+		IMSI: "234102356143376", AKAProvider: &recordingAKAProvider{result: result},
+		AKAChallengeMode: "checkcode",
+	})
 	session.socket = newTestIKETransport()
 	session.ikeKeys = testIKEKeys()
 	session.stage = stageEAP
 	challenge := signedAKAChallengeWithResultIndication(t, session.currentEAPIdentity(),
 		bytes.Repeat([]byte{0x33}, 16), bytes.Repeat([]byte{0x44}, 16), result, true)
-	if err := session.handleRFCChallenge(challenge); err != nil {
+	if _, err := session.handleRFCChallenge(challenge); err != nil {
 		t.Fatalf("handleRFCChallenge: %v", err)
 	}
 	if !session.eapResultIndicated || session.eapResultConfirmed {
@@ -214,7 +217,7 @@ func TestComputeEAPInitiatorAuthUsesSignedOctetsAndMSK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("computeEAPInitiatorAuth: %v", err)
 	}
-	idType, idData := session.currentIKEIdentity()
+	idType, idData := session.currentIKEIdentityPayload()
 	macedID := session.prf.Compute(session.ikeKeys.SK_pi, identityPayloadBody(idType, idData))
 	signed := append([]byte(nil), session.ikeSAInitRequest...)
 	signed = append(signed, session.nr...)
@@ -233,8 +236,9 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
 	}
 	want := []ikev2.PayloadType{
-		ikev2.PayloadIDi, ikev2.PayloadIDr, ikev2.PayloadSA, ikev2.PayloadTSi,
-		ikev2.PayloadTSr, ikev2.PayloadNotify, ikev2.PayloadCP,
+		ikev2.PayloadIDi, ikev2.PayloadIDr, ikev2.PayloadCP, ikev2.PayloadSA,
+		ikev2.PayloadTSi, ikev2.PayloadTSr, ikev2.PayloadNotify,
+		ikev2.PayloadNotify, ikev2.PayloadNotify, ikev2.PayloadNotify,
 	}
 	if len(payloads) != len(want) {
 		t.Fatalf("payload count = %d, want %d", len(payloads), len(want))
@@ -248,35 +252,39 @@ func TestInitialEAPIKEAuthOmitsAuthAndEAP(t *testing.T) {
 	if idr.IDType != ikev2.ID_FQDN || string(idr.IDData) != "ims" {
 		t.Fatalf("APN IDr = %+v", idr)
 	}
-	notify := payloads[5].(*ikev2.EncryptedPayloadNotify)
-	if notify.NotifyType != ikev2.NotifyTypeEAPOnlyAuthentication || notify.ProtocolID != 0 || notify.SPISize != 0 || len(notify.NotifyData) != 0 {
+	notify := payloads[6].(*ikev2.EncryptedPayloadNotify)
+	if notify.NotifyType != ikev2.NotifyTypeEAPOnlyAuthentication || notify.ProtocolID != ikev2.ProtoIKE || notify.SPISize != 0 || len(notify.NotifyData) != 0 {
 		t.Fatalf("EAP-only notify = %+v", notify)
 	}
-	cp := payloads[6].(*ikev2.EncryptedPayloadCP)
+	cp := payloads[2].(*ikev2.EncryptedPayloadCP)
 	wantCPTypes := []uint16{
 		ikev2.CPAttrIP4Address, ikev2.CPAttrIP4DNS, ikev2.CPAttrPCSCFIP4,
 		ikev2.CPAttrIP6Address, ikev2.CPAttrIP6DNS, ikev2.CPAttrPCSCFIP6,
+		ikev2.ASSIGNED_PCSCF_IP6_ADDRESS,
 	}
 	if len(cp.Attributes) != len(wantCPTypes) {
 		t.Fatalf("initial CP request address families: %+v", cp.Attributes)
 	}
 	for index, attribute := range cp.Attributes {
-		if attribute.Type != wantCPTypes[index] || len(attribute.Value) != 0 {
+		wantValueLength := 0
+		if attribute.Type == ikev2.CPAttrIP6Address {
+			wantValueLength = net.IPv6len + 1
+		}
+		if attribute.Type != wantCPTypes[index] || len(attribute.Value) != wantValueLength {
 			t.Fatalf("initial CP attribute[%d] = %+v, want type %d", index, attribute, wantCPTypes[index])
 		}
 	}
 }
 
-func TestInitialEAPIKEAuthOmitsIDrForDefaultAPN(t *testing.T) {
+func TestInitialEAPIKEAuthIncludesEmptyIDrForDefaultAPN(t *testing.T) {
 	session := NewSession(&Config{IMSI: "234102356143376"})
 	payloads, err := session.buildIKEAuthInitPayloads()
 	if err != nil {
 		t.Fatalf("buildIKEAuthInitPayloads: %v", err)
 	}
-	for _, payload := range payloads {
-		if payload.Type() == ikev2.PayloadIDr {
-			t.Fatal("default APN request unexpectedly included IDr")
-		}
+	idr, ok := payloads[1].(*ikev2.EncryptedPayloadID)
+	if !ok || idr.Type() != ikev2.PayloadIDr || len(idr.IDData) != 0 {
+		t.Fatalf("default APN IDr = %#v", payloads[1])
 	}
 }
 
