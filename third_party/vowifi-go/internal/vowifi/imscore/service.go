@@ -291,10 +291,12 @@ func (s *Service) Stop() {
 	}
 	registrationIO := s.registrationIO
 	registrationTCP := s.registrationTCP
+	registrationPreviousTCP := s.registrationPreviousTCP
 	securityServerIO := s.securityServerIO
 	clientPortReserve := s.clientPortReserve
 	s.registrationIO = nil
 	s.registrationTCP = nil
+	s.registrationPreviousTCP = nil
 	s.registrationTCPProtected = false
 	s.registrationTransport = ""
 	s.securityServerIO = nil
@@ -308,6 +310,9 @@ func (s *Service) Stop() {
 	}
 	if registrationTCP != nil {
 		_ = registrationTCP.Close()
+	}
+	if registrationPreviousTCP != nil && registrationPreviousTCP != registrationTCP {
+		_ = registrationPreviousTCP.Close()
 	}
 	if securityServerIO != nil {
 		_ = securityServerIO.Close()

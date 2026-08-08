@@ -143,6 +143,9 @@ func (s *Service) activateProtectedRegistrationTCP(conn net.Conn) {
 	s.mu.Lock()
 	previous := s.registrationTCP
 	s.registrationTCP = conn
+	if previous != nil && previous != conn {
+		s.registrationPreviousTCP = previous
+	}
 	s.registrationTCPProtected = true
 	s.registrationTransport = "tcp"
 	s.mu.Unlock()
@@ -151,7 +154,14 @@ func (s *Service) activateProtectedRegistrationTCP(conn net.Conn) {
 	})
 	s.networkDone.Add(1)
 	go s.readRegistrationStream(conn)
-	if previous != nil && previous != conn {
+}
+
+func (s *Service) finalizeRegistrationTransportSwitch() {
+	s.mu.Lock()
+	previous := s.registrationPreviousTCP
+	s.registrationPreviousTCP = nil
+	s.mu.Unlock()
+	if previous != nil {
 		_ = previous.Close()
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -101,6 +102,119 @@ func TestRegisterSwitchesFromInitialUDPToProtectedTCP(t *testing.T) {
 	if !network.installed || !svc.IsRegistered() {
 		t.Fatal("protected TCP registration did not complete")
 	}
+}
+
+func TestRegisterKeepsInitialTCPUntilProtectedRegisterCompletes(t *testing.T) {
+	initial, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer initial.Close()
+	protected, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer protected.Close()
+	result := make(chan error, 1)
+	go serveMakeBeforeBreakRegistration(initial, protected, result)
+
+	network := &captureIPSecNetwork{SystemIMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1))}
+	svc, err := New(&IMSConfig{
+		DeviceID: "dev-sec-mbb", IMEI: "860349055895064", IMSI: "234102356143376",
+		IMPI: "234102356143376@ims.example", IMPU: []string{"sip:234102356143376@ims.example"},
+		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "tcp",
+		Registrar: initial.Addr().String(), IMSNetwork: network,
+		AKAProvider: stubAKAProvider{}, IPSec3GPPEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func serveMakeBeforeBreakRegistration(initial, protected *net.TCPListener, result chan<- error) {
+	initialConn, err := initial.AcceptTCP()
+	if err != nil {
+		result <- err
+		return
+	}
+	defer initialConn.Close()
+	initialRequest, err := readSIPStreamMessage(bufio.NewReader(initialConn))
+	if err != nil {
+		result <- err
+		return
+	}
+	client, err := parseSecurityMechanism(splitSecurityMechanisms(sipHeaderValue(initialRequest, "Security-Client"))[0])
+	if err != nil {
+		result <- err
+		return
+	}
+	serverHeader := fmt.Sprintf("ipsec-3gpp;q=0.98;alg=hmac-sha-1-96;mod=trans;ealg=aes-cbc;spi-c=858993459;spi-s=1145324612;port-c=6059;port-s=%d", tcpPort(protected.Addr()))
+	challenge := strings.TrimPrefix(strings.TrimSpace(digestChallengeHeaderNoQOP()), "WWW-Authenticate: ")
+	headers := "WWW-Authenticate: " + challenge + "\r\nSecurity-Server: " + serverHeader + "\r\n"
+	if _, err = initialConn.Write([]byte(registerWireResponse(initialRequest, 401, headers))); err != nil {
+		result <- err
+		return
+	}
+	protectedConn, err := protected.AcceptTCP()
+	if err != nil {
+		result <- err
+		return
+	}
+	defer protectedConn.Close()
+	authenticated, err := readSIPStreamMessage(bufio.NewReader(protectedConn))
+	if err != nil {
+		result <- err
+		return
+	}
+	if err := assertTCPConnectionOpen(initialConn); err != nil {
+		result <- err
+		return
+	}
+	if tcpPort(protectedConn.RemoteAddr()) != int(client.PortC) {
+		result <- fmt.Errorf("protected source port = %d, want %d", tcpPort(protectedConn.RemoteAddr()), client.PortC)
+		return
+	}
+	if _, err = protectedConn.Write([]byte(registerWireResponse(authenticated, 200, ""))); err != nil {
+		result <- err
+		return
+	}
+	result <- waitForTCPConnectionClose(initialConn)
+}
+
+func assertTCPConnectionOpen(conn *net.TCPConn) error {
+	if err := conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+		return err
+	}
+	var probe [1]byte
+	_, err := conn.Read(probe[:])
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return conn.SetReadDeadline(time.Time{})
+	}
+	if err == nil {
+		return errors.New("initial REGISTER connection received unexpected data")
+	}
+	return fmt.Errorf("initial REGISTER connection closed before protected response: %w", err)
+}
+
+func waitForTCPConnectionClose(conn *net.TCPConn) error {
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		return err
+	}
+	var probe [1]byte
+	_, err := conn.Read(probe[:])
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return fmt.Errorf("initial REGISTER connection remained open: %w", err)
 }
 
 func serveUDPChallengeThenTCPSuccess(udpServer *net.UDPConn, tcpServer *net.TCPListener, result chan<- error) {

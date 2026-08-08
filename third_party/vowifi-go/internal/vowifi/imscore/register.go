@@ -108,6 +108,7 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	if session.security != nil && session.security.server == nil {
 		return 0, errors.New("imscore: registration completed without 3GPP security agreement")
 	}
+	s.finalizeRegistrationTransportSwitch()
 	expires := registrationExpires(resp, s.cfg.Expires)
 	session.expires = expires
 	if publicID := firstSIPHeaderURI(resp.Header("P-Associated-URI")); publicID != "" {

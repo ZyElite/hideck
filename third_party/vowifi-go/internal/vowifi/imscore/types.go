@@ -194,6 +194,7 @@ type Service struct {
 	transport                *sipTransport
 	registrationIO           net.PacketConn
 	registrationTCP          net.Conn
+	registrationPreviousTCP  net.Conn
 	registrationTCPProtected bool
 	registrationTransport    string
 	securityServerIO         net.Listener
