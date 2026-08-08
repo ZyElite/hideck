@@ -217,7 +217,7 @@ func TestIKEReauthTimerSignalsFreshRuntimeRequirement(t *testing.T) {
 	if s.State() != stateError {
 		t.Fatalf("state = %q, want error", s.State())
 	}
-	if err := s.TerminalError(); err == nil || !strings.Contains(err.Error(), "fresh runtime session") {
+	if err := s.TerminalError(); !errors.Is(err, ErrFreshRuntimeRequired) {
 		t.Fatalf("terminal error = %v, want fresh runtime requirement", err)
 	}
 	s.Shutdown()

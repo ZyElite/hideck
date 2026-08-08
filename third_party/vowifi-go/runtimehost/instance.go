@@ -260,6 +260,23 @@ func (i *Instance) setTunnelControlFailure(err error) {
 	})
 }
 
+func (i *Instance) setTunnelReauthenticationRequired(err error) {
+	i.updateState(func(state *State) {
+		state.SessionState = "error"
+		state.IMSState = "restarting"
+		state.Error = err.Error()
+		state.LastError = err.Error()
+		state.LastErrorClass = ErrorClassReauthentication
+		state.LastReason = "IKE reauthentication requires fresh runtime"
+		state.TunnelReady = false
+		state.DataPlaneUp = false
+		state.IMSReady = false
+		state.SMSReady = false
+		state.RegStatus = 0
+		state.RegStatusText = "restarting"
+	})
+}
+
 // setService installs the IMS service.
 func (i *Instance) setService(s Service) {
 	i.mu.Lock()

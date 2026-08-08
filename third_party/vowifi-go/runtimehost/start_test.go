@@ -391,7 +391,7 @@ func TestStartClearsIMSReadyWhenRegistrationRefreshFails(t *testing.T) {
 	}
 }
 
-func TestStartSurfacesEstablishedTunnelFailure(t *testing.T) {
+func TestStartRequestsFreshRuntimeForIKEReauthentication(t *testing.T) {
 	prepared := &identity.PreparedSession{
 		Profile:     identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},
 		IMSIdentity: identity.IMSIdentity{IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example", Domain: "ims.example"},
@@ -402,7 +402,7 @@ func TestStartSurfacesEstablishedTunnelFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	tunnel.fail(errors.New("full reauthentication requires a fresh runtime session"))
+	tunnel.fail(swu.ErrFreshRuntimeRequired)
 
 	deadline := time.After(time.Second)
 	for inst.State().LastError == "" {
@@ -414,10 +414,41 @@ func TestStartSurfacesEstablishedTunnelFailure(t *testing.T) {
 		}
 	}
 	state := inst.State()
-	if state.SessionState != "error" || state.TunnelReady || state.IMSReady || state.SMSReady {
+	if state.SessionState != "error" || state.IMSState != "restarting" || state.TunnelReady || state.IMSReady || state.SMSReady {
 		t.Fatalf("terminal tunnel state = %+v", state)
 	}
-	if state.LastReason != "SWu tunnel control failed" || !strings.Contains(state.LastError, "fresh runtime session") {
+	if state.LastErrorClass != ErrorClassReauthentication || state.LastReason != "IKE reauthentication requires fresh runtime" ||
+		!strings.Contains(state.LastError, "fresh runtime session") {
+		t.Fatalf("terminal tunnel error = %+v", state)
+	}
+	_ = inst.Stop(context.Background())
+}
+
+func TestStartSurfacesEstablishedTunnelFailure(t *testing.T) {
+	prepared := &identity.PreparedSession{
+		Profile:     identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},
+		IMSIdentity: identity.IMSIdentity{IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example", Domain: "ims.example"},
+		EPDGAddr:    "epdg.example.com",
+	}
+	tunnel := newLifecycleTunnel(nil)
+	inst, err := Start(context.Background(), runtimeTestRequest(prepared, tunnel))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	tunnel.fail(errors.New("DPD failed"))
+
+	deadline := time.After(time.Second)
+	for inst.State().LastError == "" {
+		select {
+		case <-deadline:
+			t.Fatal("runtime did not expose terminal tunnel failure")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	state := inst.State()
+	if state.LastErrorClass != "network" || state.LastReason != "SWu tunnel control failed" ||
+		!strings.Contains(state.LastError, "DPD failed") {
 		t.Fatalf("terminal tunnel error = %+v", state)
 	}
 	_ = inst.Stop(context.Background())

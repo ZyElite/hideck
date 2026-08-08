@@ -13,6 +13,7 @@ import (
 const (
 	vowifiDesiredReconcileInterval = 30 * time.Second
 	vowifiDesiredReconcileReason   = "desired_reconcile"
+	vowifiIKEReauthReason          = "ike_reauthentication"
 )
 
 // startVoWiFiDesiredReconcileLoop 定期检查配置期望态，把丢失的 VoWiFi 实例低频拉回。
@@ -62,6 +63,17 @@ func (p *Pool) reconcileDesiredVoWiFiOnce(now time.Time) {
 // shouldReconcileVoWiFi 判断设备是否允许进入目标态恢复队列。
 func (p *Pool) shouldReconcileVoWiFi(w *Worker) bool {
 	return p.shouldReconcileVoWiFiForReason(w, "")
+}
+
+func (p *Pool) handleVoWiFiRuntimeRecycle(deviceID, reason string) {
+	if p == nil {
+		return
+	}
+	worker := p.GetWorker(strings.TrimSpace(deviceID))
+	if !p.shouldReconcileVoWiFiForReason(worker, reason) {
+		return
+	}
+	p.scheduleDesiredVoWiFiRecover(worker.ID, reason, time.Now())
 }
 
 func (p *Pool) shouldReconcileVoWiFiForReason(w *Worker, reason string) bool {

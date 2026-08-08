@@ -11,15 +11,22 @@ import (
 
 const failedRuntimeStopTimeout = 10 * time.Second
 
+const ikeReauthenticationReason = "ike_reauthentication"
+
 func isTerminalRuntimeFailure(state runtimehost.State) bool {
 	return state.SessionState == "error" && strings.TrimSpace(state.LastError) != ""
 }
 
 func (m *Manager) releaseFailedRuntime(deviceID string, inst *runtimehost.Instance, state runtimehost.State) bool {
+	controlledReauth := state.LastErrorClass == runtimehost.ErrorClassReauthentication
 	if m == nil || inst == nil || !m.RuntimeStore().DeleteInstance(deviceID, inst) {
 		return false
 	}
-	m.InvalidateRuntime(deviceID, "runtime_failure")
+	invalidationReason := "runtime_failure"
+	if controlledReauth {
+		invalidationReason = ikeReauthenticationReason
+	}
+	m.InvalidateRuntime(deviceID, invalidationReason)
 	m.BroadcastState(deviceID)
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), failedRuntimeStopTimeout)
@@ -29,6 +36,11 @@ func (m *Manager) releaseFailedRuntime(deviceID string, inst *runtimehost.Instan
 	}
 	if adapter := m.hostAdapter(); adapter != nil {
 		adapter.RestoreSMSMode(deviceID)
+	}
+	if controlledReauth {
+		logger.Info("VoWiFi IKE 重鉴权旧实例已释放，立即请求新运行时", "device", deviceID)
+		m.requestRuntimeRecycle(deviceID, ikeReauthenticationReason)
+		return true
 	}
 	logger.Error("VoWiFi 运行时故障已释放，等待目标态恢复",
 		"device", deviceID,

@@ -10,15 +10,16 @@ import (
 )
 
 type Manager struct {
-	runtimeStore RuntimeStore
-	stateHub     *StateHub
-	recoverStore *DesiredRecoverStore
-	lifecycle    *LifecycleController
-	runtimeStart  runtimeStartFunc
-	adapter       Adapter
-	voiceGateway  *voicehost.Gateway
-	deliveryStore messaging.DeliveryStore
-	dispatcher    eventhost.Dispatcher
+	runtimeStore   RuntimeStore
+	stateHub       *StateHub
+	recoverStore   *DesiredRecoverStore
+	lifecycle      *LifecycleController
+	runtimeStart   runtimeStartFunc
+	runtimeRecycle func(deviceID, reason string)
+	adapter        Adapter
+	voiceGateway   *voicehost.Gateway
+	deliveryStore  messaging.DeliveryStore
+	dispatcher     eventhost.Dispatcher
 }
 
 func NewManager() *Manager {
@@ -79,6 +80,18 @@ func (m *Manager) ConfigureRuntimeDependencies(vg *voicehost.Gateway, ds messagi
 	m.voiceGateway = vg
 	m.deliveryStore = ds
 	m.dispatcher = ed
+}
+
+func (m *Manager) ConfigureRuntimeRecycleHandler(handler func(deviceID, reason string)) {
+	if m != nil {
+		m.runtimeRecycle = handler
+	}
+}
+
+func (m *Manager) requestRuntimeRecycle(deviceID, reason string) {
+	if m != nil && m.runtimeRecycle != nil {
+		m.runtimeRecycle(deviceID, reason)
+	}
 }
 
 func (m *Manager) ClearStartupStateAndBroadcast(deviceID string) {

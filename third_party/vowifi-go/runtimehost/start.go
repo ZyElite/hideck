@@ -152,6 +152,11 @@ func monitorTunnelFailure(ctx context.Context, inst *Instance, tunnel Tunnel) {
 		failureErr = errors.New("SWu tunnel stopped unexpectedly")
 	}
 	wrapped := fmt.Errorf("runtimehost: SWu tunnel control failed: %w", failureErr)
+	if errors.Is(failureErr, swu.ErrFreshRuntimeRequired) {
+		logger.Info("SWu IKE 重鉴权请求新运行时", "device", inst.State().DeviceID, "err", wrapped)
+		inst.setTunnelReauthenticationRequired(wrapped)
+		return
+	}
 	logger.Error("SWu tunnel control failed", "device", inst.State().DeviceID, "err", wrapped)
 	inst.setTunnelControlFailure(wrapped)
 }

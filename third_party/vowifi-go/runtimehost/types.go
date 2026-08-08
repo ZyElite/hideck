@@ -18,6 +18,9 @@ import (
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
 
+// ErrorClassReauthentication marks an expected runtime replacement boundary.
+const ErrorClassReauthentication = "reauth"
+
 // State is the runtime state of the IMS host (session + IMS registration).
 type State struct {
 	// Session state (e.g. "idle", "connecting", "established", "error").

@@ -16,6 +16,9 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/swu/eapaka"
 )
 
+// ErrFreshRuntimeRequired tells the host to replace the current IKE runtime.
+var ErrFreshRuntimeRequired = errors.New("swu: full reauthentication requires a fresh runtime session")
+
 // Config carries the SWu session configuration recovered from the decompiled
 // engine/swu. It is the input to NewSession.
 type Config struct {
@@ -544,7 +547,7 @@ func (s *Session) Reauthenticate() error {
 	if !established {
 		return errors.New("swu: session not established")
 	}
-	return errors.New("swu: full reauthentication requires a fresh runtime session")
+	return ErrFreshRuntimeRequired
 }
 
 // Snapshot returns a summary of the session state.

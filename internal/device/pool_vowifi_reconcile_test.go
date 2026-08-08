@@ -98,6 +98,35 @@ func TestDesiredVoWiFiInactiveSchedulesRecover(t *testing.T) {
 	}
 }
 
+func TestIKEReauthenticationRequestsImmediatePolicyCheckedRecover(t *testing.T) {
+	p := newDesiredVoWiFiTestPool(t, "dev-1", true, "001010000000001")
+	commands := make(chan vowifihost.LifecycleCommand, 1)
+	p.voWiFiHost().LifecycleControllerForTest().TestRun = func(_ context.Context, cmd vowifihost.LifecycleCommand) error {
+		commands <- cmd
+		return nil
+	}
+
+	p.handleVoWiFiRuntimeRecycle("dev-1", vowifiIKEReauthReason)
+
+	cmd := waitForRecoverCommand(t, commands)
+	if cmd.Kind != vowifihost.LifecycleCommandRecover || cmd.Reason != vowifiIKEReauthReason {
+		t.Fatalf("command = %+v", cmd)
+	}
+}
+
+func TestIKEReauthenticationDoesNotRecoverDisabledPolicy(t *testing.T) {
+	p := newDesiredVoWiFiTestPool(t, "dev-1", false, "001010000000001")
+	commands := make(chan vowifihost.LifecycleCommand, 1)
+	p.voWiFiHost().LifecycleControllerForTest().TestRun = func(_ context.Context, cmd vowifihost.LifecycleCommand) error {
+		commands <- cmd
+		return nil
+	}
+
+	p.handleVoWiFiRuntimeRecycle("dev-1", vowifiIKEReauthReason)
+
+	assertNoRecoverCommand(t, commands)
+}
+
 func TestDesiredVoWiFiRecoverSkipsWhenSIMIdentityNotReady(t *testing.T) {
 	p := newDesiredVoWiFiTestPool(t, "dev-1", true, "")
 	commands := make(chan vowifihost.LifecycleCommand, 1)
