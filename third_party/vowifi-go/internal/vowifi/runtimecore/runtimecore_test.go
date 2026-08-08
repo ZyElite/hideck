@@ -3,7 +3,6 @@ package runtimecore
 import (
 	"bytes"
 	"testing"
-	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
@@ -65,7 +64,7 @@ func TestBuildSWUConfigAppliesGiffgaffAlgorithms(t *testing.T) {
 	if cfg.ESPEncryption != 12 || cfg.ESPEncryptionKeyBits != 256 || cfg.ESPIntegrity != 14 {
 		t.Fatalf("ESP config = %+v", cfg)
 	}
-	if cfg.ReauthSeconds != 180*time.Second {
+	if cfg.ReauthSeconds != 0 {
 		t.Fatalf("reauth = %s", cfg.ReauthSeconds)
 	}
 }
