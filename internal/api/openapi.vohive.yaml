@@ -1552,6 +1552,37 @@ paths:
         '404':
           $ref: '#/components/responses/ErrorMessage'
 
+  /devices/{device_id}/vowifi/calls:
+    post:
+      tags: [vowifi]
+      summary: 通过 VoWiFi 发起真实外呼
+      description: |
+        使用与 `/vocall` 指令相同的 VoWiFi 语音网关发起 IMS 呼叫，
+        接通后保持指定时长并发送 BYE。该操作可能产生运营商通话费用。
+      parameters:
+        - $ref: '#/components/parameters/DeviceIDPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoWiFiCallRequest'
+      responses:
+        '200':
+          description: 呼叫已接通、保持并完成挂断
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoWiFiCallResponse'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+        '502':
+          $ref: '#/components/responses/ErrorMessage'
+
   /logs/stream:
     get:
       tags: [logs]
@@ -2746,6 +2777,38 @@ components:
       properties:
         enabled:
           type: boolean
+
+    VoWiFiCallRequest:
+      type: object
+      required: [callee]
+      properties:
+        callee:
+          type: string
+          description: E.164 或运营商支持的被叫号码
+          example: "+447942985429"
+        hold_seconds:
+          type: integer
+          minimum: 0
+          maximum: 60
+          default: 10
+          description: 接通后的保持秒数；0 使用默认值 10
+
+    VoWiFiCallResponse:
+      type: object
+      required: [status, success, duration_ms, trace_id]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        success:
+          type: boolean
+        message:
+          type: string
+        duration_ms:
+          type: integer
+          format: int64
+        trace_id:
+          type: string
 
     FlightModeResponse:
       type: object
