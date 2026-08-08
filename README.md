@@ -55,33 +55,29 @@ services:
 Default login: `admin` / `admin`. Change the password after first login. Set
 `VOHIVE_TAG` before running Compose when you want a specific image tag.
 
-## EC25 SIM 热插拔设置
+## EC25 SIM 检测设置
 
-EC25 的 USB/QMI 设备热插拔与实体 SIM 卡热插拔是两个独立功能。若模组已被
-VoHive 识别，但运行中插入 SIM 后没有状态变化，请先通过模组的 AT 端口查询：
-
-```text
-AT+QSIMDET?
-AT+QSIMSTAT?
-```
-
-`QSIMDET: 0,0` 表示实体 SIM 热插拔检测未启用。对于“SIM 插入时检测引脚为低电平”
-的卡座，可执行：
+EC25 的 USB/QMI 设备热插拔与实体 SIM 检测是两个独立功能。大疆/Baiwang 定制
+模块实测应保持实体 SIM 热插拔检测关闭：
 
 ```text
-AT+QSIMDET=1,0
-AT+QSIMSTAT=1
-AT&W
+AT+QSIMDET=0,0
 AT+CFUN=1,1
 ```
 
-如果卡座在 SIM 插入时检测引脚为高电平，应使用 `AT+QSIMDET=1,1`。检测电平必须
-与硬件设计一致，否则热插拔功能无效。`QSIMDET` 需要重启模组后生效，`QSIMSTAT=1`
-用于启用 SIM 插入/移除状态上报，`AT&W` 用于保存该上报设置。
+`QSIMDET=0,0` 会关闭基于 `SIM_DET` 引脚的实体 SIM 热插拔检测。请在模组断电时
+插好 SIM，再重新上电；也可在插卡后执行 `AT+CFUN=1,1` 软重启模组。
 
-重启后可再次执行 `AT+QSIMSTAT?` 验证。`+QSIMSTAT: 1,1` 表示已检测到 SIM，
-`+QSIMSTAT: 1,0` 表示模组仍判断 SIM 已移除。还可通过 `AT+CPIN?` 和 `AT+QCCID`
-确认 SIM 是否完成初始化以及能否读取 ICCID。具体参数含义参见
+重启后通过 AT 端口验证：
+
+```text
+AT+QSIMDET?
+AT+CPIN?
+AT+QCCID
+```
+
+预期 `AT+QSIMDET?` 返回 `+QSIMDET: 0,0`，`AT+CPIN?` 返回 `+CPIN: READY`，
+并且 `AT+QCCID` 能读取 ICCID。具体参数含义参见
 [Quectel EC25 & EC21 AT Commands Manual](https://quectel.com/content/uploads/2021/03/Quectel_EC25EC21_AT_Commands_Manual_V1.3.pdf)。
 
 ### 大疆定制模块恢复为移远 EC25 USB 身份
