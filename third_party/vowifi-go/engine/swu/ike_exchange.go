@@ -70,26 +70,18 @@ func (s *Session) pendingIKERequest() ([]byte, *ikev2.IKEPacket, error) {
 }
 
 func (s *Session) waitForIKEResponse(ctx context.Context, expected *ikev2.IKEPacket, delay time.Duration) (*ikev2.IKEPacket, bool, error) {
+	if s.ikeControlIsRunning() {
+		return s.waitForDispatchedIKEResponse(ctx, expected, delay)
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
-	decoded := s.controlResponseSource()
-	var rawPackets <-chan []byte
-	if decoded == nil {
-		rawPackets = s.socket.IKEPackets()
-	}
+	rawPackets := s.socket.IKEPackets()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, false, ctx.Err()
 		case <-timer.C:
 			return nil, true, nil
-		case packet, ok := <-decoded:
-			if !ok {
-				return nil, false, errors.New("swu: IKE control loop closed")
-			}
-			if validIKEResponseHeader(packet, expected) {
-				return packet, false, nil
-			}
 		case raw, ok := <-rawPackets:
 			if !ok {
 				return nil, false, errors.New("swu: IKE transport closed")
@@ -108,13 +100,35 @@ func (s *Session) waitForIKEResponse(ctx context.Context, expected *ikev2.IKEPac
 	}
 }
 
-func (s *Session) controlResponseSource() <-chan *ikev2.IKEPacket {
+func (s *Session) ikeControlIsRunning() bool {
 	s.controlMu.RLock()
 	defer s.controlMu.RUnlock()
-	if !s.controlRunning {
-		return nil
+	return s.controlRunning
+}
+
+func (s *Session) waitForDispatchedIKEResponse(
+	ctx context.Context,
+	expected *ikev2.IKEPacket,
+	delay time.Duration,
+) (*ikev2.IKEPacket, bool, error) {
+	header := packetIKEHeader(expected)
+	raw, timedOut, err := s.waitForDispatchedIKERaw(
+		ctx, ikeWaitKey{exchangeType: header.ExchangeType, msgID: header.MessageID}, delay,
+	)
+	if err != nil || timedOut {
+		return nil, timedOut, err
 	}
-	return s.controlResponses
+	packet, err := ikev2.DecodePacket(raw)
+	if err != nil {
+		return nil, false, err
+	}
+	if !validIKEResponseHeader(packet, expected) {
+		return nil, false, errors.New("swu: dispatched IKE response header mismatch")
+	}
+	s.mu.Lock()
+	s.lastIKEResponse = append(s.lastIKEResponse[:0], raw...)
+	s.mu.Unlock()
+	return packet, false, nil
 }
 
 func validIKEResponseHeader(packet, request *ikev2.IKEPacket) bool {

@@ -92,12 +92,16 @@ func (s *Session) exchangeEstablishedIKE(ctx context.Context, packet *ikev2.IKEP
 	if err != nil {
 		return nil, err
 	}
-	if err := s.sendIKE(raw); err != nil {
-		return nil, err
-	}
-	response, err := s.receiveIKE(ctx)
+	responseData, err := s.exchangeEstablishedRaw(ctx, packet, [][]byte{raw})
 	if err != nil {
 		return nil, err
+	}
+	response, err := ikev2.DecodePacket(responseData)
+	if err != nil {
+		return nil, fmt.Errorf("swu: decode established IKE response: %w", err)
+	}
+	if !validIKEResponseHeader(response, packet) {
+		return nil, errors.New("swu: established IKE response header mismatch")
 	}
 	payloads, err := s.decryptAndParse(response)
 	if err != nil {

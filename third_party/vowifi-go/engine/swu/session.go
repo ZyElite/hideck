@@ -112,6 +112,8 @@ type Config struct {
 	// Retransmit controls IKE request retries. Nil selects the recovered
 	// RFC 7296 policy used by TaskManager.
 	Retransmit *RetransmitConfig
+	// IKERetryConfig is the original sliding-window retry configuration.
+	IKERetryConfig *RetryConfig
 	// Wireshark enables the pcap-like traffic logger.
 	Wireshark bool
 	// OnRedirect is invoked when the ePDG redirects the session (RFC 5685).
@@ -257,8 +259,11 @@ type Session struct {
 	ikeExchangeMu    sync.Mutex
 	controlMu        sync.RWMutex
 	controlWG        sync.WaitGroup
-	controlResponses chan *ikev2.IKEPacket
+	controlRequests  chan []byte
 	controlRunning   bool
+	taskMgr          *TaskManager
+	ikeWaiters       map[ikeWaitKey]chan []byte
+	ikePending       map[ikeWaitKey][]byte
 	terminalErr      error
 	initErr          error
 	state            string
@@ -307,6 +312,8 @@ func NewSession(cfg *Config) *Session {
 		state:             stateIdle,
 		startedAt:         time.Now(),
 		rekeyResetCh:      make(chan struct{}, 1),
+		ikeWaiters:        make(map[ikeWaitKey]chan []byte),
+		ikePending:        make(map[ikeWaitKey][]byte),
 		nonceLen:          cfg.NonceLen,
 		nextOutboundID:    1,
 		localIKEInitiator: true,
@@ -454,7 +461,7 @@ func (s *Session) connectOnce(ctx context.Context) (err error) {
 	// Some ePDGs establish the first CHILD_SA in IKE_AUTH. If the responder did
 	// not return SAr2, create it explicitly with a CREATE_CHILD_SA exchange.
 	if s.espRemoteSPI == 0 {
-		if err := s.dispatchCreateChildSA(ctx); err != nil {
+		if err := s.createInitialChildSA(ctx); err != nil {
 			return err
 		}
 	}
@@ -466,7 +473,7 @@ func (s *Session) connectOnce(ctx context.Context) (err error) {
 	if err := s.startEstablishedDataPlane(); err != nil {
 		return fmt.Errorf("start data plane: %w", err)
 	}
-	if err := s.ensureIKEDispatcher(); err != nil {
+	if err := s.startIKEControl(); err != nil {
 		return fmt.Errorf("start IKE control plane: %w", err)
 	}
 	s.setState(stateEstablished)
@@ -645,6 +652,12 @@ func (s *Session) Shutdown() {
 	s.mu.Unlock()
 
 	s.cancel()
+	s.controlMu.RLock()
+	taskManager := s.taskMgr
+	s.controlMu.RUnlock()
+	if taskManager != nil {
+		taskManager.Stop()
+	}
 	s.stopTimers()
 	cleanupErr := s.stopDataPlane()
 	s.controlWG.Wait()
@@ -889,12 +902,15 @@ func (s *Session) DPDProbe() error {
 	s.mu.Lock()
 	s.lastDPDAt = time.Now()
 	s.mu.Unlock()
-	pkt := &ikev2.IKEPacket{
-		Header: newIKEHeader(
-			s.SPIi, s.SPIr, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
-		),
+	response, err := s.sendEncryptedWithRetry(nil, ikev2.INFORMATIONAL)
+	if err != nil {
+		return err
 	}
-	payloads, err := s.exchangeEstablishedIKE(s.ctx, pkt)
+	packet, err := ikev2.DecodePacket(response)
+	if err != nil {
+		return fmt.Errorf("swu: decode DPD response: %w", err)
+	}
+	payloads, err := s.decryptAndParse(packet)
 	if err != nil {
 		return err
 	}

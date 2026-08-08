@@ -79,9 +79,14 @@ func TestPeerChildSARekeyIsValidatedAndAnswered(t *testing.T) {
 
 func newEstablishedControlSession(t *testing.T) (*Session, *testIKETransport) {
 	t.Helper()
-	session := NewSession(&Config{Retransmit: &RetransmitConfig{
+	return newEstablishedControlSessionWithConfig(t, &Config{Retransmit: &RetransmitConfig{
 		MaxRetries: 0, InitialDelay: 200 * time.Millisecond, Backoff: 1,
 	}})
+}
+
+func newEstablishedControlSessionWithConfig(t *testing.T, config *Config) (*Session, *testIKETransport) {
+	t.Helper()
+	session := NewSession(config)
 	transport := newTestIKETransport()
 	session.socket = transport
 	copy(session.SPIi[:], []byte("init-spi"))
@@ -99,7 +104,7 @@ func newEstablishedControlSession(t *testing.T) (*Session, *testIKETransport) {
 		t.Fatalf("setupDataPlane: %v", err)
 	}
 	session.setState(stateEstablished)
-	if err := session.ensureIKEDispatcher(); err != nil {
+	if err := session.startIKEControl(); err != nil {
 		t.Fatalf("ensureIKEDispatcher: %v", err)
 	}
 	return session, transport
@@ -222,7 +227,7 @@ func TestPeerIKESARekeyChangesOriginalInitiatorRole(t *testing.T) {
 		t.Fatalf("encrypt peer IKE rekey: %v", err)
 	}
 	decoded, _ := ikev2.DecodePacket(raw)
-	if err := session.handleIncomingCreateChildSAParsed(decoded); err != nil {
+	if err := session.handleIncomingCreateChildSAPacket(decoded); err != nil {
 		t.Fatalf("handle peer IKE rekey: %v", err)
 	}
 	if session.localIKEInitiator || session.SPIi != peerSPI || session.nextOutboundID != 0 {

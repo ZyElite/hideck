@@ -10,7 +10,6 @@ import (
 	"net"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
-	"github.com/iniwex5/vowifi-go/engine/ipsec"
 )
 
 // RekeyIKESA initiates an IKE SA rekey (RFC 7296 §2.8): a CREATE_CHILD_SA
@@ -39,16 +38,24 @@ func (s *Session) handleCreateChildSAResp() error {
 	return errors.New("swu: CREATE_CHILD_SA response handling not wired")
 }
 
-// handleIncomingCreateChildSAParsed processes an inbound CREATE_CHILD_SA.
-func (s *Session) handleIncomingCreateChildSAParsed(packet *ikev2.IKEPacket) error {
+func (s *Session) handleIncomingCreateChildSAPacket(packet *ikev2.IKEPacket) error {
 	payloads, err := s.decryptAndParse(packet)
 	if err != nil {
 		return err
 	}
+	return s.handleIncomingCreateChildSAParsed(packetIKEHeader(packet).MessageID, payloads)
+}
+
+// handleIncomingCreateChildSAParsed restores the original decrypted-request
+// dispatch boundary used by the IKE control loop.
+func (s *Session) handleIncomingCreateChildSAParsed(msgID uint32, payloads []ikev2.Payload) error {
 	protocolID, err := createChildSAProtocol(payloads)
 	if err != nil {
 		return err
 	}
+	packet := &ikev2.IKEPacket{Header: newIKEHeader(
+		s.SPIi, s.SPIr, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false)^ikeInitiatorFlag, msgID,
+	)}
 	if protocolID == ikev2.ProtoIKE {
 		return s.handlePeerIKESARekey(packet, payloads)
 	}
@@ -70,14 +77,13 @@ func createChildSAProtocol(payloads []ikev2.Payload) (ikev2.ProtocolID, error) {
 	return 0, errors.New("swu: CREATE_CHILD_SA request missing a single SA proposal")
 }
 
-// handleIncomingInformational processes an inbound INFORMATIONAL request.
-func (s *Session) handleIncomingInformational(packet *ikev2.IKEPacket) error {
+func (s *Session) handleIncomingInformationalPacket(packet *ikev2.IKEPacket) error {
 	return s.handlePeerInformational(packet)
 }
 
 // dispatchCreateChildSA performs the CREATE_CHILD_SA exchange for the ESP data
 // plane (RFC 7296 §1.3.2).
-func (s *Session) dispatchCreateChildSA(ctx context.Context) error {
+func (s *Session) createInitialChildSA(ctx context.Context) error {
 	ni := make([]byte, s.nonceLen)
 	if _, err := rand.Read(ni); err != nil {
 		return err
@@ -249,29 +255,6 @@ func spiBytes(spi uint32) []byte {
 	return []byte{byte(spi >> 24), byte(spi >> 16), byte(spi >> 8), byte(spi)}
 }
 
-// sendEncryptedResponseWithMsgID sends an encrypted response with an explicit
-// message ID.
-func (s *Session) sendEncryptedResponseWithMsgID(payloads []ikev2.Payload, msgID uint32) error {
-	pkt := &ikev2.IKEPacket{
-		Header:   newIKEHeader(s.SPIi, s.SPIr, ikev2.INFORMATIONAL, ikev2.FlagResponse, msgID),
-		Payloads: payloads,
-	}
-	raw, err := s.encryptAndWrapWithMsgID(pkt, msgID)
-	if err != nil {
-		return err
-	}
-	return s.sendIKE(raw)
-}
-
-// sendEncryptedWithRetry sends an encrypted message with a single retry.
-func (s *Session) sendEncryptedWithRetry(payloads []ikev2.Payload) error {
-	err := s.sendEncryptedResponseWithMsgID(payloads, s.nextMessageID())
-	if err != nil {
-		return err
-	}
-	return s.sendEncryptedResponseWithMsgID(payloads, s.nextMessageID())
-}
-
 // sendIkeAuthChildless sends an IKE_AUTH request without a CHILD_SA (used for
 // EAP-only authentication).
 func (s *Session) sendIkeAuthChildless() error {
@@ -299,115 +282,6 @@ func (s *Session) fragmentMessage(raw []byte) ([][]byte, error) {
 		out = append(out, raw)
 	}
 	return out, nil
-}
-
-// startIKEControlLoop starts the IKE control loop (dispatcher).
-func (s *Session) startIKEControlLoop() error {
-	if s.socket == nil {
-		return errors.New("swu: no IKE transport")
-	}
-	s.controlMu.Lock()
-	if s.controlRunning {
-		s.controlMu.Unlock()
-		return nil
-	}
-	transport := s.socket
-	responses := make(chan *ikev2.IKEPacket, 8)
-	requests := make(chan *ikev2.IKEPacket, 8)
-	s.controlResponses = responses
-	s.controlRunning = true
-	s.controlWG.Add(2)
-	s.controlMu.Unlock()
-	go s.ikeDispatchLoop(transport, responses, requests)
-	go s.ikeRequestLoop(requests)
-	return nil
-}
-
-// ikeDispatchLoop dispatches inbound IKE messages.
-
-func (s *Session) ikeDispatchLoop(transport ipsec.Transport, responses chan *ikev2.IKEPacket, requests chan<- *ikev2.IKEPacket) {
-	defer s.controlWG.Done()
-	defer func() {
-		s.controlMu.Lock()
-		if s.controlResponses == responses {
-			s.controlRunning = false
-		}
-		s.controlMu.Unlock()
-	}()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case raw, ok := <-transport.IKEPackets():
-			if !ok {
-				return
-			}
-			pkt, err := ikev2.DecodePacket(raw)
-			if err != nil {
-				s.failEstablishedControl(fmt.Errorf("swu: decode established IKE packet: %w", err))
-				return
-			}
-			if packetIKEHeader(pkt).Flags&ikeResponseFlag != 0 {
-				select {
-				case responses <- pkt:
-				case <-s.ctx.Done():
-					return
-				}
-				continue
-			}
-			select {
-			case requests <- pkt:
-			case <-s.ctx.Done():
-				return
-			}
-		}
-	}
-}
-
-func (s *Session) ikeRequestLoop(requests <-chan *ikev2.IKEPacket) {
-	defer s.controlWG.Done()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case packet := <-requests:
-			s.ikeExchangeMu.Lock()
-			err := s.handleIncomingIKE(packet)
-			s.ikeExchangeMu.Unlock()
-			if err != nil {
-				s.failEstablishedControl(err)
-				return
-			}
-		}
-	}
-}
-
-// handleIncomingIKE routes an inbound IKE message.
-func (s *Session) handleIncomingIKE(pkt *ikev2.IKEPacket) error {
-	header := packetIKEHeader(pkt)
-	switch header.ExchangeType {
-	case ikev2.ExchangeInformational:
-		return s.handleIncomingInformational(pkt)
-	case ikev2.ExchangeCreateChildSA:
-		return s.handleIncomingCreateChildSAParsed(pkt)
-	default:
-		return fmt.Errorf("swu: unsupported established IKE exchange %d", header.ExchangeType)
-	}
-}
-
-func (s *Session) failEstablishedControl(err error) {
-	if err == nil || errors.Is(err, context.Canceled) {
-		return
-	}
-	s.cancel()
-	s.stopTimers()
-	s.setTerminalError(err)
-	s.signalDone()
-}
-
-// ensureIKEDispatcher ensures the IKE dispatcher is running.
-func (s *Session) ensureIKEDispatcher() error {
-	return s.startIKEControlLoop()
 }
 
 // startNetEventMonitor starts the network event monitor (MOBIKE triggers).
