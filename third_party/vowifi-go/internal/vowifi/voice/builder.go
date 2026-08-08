@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 const (
@@ -62,16 +63,18 @@ func BuildIMSBye(agent *Agent, call *Call) string {
 	return buildVoiceRequest(dialog, call.CallID(), "BYE", voiceBranch(), "")
 }
 
-func buildIMSReinvite(agent *Agent, call *Call) string {
+func buildIMSSessionUpdate(agent *Agent, call *Call) string {
 	if agent == nil || call == nil {
 		return ""
 	}
-	dialog := call.advanceVoiceInviteCSeq()
-	sdp := call.imsLocalSDPValue()
-	if strings.TrimSpace(sdp) == "" {
-		sdp = generateBasicSDP(agent, call)
+	dialog := call.advanceVoiceCSeq()
+	request := buildVoiceRequest(dialog, call.CallID(), "UPDATE", voiceBranch(), "")
+	expires := call.voiceSessionExpires()
+	if expires <= 0 {
+		return request
 	}
-	return buildVoiceRequest(dialog, call.CallID(), "INVITE", voiceBranch(), sdp)
+	header := fmt.Sprintf("Session-Expires: %d\r\n", int64(expires/time.Second))
+	return strings.Replace(request, "Content-Length: 0\r\n", header+"Content-Length: 0\r\n", 1)
 }
 
 // BuildIMSACK builds the ACK for the final INVITE response.

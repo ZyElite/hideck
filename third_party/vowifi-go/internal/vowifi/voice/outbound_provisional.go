@@ -18,6 +18,7 @@ func (a *Agent) handleOutboundProvisional(ctx context.Context, call *Call, respo
 	logOutboundInviteResponse("IMS INVITE 临时响应", response)
 	call.MarkInviteProvisional()
 	call.learnVoiceDialog(response)
+	call.applyVoiceSessionExpires(voiceResponseHeader(response.Headers, "Session-Expires"))
 	a.applyProvisionalState(call, response.StatusCode)
 	if isVoiceSDPContentType(voiceResponseHeader(response.Headers, "Content-Type")) && len(response.Body) > 0 {
 		if err := a.updateRemoteMedia(call, response); err != nil {
@@ -63,7 +64,17 @@ func (a *Agent) applyProvisionalState(call *Call, status int) {
 }
 
 func (a *Agent) sendReliableProvisionalPRACK(ctx context.Context, call *Call, rseq uint32) error {
-	response, err := a.ims.RoundTripSIP(ctx, buildIMSPrack(a, call, rseq))
+	request := buildIMSPrack(a, call, rseq)
+	if err := call.configurePrackRetransmission(func() error {
+		return a.ims.SendRawSIP(request)
+	}); err != nil {
+		return err
+	}
+	if err := call.StartPrackRuntimeRetransmission(); err != nil {
+		return err
+	}
+	defer call.StopPrackTimer()
+	response, err := a.ims.RoundTripSIP(ctx, request)
 	if err != nil {
 		return fmt.Errorf("voice: PRACK transaction failed: %w", err)
 	}

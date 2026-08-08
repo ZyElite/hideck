@@ -3,6 +3,7 @@ package voice
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
@@ -33,7 +34,7 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 		return InboundAnswer{}, err
 	}
 	_, imsAnswer := call.localSDPs()
-	if err := responder.Respond(a.voiceSDPResponse(200, imsAnswer)); err != nil {
+	if err := responder.Respond(a.voiceSDPResponse(call, 200, imsAnswer)); err != nil {
 		a.releaseInboundCall(call, err, false)
 		return InboundAnswer{}, err
 	}
@@ -42,7 +43,7 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 		a.releaseInboundCall(call, err, false)
 		return InboundAnswer{}, err
 	}
-	if err := call.StartSessionTimer(defaultVoiceSessionRefresh); err != nil {
+	if err := call.StartSessionTimer(call.voiceSessionExpires()); err != nil {
 		a.releaseInboundCall(call, err, false)
 		return InboundAnswer{}, err
 	}
@@ -83,8 +84,11 @@ func (a *Agent) rejectInboundCall(call *Call, statusCode int) error {
 	return nil
 }
 
-func (a *Agent) voiceSDPResponse(status int, sdp string) imscore.InboundVoiceResponse {
+func (a *Agent) voiceSDPResponse(call *Call, status int, sdp string) imscore.InboundVoiceResponse {
 	response := imscore.InboundVoiceResponse{StatusCode: status, ContentType: "application/sdp", Body: []byte(sdp)}
+	if expires := call.voiceSessionExpires(); expires > 0 {
+		response.SessionExpires = strconv.FormatInt(int64(expires/time.Second), 10)
+	}
 	if profile, err := a.ims.RegisteredSIPDialogProfile(); err == nil {
 		response.Contact = profile.ContactURI
 	}

@@ -106,6 +106,7 @@ func (a *Agent) beginInboundInvite(call *Call, request imscore.InboundVoiceReque
 	defer call.inboundDecisionMu.Unlock()
 	call.SetStartTime(time.Now())
 	call.setInboundRequest(request.Responder)
+	call.applyVoiceSessionExpires(request.SessionExpires)
 	if err := a.prepareInboundVoiceDialog(call, request); err != nil {
 		a.releaseInboundCall(call, err, false)
 		return 500, err
@@ -158,7 +159,11 @@ func (a *Agent) handleInboundUpdate(request imscore.InboundVoiceRequest, call *C
 	if call.GetState() != callstate.StateConnected {
 		return voiceResult(491), nil
 	}
-	return voiceResult(200), a.applyIMSUpdate(call)
+	call.applyVoiceSessionExpires(request.SessionExpires)
+	if err := a.applyIMSUpdate(call); err != nil {
+		return voiceResult(200), err
+	}
+	return voiceResult(200), call.StartSessionTimer(call.voiceSessionExpires())
 }
 
 func (a *Agent) handleReinvite(request imscore.InboundVoiceRequest, call *Call) (imscore.InboundVoiceResult, error) {
@@ -167,8 +172,12 @@ func (a *Agent) handleReinvite(request imscore.InboundVoiceRequest, call *Call) 
 	if call.GetState() != callstate.StateConnected {
 		return voiceResult(491), nil
 	}
+	call.applyVoiceSessionExpires(request.SessionExpires)
 	if len(request.Body) == 0 {
-		return voiceResult(200), a.applyIMSUpdate(call)
+		if err := a.applyIMSUpdate(call); err != nil {
+			return voiceResult(200), err
+		}
+		return voiceResult(200), call.StartSessionTimer(call.voiceSessionExpires())
 	}
 	if request.Responder == nil || !isVoiceSDPContentType(request.ContentType) {
 		return voiceResult(488), nil
@@ -193,10 +202,13 @@ func (a *Agent) handleReinvite(request imscore.InboundVoiceRequest, call *Call) 
 	relay.SetRemoteAddr(remote)
 	relay.SetPTMapping(ExtractAndApplyPTMapping(offer, parsedClientAnswer))
 	call.setRemoteSDP(string(request.Body), RewriteSDP(string(request.Body), clientRelayIP, relay.LANPort()))
-	if err := request.Responder.Respond(a.voiceSDPResponse(200, imsAnswer)); err != nil {
+	if err := request.Responder.Respond(a.voiceSDPResponse(call, 200, imsAnswer)); err != nil {
 		return voiceResult(0), err
 	}
 	if err := a.applyIMSUpdate(call); err != nil {
+		return voiceResult(0), err
+	}
+	if err := call.StartSessionTimer(call.voiceSessionExpires()); err != nil {
 		return voiceResult(0), err
 	}
 	a.notifyIncomingCall(call)

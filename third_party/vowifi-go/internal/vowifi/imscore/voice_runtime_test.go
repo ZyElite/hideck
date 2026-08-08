@@ -135,7 +135,7 @@ func TestInboundVoiceResponderRetainsReplyPathForFinalSDPResponse(t *testing.T) 
 	}
 	answer := []byte("v=0\r\nc=IN IP4 192.0.2.2\r\nm=audio 40000 RTP/AVP 0\r\n")
 	if err := handler.request.Responder.Respond(InboundVoiceResponse{
-		StatusCode: 200, ContentType: "application/sdp", Body: answer,
+		StatusCode: 200, ContentType: "application/sdp", Body: answer, SessionExpires: "120",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -150,6 +150,9 @@ func TestInboundVoiceResponderRetainsReplyPathForFinalSDPResponse(t *testing.T) 
 	if !strings.Contains(responses[1], "Content-Type: application/sdp") || !strings.HasSuffix(responses[1], string(answer)) {
 		t.Fatalf("final response omitted SDP: %q", responses[1])
 	}
+	if handler.request.SessionExpires != "120;refresher=uas" || rawSIPHeaderValue(responses[1], "Session-Expires") != "120" {
+		t.Fatalf("Session-Expires request/response = %q / %q", handler.request.SessionExpires, responses[1])
+	}
 	if err := handler.request.Responder.Respond(InboundVoiceResponse{StatusCode: 486}); err == nil {
 		t.Fatal("second final response unexpectedly succeeded")
 	}
@@ -162,6 +165,7 @@ func inboundVoiceInvite(callID string) string {
 		"From: <sip:peer@ims.example>;tag=remote\r\n"+
 		"To: <sip:user@ims.example>\r\n"+
 		"Call-ID: %s\r\nCSeq: 1 INVITE\r\n"+
+		"Session-Expires: 120;refresher=uas\r\n"+
 		"Content-Type: application/sdp\r\nContent-Length: %d\r\n\r\n%s", callID, len(body), body)
 }
 

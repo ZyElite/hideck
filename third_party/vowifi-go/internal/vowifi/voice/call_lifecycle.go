@@ -1,7 +1,6 @@
 package voice
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -139,37 +138,6 @@ func (c *Call) StopOutboundNoAnswerTimer() error {
 		c.noAnswerTimer.Stop()
 		c.noAnswerTimer = nil
 	}
-	c.mu.Unlock()
-	return nil
-}
-
-// StartSessionTimer schedules the RFC 4028 session refresh.
-func (c *Call) StartSessionTimer(interval time.Duration) error {
-	if c == nil {
-		return errors.New("voice: nil call")
-	}
-	if c.agent == nil || c.agent.ims == nil {
-		return errors.New("voice: session timer has no IMS agent")
-	}
-	if interval <= 0 {
-		interval = 1800 * time.Second
-	}
-	c.mu.Lock()
-	if c.sessionTimer != nil {
-		c.sessionTimer.Stop()
-	}
-	c.sessionTimer = time.AfterFunc(interval, func() {
-		if c.GetState() == callstate.StateConnected {
-			ctx, cancel := context.WithTimeout(context.Background(), voiceInviteTimeout)
-			err := c.agent.refreshVoiceSession(ctx, c)
-			cancel()
-			if err != nil {
-				_ = c.agent.failOutboundCall(c, err)
-				return
-			}
-			_ = c.StartSessionTimer(interval)
-		}
-	})
 	c.mu.Unlock()
 	return nil
 }

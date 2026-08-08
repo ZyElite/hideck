@@ -72,6 +72,7 @@ func TestInboundCallAnswerRelaysRTPAndRemoteBYECleansUp(t *testing.T) {
 	var delivered IncomingCall
 	agent.SetIncomingCallHandler(func(call IncomingCall) { delivered = call })
 	request := inboundAgentInvite("call-in-answer", imsPeer, responder)
+	request.SessionExpires = "120;refresher=uas"
 	result, err := agent.HandleInboundVoiceRequest(request)
 	if err != nil || result.StatusCode != 0 {
 		t.Fatalf("HandleInboundVoiceRequest result=%+v err=%v", result, err)
@@ -89,6 +90,9 @@ func TestInboundCallAnswerRelaysRTPAndRemoteBYECleansUp(t *testing.T) {
 		t.Fatalf("AnswerWithSDP answer=%+v err=%v", answer, err)
 	}
 	call := agent.callByID(delivered.CallID)
+	if response := responder.lastResponse(); response.SessionExpires != "120" || call.sessionTimer == nil {
+		t.Fatalf("inbound Session-Expires response=%q timer=%v", response.SessionExpires, call.sessionTimer)
+	}
 	assertVoiceRelayPacket(t, client, offer.GetMediaPort(), imsPeer, call.RTPRelay().IMSPort())
 	if _, err := agent.HandleInboundVoiceRequest(imscore.InboundVoiceRequest{Method: "BYE", CallID: call.CallID()}); err != nil {
 		t.Fatal(err)

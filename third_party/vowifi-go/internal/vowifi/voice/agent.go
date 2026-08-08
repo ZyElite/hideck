@@ -15,9 +15,8 @@ import (
 )
 
 const (
-	voiceInviteTimeout         = 45 * time.Second
-	voiceHangupTimeout         = 10 * time.Second
-	defaultVoiceSessionRefresh = 30 * time.Minute
+	voiceInviteTimeout = 45 * time.Second
+	voiceHangupTimeout = 10 * time.Second
 )
 
 // NewAgent creates a voice agent for a device.
@@ -169,7 +168,7 @@ func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, err
 	if err := call.Transition(callstate.StateConnected); err != nil {
 		return nil, a.failEstablishedOutboundCall(ctx, call, err)
 	}
-	if err := call.StartSessionTimer(defaultVoiceSessionRefresh); err != nil {
+	if err := call.StartSessionTimer(call.voiceSessionExpires()); err != nil {
 		return nil, a.failEstablishedOutboundCall(ctx, call, err)
 	}
 	a.emitCallAnswered(call)
@@ -205,6 +204,7 @@ func (a *Agent) completeOutboundInvite(call *Call, response imscore.SIPResponse)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("voice: INVITE rejected: %d %s", response.StatusCode, response.Reason)
 	}
+	call.applyVoiceSessionExpires(voiceResponseHeader(response.Headers, "Session-Expires"))
 	if state := call.GetState(); state == callstate.StateDialing || state == callstate.StateAlerting {
 		if err := call.Transition(callstate.StateConnecting); err != nil {
 			return err
@@ -346,18 +346,16 @@ func (a *Agent) forceReleaseCall(call *Call, cause error) {
 }
 
 func (a *Agent) refreshVoiceSession(ctx context.Context, call *Call) error {
-	response, err := a.ims.RoundTripSIP(ctx, buildIMSReinvite(a, call))
+	response, err := a.ims.RoundTripSIP(ctx, buildIMSSessionUpdate(a, call))
 	if err != nil {
 		return fmt.Errorf("voice: session refresh failed: %w", err)
 	}
 	call.learnVoiceDialog(response)
-	if err := a.sendIMSDialogRequest(buildIMSACKForStatus(a, call, response.StatusCode)); err != nil {
-		return fmt.Errorf("voice: send refresh ACK: %w", err)
-	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("voice: session refresh rejected: %d %s", response.StatusCode, response.Reason)
 	}
-	return a.updateRemoteMedia(call, response)
+	call.applyVoiceSessionExpires(voiceResponseHeader(response.Headers, "Session-Expires"))
+	return nil
 }
 
 // Ready reports whether the agent can start an IMS voice transaction.

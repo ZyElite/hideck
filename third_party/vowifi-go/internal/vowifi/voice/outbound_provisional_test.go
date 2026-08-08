@@ -15,9 +15,13 @@ import (
 const reliableEarlyMediaSDP = "v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 33000 RTP/AVP 104\r\na=rtpmap:104 AMR-WB/16000\r\n"
 
 type reliableProvisionalRegistrar struct {
-	conn  *net.UDPConn
-	prack chan string
-	ack   chan string
+	conn                *net.UDPConn
+	prack               chan string
+	ack                 chan string
+	prackResponsesAfter int
+	prackCount          int
+	sessionExpires      string
+	provisionalExpires  string
 }
 
 type sipTestResponse struct {
@@ -28,14 +32,30 @@ type sipTestResponse struct {
 	body    string
 }
 
+type reliableRegistrarOptions struct {
+	prackResponsesAfter       int
+	finalSessionExpires       string
+	provisionalSessionExpires string
+}
+
 func startReliableProvisionalRegistrar(t *testing.T) *reliableProvisionalRegistrar {
+	return startReliableProvisionalRegistrarWithOptions(t, reliableRegistrarOptions{prackResponsesAfter: 1})
+}
+
+func startReliableProvisionalRegistrarWithOptions(
+	t *testing.T,
+	options reliableRegistrarOptions,
+) *reliableProvisionalRegistrar {
 	t.Helper()
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatalf("ListenUDP: %v", err)
 	}
 	registrar := &reliableProvisionalRegistrar{
-		conn: conn, prack: make(chan string, 1), ack: make(chan string, 1),
+		conn: conn, prack: make(chan string, 4), ack: make(chan string, 1),
+		prackResponsesAfter: options.prackResponsesAfter,
+		sessionExpires:      options.finalSessionExpires,
+		provisionalExpires:  options.provisionalSessionExpires,
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	go registrar.serve()
@@ -58,6 +78,10 @@ func (r *reliableProvisionalRegistrar) serve() {
 			r.writeProvisional(request, remote)
 		case "PRACK":
 			r.prack <- request
+			r.prackCount++
+			if r.prackCount < r.prackResponsesAfter {
+				continue
+			}
 			r.writeResponse(sipTestResponse{request: request, remote: remote, status: 200})
 			r.writeFinalInvite(invite, inviteRemote)
 		case "ACK":
@@ -74,6 +98,9 @@ func (r *reliableProvisionalRegistrar) writeProvisional(request string, remote *
 		"Contact: " + contact + "\r\n" +
 		"Record-Route: <sip:edge-one.example;lr>, <sip:edge-two.example;lr>\r\n" +
 		"Require: 100rel\r\nRSeq: 41\r\nContent-Type: application/sdp\r\n"
+	if r.provisionalExpires != "" {
+		extra += "Session-Expires: " + r.provisionalExpires + "\r\n"
+	}
 	r.writeResponse(sipTestResponse{
 		request: request, remote: remote, status: 183, extra: extra, body: reliableEarlyMediaSDP,
 	})
@@ -84,6 +111,9 @@ func (r *reliableProvisionalRegistrar) writeFinalInvite(request string, remote *
 		return
 	}
 	extra := "To: <sip:callee@ims.example.com>;tag=early-dialog\r\n"
+	if r.sessionExpires != "" {
+		extra += "Session-Expires: " + r.sessionExpires + "\r\n"
+	}
 	r.writeResponse(sipTestResponse{request: request, remote: remote, status: 200, extra: extra})
 }
 
@@ -119,11 +149,65 @@ func TestAgentPRACKsReliableProvisionalBeforeFinalInvite(t *testing.T) {
 	if call.GetState() != callstate.StateConnected || !call.HasReliableProvisional() {
 		t.Fatalf("state=%s reliable=%t", call.GetState(), call.HasReliableProvisional())
 	}
+	if call.sessionTimer != nil {
+		t.Fatal("call without Session-Expires installed a session timer")
+	}
 	inviteCSeq := call.voiceDialogSnapshot().inviteCSeq
 	assertReliableProvisionalPRACK(t, <-registrar.prack, registrar.conn.LocalAddr().(*net.UDPAddr).Port, inviteCSeq)
 	wantACKCSeq := fmt.Sprintf("%d ACK", inviteCSeq)
 	if ack := <-registrar.ack; voiceTestHeader(ack, "CSeq") != wantACKCSeq {
 		t.Fatalf("ACK CSeq = %q, want %s", voiceTestHeader(ack, "CSeq"), wantACKCSeq)
+	}
+}
+
+func TestAgentRetransmitsPRACKWithOriginalTransaction(t *testing.T) {
+	registrar := startReliableProvisionalRegistrarWithOptions(t, reliableRegistrarOptions{
+		prackResponsesAfter: 2, finalSessionExpires: "120;refresher=uac",
+	})
+	agent := newVoiceTestAgent(t, registrar.conn)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	call, err := agent.dialContext(ctx, "+447942985429", testClientSDP)
+	if err != nil {
+		t.Fatalf("dialContext: %v", err)
+	}
+	first, second := <-registrar.prack, <-registrar.prack
+	for _, name := range []string{"Via", "Call-ID", "CSeq", "RAck"} {
+		if voiceTestHeader(first, name) != voiceTestHeader(second, name) {
+			t.Fatalf("retransmitted PRACK %s changed: %q / %q", name, first, second)
+		}
+	}
+	if call.voiceSessionExpires() != 120*time.Second || call.sessionTimer == nil {
+		t.Fatalf("negotiated session timer = %s, timer=%v", call.voiceSessionExpires(), call.sessionTimer)
+	}
+	if call.prackTimer != nil {
+		t.Fatal("PRACK timer remains active after final response")
+	}
+}
+
+func TestAgentRetainsSessionExpiryFromReliableProvisional(t *testing.T) {
+	registrar := startReliableProvisionalRegistrarWithOptions(t, reliableRegistrarOptions{
+		prackResponsesAfter: 1, provisionalSessionExpires: "180;refresher=uac",
+	})
+	agent := newVoiceTestAgent(t, registrar.conn)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	call, err := agent.dialContext(ctx, "+447942985429", testClientSDP)
+	if err != nil {
+		t.Fatalf("dialContext: %v", err)
+	}
+	if call.voiceSessionExpires() != 180*time.Second || call.sessionTimer == nil {
+		t.Fatalf("provisional session timer = %s, timer=%v", call.voiceSessionExpires(), call.sessionTimer)
 	}
 }
 

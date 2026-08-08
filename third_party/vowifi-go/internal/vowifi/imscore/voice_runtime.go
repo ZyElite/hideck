@@ -34,26 +34,28 @@ type SIPResponse struct {
 
 // InboundVoiceRequest is a SIP request routed to the active voice agent.
 type InboundVoiceRequest struct {
-	Method      string
-	CallID      string
-	From        string
-	To          string
-	Contact     string
-	RecordRoute string
-	CSeq        string
-	ContentType string
-	Body        []byte
-	Responder   InboundVoiceResponder
+	Method         string
+	CallID         string
+	From           string
+	To             string
+	Contact        string
+	RecordRoute    string
+	CSeq           string
+	ContentType    string
+	SessionExpires string
+	Body           []byte
+	Responder      InboundVoiceResponder
 }
 
 // InboundVoiceResponse is one provisional or final response to an inbound
 // voice request.
 type InboundVoiceResponse struct {
-	StatusCode  int
-	ContentType string
-	Body        []byte
-	Contact     string
-	ToTag       string
+	StatusCode     int
+	ContentType    string
+	Body           []byte
+	Contact        string
+	ToTag          string
+	SessionExpires string
 }
 
 // InboundVoiceResponder retains the network transaction used by an inbound
@@ -226,7 +228,8 @@ func (s *Service) handleInboundVoice(raw string, reply func(string) error) (inbo
 		From: rawSIPHeaderValue(raw, "From"), To: rawSIPHeaderValue(raw, "To"),
 		Contact: rawSIPHeaderValue(raw, "Contact"), RecordRoute: rawSIPHeaderValue(raw, "Record-Route"),
 		CSeq: rawSIPHeaderValue(raw, "CSeq"), ContentType: rawSIPHeaderValue(raw, "Content-Type"),
-		Body: body, Responder: newInboundVoiceResponder(raw, reply),
+		SessionExpires: rawSIPHeaderValue(raw, "Session-Expires"),
+		Body:           body, Responder: newInboundVoiceResponder(raw, reply),
 	})
 	if !result.Handled {
 		return inboundSIPResult{}, false, err

@@ -428,6 +428,44 @@ func TestCallTimersStopAndDoneCloseOnce(t *testing.T) {
 	}
 }
 
+func TestSessionRefreshUsesRecoveredExpirySchedule(t *testing.T) {
+	tests := []struct {
+		expires time.Duration
+		want    time.Duration
+	}{
+		{expires: 30 * time.Minute, want: 15 * time.Minute},
+		{expires: 120 * time.Second, want: 110 * time.Second},
+		{expires: 5 * time.Second, want: 5 * time.Second},
+	}
+	for _, test := range tests {
+		if got := sessionRefreshDelay(test.expires); got != test.want {
+			t.Fatalf("sessionRefreshDelay(%s) = %s, want %s", test.expires, got, test.want)
+		}
+	}
+}
+
+func TestBuildIMSSessionUpdateUsesNegotiatedExpiry(t *testing.T) {
+	agent := newTestAgent(t)
+	call := NewCall(agent, callstate.DirectionOutbound, "call-refresh", "+8613800000000")
+	call.setVoiceDialog(&voiceSIPDialog{
+		localURI: "sip:local@ims.example", remoteURI: "sip:peer@ims.example",
+		remoteTarget: "sip:peer@edge.example", localAddress: "192.0.2.10:5060",
+		transport: "tcp", localTag: "local", remoteTag: "remote", cseq: 7, inviteCSeq: 7,
+	})
+	call.applyVoiceSessionExpires("120;refresher=uac")
+
+	request := buildIMSSessionUpdate(agent, call)
+	if !strings.HasPrefix(request, "UPDATE sip:peer@edge.example SIP/2.0") {
+		t.Fatalf("session refresh request line = %q", strings.Split(request, "\r\n")[0])
+	}
+	if voiceTestHeader(request, "CSeq") != "8 UPDATE" || voiceTestHeader(request, "Session-Expires") != "120" {
+		t.Fatalf("session refresh headers = CSeq %q Session-Expires %q", voiceTestHeader(request, "CSeq"), voiceTestHeader(request, "Session-Expires"))
+	}
+	if voiceTestHeader(request, "Content-Type") != "" || !strings.HasSuffix(request, "Content-Length: 0\r\n\r\n") {
+		t.Fatalf("session refresh unexpectedly carries SDP: %q", request)
+	}
+}
+
 func TestAgentInboundAnswerRequiresRequestContext(t *testing.T) {
 	agent := newTestAgent(t)
 	call := NewCall(agent, callstate.DirectionInbound, "call-in", "+8613800000000")

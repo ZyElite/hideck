@@ -47,14 +47,6 @@ func (c *Call) MarkErrorACKSent() {
 // CancelOutboundInviteTimer cancels the no-answer timer.
 func (c *Call) CancelOutboundInviteTimer() error { return c.StopOutboundNoAnswerTimer() }
 
-// StartPrackRuntimeRetransmission requires a stored reliable response context.
-func (c *Call) StartPrackRuntimeRetransmission() error {
-	return errors.New("voice: PRACK retransmission context is unavailable")
-}
-
-// StopPrackTimer is idempotent when no reliable provisional is active.
-func (c *Call) StopPrackTimer() error { return nil }
-
 // --- Call constructors ---
 
 // NewOutboundCall creates an outbound call in the Dialing state.

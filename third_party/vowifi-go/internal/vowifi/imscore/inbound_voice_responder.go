@@ -71,6 +71,12 @@ func buildSIPVoiceResponse(request, localTag string, response InboundVoiceRespon
 		}
 		fmt.Fprintf(&out, "Contact: <%s>\r\n", strings.Trim(value, "<>"))
 	}
+	if value := strings.TrimSpace(response.SessionExpires); value != "" {
+		if strings.ContainsAny(value, "\r\n") {
+			return "", errors.New("imscore: invalid SIP Session-Expires response header")
+		}
+		fmt.Fprintf(&out, "Session-Expires: %s\r\n", value)
+	}
 	if len(response.Body) > 0 {
 		contentType := strings.TrimSpace(response.ContentType)
 		if contentType == "" || strings.ContainsAny(contentType, "\r\n") {
