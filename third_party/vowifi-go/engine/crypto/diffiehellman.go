@@ -1,100 +1,137 @@
 package crypto
 
 import (
+	"crypto/ecdh"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
 )
 
-// DHGroup is an IKEv2 MODP Diffie-Hellman group (RFC 3526).
-type DHGroup struct {
-	GroupID   uint16
-	Prime     *big.Int
-	Generator *big.Int
-}
+var (
+	prime768  = mustPrime(prime768Hex)
+	prime1024 = mustPrime(prime1024Hex)
+	prime1536 = mustPrime(prime1536Hex)
+	prime2048 = mustPrime(prime2048Hex)
+	prime3072 = mustPrime(prime3072Hex)
+	prime4096 = mustPrime(prime4096Hex)
+	prime6144 = mustPrime(prime6144Hex)
+	prime8192 = mustPrime(prime8192Hex)
+	gen2      = big.NewInt(2)
+)
 
-// modp1024 is RFC 3526 group 2 (MODP-1024).
-var modp1024 = &DHGroup{
-	GroupID:   2,
-	Prime:     mustBig("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3BE39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE515D2261898FA051015728E5A8AACAA68FFFFFFFFFFFFFFFF", 16),
-	Generator: big.NewInt(2),
-}
-
-// modp2048 is RFC 3526 group 14 (MODP-2048).
-var modp2048 = &DHGroup{
-	GroupID:   14,
-	Prime:     mustBig("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3BE39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE515D2261898FA051015728E5A8AACAA68FFFFFFFFFFFFFFFF", 16),
-	Generator: big.NewInt(2),
-}
-
-func mustBig(s string, base int) *big.Int {
-	n, ok := new(big.Int).SetString(s, base)
-	if !ok {
-		panic("crypto: bad group prime constant")
-	}
-	return n
-}
-
-// NewDiffieHellman returns a DH session for the given IKEv2 group ID.
-func NewDiffieHellman(groupID uint16) (*DiffieHellman, error) {
-	var g *DHGroup
-	switch groupID {
-	case 2:
-		g = modp1024
-	case 14:
-		g = modp2048
-	default:
-		return nil, fmt.Errorf("crypto: unsupported DH group %d", groupID)
-	}
-	return &DiffieHellman{group: g}, nil
-}
-
-// DiffieHellman performs a single MODP Diffie-Hellman exchange.
 type DiffieHellman struct {
-	group      *DHGroup
-	privateKey *big.Int
-	publicKey  *big.Int
+	Group      uint16
+	PrivateKey *big.Int
+	PublicKey  *big.Int
+	SharedKey  []byte
+	P          *big.Int
+	G          *big.Int
+
+	ecdhCurve   ecdh.Curve
+	ecdhPrivKey *ecdh.PrivateKey
+	ecdhPubKey  *ecdh.PublicKey
 }
 
-// GenerateKey derives a fresh private/public key pair.
-func (d *DiffieHellman) GenerateKey() error {
-	// exponent in [2, p-2]
-	max := new(big.Int).Sub(d.group.Prime, big.NewInt(3))
-	priv, err := rand.Int(rand.Reader, max)
+func NewDiffieHellman(group uint16) (*DiffieHellman, error) {
+	dh := &DiffieHellman{Group: group}
+	switch group {
+	case 1:
+		dh.P, dh.G = prime768, gen2
+	case 2:
+		dh.P, dh.G = prime1024, gen2
+	case 5:
+		dh.P, dh.G = prime1536, gen2
+	case 14:
+		dh.P, dh.G = prime2048, gen2
+	case 15:
+		dh.P, dh.G = prime3072, gen2
+	case 16:
+		dh.P, dh.G = prime4096, gen2
+	case 17:
+		dh.P, dh.G = prime6144, gen2
+	case 18:
+		dh.P, dh.G = prime8192, gen2
+	case 19:
+		dh.ecdhCurve = ecdh.P256()
+	case 20:
+		dh.ecdhCurve = ecdh.P384()
+	default:
+		return nil, fmt.Errorf("不支持的 DH 组: %d", group)
+	}
+	return dh, nil
+}
+
+func (dh *DiffieHellman) GenerateKey() error {
+	if dh.ecdhCurve != nil {
+		privateKey, err := dh.ecdhCurve.GenerateKey(rand.Reader)
+		if err != nil {
+			return err
+		}
+		dh.ecdhPrivKey = privateKey
+		dh.ecdhPubKey = privateKey.PublicKey()
+		return nil
+	}
+	privateKey, err := rand.Int(rand.Reader, dh.P)
 	if err != nil {
 		return err
 	}
-	priv.Add(priv, big.NewInt(2))
-	d.privateKey = priv
-	d.publicKey = new(big.Int).Exp(d.group.Generator, priv, d.group.Prime)
+	dh.PrivateKey = privateKey
+	dh.PublicKey = new(big.Int).Exp(dh.G, privateKey, dh.P)
 	return nil
 }
 
-// PublicKeyBytes returns the public key as a big-endian byte string (zero
-// padded to the group prime size).
-func (d *DiffieHellman) PublicKeyBytes() []byte {
-	return padBytes(d.publicKey.Bytes(), d.group.Prime.BitLen()/8)
+func (dh *DiffieHellman) ComputeSharedSecret(peerPublicKey []byte) ([]byte, error) {
+	if dh.ecdhCurve != nil {
+		return dh.computeECDHSecret(peerPublicKey)
+	}
+	peer := new(big.Int).SetBytes(peerPublicKey)
+	one := big.NewInt(1)
+	pMinusOne := new(big.Int).Sub(dh.P, one)
+	if peer.Cmp(one) <= 0 || peer.Cmp(pMinusOne) >= 0 {
+		return nil, errors.New("无效的对端公钥")
+	}
+	secret := new(big.Int).Exp(peer, dh.PrivateKey, dh.P)
+	dh.SharedKey = leftPad(secret.Bytes(), (dh.P.BitLen()+7)/8)
+	return dh.SharedKey, nil
 }
 
-// ComputeSharedSecret derives the shared secret from the peer's public key.
-func (d *DiffieHellman) ComputeSharedSecret(peer []byte) ([]byte, error) {
-	if d.privateKey == nil {
-		return nil, fmt.Errorf("crypto: no private key generated")
+func (dh *DiffieHellman) computeECDHSecret(peerPublicKey []byte) ([]byte, error) {
+	if dh.ecdhPrivKey == nil {
+		return nil, errors.New("ECDH 私钥未初始化")
 	}
-	peerInt := new(big.Int).SetBytes(peer)
-	if peerInt.Sign() <= 0 || peerInt.Cmp(d.group.Prime) >= 0 {
-		return nil, fmt.Errorf("crypto: invalid peer public key")
+	peer, err := dh.ecdhCurve.NewPublicKey(peerPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("无效的对端公钥: %w", err)
 	}
-	secret := new(big.Int).Exp(peerInt, d.privateKey, d.group.Prime)
-	return padBytes(secret.Bytes(), d.group.Prime.BitLen()/8), nil
+	secret, err := dh.ecdhPrivKey.ECDH(peer)
+	if err != nil {
+		return nil, err
+	}
+	dh.SharedKey = append(dh.SharedKey[:0], secret...)
+	return dh.SharedKey, nil
 }
 
-// padBytes left-pads b to n bytes.
-func padBytes(b []byte, n int) []byte {
-	if len(b) >= n {
-		return b
+func (dh *DiffieHellman) PublicKeyBytes() []byte {
+	if dh.ecdhPubKey != nil {
+		return append([]byte(nil), dh.ecdhPubKey.Bytes()...)
 	}
-	out := make([]byte, n)
-	copy(out[n-len(b):], b)
-	return out
+	return leftPad(dh.PublicKey.Bytes(), (dh.P.BitLen()+7)/8)
+}
+
+func leftPad(value []byte, length int) []byte {
+	if len(value) >= length {
+		return value
+	}
+	padded := make([]byte, length)
+	copy(padded[length-len(value):], value)
+	return padded
+}
+
+func mustPrime(value string) *big.Int {
+	prime, ok := new(big.Int).SetString(value, 16)
+	if !ok {
+		panic("invalid MODP prime")
+	}
+	return prime
 }

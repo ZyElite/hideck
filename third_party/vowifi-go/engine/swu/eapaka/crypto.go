@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hash"
 
+	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/sim"
 )
 
@@ -917,78 +918,5 @@ func prfPrimeSHA256(key, seed []byte, length int) []byte {
 }
 
 func fips1862PRF(seed []byte, length int) []byte {
-	xkey := make([]byte, 20)
-	copy(xkey, seed)
-	var out []byte
-	for len(out) < length {
-		for i := 0; i < 2 && len(out) < length; i++ {
-			w := fips1862G(xkey)
-			out = append(out, w...)
-			xkey = add160(xkey, w, 1)
-		}
-	}
-	return out[:length]
-}
-
-func fips1862G(xval []byte) []byte {
-	var block [64]byte
-	copy(block[:20], xval)
-	h0, h1, h2, h3, h4 := uint32(0x67452301), uint32(0xEFCDAB89), uint32(0x98BADCFE), uint32(0x10325476), uint32(0xC3D2E1F0)
-	var w [80]uint32
-	for i := 0; i < 16; i++ {
-		w[i] = binary.BigEndian.Uint32(block[i*4 : i*4+4])
-	}
-	for i := 16; i < 80; i++ {
-		w[i] = bitsRotateLeft32(w[i-3]^w[i-8]^w[i-14]^w[i-16], 1)
-	}
-	a, b, c, d, e := h0, h1, h2, h3, h4
-	for i := 0; i < 80; i++ {
-		var f, k uint32
-		switch {
-		case i < 20:
-			f = (b & c) | ((^b) & d)
-			k = 0x5A827999
-		case i < 40:
-			f = b ^ c ^ d
-			k = 0x6ED9EBA1
-		case i < 60:
-			f = (b & c) | (b & d) | (c & d)
-			k = 0x8F1BBCDC
-		default:
-			f = b ^ c ^ d
-			k = 0xCA62C1D6
-		}
-		temp := bitsRotateLeft32(a, 5) + f + e + k + w[i]
-		e = d
-		d = c
-		c = bitsRotateLeft32(b, 30)
-		b = a
-		a = temp
-	}
-	h0 += a
-	h1 += b
-	h2 += c
-	h3 += d
-	h4 += e
-	out := make([]byte, 20)
-	binary.BigEndian.PutUint32(out[0:4], h0)
-	binary.BigEndian.PutUint32(out[4:8], h1)
-	binary.BigEndian.PutUint32(out[8:12], h2)
-	binary.BigEndian.PutUint32(out[12:16], h3)
-	binary.BigEndian.PutUint32(out[16:20], h4)
-	return out
-}
-
-func add160(a, b []byte, carry uint16) []byte {
-	out := make([]byte, 20)
-	for i := 19; i >= 0; i-- {
-		sum := uint16(a[i]) + uint16(b[i]) + carry
-		out[i] = byte(sum)
-		carry = sum >> 8
-	}
-	return out
-}
-
-func bitsRotateLeft32(v uint32, n uint) uint32 {
-	return (v << n) | (v >> (32 - n))
+	return enginecrypto.NewFIPS1862PRFSHA1(seed).Bytes(nil, length)
 }

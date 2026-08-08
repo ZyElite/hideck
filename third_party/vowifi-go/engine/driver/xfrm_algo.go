@@ -10,14 +10,15 @@ package driver
 // IKEv2 transform IDs (RFC 7296 §3.3.2) mapped to kernel XFRM algorithm names.
 const (
 	// Encryption transforms.
-	encrDESCBC      uint16 = 3  // ENCR_3DES
-	encrAESCBC      uint16 = 12 // ENCR_AES_CBC
-	encrAESGCM16    uint16 = 18 // ENCR_AES_GCM_16
-	encrAESGCM8     uint16 = 20 // ENCR_AES_GCM_8
-	encrAESCCM8     uint16 = 14 // ENCR_AES_CCM_8
-	encrAESCCM12    uint16 = 15 // ENCR_AES_CCM_12
-	encrAESCCM16    uint16 = 16 // ENCR_AES_CCM_16
-	encrNull        uint16 = 11 // ENCR_NULL
+	encrDESCBC   uint16 = 3  // ENCR_3DES
+	encrAESCBC   uint16 = 12 // ENCR_AES_CBC
+	encrAESGCM8  uint16 = 18 // ENCR_AES_GCM_8
+	encrAESGCM12 uint16 = 19 // ENCR_AES_GCM_12
+	encrAESGCM16 uint16 = 20 // ENCR_AES_GCM_16
+	encrAESCCM8  uint16 = 14 // ENCR_AES_CCM_8
+	encrAESCCM12 uint16 = 15 // ENCR_AES_CCM_12
+	encrAESCCM16 uint16 = 16 // ENCR_AES_CCM_16
+	encrNull     uint16 = 11 // ENCR_NULL
 	// Integrity transforms.
 	integHMACMD5    uint16 = 1 // AUTH_HMAC_MD5_96
 	integHMACSHA1   uint16 = 2 // AUTH_HMAC_SHA1_96
@@ -35,7 +36,7 @@ func IKEv2AlgToXFRMCrypt(alg uint16) string {
 		return "cbc(des3_ede)"
 	case encrAESCBC:
 		return "cbc(aes)"
-	case encrAESGCM16, encrAESGCM8:
+	case encrAESGCM8, encrAESGCM12, encrAESGCM16:
 		return "rfc4106(gcm(aes))"
 	case encrAESCCM8, encrAESCCM12, encrAESCCM16:
 		return "rfc4309(ccm(aes))"
@@ -71,7 +72,7 @@ func IKEv2AlgToXFRMAuth(alg uint16) string {
 // algorithm name, or "" if the transform is not an AEAD.
 func IKEv2AlgToXFRMAead(alg uint16) string {
 	switch alg {
-	case encrAESGCM16, encrAESGCM8:
+	case encrAESGCM8, encrAESGCM12, encrAESGCM16:
 		return "rfc4106(gcm(aes))"
 	case encrAESCCM8, encrAESCCM12, encrAESCCM16:
 		return "rfc4309(ccm(aes))"

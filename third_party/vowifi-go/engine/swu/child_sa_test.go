@@ -40,7 +40,10 @@ func TestDeriveChildSAKeysUsesFreshNoncesAndBothDirections(t *testing.T) {
 	}
 	directionLen := s.espEncKeyLen + s.espIntegKeyLen
 	seed := append(append([]byte{}, s.childNi...), s.childNr...)
-	want := enginecrypto.PrfPlus(s.prf, s.ikeKeys.SK_d, seed, 2*directionLen)
+	want, err := enginecrypto.PrfPlus(s.prf, s.ikeKeys.SK_d, seed, 2*directionLen)
+	if err != nil {
+		t.Fatalf("PrfPlus: %v", err)
+	}
 	if !bytes.Equal(keys.initiator.enc, want[:s.espEncKeyLen]) ||
 		!bytes.Equal(keys.responder.enc, want[directionLen:directionLen+s.espEncKeyLen]) {
 		t.Fatal("directional CHILD_SA encryption keys do not match RFC 7296 KEYMAT order")

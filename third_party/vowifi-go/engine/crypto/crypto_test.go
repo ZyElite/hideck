@@ -80,7 +80,10 @@ func TestAESXCBCMAC(t *testing.T) {
 func TestPrfPlus(t *testing.T) {
 	key := bytes.Repeat([]byte{0xaa}, 20)
 	seed := []byte("seed")
-	out := PrfPlus(&hmacPRF{newHash: sha1.New, keyLen: 20}, key, seed, 200)
+	out, err := PrfPlus(PRF_HMAC_SHA1, key, seed, 200)
+	if err != nil {
+		t.Fatalf("PrfPlus: %v", err)
+	}
 	if len(out) != 200 {
 		t.Fatalf("PrfPlus length = %d, want 200", len(out))
 	}
@@ -145,7 +148,10 @@ func TestAESCBCRoundTrip(t *testing.T) {
 	if len(pt)%aes.BlockSize != 0 {
 		t.Fatalf("test input not block aligned: %d", len(pt))
 	}
-	ct := c.Seal(nil, pt, iv, nil)
+	ct, err := c.Seal(nil, pt, iv, nil)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 	back, err := c.Open(nil, ct, iv, nil)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -162,7 +168,10 @@ func TestPrepared3DESCipherRoundTrip(t *testing.T) {
 	}
 	plain := bytes.Repeat([]byte{0x42}, 2*des.BlockSize)
 	iv := bytes.Repeat([]byte{0x53}, des.BlockSize)
-	encrypted := cipher.Seal(nil, plain, iv, nil)
+	encrypted, err := cipher.Seal(nil, plain, iv, nil)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 	decrypted, err := cipher.Open(nil, encrypted, iv, nil)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -186,7 +195,10 @@ func TestAESGCMRoundTrip(t *testing.T) {
 	iv := bytes.Repeat([]byte{0x44}, c.IVSize())
 	pt := []byte("voice over wifi payload")
 	aad := []byte{0xaa, 0xbb, 0xcc, 0xdd, 0x01, 0x02, 0x03, 0x04}
-	ct := c.Seal(nil, pt, iv, aad)
+	ct, err := c.Seal(nil, pt, iv, aad)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 	if len(ct) != len(pt)+16 {
 		t.Errorf("ciphertext length = %d, want %d", len(ct), len(pt)+16)
 	}
@@ -243,20 +255,26 @@ func TestLegacyCipher(t *testing.T) {
 
 // TestFIPS1862PRF checks determinism and output length.
 func TestFIPS1862PRF(t *testing.T) {
-	f := NewFIPS1862PRFSHA1(bytes.Repeat([]byte{0xab}, 20), []byte{0, 0, 0, 0, 0, 0, 0, 1})
-	o1 := f.Bytes(64)
+	key := bytes.Repeat([]byte{0xab}, 20)
+	seed := []byte{0, 0, 0, 0, 0, 0, 0, 1}
+	f := NewFIPS1862PRFSHA1(key)
+	o1 := f.Bytes(seed, 64)
+	want := mustHex(t, "65580ed670fa52cfc69142a9ecba334b6f72a68f659c92edec346fd7e9955124cf2a8ca1f3a853385bea85151d631473bac7f1401d1107bd0c33ca7bf205af03")
+	if !bytes.Equal(o1, want) {
+		t.Fatalf("FIPS1862PRF = %x, want %x", o1, want)
+	}
 	if len(o1) != 64 {
 		t.Fatalf("FIPS1862PRF length = %d, want 64", len(o1))
 	}
 	// A fresh instance with the same key/counter must produce the same output.
-	f2 := NewFIPS1862PRFSHA1(bytes.Repeat([]byte{0xab}, 20), []byte{0, 0, 0, 0, 0, 0, 0, 1})
-	o2 := f2.Bytes(64)
+	f2 := NewFIPS1862PRFSHA1(key)
+	o2 := f2.Bytes(seed, 64)
 	if !bytes.Equal(o1, o2) {
 		t.Error("FIPS1862PRF not deterministic")
 	}
 	// Different counter must produce different output.
-	f3 := NewFIPS1862PRFSHA1(bytes.Repeat([]byte{0xab}, 20), []byte{0, 0, 0, 0, 0, 0, 0, 2})
-	o3 := f3.Bytes(64)
+	f3 := NewFIPS1862PRFSHA1(key)
+	o3 := f3.Bytes([]byte{0, 0, 0, 0, 0, 0, 0, 2}, 64)
 	if bytes.Equal(o1, o3) {
 		t.Error("FIPS1862PRF ignores the counter")
 	}

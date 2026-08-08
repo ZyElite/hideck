@@ -1,336 +1,183 @@
 package crypto
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/des"
 	"crypto/rand"
+	"errors"
 	"fmt"
+	"io"
 )
 
-// IKEv2 ENCR transform IDs (RFC 7296 §3.3.2).
+// IKEv2 encryption transform IDs used by the original engine.
 const (
-	EncrNull     uint16 = 1
 	EncrDESCBC   uint16 = 2
 	Encr3DESCBC  uint16 = 3
+	EncrNull     uint16 = 11
 	EncrAESCBC   uint16 = 12
-	EncrAESGCM16 uint16 = 18
+	EncrAESGCM8  uint16 = 18
 	EncrAESGCM12 uint16 = 19
-	EncrAESGCM8  uint16 = 20
+	EncrAESGCM16 uint16 = 20
 )
 
-// PreparedCipher is a ready-to-use IKEv2/ESP encryption transform.
-type PreparedCipher interface {
-	// Seal encrypts plaintext with the given IV and AAD, appending to dst.
-	Seal(dst, plaintext, iv, aad []byte) []byte
-	// Open decrypts ciphertext with the given IV and AAD, appending to dst.
-	Open(dst, ciphertext, iv, aad []byte) ([]byte, error)
-	// IVSize is the IV length carried in the packet.
+// Encrypter is the original stateless encryption transform contract.
+type Encrypter interface {
+	Encrypt(plaintext, key, iv, aad []byte) ([]byte, error)
+	Decrypt(ciphertext, key, iv, aad []byte) ([]byte, error)
 	IVSize() int
-	// BlockSize is the block size used for padding.
+	BlockSize() int
+	KeySize() int
+}
+
+// AppendEncrypter avoids an intermediate allocation when appending output.
+type AppendEncrypter interface {
+	EncryptTo(dst, plaintext, key, iv, aad []byte) ([]byte, error)
+	DecryptTo(dst, ciphertext, key, iv, aad []byte) ([]byte, error)
+}
+
+// CipherPreparer compiles key material into a reusable cipher.
+type CipherPreparer interface {
+	Prepare(key []byte) (PreparedCipher, error)
+}
+
+// PreparedCipher is safe to reuse with a new packet IV on each operation.
+type PreparedCipher interface {
+	Seal(dst, plaintext, iv, aad []byte) ([]byte, error)
+	Open(dst, ciphertext, iv, aad []byte) ([]byte, error)
+	IVSize() int
 	BlockSize() int
 }
 
-// PrepareCipher builds an encryption transform for the given ENCR transform
-// ID. Returns an error for unsupported transforms.
-//
-// AES-GCM follows RFC 4106/5282: the key material is K|salt (the 4-byte salt
-// is the last 4 bytes), the packet carries an 8-byte IV and the GCM nonce is
-// salt||IV (12 bytes).
-func PrepareCipher(transformID uint16, key []byte) (PreparedCipher, error) {
-	switch transformID {
-	case EncrNull:
-		return &nullEncryption{}, nil
-	case EncrAESCBC:
-		return newAESCBC(key)
-	case Encr3DESCBC:
-		return newPrepared3DESCBC(key)
-	case EncrAESGCM16, EncrAESGCM12, EncrAESGCM8:
-		return newAESGCM(key)
-	default:
-		return nil, fmt.Errorf("crypto: unsupported ENCR transform %d", transformID)
-	}
-}
-
-type prepared3DESCBC struct {
-	block cipher.Block
-}
-
-func newPrepared3DESCBC(key []byte) (PreparedCipher, error) {
-	block, err := des.NewTripleDESCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	return &prepared3DESCBC{block: block}, nil
-}
-
-func (c *prepared3DESCBC) Seal(dst, plaintext, iv, aad []byte) []byte {
-	if len(plaintext) == 0 {
-		return append(dst, plaintext...)
-	}
-	if len(plaintext)%des.BlockSize != 0 {
-		return dst
-	}
-	out := append(dst, plaintext...)
-	cipher.NewCBCEncrypter(c.block, iv).CryptBlocks(out[len(dst):], out[len(dst):])
-	return out
-}
-
-func (c *prepared3DESCBC) Open(dst, ciphertext, iv, aad []byte) ([]byte, error) {
-	if len(ciphertext) == 0 {
-		return append(dst, ciphertext...), nil
-	}
-	if len(ciphertext)%des.BlockSize != 0 {
-		return dst, fmt.Errorf("crypto: bad 3DES ciphertext length %d", len(ciphertext))
-	}
-	out := make([]byte, len(ciphertext))
-	cipher.NewCBCDecrypter(c.block, iv).CryptBlocks(out, ciphertext)
-	return append(dst, out...), nil
-}
-
-func (*prepared3DESCBC) IVSize() int    { return des.BlockSize }
-func (*prepared3DESCBC) BlockSize() int { return des.BlockSize }
-
-// GetEncrypterWithKeyLen returns a prepared AES-CBC or AES-GCM transform with
-// the given key.
-func GetEncrypterWithKeyLen(transformID uint16, key []byte) (PreparedCipher, error) {
-	return PrepareCipher(transformID, key)
-}
-
-// RandomBytes returns n cryptographically random bytes.
-func RandomBytes(n int) ([]byte, error) {
-	b := make([]byte, n)
-	_, err := rand.Read(b)
-	return b, err
-}
-
-// nullEncryption passes data through unmodified (ENCR_NULL).
-type nullEncryption struct{}
-
-func (*nullEncryption) Seal(dst, plaintext, iv, aad []byte) []byte {
-	return append(dst, plaintext...)
-}
-func (*nullEncryption) Open(dst, ciphertext, iv, aad []byte) ([]byte, error) {
-	return append(dst, ciphertext...), nil
-}
-func (*nullEncryption) IVSize() int    { return 0 }
-func (*nullEncryption) BlockSize() int { return 0 }
-
-// aesGCM is ENCR_AES_GCM_* (RFC 4106 ESP / RFC 5282 IKEv2).
-//
-// The key material is K|salt: the AES key is key[:len-4] and the last 4 bytes
-// form the salt. The packet IV is 8 bytes and the GCM nonce is salt||IV.
-type aesGCM struct {
-	aead   cipher.AEAD // 12-byte nonce
-	salt   [4]byte
-	keyLen int // AES key length (16/24/32)
-}
-
-func newAESGCM(key []byte) (PreparedCipher, error) {
-	if len(key) < 4 {
-		return nil, fmt.Errorf("crypto: AES-GCM key too short (%d bytes)", len(key))
-	}
-	blk, err := aes.NewCipher(key[:len(key)-4])
-	if err != nil {
-		return nil, err
-	}
-	aead, err := cipher.NewGCM(blk)
-	if err != nil {
-		return nil, err
-	}
-	g := &aesGCM{aead: aead, keyLen: len(key) - 4}
-	copy(g.salt[:], key[len(key)-4:])
-	return g, nil
-}
-
-// nonce builds the 12-byte GCM nonce as salt||IV.
-func (g *aesGCM) nonce(iv []byte) []byte {
-	nonce := make([]byte, 12)
-	copy(nonce, g.salt[:])
-	copy(nonce[4:], iv)
-	return nonce
-}
-
-func (g *aesGCM) Seal(dst, plaintext, iv, aad []byte) []byte {
-	return g.aead.Seal(dst, g.nonce(iv), plaintext, aad)
-}
-func (g *aesGCM) Open(dst, ciphertext, iv, aad []byte) ([]byte, error) {
-	return g.aead.Open(dst, g.nonce(iv), ciphertext, aad)
-}
-func (g *aesGCM) IVSize() int    { return 8 }
-func (g *aesGCM) BlockSize() int { return aes.BlockSize }
-
-// preparedCBC is ENCR_AES_CBC (RFC 3602).
-type preparedCBC struct {
+type fallbackPreparedCipher struct {
+	enc Encrypter
 	key []byte
-	iv  []byte
 }
 
-func newAESCBC(key []byte) (PreparedCipher, error) {
-	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-		return nil, fmt.Errorf("crypto: bad AES-CBC key length %d", len(key))
-	}
-	return &preparedCBC{key: key}, nil
-}
-
-// preparedCBC is raw AES-CBC: the caller is responsible for padding the
-// plaintext to a block multiple (IKEv2/ESP apply their own padding schemes).
-func (c *preparedCBC) Seal(dst, plaintext, iv, aad []byte) []byte {
-	if len(plaintext) == 0 {
-		return append(dst, plaintext...)
-	}
-	if len(plaintext)%aes.BlockSize != 0 {
-		return dst
-	}
-	blk, err := aes.NewCipher(c.key)
+// PrepareCipher accepts both the original Encrypter form and the later
+// transform-ID form retained by this tree.
+func PrepareCipher(algorithm any, key []byte) (PreparedCipher, error) {
+	enc, err := resolveEncrypter(algorithm, key)
 	if err != nil {
-		return dst
+		return nil, err
 	}
-	// Copy the plaintext into dst first so the source is not clobbered when
-	// plaintext aliases dst's tail (ESP encrypts in place).
-	out := append(dst, plaintext...)
-	mode := cipher.NewCBCEncrypter(blk, iv)
-	mode.CryptBlocks(out[len(dst):], out[len(dst):])
-	return out
+	if preparer, ok := enc.(CipherPreparer); ok {
+		return preparer.Prepare(key)
+	}
+	return &fallbackPreparedCipher{enc: enc, key: key}, nil
 }
 
-func (c *preparedCBC) Open(dst, ciphertext, iv, aad []byte) ([]byte, error) {
-	if len(ciphertext) == 0 {
-		return append(dst, ciphertext...), nil
+func resolveEncrypter(algorithm any, key []byte) (Encrypter, error) {
+	if algorithm == nil {
+		return nil, nil
 	}
-	if len(ciphertext)%aes.BlockSize != 0 {
-		return dst, fmt.Errorf("crypto: bad ciphertext length %d", len(ciphertext))
+	if enc, ok := algorithm.(Encrypter); ok {
+		return enc, nil
 	}
-	blk, err := aes.NewCipher(c.key)
+	var id uint16
+	switch selector := algorithm.(type) {
+	case uint16:
+		id = selector
+	case int:
+		if selector < 0 || selector > int(^uint16(0)) {
+			return nil, fmt.Errorf("crypto: invalid encryption selector %d", selector)
+		}
+		id = uint16(selector)
+	default:
+		return nil, fmt.Errorf("crypto: invalid encryption selector %T", algorithm)
+	}
+	return encrypterForKey(id, key)
+}
+
+func encrypterForKey(id uint16, key []byte) (Encrypter, error) {
+	keyBits := len(key) * 8
+	if isAESGCM(id) {
+		keyBits = (len(key) - 4) * 8
+	}
+	if id == EncrNull || id == EncrDESCBC || id == Encr3DESCBC {
+		keyBits = 0
+	}
+	return GetEncrypterWithKeyLen(id, keyBits)
+}
+
+func isAESGCM(id uint16) bool {
+	return id == EncrAESGCM8 || id == EncrAESGCM12 || id == EncrAESGCM16
+}
+
+func (f *fallbackPreparedCipher) Seal(dst, plaintext, iv, aad []byte) ([]byte, error) {
+	return EncryptTo(f.enc, dst, plaintext, f.key, iv, aad)
+}
+
+func (f *fallbackPreparedCipher) Open(dst, ciphertext, iv, aad []byte) ([]byte, error) {
+	return DecryptTo(f.enc, dst, ciphertext, f.key, iv, aad)
+}
+
+func (f *fallbackPreparedCipher) IVSize() int {
+	if f == nil || f.enc == nil {
+		return 0
+	}
+	return f.enc.IVSize()
+}
+
+func (f *fallbackPreparedCipher) BlockSize() int {
+	if f == nil || f.enc == nil {
+		return 0
+	}
+	return f.enc.BlockSize()
+}
+
+func EncryptTo(enc Encrypter, dst, plaintext, key, iv, aad []byte) ([]byte, error) {
+	if appender, ok := enc.(AppendEncrypter); ok {
+		return appender.EncryptTo(dst, plaintext, key, iv, aad)
+	}
+	result, err := enc.Encrypt(plaintext, key, iv, aad)
 	if err != nil {
 		return dst, err
 	}
-	out := make([]byte, len(ciphertext))
-	mode := cipher.NewCBCDecrypter(blk, iv)
-	mode.CryptBlocks(out, ciphertext)
-	return append(dst, out...), nil
+	return append(dst, result...), nil
 }
 
-func (c *preparedCBC) IVSize() int    { return aes.BlockSize }
-func (c *preparedCBC) BlockSize() int { return aes.BlockSize }
-
-// ---------------------------------------------------------------------------
-// Legacy Cipher interface methods on the shared types
-// ---------------------------------------------------------------------------
-
-// Prepare loads the secret key (required by the legacy Cipher interface).
-func (n *nullEncryption) Prepare(key []byte) error { return nil }
-func (n *nullEncryption) Encrypt(dst, iv, plaintext []byte) []byte {
-	return append(dst, plaintext...)
-}
-func (n *nullEncryption) Decrypt(dst, iv, ciphertext []byte) ([]byte, error) {
-	return append(dst, ciphertext...), nil
-}
-func (n *nullEncryption) EncryptTo(dst, iv, plaintext []byte) []byte {
-	return append(dst, plaintext...)
-}
-func (n *nullEncryption) DecryptTo(dst, iv, ciphertext []byte) ([]byte, error) {
-	return append(dst, ciphertext...), nil
-}
-func (n *nullEncryption) KeySize() int { return 0 }
-
-// Prepare loads the secret key for AES-GCM (RFC 4106: K|salt).
-func (g *aesGCM) Prepare(key []byte) error {
-	prepared, err := newAESGCM(key)
+func DecryptTo(enc Encrypter, dst, ciphertext, key, iv, aad []byte) ([]byte, error) {
+	if appender, ok := enc.(AppendEncrypter); ok {
+		return appender.DecryptTo(dst, ciphertext, key, iv, aad)
+	}
+	result, err := enc.Decrypt(ciphertext, key, iv, aad)
 	if err != nil {
-		return err
+		return dst, err
 	}
-	*g = *(prepared.(*aesGCM))
-	return nil
+	return append(dst, result...), nil
 }
-func (g *aesGCM) Encrypt(dst, iv, plaintext []byte) []byte {
-	return g.Seal(dst, plaintext, iv, nil)
-}
-func (g *aesGCM) Decrypt(dst, iv, ciphertext []byte) ([]byte, error) {
-	return g.Open(dst, ciphertext, iv, nil)
-}
-func (g *aesGCM) EncryptTo(dst, iv, plaintext []byte) []byte {
-	return g.Seal(dst, plaintext, iv, nil)
-}
-func (g *aesGCM) DecryptTo(dst, iv, ciphertext []byte) ([]byte, error) {
-	return g.Open(dst, ciphertext, iv, nil)
-}
-func (g *aesGCM) KeySize() int { return g.keyLen }
 
-// EncryptTo encrypts plaintext with the given IV/AAD using a prepared cipher
-// (alias of Seal with the recovered EncryptTo name).
-func EncryptTo(c PreparedCipher, dst, plaintext, iv, aad []byte) []byte {
-	if c == nil {
-		return nil
+func GetEncrypter(id uint16) (Encrypter, error) {
+	return GetEncrypterWithKeyLen(id, 0)
+}
+
+func GetEncrypterWithKeyLen(id uint16, keyLenBits int) (Encrypter, error) {
+	keySize := 16
+	if keyLenBits != 0 {
+		if keyLenBits%8 != 0 {
+			return nil, errors.New("无效的密钥长度")
+		}
+		keySize = keyLenBits / 8
 	}
-	return c.Seal(dst, plaintext, iv, aad)
-}
-
-// DecryptTo decrypts ciphertext with the given IV/AAD (alias of Open).
-func DecryptTo(c PreparedCipher, dst, ciphertext, iv, aad []byte) ([]byte, error) {
-	if c == nil {
-		return nil, nil
+	switch id {
+	case EncrAESCBC:
+		return &aesCBC{keySize: keySize}, nil
+	case Encr3DESCBC:
+		return &tripleDESCBC{}, nil
+	case EncrDESCBC:
+		return &desCBC{}, nil
+	case EncrNull:
+		return &nullEncryption{}, nil
+	case EncrAESGCM16, EncrAESGCM12, EncrAESGCM8:
+		if keyLenBits == 0 {
+			return nil, errors.New("AES-GCM 密钥长度未指定（keyLenBits=0），无法安全初始化加密器")
+		}
+		return &aesGCM{icvSize: 16, keySize: keySize}, nil
+	default:
+		return nil, errors.New("不支持的加密算法")
 	}
-	return c.Open(dst, ciphertext, iv, aad)
 }
 
-// preparedGCM is the prepared (Seal/Open) AES-GCM transform recovered from the
-// binary as a distinct type from the legacy aesGCM.
-type preparedGCM struct {
-	inner *aesGCM
+func RandomBytes(n int) ([]byte, error) {
+	b := make([]byte, n)
+	_, err := io.ReadFull(rand.Reader, b)
+	return b, err
 }
-
-// newPreparedGCM builds a prepared AES-GCM transform.
-func newPreparedGCM(key []byte) (*preparedGCM, error) {
-	g, err := newAESGCM(key)
-	if err != nil {
-		return nil, err
-	}
-	inner, ok := g.(*aesGCM)
-	if !ok {
-		return nil, fmt.Errorf("crypto: unexpected GCM type")
-	}
-	return &preparedGCM{inner: inner}, nil
-}
-
-// Seal encrypts plaintext, appending to dst.
-func (p *preparedGCM) Seal(dst, plaintext, iv, aad []byte) []byte {
-	return p.inner.Seal(dst, plaintext, iv, aad)
-}
-
-// Open decrypts ciphertext, appending to dst.
-func (p *preparedGCM) Open(dst, ciphertext, iv, aad []byte) ([]byte, error) {
-	return p.inner.Open(dst, ciphertext, iv, aad)
-}
-
-// IVSize returns the IV length carried in the packet.
-func (p *preparedGCM) IVSize() int { return p.inner.IVSize() }
-
-// BlockSize returns the block size used for padding.
-func (p *preparedGCM) BlockSize() int { return p.inner.BlockSize() }
-
-// fallbackPreparedCipher wraps a legacy Cipher to satisfy PreparedCipher.
-type fallbackPreparedCipher struct {
-	cipher Cipher
-}
-
-// newFallbackPreparedCipher wraps a legacy cipher.
-func newFallbackPreparedCipher(c Cipher) *fallbackPreparedCipher {
-	return &fallbackPreparedCipher{cipher: c}
-}
-
-// Seal encrypts via the legacy cipher (IV is the explicit IV).
-func (f *fallbackPreparedCipher) Seal(dst, plaintext, iv, aad []byte) []byte {
-	return f.cipher.Encrypt(dst, iv, plaintext)
-}
-
-// Open decrypts via the legacy cipher.
-func (f *fallbackPreparedCipher) Open(dst, ciphertext, iv, aad []byte) ([]byte, error) {
-	return f.cipher.Decrypt(dst, iv, ciphertext)
-}
-
-// IVSize returns the IV length of the legacy cipher.
-func (f *fallbackPreparedCipher) IVSize() int { return f.cipher.IVSize() }
-
-// BlockSize returns the block size of the legacy cipher.
-func (f *fallbackPreparedCipher) BlockSize() int { return f.cipher.BlockSize() }

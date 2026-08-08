@@ -227,7 +227,10 @@ func (s *Session) deriveChildSAKeysFor(initiatorNonce, responderNonce []byte) (*
 		return nil, errors.New("swu: invalid ESP encryption key length")
 	}
 	directionLen := encLen + integLen
-	km := crypto.PrfPlus(s.prf, s.ikeKeys.SK_d, seed, 2*directionLen)
+	km, err := crypto.PrfPlus(s.prf, s.ikeKeys.SK_d, seed, 2*directionLen)
+	if err != nil {
+		return nil, err
+	}
 	if len(km) < 2*directionLen {
 		return nil, errors.New("swu: prf+ produced insufficient child SA keys")
 	}

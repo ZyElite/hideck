@@ -98,7 +98,10 @@ func EncapsulateWithNextHeaderInto(dst []byte, plaintext []byte, nextHeader byte
 	payload := out[payloadOff:]
 
 	// Encrypt in place; the result appends the ciphertext (and tag for AEAD).
-	out = c.Seal(out[:payloadOff], payload, iv, hdr)
+	out, err = c.Seal(out[:payloadOff], payload, iv, hdr)
+	if err != nil {
+		return nil, err
+	}
 
 	// CBC mode: compute the integrity over the whole packet and append.
 	if !sa.aead && sa.integ != nil {

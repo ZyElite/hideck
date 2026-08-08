@@ -80,7 +80,10 @@ func (s *Session) encryptAEADIKE(source *ikev2.IKEPacket, messageID uint32, firs
 	bodyLength := len(iv) + len(plain) + aesGCMTagLength
 	template := protectedIKEPacket(source, messageID, first, make([]byte, bodyLength)).Encode()
 	aad := template[:ikeHeaderLength+ikePayloadHeaderLength]
-	encrypted := cipher.Seal(nil, plain, iv, aad)
+	encrypted, err := cipher.Seal(nil, plain, iv, aad)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt IKE AEAD message: %w", err)
+	}
 	body := append(append([]byte{}, iv...), encrypted...)
 	return protectedIKEPacket(source, messageID, first, body).Encode(), nil
 }

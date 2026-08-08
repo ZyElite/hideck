@@ -3,6 +3,8 @@ package swu
 import (
 	"fmt"
 	"strings"
+
+	"github.com/iniwex5/vowifi-go/engine/crypto"
 )
 
 // Algorithm policy names recovered from the decompiled
@@ -62,11 +64,11 @@ func buildAlgorithmPlan(policy string, cfg *Config) *AlgorithmPlan {
 	plan := &AlgorithmPlan{}
 	switch normalizeAlgorithmPolicy(policy) {
 	case policyStrict:
-		plan.IKEEncryption = 18 // ENCR_AES_GCM_16
-		plan.IKEPRF = 5         // PRF_HMAC_SHA2_256
-		plan.IKEIntegrity = 0   // AEAD (no separate integrity)
-		plan.IKEDH = 14         // MODP-2048
-		plan.ESPEncryption = 18 // ENCR_AES_GCM_16
+		plan.IKEEncryption = crypto.EncrAESGCM16
+		plan.IKEPRF = 5       // PRF_HMAC_SHA2_256
+		plan.IKEIntegrity = 0 // AEAD (no separate integrity)
+		plan.IKEDH = 14       // MODP-2048
+		plan.ESPEncryption = crypto.EncrAESGCM16
 		plan.ESPIntegrity = 0
 	case policyLegacyPrefer:
 		plan.IKEEncryption = 3 // ENCR_3DES

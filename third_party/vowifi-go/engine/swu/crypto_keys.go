@@ -37,9 +37,9 @@ func (s *Session) encryptAndWrapWithMsgID(pkt *ikev2.IKEPacket, msgID uint32) ([
 	if s.aead {
 		return s.encryptAEADIKE(pkt, msgID, firstPayload, plain, iv, cipher)
 	}
-	encrypted := cipher.Seal(nil, plain, iv, nil)
-	if len(encrypted) == 0 && len(plain) > 0 {
-		return nil, errors.New("encrypt IKE message: cipher returned no data")
+	encrypted, err := cipher.Seal(nil, plain, iv, nil)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt IKE message: %w", err)
 	}
 	integ := crypto.NewIntegrity(s.integAlg)
 	if integ == nil {

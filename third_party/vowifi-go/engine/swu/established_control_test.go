@@ -87,7 +87,7 @@ func newEstablishedControlSession(t *testing.T) (*Session, *testIKETransport) {
 	copy(session.SPIi[:], []byte("init-spi"))
 	copy(session.SPIr[:], []byte("resp-spi"))
 	session.ikeKeys = testIKEKeys()
-	session.ikeKeys.SK_d = bytes.Repeat([]byte{0x31}, session.prf.OutputSize())
+	session.ikeKeys.SK_d = bytes.Repeat([]byte{0x31}, enginecrypto.PRFOutputSize(session.prf))
 	session.innerIP = []byte{10, 0, 0, 2}
 	session.innerPrefix = 32
 	session.espLocalSPI = 0x10203040

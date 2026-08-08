@@ -39,7 +39,7 @@ func (s *Session) GenerateIKESAKeys(responderNonce []byte) error {
 		return errors.New("no PRF configured")
 	}
 
-	prfOut := s.prf.OutputSize()
+	prfOut := crypto.PRFOutputSize(s.prf)
 	ni, nr := s.Ni, responderNonce
 	if prfOut == 16 {
 		if len(ni) > 8 {
@@ -53,7 +53,7 @@ func (s *Session) GenerateIKESAKeys(responderNonce []byte) error {
 	// SKEYSEED = prf(Ni | Nr, g^ir).
 	skeyseedKey := append(append([]byte{}, ni...), nr...)
 	skeyseed := s.prf.Compute(skeyseedKey, s.dhSharedSecret)
-	wipe(skeyseedKey)
+	crypto.Wipe(skeyseedKey)
 
 	// prf+ seed = full Ni | Nr | SPIi | SPIr.
 	seed := append(append([]byte{}, s.Ni...), responderNonce...)
@@ -97,7 +97,7 @@ func (s *Session) deriveIKESARekeyKeys(
 	if len(oldSKd) == 0 || len(sharedSecret) == 0 {
 		return nil, errors.New("incomplete IKE SA rekey key material")
 	}
-	prfOut := s.prf.OutputSize()
+	prfOut := crypto.PRFOutputSize(s.prf)
 	ni, nr := initiatorNonce, responderNonce
 	if prfOut == 16 {
 		if len(ni) > 8 {
@@ -113,7 +113,7 @@ func (s *Session) deriveIKESARekeyKeys(
 	rekeyData = append(rekeyData, ni...)
 	rekeyData = append(rekeyData, nr...)
 	skeyseed := s.prf.Compute(oldSKd, rekeyData)
-	wipe(rekeyData)
+	crypto.Wipe(rekeyData)
 
 	seed := append(append([]byte{}, initiatorNonce...), responderNonce...)
 	seed = append(seed, initiatorSPI[:]...)
@@ -125,7 +125,10 @@ func (s *Session) deriveIKESARekeyKeys(
 // deriveIKEKeys runs prf+ and slices the output into the seven IKE SA keys.
 func (s *Session) deriveIKEKeys(skeyseed, seed []byte, prfOut int) (*IKEKeys, error) {
 	total := 3*prfOut + 2*s.integKeyLen + 2*s.encKeyLen
-	km := crypto.PrfPlus(s.prf, skeyseed, seed, total)
+	km, err := crypto.PrfPlus(s.prf, skeyseed, seed, total)
+	if err != nil {
+		return nil, err
+	}
 	if len(km) < total {
 		return nil, errors.New("prf+ produced insufficient key material")
 	}
@@ -156,11 +159,4 @@ func sliceCopy(km []byte, off, n int) []byte {
 	out := make([]byte, n)
 	copy(out, km[off:off+n])
 	return out
-}
-
-// wipe zeroes a key buffer.
-func wipe(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }

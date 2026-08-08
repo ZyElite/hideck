@@ -73,8 +73,8 @@ func TestBuildIKESAInitPacketCarriesAES256KeyLength(t *testing.T) {
 	if len(encryption.Attributes) != 1 || encryption.Attributes[0].Value != 256 {
 		t.Fatalf("IKE AES transform = %+v", encryption)
 	}
-	if s.encKeyLen != 32 || s.integKeyLen != 64 || s.prf.OutputSize() != 64 {
-		t.Fatalf("IKE key sizes = enc:%d integ:%d prf:%d", s.encKeyLen, s.integKeyLen, s.prf.OutputSize())
+	if s.encKeyLen != 32 || s.integKeyLen != 64 || crypto.PRFOutputSize(s.prf) != 64 {
+		t.Fatalf("IKE key sizes = enc:%d integ:%d prf:%d", s.encKeyLen, s.integKeyLen, crypto.PRFOutputSize(s.prf))
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 )
 
@@ -18,7 +19,7 @@ func TestBuildAlgorithmPlan(t *testing.T) {
 		encr   uint16
 		prf    uint16
 	}{
-		"strict":        {policy: "strict", encr: 18, prf: 5},
+		"strict":        {policy: "strict", encr: enginecrypto.EncrAESGCM16, prf: 5},
 		"legacy_prefer": {policy: "legacy_prefer", encr: 3, prf: 2},
 		"prefer":        {policy: "prefer", encr: 12, prf: 2},
 		"":              {policy: "", encr: 12, prf: 2},
@@ -270,7 +271,7 @@ func TestNewSessionInitializesAES256SHA512Algorithms(t *testing.T) {
 }
 
 func TestNewSessionRejectsUnsupportedGCMTagLengths(t *testing.T) {
-	for _, transform := range []uint16{19, 20} {
+	for _, transform := range []uint16{18, 19} {
 		s := NewSession(&Config{IKEEncryption: transform, IKEIntegrity: 0})
 		if s.initErr == nil || !strings.Contains(s.initErr.Error(), "non-16-byte GCM tag") {
 			t.Fatalf("transform %d initErr = %v, want explicit tag-length error", transform, s.initErr)
@@ -291,7 +292,7 @@ func TestNewSessionInitializesLegacyAlgorithms(t *testing.T) {
 func TestConnectReportsAlgorithmInitializationFailure(t *testing.T) {
 	s := NewSession(&Config{EPDGAddr: "127.0.0.1", IKEDH: 999})
 	err := s.Connect(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "unsupported DH group 999") {
+	if err == nil || !strings.Contains(err.Error(), "不支持的 DH 组: 999") {
 		t.Fatalf("Connect() error = %v", err)
 	}
 	if s.socket != nil || s.State() != stateError {
