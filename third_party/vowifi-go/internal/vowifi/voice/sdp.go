@@ -178,6 +178,7 @@ func RewriteSDP(sdp, ip string, port int) string {
 		return sdp
 	}
 	var b strings.Builder
+	ipFamily := sdpIPFamily(ip)
 	for _, line := range strings.Split(sdp, "\r\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -185,7 +186,7 @@ func RewriteSDP(sdp, ip string, port int) string {
 		}
 		switch {
 		case strings.HasPrefix(line, "c="):
-			b.WriteString("c=IN IP4 " + ip + "\r\n")
+			b.WriteString("c=IN " + ipFamily + " " + ip + "\r\n")
 			continue
 		case strings.HasPrefix(line, "m="):
 			parts := strings.Fields(line)

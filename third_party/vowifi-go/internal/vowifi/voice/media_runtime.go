@@ -12,12 +12,19 @@ import (
 
 const clientRelayIP = "127.0.0.1"
 
-func newVoiceMediaRelay(imsLocalIP string) (*media.RTPRelay, error) {
+type imsPacketListener interface {
+	ListenPacket(network string, addr *net.UDPAddr) (net.PacketConn, error)
+}
+
+func newVoiceMediaRelay(imsNetwork imsPacketListener, imsLocalIP string) (*media.RTPRelay, error) {
+	if imsNetwork == nil {
+		return nil, errors.New("voice: IMS media network is unavailable")
+	}
 	bindIP := net.ParseIP(strings.TrimSpace(imsLocalIP))
-	if bindIP == nil || bindIP.To4() == nil {
+	if bindIP == nil {
 		return nil, fmt.Errorf("voice: invalid IMS media IP %q", imsLocalIP)
 	}
-	imsConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: bindIP})
+	imsConn, err := imsNetwork.ListenPacket("udp", &net.UDPAddr{IP: bindIP})
 	if err != nil {
 		return nil, fmt.Errorf("voice: listen IMS RTP: %w", err)
 	}
@@ -34,7 +41,7 @@ func mediaRemote(info *SDPInfo) (*net.UDPAddr, error) {
 		return nil, errors.New("voice: SDP media port must be greater than zero")
 	}
 	ip := net.ParseIP(strings.TrimSpace(info.GetMediaAddress()))
-	if ip == nil || ip.To4() == nil {
+	if ip == nil {
 		return nil, fmt.Errorf("voice: invalid SDP media address %q", info.GetMediaAddress())
 	}
 	return &net.UDPAddr{IP: ip, Port: info.GetMediaPort()}, nil

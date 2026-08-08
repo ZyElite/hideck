@@ -10,6 +10,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/media"
 )
 
 const (
@@ -23,14 +24,17 @@ func NewAgent(deviceID string, ims *imscore.Service, bus *imscore.EventBus) *Age
 	if bus == nil {
 		bus = imscore.NewEventBus()
 	}
-	return &Agent{
-		deviceID:      deviceID,
-		ims:           ims,
-		bus:           bus,
-		actor:         callstate.NewActor(),
-		calls:         make(map[string]*Call),
-		newMediaRelay: newVoiceMediaRelay,
+	agent := &Agent{
+		deviceID: deviceID,
+		ims:      ims,
+		bus:      bus,
+		actor:    callstate.NewActor(),
+		calls:    make(map[string]*Call),
 	}
+	agent.newMediaRelay = func(localIP string) (*media.RTPRelay, error) {
+		return newVoiceMediaRelay(ims, localIP)
+	}
+	return agent
 }
 
 // DeviceID returns the device ID.

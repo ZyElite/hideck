@@ -3,6 +3,7 @@ package voice
 import (
 	"crypto/rand"
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -175,8 +176,9 @@ func generateBasicSDP(agent *Agent, call *Call) string {
 	if port <= 0 {
 		return ""
 	}
+	ipFamily := sdpIPFamily(ip)
 	sessionID := voiceSessID()
-	return fmt.Sprintf("v=0\r\no=- %d %d IN IP4 %s\r\ns=VoHive Call\r\nc=IN IP4 %s\r\nt=0 0\r\nm=audio %d RTP/AVP 104 114 9 8 0 101\r\nb=AS:50\r\na=rtpmap:104 AMR-WB/16000\r\na=fmtp:104 octet-align=1; max-red=0\r\na=rtpmap:114 AMR/8000\r\na=fmtp:114 octet-align=1; max-red=0\r\na=rtpmap:9 G722/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=sendrecv\r\na=ptime:20\r\na=maxptime:20\r\n", sessionID, sessionID, ip, ip, port)
+	return fmt.Sprintf("v=0\r\no=- %d %d IN %s %s\r\ns=VoHive Call\r\nc=IN %s %s\r\nt=0 0\r\nm=audio %d RTP/AVP 104 114 9 8 0 101\r\nb=AS:50\r\na=rtpmap:104 AMR-WB/16000\r\na=fmtp:104 octet-align=1; max-red=0\r\na=rtpmap:114 AMR/8000\r\na=fmtp:114 octet-align=1; max-red=0\r\na=rtpmap:9 G722/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=sendrecv\r\na=ptime:20\r\na=maxptime:20\r\n", sessionID, sessionID, ipFamily, ip, ipFamily, ip, port)
 }
 
 func (a *Agent) localAddr() string {
@@ -187,11 +189,27 @@ func (a *Agent) localAddr() string {
 }
 
 func (a *Agent) localIP() string {
-	address := a.localAddr()
-	if index := strings.LastIndexByte(address, ':'); index > 0 {
-		return strings.Trim(address[:index], "[]")
+	return voiceHost(a.localAddr())
+}
+
+func voiceHost(address string) string {
+	address = strings.TrimSpace(address)
+	if ip := net.ParseIP(strings.Trim(address, "[]")); ip != nil {
+		return ip.String()
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err == nil {
+		return strings.Trim(host, "[]")
 	}
 	return strings.Trim(address, "[]")
+}
+
+func sdpIPFamily(address string) string {
+	ip := net.ParseIP(strings.TrimSpace(address))
+	if ip != nil && ip.To4() == nil {
+		return "IP6"
+	}
+	return "IP4"
 }
 
 func (a *Agent) mediaPort() int {
