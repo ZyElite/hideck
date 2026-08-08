@@ -14,14 +14,7 @@ import (
 
 // SockExtendedErr mirrors syscall.SockExtendedErr (Linux IP_RECVERR ancillary
 // data) so the type stays portable.
-type SockExtendedErr struct {
-	Errno  uint8
-	Origin uint8
-	Type   uint8
-	Code   uint8
-	Info   uint32
-	Data   uint32
-}
+type SockExtendedErr = unix.SockExtendedErr
 
 // ParseSockExtError extracts the extended socket error (IP_RECVERR) carried in
 // a received ancillary message buffer. Only ICMP-originated errors (level
@@ -37,12 +30,11 @@ func ParseSockExtError(b []byte) (*SockExtendedErr, error) {
 			(h.Level == syscall.IPPROTO_IPV6 && h.Type == 25 /*IPV6_RECVERR*/)) {
 			continue
 		}
-		if len(cm.Data) <= 15 {
+		if len(cm.Data) < int(unsafe.Sizeof(unix.SockExtendedErr{})) {
 			continue
 		}
-		e := new(SockExtendedErr)
-		copy((*[16]byte)(unsafe.Pointer(e))[:], cm.Data[:16])
-		return e, nil
+		value := *(*unix.SockExtendedErr)(unsafe.Pointer(&cm.Data[0]))
+		return &value, nil
 	}
 	return nil, errors.New("no extended socket error")
 }
@@ -73,17 +65,17 @@ func setUDPEncap(conn *net.UDPConn, enable bool) error {
 // queue, turning ICMP errors into NetEvents.
 func (r *SocketManager) startErrorListener() {
 	defer r.wg.Done()
-	if r.conn == nil {
+	if r.Conn == nil {
 		return
 	}
-	raw, err := r.conn.SyscallConn()
+	raw, err := r.Conn.SyscallConn()
 	if err != nil {
 		logWarn("error listener: " + err.Error())
 		return
 	}
 	ipv6 := false
-	if r.remoteAddr != nil {
-		ipv6 = r.remoteAddr.IP.To4() == nil && r.remoteAddr.IP.To16() != nil
+	if r.LocalAddr != nil {
+		ipv6 = r.LocalAddr.IP.To4() == nil && r.LocalAddr.IP.To16() != nil
 	}
 	var fd int
 	var ctrlErr error
@@ -100,19 +92,30 @@ func (r *SocketManager) startErrorListener() {
 		return
 	}
 
-	pkt := make([]byte, 0x400)
-	oob := make([]byte, 0x400)
+	pkt := make([]byte, 1024)
+	oob := make([]byte, 1024)
 	for {
 		select {
-		case <-r.stop:
+		case <-r.closeChan:
 			return
 		default:
 		}
-		// MSG_ERRQUEUE reads errors queued on the socket; MSG_DONTWAIT keeps
-		// the loop responsive to Stop.
+		pollFDs := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLERR}}
+		if _, err := unix.Poll(pollFDs, 250); err != nil {
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
+			return
+		}
+		if pollFDs[0].Revents&unix.POLLERR == 0 {
+			continue
+		}
 		_, oobn, _, _, err := syscall.Recvmsg(fd, pkt, oob, syscall.MSG_ERRQUEUE|syscall.MSG_DONTWAIT)
 		if err != nil {
-			continue
+			if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
+				continue
+			}
+			return
 		}
 		if oobn < 1 {
 			continue
@@ -121,23 +124,18 @@ func (r *SocketManager) startErrorListener() {
 		if err != nil || sockext == nil {
 			continue
 		}
-		if sockext.Origin|1 != 3 {
+		if sockext.Origin != unix.SO_EE_ORIGIN_ICMP && sockext.Origin != unix.SO_EE_ORIGIN_ICMP6 {
 			continue // not ICMP-originated
 		}
-		switch sockext.Errno {
-		case 90: // EMSGSIZE // "fragmentation needed": MTU update
-			if uint32(sockext.Info)-0x1f5 < 999 {
-				r.sendNetEvent(NetEvent{Type: NetEventMTU, Param: sockext.Info, Detail: fmt.Sprintf("MTU changed to %d", sockext.Info)})
-			}
-		case 101, 113: // ENETUNREACH, EHOSTUNREACH
-			r.sendNetEvent(NetEvent{Type: NetEventUnreachable, Detail: fmt.Sprintf("ICMP error %d", sockext.Errno)})
+		if event, ok := netEventFromExtendedError(sockext.Errno, sockext.Info); ok {
+			r.sendNetEvent(event)
 		}
 	}
 }
 
 func (r *SocketManager) sendNetEvent(ev NetEvent) {
 	select {
-	case r.netEvents <- ev:
+	case r.NetEvents <- ev:
 	default:
 	}
 }

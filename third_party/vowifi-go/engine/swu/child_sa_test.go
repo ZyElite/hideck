@@ -73,7 +73,7 @@ func TestDataPlaneUsesIndependentInboundAndOutboundSPI(t *testing.T) {
 	if got := binary.BigEndian.Uint32(outbound[:4]); got != s.espRemoteSPI {
 		t.Fatalf("outbound SPI = %08x, want remote %08x", got, s.espRemoteSPI)
 	}
-	inbound, err := ipsec.Encapsulate(inner, nil, s.espInboundSA)
+	inbound, err := ipsec.Encapsulate(inner, s.espInboundSA)
 	if err != nil {
 		t.Fatalf("build inbound packet: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestDataPlaneEncapsulationLeaseReleasesPooledBuffer(t *testing.T) {
 	if len(lease.data) == 0 || cap(lease.buffer.Bytes()) < len(lease.data) {
 		t.Fatalf("invalid lease: data length %d, capacity %d", len(lease.data), cap(lease.buffer.Bytes()))
 	}
-	decoded, err := ipsec.Decapsulate(lease.data, nil, s.espOutboundSA)
+	decoded, err := ipsec.Decapsulate(lease.data, s.espOutboundSA)
 	if err != nil {
 		t.Fatalf("decapsulate leased ESP packet: %v", err)
 	}

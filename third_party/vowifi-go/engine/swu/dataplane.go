@@ -343,8 +343,12 @@ func (s *Session) loopInnerToESP(transport ipsec.Transport, endpoint *userspaceI
 			if err != nil {
 				continue
 			}
-			transport.SendESP(lease.data)
+			err = transport.SendESP(lease.data)
 			lease.Release()
+			if err != nil {
+				s.failDataPlane(fmt.Errorf("swu: send ESP packet: %w", err))
+				return
+			}
 		}
 	}
 }
@@ -359,7 +363,7 @@ func (s *Session) encapsulateInnerPacket(inner []byte) ([]byte, error) {
 	if !matchSelectors(inner, s.childTSi, s.childTSr) {
 		return nil, errors.New("swu: outbound inner packet is outside negotiated traffic selectors")
 	}
-	return ipsec.Encapsulate(inner, nil, s.espOutboundSA)
+	return ipsec.Encapsulate(inner, s.espOutboundSA)
 }
 
 // encapsulateInnerPacketLease wraps an inner packet using a buffer-pool lease.
@@ -377,7 +381,7 @@ func (s *Session) encapsulateInnerPacketLease(inner []byte) (*packetLease, error
 		return nil, err
 	}
 	buffer := bufferpool.Get(total)
-	esp, err := ipsec.EncapsulateInto(inner, buffer.Bytes()[:0], s.espOutboundSA)
+	esp, err := ipsec.EncapsulateInto(buffer.Bytes()[:0], inner, s.espOutboundSA)
 	if err != nil {
 		buffer.Release()
 		return nil, err
@@ -392,7 +396,7 @@ func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, error) {
 	if s.espInboundSA == nil {
 		return nil, errors.New("swu: no ESP SA")
 	}
-	inner, err := ipsec.Decapsulate(esp, nil, s.espInboundSA)
+	inner, err := ipsec.Decapsulate(esp, s.espInboundSA)
 	if err != nil {
 		return nil, err
 	}
@@ -475,7 +479,11 @@ func (s *Session) resolveXFRMOuterTuple() (net.IP, net.IP, uint16, uint16, error
 	if s.socket == nil {
 		return nil, nil, 0, 0, errors.New("swu: no transport")
 	}
-	return s.socket.LocalIP(), s.socket.RemoteIP(), s.socket.LocalPort(), s.socket.RemotePort(), nil
+	remotePort := s.socket.RemotePort()
+	if remotePort < 0 || remotePort > int(^uint16(0)) {
+		return nil, nil, 0, 0, fmt.Errorf("swu: invalid remote UDP port %d", remotePort)
+	}
+	return s.socket.LocalIP(), s.socket.RemoteIP(), s.socket.LocalPort(), uint16(remotePort), nil
 }
 
 // selectOutgoingSA selects the outbound ESP SA (single-SA model).

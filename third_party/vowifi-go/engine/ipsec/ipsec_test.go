@@ -280,7 +280,7 @@ func TestESPConcurrentDuplicateIsDeliveredOnce(t *testing.T) {
 func TestESPSequenceExhaustionFailsBeforeWrap(t *testing.T) {
 	key := bytes.Repeat([]byte{0x33}, 20)
 	sa := NewSecurityAssociation(0x10203040, crypto.EncrAESGCM16, key, 0)
-	sa.seqNo = ^uint32(0) - 1
+	sa.SequenceNumber = uint64(^uint32(0) - 1)
 	last, err := Encapsulate(fakeIPPacket(1), nil, sa)
 	if err != nil {
 		t.Fatalf("last valid Encapsulate: %v", err)
@@ -345,8 +345,8 @@ func TestSocks5UDPDatagram(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeSocks5UDPDatagram: %v", err)
 	}
-	if !dec.Addr.IP.Equal(net.ParseIP("10.0.0.1")) || dec.Addr.Port != 4500 {
-		t.Errorf("decoded addr = %v, want 10.0.0.1:4500", dec.Addr)
+	if !dec.DstAddr.IP.Equal(net.ParseIP("10.0.0.1")) || dec.DstAddr.Port != 4500 {
+		t.Errorf("decoded addr = %v, want 10.0.0.1:4500", dec.DstAddr)
 	}
 	if !bytes.Equal(dec.Data, data) {
 		t.Error("decoded data differs")
@@ -365,8 +365,8 @@ func TestSocks5UDPDatagram(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode IPv6 datagram: %v", err)
 	}
-	if !dec6.Addr.IP.Equal(net.ParseIP("2001:db8::1")) {
-		t.Errorf("decoded IPv6 addr = %v", dec6.Addr.IP)
+	if !dec6.DstAddr.IP.Equal(net.ParseIP("2001:db8::1")) {
+		t.Errorf("decoded IPv6 addr = %v", dec6.DstAddr.IP)
 	}
 
 	// Truncated datagrams must error.
@@ -403,7 +403,7 @@ func TestSocks5HandshakeUserPass(t *testing.T) {
 	if err := socks5Handshake(m, cfg); err != nil {
 		t.Fatalf("socks5Handshake: %v", err)
 	}
-	want := []byte{5, 2, 0, 2, 1, 4, 'u', 's', 'e', 'r', 4, 'p', 'a', 's', 's'}
+	want := []byte{5, 2, 2, 0, 1, 4, 'u', 's', 'e', 'r', 4, 'p', 'a', 's', 's'}
 	if !bytes.Equal(m.w.Bytes(), want) {
 		t.Errorf("greeting+auth = %x, want %x", m.w.Bytes(), want)
 	}
@@ -479,27 +479,21 @@ func TestParseSocks5Addr(t *testing.T) {
 }
 
 func TestResolveUDPAddrAll(t *testing.T) {
-	addrs, err := ResolveUDPAddrAll("127.0.0.1", "4500")
+	addr, addrs, err := ResolveUDPAddrAll("127.0.0.1:4500", "")
 	if err != nil {
 		t.Fatalf("ResolveUDPAddrAll: %v", err)
 	}
-	if len(addrs) != 1 || !addrs[0].IP.Equal(net.ParseIP("127.0.0.1")) || addrs[0].Port != 4500 {
-		t.Errorf("addrs = %v, want [127.0.0.1:4500]", addrs)
-	}
-
-	// Combined host:port form.
-	addrs, err = ResolveUDPAddrAll("127.0.0.1:500", "")
-	if err != nil || len(addrs) != 1 || addrs[0].Port != 500 {
-		t.Errorf("combined form: %v %v", addrs, err)
+	if len(addrs) != 1 || !addrs[0].Equal(net.ParseIP("127.0.0.1")) || addr.Port != 4500 {
+		t.Errorf("addr/addrs = %v %v, want 127.0.0.1:4500", addr, addrs)
 	}
 
 	// IPv4-mapped IPv6 collapses to IPv4.
-	addrs, err = ResolveUDPAddrAll("::ffff:127.0.0.1", "500")
-	if err != nil || len(addrs) != 1 || len(addrs[0].IP) != 4 {
+	addr, addrs, err = ResolveUDPAddrAll("[::ffff:127.0.0.1]:500", "")
+	if err != nil || len(addrs) != 1 || len(addr.IP) != 4 {
 		t.Errorf("mapped addr: %v %v", addrs, err)
 	}
 
-	if _, err := ResolveUDPAddrAll("127.0.0.1", "bogus-service-name"); err == nil {
+	if _, _, err := ResolveUDPAddrAll("127.0.0.1:bogus-service-name", ""); err == nil {
 		t.Error("bad port accepted")
 	}
 }
@@ -507,16 +501,20 @@ func TestResolveUDPAddrAll(t *testing.T) {
 // TestSocketManagerLoopback drives an ESP packet end-to-end between two
 // SocketManagers over loopback.
 func TestSocketManagerLoopback(t *testing.T) {
-	server, err := NewSocketManager("127.0.0.1", "127.0.0.1:0", "127.0.0.1", "4500")
+	server, err := NewSocketManager("server", "127.0.0.1:0", "127.0.0.1:4500", "")
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
-	client, err := NewSocketManager("127.0.0.1", "127.0.0.1:0", "127.0.0.1", strconv.Itoa(int(server.LocalPort())))
+	client, err := NewSocketManager("client", "127.0.0.1:0", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(server.LocalPort()))), "")
 	if err != nil {
 		t.Fatalf("client: %v", err)
 	}
-	server.Start()
-	client.Start()
+	if err := server.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	if err := client.Start(); err != nil {
+		t.Fatalf("start client: %v", err)
+	}
 	defer server.Stop()
 	defer client.Stop()
 
@@ -528,7 +526,9 @@ func TestSocketManagerLoopback(t *testing.T) {
 		t.Fatalf("Encapsulate: %v", err)
 	}
 
-	client.SendESP(enc)
+	if err := client.SendESP(enc); err != nil {
+		t.Fatalf("SendESP: %v", err)
+	}
 	select {
 	case got := <-server.ESPPackets():
 		dec, err := Decapsulate(got, nil, sa)
@@ -544,7 +544,9 @@ func TestSocketManagerLoopback(t *testing.T) {
 
 	// IKE path (with the RFC 3948 marker on port 4500).
 	ike := fakeIKEInit()
-	client.SendIKE(ike)
+	if err := client.SendIKE(ike); err != nil {
+		t.Fatalf("SendIKE: %v", err)
+	}
 	select {
 	case got := <-server.IKEPackets():
 		if !bytes.Equal(got, ike) {

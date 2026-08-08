@@ -22,7 +22,9 @@ func (s *Session) sendIKE(raw []byte) error {
 	s.mu.Lock()
 	s.lastIKERequest = append(s.lastIKERequest[:0], raw...)
 	s.mu.Unlock()
-	s.socket.SendIKE(raw)
+	if err := s.socket.SendIKE(raw); err != nil {
+		return fmt.Errorf("swu: send IKE request: %w", err)
+	}
 	return nil
 }
 
@@ -43,7 +45,9 @@ func (s *Session) receiveIKE(ctx context.Context) (*ikev2.IKEPacket, error) {
 		if retries >= policy.MaxRetries {
 			return nil, ErrTaskTimeout
 		}
-		s.socket.SendIKE(request)
+		if err := s.socket.SendIKE(request); err != nil {
+			return nil, fmt.Errorf("swu: retransmit IKE request: %w", err)
+		}
 		delay = time.Duration(float64(delay) * policy.Backoff)
 	}
 }

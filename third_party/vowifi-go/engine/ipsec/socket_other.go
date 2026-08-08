@@ -21,7 +21,7 @@ func (r *SocketManager) startErrorListener() {
 
 // SockExtendedErr mirrors syscall.SockExtendedErr for API compatibility.
 type SockExtendedErr struct {
-	Errno  uint8
+	Errno  uint32
 	Origin uint8
 	Type   uint8
 	Code   uint8

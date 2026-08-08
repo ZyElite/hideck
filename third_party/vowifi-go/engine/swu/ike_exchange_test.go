@@ -34,6 +34,17 @@ func TestReceiveIKERetransmitsThenTimesOut(t *testing.T) {
 	}
 }
 
+func TestSendIKEPropagatesTransportFailure(t *testing.T) {
+	transportErr := errors.New("transport send failed")
+	transport := newTestIKETransport()
+	transport.sendIKEErr = transportErr
+	session := NewSession(&Config{})
+	session.socket = transport
+	if err := session.sendIKE(testIKEPacket(9)); !errors.Is(err, transportErr) {
+		t.Fatalf("sendIKE error = %v, want %v", err, transportErr)
+	}
+}
+
 func TestReceiveIKEIgnoresUnrelatedMessageID(t *testing.T) {
 	transport := newTestIKETransport()
 	session := NewSession(&Config{Retransmit: &RetransmitConfig{
@@ -160,11 +171,12 @@ func testIKEResponse(messageID uint32) []byte {
 }
 
 type testIKETransport struct {
-	ike       chan []byte
-	esp       chan []byte
-	netEvents chan ipsec.NetEvent
-	sentIKE   chan []byte
-	sendCount atomic.Int32
+	ike        chan []byte
+	esp        chan []byte
+	netEvents  chan ipsec.NetEvent
+	sentIKE    chan []byte
+	sendCount  atomic.Int32
+	sendIKEErr error
 }
 
 func newTestIKETransport() *testIKETransport {
@@ -177,23 +189,27 @@ func newTestIKETransport() *testIKETransport {
 func (t *testIKETransport) IKEPackets() <-chan []byte            { return t.ike }
 func (t *testIKETransport) ESPPackets() <-chan []byte            { return t.esp }
 func (t *testIKETransport) NetEventsChan() <-chan ipsec.NetEvent { return t.netEvents }
-func (t *testIKETransport) Start()                               {}
+func (t *testIKETransport) Start() error                         { return nil }
 func (t *testIKETransport) Stop()                                {}
-func (t *testIKETransport) SendIKE(raw []byte) {
+func (t *testIKETransport) SendIKE(raw []byte) error {
 	t.sendCount.Add(1)
+	if t.sendIKEErr != nil {
+		return t.sendIKEErr
+	}
 	select {
 	case t.sentIKE <- append([]byte(nil), raw...):
 	default:
 	}
+	return nil
 }
-func (t *testIKETransport) SendESP([]byte)           {}
-func (t *testIKETransport) SendNATKeepalive()        {}
-func (t *testIKETransport) SetRemotePort(uint16)     {}
+func (t *testIKETransport) SendESP([]byte) error     { return nil }
+func (t *testIKETransport) SendNATKeepalive() error  { return nil }
+func (t *testIKETransport) SetRemotePort(int)        {}
 func (t *testIKETransport) LocalIP() net.IP          { return net.IPv4zero }
 func (t *testIKETransport) RemoteIP() net.IP         { return net.IPv4zero }
 func (t *testIKETransport) LocalPort() uint16        { return 0 }
-func (t *testIKETransport) RemotePort() uint16       { return 0 }
+func (t *testIKETransport) RemotePort() int          { return 0 }
 func (t *testIKETransport) LocalAddrString() string  { return "" }
 func (t *testIKETransport) RemoteAddrString() string { return "" }
 func (t *testIKETransport) RawFD() (int, error)      { return -1, nil }
-func (t *testIKETransport) SetUDPEncap(bool) error   { return nil }
+func (t *testIKETransport) SetUDPEncap() error       { return nil }

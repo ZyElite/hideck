@@ -260,7 +260,9 @@ func (s *Session) sendEstablishedIKEResponse(request *ikev2.IKEPacket, payloads 
 	if s.socket == nil {
 		return errors.New("swu: no IKE transport")
 	}
-	s.socket.SendIKE(raw)
+	if err := s.socket.SendIKE(raw); err != nil {
+		return fmt.Errorf("swu: send IKE response: %w", err)
+	}
 	return nil
 }
 

@@ -29,7 +29,7 @@ const (
 func socks5Handshake(conn io.ReadWriter, config *Socks5Config) error {
 	methods := []byte{socks5MethodNoAuth}
 	if config != nil && len(config.Username) > 0 {
-		methods = []byte{socks5MethodNoAuth, socks5MethodUserPass}
+		methods = []byte{socks5MethodUserPass, socks5MethodNoAuth}
 	}
 	greeting := append([]byte{socks5Version, byte(len(methods))}, methods...)
 	if _, err := conn.Write(greeting); err != nil {
@@ -84,7 +84,7 @@ func socks5UserPasswordAuth(conn io.ReadWriter, config *Socks5Config) error {
 // returns the relay address to send UDP datagrams to. target is the address
 // announced to the proxy (the local ePDG endpoint); a nil target uses
 // 0.0.0.0:0.
-func socks5UDPAssociate(conn io.ReadWriter, config *Socks5Config, target *net.UDPAddr) (*net.UDPAddr, error) {
+func socks5UDPAssociate(conn io.ReadWriter, target *net.UDPAddr) (*net.UDPAddr, error) {
 	if target == nil {
 		target = &net.UDPAddr{IP: net.IPv4zero, Port: 0}
 	}
@@ -197,9 +197,9 @@ func socks5ReplyString(rep byte) string {
 
 // Socks5UDPDatagram is a decoded SOCKS5 UDP datagram (RFC 1928 §7).
 type Socks5UDPDatagram struct {
-	Frag byte
-	Addr *net.UDPAddr
-	Data []byte
+	Frag    byte
+	DstAddr *net.UDPAddr
+	Data    []byte
 }
 
 // EncodeSocks5UDPDatagram wraps data in a SOCKS5 UDP relay datagram for the
@@ -266,9 +266,9 @@ func DecodeSocks5UDPDatagram(dgram []byte) (*Socks5UDPDatagram, error) {
 	}
 	port := int(dgram[hdrLen-2])<<8 | int(dgram[hdrLen-1])
 	return &Socks5UDPDatagram{
-		Frag: frag,
-		Addr: &net.UDPAddr{IP: ip, Port: port},
-		Data: dgram[hdrLen:],
+		Frag:    frag,
+		DstAddr: &net.UDPAddr{IP: ip, Port: port},
+		Data:    dgram[hdrLen:],
 	}, nil
 }
 

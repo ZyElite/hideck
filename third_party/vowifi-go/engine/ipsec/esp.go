@@ -13,10 +13,13 @@ import (
 // mode the integrity transform covers the whole packet up to (and including)
 // the pad-length byte.
 
-// Encapsulate wraps packet in an ESP frame, inferring the inner protocol from
-// the IP version nibble. It writes into dst (growing it if needed) and
-// returns the resulting slice.
-func Encapsulate(packet []byte, dst []byte, sa *SecurityAssociation) ([]byte, error) {
+// Encapsulate wraps packet in an ESP frame and infers the inner protocol. The
+// legacy target is an SA; the compatibility form accepts dst followed by SA.
+func Encapsulate(packet []byte, target any, compatibility ...*SecurityAssociation) ([]byte, error) {
+	dst, sa, err := encapsulationTarget(target, compatibility)
+	if err != nil {
+		return nil, err
+	}
 	var nextHeader byte
 	switch {
 	case len(packet) == 0:
@@ -31,9 +34,32 @@ func Encapsulate(packet []byte, dst []byte, sa *SecurityAssociation) ([]byte, er
 	return EncapsulateWithNextHeaderInto(dst, packet, nextHeader, sa)
 }
 
+func encapsulationTarget(target any, compatibility []*SecurityAssociation) ([]byte, *SecurityAssociation, error) {
+	if sa, ok := target.(*SecurityAssociation); ok && len(compatibility) == 0 {
+		return nil, sa, nil
+	}
+	if len(compatibility) != 1 {
+		return nil, nil, errInvalidSA
+	}
+	if target == nil {
+		return nil, compatibility[0], nil
+	}
+	dst, ok := target.([]byte)
+	if !ok {
+		return nil, nil, errInvalidSA
+	}
+	return dst, compatibility[0], nil
+}
+
 // EncapsulateInto is Encapsulate with the explicit next-header inference.
-func EncapsulateInto(packet []byte, dst []byte, sa *SecurityAssociation) ([]byte, error) {
-	return Encapsulate(packet, dst, sa)
+func EncapsulateInto(dst []byte, packet []byte, sa *SecurityAssociation) ([]byte, error) {
+	var nextHeader byte
+	if len(packet) > 0 && packet[0]>>4 == 4 {
+		nextHeader = 4
+	} else if len(packet) > 0 && packet[0]>>4 == 6 {
+		nextHeader = 41
+	}
+	return EncapsulateWithNextHeaderInto(dst, packet, nextHeader, sa)
 }
 
 // EncapsulateWithNextHeaderInto wraps plaintext in an ESP frame with the
@@ -43,7 +69,7 @@ func EncapsulateWithNextHeaderInto(dst []byte, plaintext []byte, nextHeader byte
 	if sa == nil {
 		return nil, errInvalidSA
 	}
-	if sa.cipherName == 0 {
+	if sa.EncryptionAlg == nil {
 		return nil, errNoCipher
 	}
 	c, err := sa.cipher()
@@ -66,17 +92,19 @@ func EncapsulateWithNextHeaderInto(dst []byte, plaintext []byte, nextHeader byte
 		return nil, err
 	}
 
-	// Grow dst to fit the whole frame.
-	if cap(dst) < total {
-		grown := make([]byte, len(dst), total)
+	// Grow dst to fit the frame while preserving any caller-owned prefix.
+	prefixLength := len(dst)
+	required := prefixLength + total
+	if cap(dst) < required {
+		grown := make([]byte, len(dst), required)
 		copy(grown, dst)
 		dst = grown
 	}
-	out := dst[:0]
+	out := dst
 
 	// ESP header (SPI | Seq): the AAD for AES-GCM (RFC 4106 §3.1).
 	hdr := make([]byte, 8)
-	marshalESPHeader(hdr, sa.spi, seq)
+	marshalESPHeader(hdr, sa.SPI, seq)
 	out = append(out, hdr...)
 
 	// IV: random bytes carried in clear.
@@ -104,8 +132,8 @@ func EncapsulateWithNextHeaderInto(dst []byte, plaintext []byte, nextHeader byte
 	}
 
 	// CBC mode: compute the integrity over the whole packet and append.
-	if !sa.aead && sa.integ != nil {
-		out = append(out, sa.integ.Compute(sa.integKey, out)...)
+	if !sa.IsAEAD && sa.IntegrityAlg2 != nil {
+		out = append(out, sa.IntegrityAlg2.Compute(sa.IntegrityKey, out[prefixLength:])...)
 	}
 	return out, nil
 }
@@ -116,7 +144,7 @@ func EncapsulationLayout(packetLen int, sa *SecurityAssociation) (total, padding
 	if sa == nil {
 		return 0, 0, errInvalidSA
 	}
-	if sa.cipherName == 0 {
+	if sa.EncryptionAlg == nil {
 		return 0, 0, errNoCipher
 	}
 	c, err := sa.cipher()
@@ -140,7 +168,11 @@ func encapsulationLayout(plaintextLen, blockSize, ivSize int, sa *SecurityAssoci
 
 // Decapsulate verifies and unwraps an ESP frame, appending the inner packet
 // to dst. The next header byte is available via DecapsulateWithNextHeaderInto.
-func Decapsulate(packet []byte, dst []byte, sa *SecurityAssociation) ([]byte, error) {
+func Decapsulate(packet []byte, target any, compatibility ...*SecurityAssociation) ([]byte, error) {
+	dst, sa, targetErr := encapsulationTarget(target, compatibility)
+	if targetErr != nil {
+		return nil, targetErr
+	}
 	inner, _, err := DecapsulateWithNextHeaderInto(dst, packet, sa)
 	return inner, err
 }
@@ -154,7 +186,7 @@ func DecapsulateWithNextHeaderInto(dst []byte, packet []byte, sa *SecurityAssoci
 	if sa == nil {
 		return nil, 0, errInvalidSA
 	}
-	if sa.cipherName == 0 {
+	if sa.EncryptionAlg == nil {
 		return nil, 0, errNoCipher
 	}
 	c, err := sa.cipher()
@@ -166,7 +198,7 @@ func DecapsulateWithNextHeaderInto(dst []byte, packet []byte, sa *SecurityAssoci
 	}
 
 	spi := binary.BigEndian.Uint32(packet[0:4])
-	if sa.spi != 0 && sa.spi != spi {
+	if sa.SPI != 0 && sa.SPI != spi {
 		return nil, 0, errSPIMismatch
 	}
 	sequence := binary.BigEndian.Uint32(packet[4:8])
@@ -176,19 +208,19 @@ func DecapsulateWithNextHeaderInto(dst []byte, packet []byte, sa *SecurityAssoci
 
 	ivSize := c.IVSize()
 	if len(packet) < 8+ivSize {
-		return nil, 0, errPacketTooShort
+		return nil, 0, errIVTooShort
 	}
 	iv := packet[8 : 8+ivSize]
 
 	var payload []byte
-	if !sa.aead && sa.integ != nil {
-		integSize := sa.integ.OutputSize()
+	if !sa.IsAEAD && sa.IntegrityAlg2 != nil {
+		integSize := sa.IntegrityAlg2.OutputSize()
 		if len(packet) < 8+ivSize+integSize {
-			return nil, 0, errPacketTooShort
+			return nil, 0, errICVTooShort
 		}
 		// Verify the ICV over everything up to (not including) it.
 		dataLen := len(packet) - integSize
-		if !sa.integ.Verify(sa.integKey, packet[:dataLen], packet[dataLen:]) {
+		if !sa.IntegrityAlg2.Verify(sa.IntegrityKey, packet[:dataLen], packet[dataLen:]) {
 			return nil, 0, errIntegrityFailed
 		}
 		payload = packet[8+ivSize : dataLen]

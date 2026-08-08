@@ -24,6 +24,10 @@ var ErrFreshRuntimeRequired = errors.New("swu: full reauthentication requires a 
 // Config carries the SWu session configuration recovered from the decompiled
 // engine/swu. It is the input to NewSession.
 type Config struct {
+	// DeviceID identifies the access device in transport diagnostics.
+	DeviceID string
+	// DNSServer optionally selects the resolver used for ePDG lookup.
+	DNSServer string
 	// EPDGAddr is the ePDG host (FQDN or IP) and optional port.
 	EPDGAddr string
 	// APN is carried as IDr in the first IKE_AUTH request (3GPP TS 24.302).
@@ -208,7 +212,7 @@ type Session struct {
 	dnsServers      []net.IP
 	pcscfServers    []net.IP
 	remoteIP        net.IP // ePDG outer address
-	remotePort      uint16
+	remotePort      int
 
 	// --- lifecycle ---
 	ctx      context.Context
@@ -476,14 +480,18 @@ func (s *Session) buildTransport() error {
 		localIP = ip
 	}
 	localAddr := net.JoinHostPort(localIP.String(), "0")
-	sm, err := ipsec.NewSocketManager(localIP.String(), localAddr, host, port)
+	targetAddr := net.JoinHostPort(host, port)
+	sm, err := ipsec.NewSocketManager(s.cfg.DeviceID, localAddr, targetAddr, s.cfg.DNSServer)
 	if err != nil {
 		return fmt.Errorf("open IKE socket: %w", err)
+	}
+	if err := sm.Start(); err != nil {
+		sm.Stop()
+		return fmt.Errorf("start IKE socket: %w", err)
 	}
 	s.socket = sm
 	s.remoteIP = sm.RemoteIP()
 	s.remotePort = sm.RemotePort()
-	sm.Start()
 	return nil
 }
 
@@ -493,14 +501,21 @@ func (s *Session) buildProxyTransport(host, port string) error {
 		proxyCfg = *s.cfg.Proxy
 	}
 	targetAddr := net.JoinHostPort(host, port)
-	transport, err := ipsec.NewSocks5Transport(proxyCfg, s.cfg.ProxyAddr, targetAddr, 10*time.Second)
+	proxyCfg.ProxyAddr = s.cfg.ProxyAddr
+	proxyCfg.RemoteAddr = targetAddr
+	proxyCfg.DNSServer = s.cfg.DNSServer
+	proxyCfg.DeviceID = s.cfg.DeviceID
+	transport, err := ipsec.NewSocks5Transport(proxyCfg)
 	if err != nil {
 		return fmt.Errorf("open SOCKS5 IKE transport: %w", err)
+	}
+	if err := transport.Start(); err != nil {
+		transport.Stop()
+		return fmt.Errorf("start SOCKS5 IKE transport: %w", err)
 	}
 	s.socket = transport
 	s.remoteIP = transport.RemoteIP()
 	s.remotePort = transport.RemotePort()
-	transport.Start()
 	return nil
 }
 
@@ -752,20 +767,23 @@ func (s *Session) startNATKeepalive() {
 		every = 20 * time.Second
 	}
 	s.armTimer(&s.natKeepalive, every, func() {
-		s.sendNATKeepalive()
+		if err := s.sendNATKeepalive(); err != nil {
+			s.failEstablishedControl(fmt.Errorf("swu: NAT keepalive failed: %w", err))
+			return
+		}
 		s.startNATKeepalive()
 	})
 }
 
 // sendNATKeepalive sends a NAT keepalive packet on the ESP transport.
-func (s *Session) sendNATKeepalive() {
+func (s *Session) sendNATKeepalive() error {
 	if s.socket == nil {
-		return
+		return errors.New("swu: no IKE transport")
 	}
 	s.mu.Lock()
 	s.lastPingAt = time.Now()
 	s.mu.Unlock()
-	s.socket.SendNATKeepalive()
+	return s.socket.SendNATKeepalive()
 }
 
 // startDPD arms the dead-peer-detection timer (RFC 7296 §1.4.2).

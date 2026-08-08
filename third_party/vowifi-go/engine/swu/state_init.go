@@ -106,7 +106,7 @@ func (s *Session) buildIKESAInitPacket() (*ikev2.IKEPacket, error) {
 	if s.socket != nil {
 		pkt.Payloads = append(pkt.Payloads,
 			natDetectionNotify(notifyNATSource, s.SPIi, [8]byte{}, s.socket.LocalIP(), s.socket.LocalPort()),
-			natDetectionNotify(notifyNATDestination, s.SPIi, [8]byte{}, s.socket.RemoteIP(), s.socket.RemotePort()),
+			natDetectionNotify(notifyNATDestination, s.SPIi, [8]byte{}, s.socket.RemoteIP(), uint16(s.socket.RemotePort())),
 		)
 	}
 	return pkt, nil
@@ -300,7 +300,7 @@ func (s *Session) applyNATTraversal(sourceHash, destinationHash []byte) {
 	if s.socket == nil || len(sourceHash) == 0 || len(destinationHash) == 0 {
 		return
 	}
-	expectedSource := natDetectionHash(s.SPIi, s.SPIr, s.socket.RemoteIP(), s.socket.RemotePort())
+	expectedSource := natDetectionHash(s.SPIi, s.SPIr, s.socket.RemoteIP(), uint16(s.socket.RemotePort()))
 	expectedDestination := natDetectionHash(s.SPIi, s.SPIr, s.socket.LocalIP(), s.socket.LocalPort())
 	if !bytes.Equal(sourceHash, expectedSource) || !bytes.Equal(destinationHash, expectedDestination) {
 		s.socket.SetRemotePort(4500)

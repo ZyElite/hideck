@@ -5,447 +5,254 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 )
 
-// ResolveUDPAddrAll resolves an ePDG address into every UDP endpoint. The
-// address may be an IP literal or a DNS name; port may be numeric or a
-// service name. Results are de-duplicated by IP and IPv4-mapped-IPv6
-// addresses are converted to plain IPv4.
-func ResolveUDPAddrAll(addr, port string) ([]*net.UDPAddr, error) {
-	host := strings.TrimSpace(addr)
-	if h, p, err := net.SplitHostPort(addr); err == nil {
-		host = h
-		if p != "" {
-			port = p
-		}
-	}
-	p, err := resolveUDPPort(port)
-	if err != nil {
-		return nil, err
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return []*net.UDPAddr{{IP: ipv4Compat(ip), Port: p}}, nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[string]struct{}, len(ips))
-	addrs := make([]*net.UDPAddr, 0, len(ips))
-	for _, a := range ips {
-		ip := ipv4Compat(a.IP)
-		key := ip.String()
-		if _, dup := seen[key]; dup {
-			continue
-		}
-		seen[key] = struct{}{}
-		addrs = append(addrs, &net.UDPAddr{IP: ip, Port: p})
-	}
-	if len(addrs) == 0 {
-		return nil, errors.New("no IP addresses found")
-	}
-	return addrs, nil
+const (
+	ikeQueueSize      = 100
+	espQueueSize      = 1000
+	networkQueueSize  = 10
+	directReadBufSize = 4096
+)
+
+// SocketStats is a snapshot of direct-transport receive counters.
+type SocketStats struct {
+	ReceivedIKE uint64
+	ReceivedESP uint64
+	DroppedIKE  uint64
+	DroppedESP  uint64
 }
 
-// resolveUDPPort converts a numeric or service port string to an int.
-func resolveUDPPort(port string) (int, error) {
-	if port == "" {
-		return 0, errors.New("missing port")
-	}
-	if n, err := strconv.Atoi(port); err == nil {
-		return n, nil
-	}
-	n, err := net.LookupPort("udp", port)
-	if err != nil {
-		return 0, err
-	}
-	return n, nil
-}
+// Stats retains the reconstructed type name as an alias.
+type Stats = SocketStats
 
-// ipv4Compat maps IPv4-mapped IPv6 (::ffff:a.b.c.d) to the 4-byte IPv4 form.
-func ipv4Compat(ip net.IP) net.IP {
-	if v4 := ip.To4(); v4 != nil {
-		return v4
-	}
-	return ip
-}
-
-// Stats is a snapshot of a SocketManager's receive counters.
-type Stats struct {
-	ESPReceived uint64
-	IKEReceived uint64
-	IKEDropped  uint64
-	ESPDropped  uint64
-}
-
-// SocketManager is a Transport that exchanges IKE/ESP datagrams directly with
-// the ePDG over a local UDP socket.
+// SocketManager exchanges IKE and ESP datagrams directly with the ePDG.
 type SocketManager struct {
-	// Receive counters.
-	espReceived uint64
-	ikeReceived uint64
-	ikeDropped  uint64
-	espDropped  uint64
+	receivedIKE uint64
+	receivedESP uint64
+	droppedIKE  uint64
+	droppedESP  uint64
 
-	localIP string // informational, for logs
-	conn    *net.UDPConn
+	DeviceID   string
+	Conn       *net.UDPConn
+	LocalAddr  *net.UDPAddr
+	RemoteAddr *net.UDPAddr
+	remoteIPs  []net.IP
+	remoteMu   sync.Mutex
+	remoteIdx  uint32
 
-	sendMu     sync.Mutex // guards remoteAddr / remoteIPs / rrCounter
-	localAddr  *net.UDPAddr
-	remoteAddr *net.UDPAddr // current remote (updated on NAT rebinding)
-	remoteIPs  []*net.UDPAddr
-	numRemotes uint32
-	rrCounter  uint32
-
-	ikePackets chan []byte
-	espPackets chan []byte
-	netEvents  chan NetEvent
-	stop       chan struct{}
-	wg         sync.WaitGroup
+	IKEChan   chan []byte
+	ESPChan   chan []byte
+	NetEvents chan NetEvent
+	closeChan chan struct{}
+	wg        sync.WaitGroup
+	lifecycle sync.Mutex
+	started   bool
+	stopped   bool
+	startErr  error
 }
 
-// NewSocketManager binds a UDP socket to localAddr (an "IP:port" string) and
-// resolves the ePDG address remoteHost:remotePort. It returns a ready
-// (un-started) transport.
-func NewSocketManager(localIP, localAddr, remoteHost, remotePort string) (*SocketManager, error) {
-	addrs, err := ResolveUDPAddrAll(remoteHost, remotePort)
+// NewSocketManager resolves remote, binds local, and prepares a transport.
+func NewSocketManager(deviceID, local, remote, dnsServer string) (*SocketManager, error) {
+	remoteAddr, remoteIPs, err := ResolveUDPAddrAll(remote, dnsServer)
 	if err != nil {
-		return nil, fmt.Errorf("resolve remote address: %w", err)
+		return nil, fmt.Errorf("resolve remote address %q: %w", remote, err)
 	}
-	if len(addrs) == 0 {
-		return nil, errors.New("remote address resolved to zero endpoints")
+	network := "udp6"
+	if remoteAddr.IP.To4() != nil {
+		network = "udp4"
 	}
-
-	network := "udp"
-	if addrs[0].IP.To4() == nil {
-		network = "udp"
+	if strings.TrimSpace(local) == "" {
+		local = ":0"
 	}
-	if localAddr == "" {
-		localAddr = ":0"
+	localAddr, err := net.ResolveUDPAddr(network, local)
+	if err != nil {
+		return nil, fmt.Errorf("resolve local address %q: %w", local, err)
 	}
-	lc := net.ListenConfig{Control: reuseSocketOptions}
-	pc, err := lc.ListenPacket(context.Background(), network, localAddr)
+	listenConfig := net.ListenConfig{Control: reuseSocketOptions}
+	packetConn, err := listenConfig.ListenPacket(
+		context.Background(), network, localAddr.String(),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", localAddr, err)
 	}
-	conn := pc.(*net.UDPConn)
-	local, err := net.ResolveUDPAddr(network, conn.LocalAddr().String())
-	if err != nil {
-		conn.Close()
-		return nil, err
+	conn, ok := packetConn.(*net.UDPConn)
+	if !ok {
+		_ = packetConn.Close()
+		return nil, errors.New("underlying connection is not UDP")
 	}
-
+	actual, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		_ = conn.Close()
+		return nil, errors.New("UDP socket has no local UDP address")
+	}
 	return &SocketManager{
-		localIP:    localIP,
-		conn:       conn,
-		localAddr:  local,
-		remoteAddr: addrs[0],
-		remoteIPs:  addrs,
-		numRemotes: uint32(len(addrs)),
-		ikePackets: make(chan []byte, 100),
-		espPackets: make(chan []byte, 1000),
-		netEvents:  make(chan NetEvent, 10),
-		stop:       make(chan struct{}),
+		DeviceID: deviceID, Conn: conn, LocalAddr: actual, RemoteAddr: remoteAddr,
+		remoteIPs: remoteIPs, IKEChan: make(chan []byte, ikeQueueSize),
+		ESPChan: make(chan []byte, espQueueSize), NetEvents: make(chan NetEvent, networkQueueSize),
+		closeChan: make(chan struct{}),
 	}, nil
 }
 
-// reuseSocketOptions enables SO_REUSEADDR and SO_REUSEPORT on the UDP socket
-// (recovered from NewSocketManager.func1).
-func reuseSocketOptions(network, address string, c syscall.RawConn) error {
-	var serr error
-	err := c.Control(func(fd uintptr) {
-		if serr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); serr != nil {
-			return
+func reuseSocketOptions(_, _ string, raw syscall.RawConn) error {
+	var optionErr error
+	err := raw.Control(func(fd uintptr) {
+		optionErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+		if optionErr == nil {
+			optionErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, soReusePort, 1)
 		}
-		serr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, soReusePort, 1)
 	})
 	if err != nil {
 		return err
 	}
-	return serr
+	return optionErr
 }
 
-// --- Transport channel accessors ---
+func (s *SocketManager) IKEPackets() <-chan []byte      { return s.IKEChan }
+func (s *SocketManager) ESPPackets() <-chan []byte      { return s.ESPChan }
+func (s *SocketManager) NetEventsChan() <-chan NetEvent { return s.NetEvents }
 
-func (r *SocketManager) IKEPackets() <-chan []byte      { return r.ikePackets }
-func (r *SocketManager) ESPPackets() <-chan []byte      { return r.espPackets }
-func (r *SocketManager) NetEventsChan() <-chan NetEvent { return r.netEvents }
-
-// ReceiveIKE blocks until the next IKE packet is delivered by the transport,
-// returning an error if the transport has been stopped.
-func (r *SocketManager) ReceiveIKE() ([]byte, error) {
-	pkt, ok := <-r.ikePackets
+func (s *SocketManager) ReceiveIKE() ([]byte, error) {
+	packet, ok := <-s.IKEChan
 	if !ok {
 		return nil, errors.New("IKE channel closed")
 	}
-	return pkt, nil
+	return packet, nil
 }
 
-// --- Address accessors ---
-
-func (r *SocketManager) LocalIP() net.IP {
-	if r.localAddr == nil {
+func (s *SocketManager) LocalIP() net.IP {
+	if s.LocalAddr == nil {
 		return nil
 	}
-	return r.localAddr.IP
+	return s.LocalAddr.IP
 }
 
-func (r *SocketManager) LocalPort() uint16 {
-	if r.localAddr == nil {
+func (s *SocketManager) LocalPort() uint16 {
+	if s.LocalAddr == nil {
 		return 0
 	}
-	return uint16(r.localAddr.Port)
+	return uint16(s.LocalAddr.Port)
 }
 
-func (r *SocketManager) RemoteIP() net.IP {
-	r.sendMu.Lock()
-	defer r.sendMu.Unlock()
-	if r.remoteAddr == nil {
+func (s *SocketManager) RemoteIP() net.IP {
+	s.remoteMu.Lock()
+	defer s.remoteMu.Unlock()
+	if s.RemoteAddr == nil {
 		return nil
 	}
-	return r.remoteAddr.IP
+	return append(net.IP(nil), s.RemoteAddr.IP...)
 }
 
-func (r *SocketManager) RemotePort() uint16 {
-	r.sendMu.Lock()
-	defer r.sendMu.Unlock()
-	if r.remoteAddr == nil {
+func (s *SocketManager) RemotePort() int {
+	s.remoteMu.Lock()
+	defer s.remoteMu.Unlock()
+	if s.RemoteAddr == nil {
 		return 0
 	}
-	return uint16(r.remoteAddr.Port)
+	return s.RemoteAddr.Port
 }
 
-func (r *SocketManager) SetRemotePort(port uint16) {
-	r.sendMu.Lock()
-	if r.remoteAddr != nil {
-		r.remoteAddr.Port = int(port)
+func (s *SocketManager) SetRemotePort(port int) {
+	s.remoteMu.Lock()
+	if s.RemoteAddr != nil {
+		s.RemoteAddr.Port = port
 	}
-	r.sendMu.Unlock()
+	s.remoteMu.Unlock()
 }
 
-func (r *SocketManager) LocalAddrString() string {
-	if r.localAddr == nil {
+func (s *SocketManager) LocalAddrString() string {
+	if s.LocalAddr == nil {
 		return ""
 	}
-	return r.localAddr.String()
+	return s.LocalAddr.String()
 }
 
-func (r *SocketManager) RemoteAddrString() string {
-	r.sendMu.Lock()
-	defer r.sendMu.Unlock()
-	if r.remoteAddr == nil {
+func (s *SocketManager) RemoteAddrString() string {
+	s.remoteMu.Lock()
+	defer s.remoteMu.Unlock()
+	if s.RemoteAddr == nil {
 		return ""
 	}
-	return r.remoteAddr.String()
+	return s.RemoteAddr.String()
 }
 
-// Stats returns a snapshot of the receive counters.
-func (r *SocketManager) Stats() Stats {
-	return Stats{
-		ESPReceived: atomic.LoadUint64(&r.espReceived),
-		IKEReceived: atomic.LoadUint64(&r.ikeReceived),
-		IKEDropped:  atomic.LoadUint64(&r.ikeDropped),
-		ESPDropped:  atomic.LoadUint64(&r.espDropped),
-	}
-}
-
-// --- Lifecycle ---
-
-// Start launches the receive loop and the ICMP error listener.
-func (r *SocketManager) Start() {
-	r.wg.Add(1)
-	go r.readLoop()
-	r.wg.Add(1)
-	go r.startErrorListener()
-}
-
-// Stop tears the transport down: it closes the socket, waits for the loops to
-// finish and closes the delivery channels.
-func (r *SocketManager) Stop() {
-	select {
-	case <-r.stop:
-	default:
-		close(r.stop)
-	}
-	if r.conn != nil {
-		r.conn.Close()
-	}
-	r.wg.Wait()
-	close(r.ikePackets)
-	close(r.espPackets)
-	close(r.netEvents)
-}
-
-// readLoop receives datagrams, tracks NAT rebinding and dispatches IKE/ESP
-// packets to the delivery channels.
-func (r *SocketManager) readLoop() {
-	defer r.wg.Done()
-	buf := make([]byte, 0x1000)
-	for {
-		n, from, err := r.conn.ReadFromUDP(buf)
-		if err != nil {
-			return
-		}
-		pkt := buf[:n]
-
-		// Track the source: a packet from an IP outside the configured list
-		// (or on a new port) signals NAT rebinding.
-		r.sendMu.Lock()
-		known := r.numRemotes == 0
-		for i := 0; i < int(r.numRemotes) && i < len(r.remoteIPs); i++ {
-			if r.remoteIPs[i].IP.Equal(from.IP) {
-				if r.numRemotes > 1 {
-					// Promote the matching IP to primary and collapse the list.
-					r.remoteIPs[0], r.remoteIPs[i] = r.remoteIPs[i], r.remoteIPs[0]
-					r.remoteIPs = r.remoteIPs[:1]
-					r.numRemotes = 1
-					logDebug("remote endpoint switched to " + from.IP.String())
-				}
-				known = true
-				break
-			}
-		}
-		if known && from.Port != r.remoteAddr.Port && from.Port > 0 {
-			oldPort := uint32(r.remoteAddr.Port)
-			r.remoteAddr.Port = from.Port
-			detail := fmt.Sprintf("updated remote port from %d to %d", oldPort, from.Port)
-			logInfo(detail)
-			select {
-			case r.netEvents <- NetEvent{Type: NetEventPortChanged, OldPort: oldPort, NewPort: uint32(from.Port), Detail: detail}:
-			default:
-			}
-		}
-		r.sendMu.Unlock()
-
-		// A single 0xff byte is a NAT keepalive and is not forwarded.
-		if n == 1 && pkt[0] == 0xff {
-			continue
-		}
-
-		if ikePkt, ok := parseIKEPayload(pkt, n); ok {
-			select {
-			case r.ikePackets <- ikePkt:
-				atomic.AddUint64(&r.ikeReceived, 1)
-			default:
-				atomic.AddUint64(&r.ikeDropped, 1)
-				logWarn("IKE packet dropped (queue full)")
-			}
-			continue
-		}
-
-		// ESP: strip a defensive 4-byte non-ESP marker if present.
-		esp := pkt
-		if n > 4 && esp[0] == 0 && esp[1] == 0 && esp[2] == 0 && esp[3] == 0 {
-			esp = esp[4:]
-		}
-		if len(esp) == 0 {
-			continue
-		}
-		select {
-		case r.espPackets <- esp:
-			atomic.AddUint64(&r.espReceived, 1)
-		default:
-			atomic.AddUint64(&r.espDropped, 1)
-			logWarn("ESP packet dropped (queue full)")
-		}
+func (s *SocketManager) Stats() SocketStats {
+	return SocketStats{
+		ReceivedIKE: atomic.LoadUint64(&s.receivedIKE),
+		ReceivedESP: atomic.LoadUint64(&s.receivedESP),
+		DroppedIKE:  atomic.LoadUint64(&s.droppedIKE),
+		DroppedESP:  atomic.LoadUint64(&s.droppedESP),
 	}
 }
 
-// --- Send paths ---
-
-// SendIKE sends an IKE packet, prepending the RFC 3948 non-ESP marker when
-// talking to port 4500.
-func (r *SocketManager) SendIKE(packet []byte) {
-	r.sendMu.Lock()
-	if r.numRemotes > 1 {
-		idx := r.rrCounter % r.numRemotes
-		r.rrCounter++
-		*r.remoteAddr = *r.remoteIPs[idx]
-		logDebug("sending IKE to " + r.remoteAddr.IP.String())
+func (s *SocketManager) Start() error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+	if s.stopped {
+		return errors.New("socket transport already stopped")
 	}
-	addr := *r.remoteAddr
-	r.sendMu.Unlock()
-
-	out := packet
-	if addr.Port == 4500 {
-		out = append([]byte{0, 0, 0, 0}, out...)
+	if s.started {
+		return s.startErr
 	}
-	if _, err := r.conn.WriteToUDP(out, &addr); err != nil {
-		logWarn("failed to send IKE packet to " + addr.String() + ": " + err.Error())
+	if s.Conn == nil {
+		return errors.New("socket not created")
 	}
+	s.started = true
+	s.wg.Add(2)
+	go s.readLoop()
+	go s.startErrorListener()
+	return s.startErr
 }
 
-// SendESP sends an ESP packet.
-func (r *SocketManager) SendESP(packet []byte) {
-	r.sendMu.Lock()
-	addr := *r.remoteAddr
-	r.sendMu.Unlock()
-
-	if _, err := r.conn.WriteToUDP(packet, &addr); err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			return
-		}
-		if strings.Contains(err.Error(), "use of closed network connection") {
-			return
-		}
-		logWarn(fmt.Sprintf("failed to send ESP packet to %s: %v, len %d", addr.String(), err, len(packet)))
+func (s *SocketManager) Stop() {
+	s.lifecycle.Lock()
+	if s.stopped {
+		s.lifecycle.Unlock()
+		return
 	}
+	s.stopped = true
+	close(s.closeChan)
+	if s.Conn != nil {
+		_ = s.Conn.Close()
+	}
+	s.lifecycle.Unlock()
+	s.wg.Wait()
+	close(s.IKEChan)
+	close(s.ESPChan)
+	close(s.NetEvents)
 }
 
-// SendNATKeepalive sends the RFC 3948 keepalive (a single 0xff byte).
-func (r *SocketManager) SendNATKeepalive() {
-	r.sendMu.Lock()
-	addr := *r.remoteAddr
-	r.sendMu.Unlock()
-
-	if _, err := r.conn.WriteToUDP([]byte{0xff}, &addr); err != nil {
-		if errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "use of closed network connection") {
-			return
-		}
-		logWarn(fmt.Sprintf("failed to send NAT keepalive to %s: %v, local addr %s", addr.String(), err, r.LocalAddrString()))
-	}
-}
-
-// RawFD returns the underlying socket file descriptor.
-func (r *SocketManager) RawFD() (int, error) {
-	if r.conn == nil {
+func (s *SocketManager) RawFD() (int, error) {
+	if s.Conn == nil {
 		return -1, errors.New("socket not created")
 	}
-	raw, err := r.conn.SyscallConn()
+	raw, err := s.Conn.SyscallConn()
 	if err != nil {
-		return -1, err
+		return -1, fmt.Errorf("get UDP syscall connection: %w", err)
 	}
-	var fd int
-	var ctrlErr error
-	err = raw.Control(func(f uintptr) { fd = int(f) })
-	if err != nil {
-		return -1, err
-	}
-	if ctrlErr != nil {
-		return -1, ctrlErr
+	fd := -1
+	if err := raw.Control(func(value uintptr) { fd = int(value) }); err != nil {
+		return -1, fmt.Errorf("get UDP file descriptor: %w", err)
 	}
 	return fd, nil
 }
 
-// SetUDPEncap enables or disables UDP encapsulation (ESP-in-UDP) on the
-// socket.
-func (r *SocketManager) SetUDPEncap(enable bool) error {
-	if r.conn == nil {
+// SetUDPEncap enables the kernel's UDP_ENCAP_ESPINUDP processing.
+func (s *SocketManager) SetUDPEncap() error { return s.setUDPEncap(true) }
+
+// DisableUDPEncap reverses SetUDPEncap for transactional XFRM cleanup.
+func (s *SocketManager) DisableUDPEncap() error { return s.setUDPEncap(false) }
+
+func (s *SocketManager) setUDPEncap(enable bool) error {
+	if s.Conn == nil {
 		return errors.New("socket not created")
 	}
-	if err := setUDPEncap(r.conn, enable); err != nil {
+	if err := setUDPEncap(s.Conn, enable); err != nil {
 		return err
 	}
-	logInfo(fmt.Sprintf("UDP encapsulation %v, local addr %s", enable, r.LocalAddrString()))
+	logInfo(fmt.Sprintf("UDP encapsulation %t, local addr %s", enable, s.LocalAddrString()))
 	return nil
 }
-
-// setUDPEncap is implemented in the platform-specific file.

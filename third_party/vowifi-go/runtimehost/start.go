@@ -241,6 +241,7 @@ func newTunnel(req StartRequest, inst *Instance) (Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.DeviceID = req.DeviceID
 	cfg.OnStateChange = inst.updateTunnelState
 	if req.Proxy != nil && req.Proxy.Enabled {
 		cfg.ProxyAddr = strings.TrimSpace(req.Proxy.Addr)

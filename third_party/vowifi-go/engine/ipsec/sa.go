@@ -3,85 +3,138 @@ package ipsec
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 )
 
-// SecurityAssociation is a user-space ESP security association. It is used in
-// two flavours (mirroring the decompiled NewSecurityAssociation /
-// NewSecurityAssociationCBC constructors):
-//
-//   - AEAD: AES-GCM (RFC 4106). The encryption key is K|salt; the packet
-//     carries an 8-byte IV, the GCM nonce is salt||IV and the tag is appended
-//     by the AEAD.
-//   - CBC: AES-CBC (raw, the ESP padding is applied by this package) plus a
-//     separate integrity transform (e.g. HMAC-SHA1-96) covering the whole ESP
-//     packet, whose output is appended as the ICV.
+// SecurityAssociation mirrors the legacy ESP SA. The prepared cipher is
+// cached because creating AES-GCM/AES-CBC state for every packet is costly.
 type SecurityAssociation struct {
-	mu             sync.Mutex
-	seqNo          uint32 // outbound ESP sequence number (first packet uses 1)
+	SequenceNumber uint64
+	ReplayWindow   uint64
+	SPI            uint32
+	RemoteSPI      uint32
+	EncryptionAlg  crypto.Encrypter
+	EncryptionKey  []byte
+	IntegritySalt  []byte
+
+	preparedCipher    crypto.PreparedCipher
+	preparedCipherErr error
+	IntegrityAlg      crypto.PRF
+	IntegrityAlg2     crypto.IntegrityAlgorithm
+	IntegrityKey      []byte
+	IsAEAD            bool
+	mu                sync.Mutex
+
+	replayMu       sync.Mutex
 	inboundHighest uint32
 	inboundBitmap  uint64
-	spi            uint32 // local SPI, written into outbound ESP headers
-	remoteSPI      uint32 // peer SPI, verified on inbound packets
-	cipherName     uint16 // ENCR transform ID
-	key            []byte // encryption key material (AES-GCM: K|salt)
-	aead           bool   // true = AES-GCM (no separate integrity)
-	integ          crypto.Integrity
-	integKey       []byte
-	prepared       crypto.PreparedCipher // lazily built by cipher()
 }
 
 const replayWindowSize = 64
 
-// NewSecurityAssociation creates an AEAD-mode ESP SA. key is K|salt per
-// RFC 4106 (the last 4 bytes are the GCM salt).
-func NewSecurityAssociation(spi uint32, cipherName uint16, key []byte, remoteSPI uint32) *SecurityAssociation {
-	return &SecurityAssociation{
-		spi:        spi,
-		cipherName: cipherName,
-		key:        key,
-		remoteSPI:  remoteSPI,
-		aead:       true,
+// NewSecurityAssociation creates an AEAD ESP SA. The fourth argument is the
+// legacy integrity-key slot; a uint32 is also accepted for compatibility with
+// the earlier reconstructed RemoteSPI constructor.
+func NewSecurityAssociation(spi uint32, algorithm any, key []byte, final any) *SecurityAssociation {
+	enc, resolveErr := resolveESPEncrypter(algorithm, key)
+	sa := &SecurityAssociation{
+		SPI: spi, EncryptionAlg: enc, EncryptionKey: key, IsAEAD: true,
 	}
+	switch value := final.(type) {
+	case []byte:
+		sa.IntegrityKey = value
+	case uint32:
+		sa.RemoteSPI = value
+	case int:
+		if value < 0 || uint64(value) > uint64(^uint32(0)) {
+			resolveErr = fmt.Errorf("ipsec: invalid remote SPI %d", value)
+		} else {
+			sa.RemoteSPI = uint32(value)
+		}
+	case nil:
+	default:
+		resolveErr = fmt.Errorf("ipsec: invalid AEAD constructor argument %T", final)
+	}
+	sa.prepare(resolveErr)
+	return sa
 }
 
-// NewSecurityAssociationCBC creates a CBC-mode ESP SA with a separate
-// integrity transform. integKey is the HMAC/XCBC key.
-func NewSecurityAssociationCBC(spi uint32, cipherName uint16, key []byte, integ crypto.Integrity, integKey []byte, remoteSPI uint32) *SecurityAssociation {
-	return &SecurityAssociation{
-		spi:        spi,
-		cipherName: cipherName,
-		key:        key,
-		integ:      integ,
-		integKey:   integKey,
-		remoteSPI:  remoteSPI,
+// NewSecurityAssociationCBC creates a CBC ESP SA. remoteSPI is an additive
+// compatibility argument retained from the reconstructed implementation.
+func NewSecurityAssociationCBC(
+	spi uint32,
+	algorithm any,
+	key []byte,
+	integrity crypto.IntegrityAlgorithm,
+	integrityKey []byte,
+	remoteSPI ...uint32,
+) *SecurityAssociation {
+	enc, resolveErr := resolveESPEncrypter(algorithm, key)
+	sa := &SecurityAssociation{
+		SPI: spi, EncryptionAlg: enc, EncryptionKey: key,
+		IntegrityAlg2: integrity, IntegrityKey: integrityKey,
 	}
+	if len(remoteSPI) > 0 {
+		sa.RemoteSPI = remoteSPI[0]
+	}
+	sa.prepare(resolveErr)
+	return sa
+}
+
+func resolveESPEncrypter(algorithm any, key []byte) (crypto.Encrypter, error) {
+	if enc, ok := algorithm.(crypto.Encrypter); ok {
+		return enc, nil
+	}
+	id, ok := algorithm.(uint16)
+	if !ok {
+		return nil, fmt.Errorf("ipsec: invalid encryption algorithm %T", algorithm)
+	}
+	keyBits := len(key) * 8
+	if id == crypto.EncrAESGCM8 || id == crypto.EncrAESGCM12 || id == crypto.EncrAESGCM16 {
+		keyBits -= 32
+	}
+	return crypto.GetEncrypterWithKeyLen(id, keyBits)
+}
+
+func (sa *SecurityAssociation) prepare(resolveErr error) {
+	if resolveErr != nil {
+		sa.preparedCipherErr = resolveErr
+		return
+	}
+	sa.preparedCipher, sa.preparedCipherErr = crypto.PrepareCipher(sa.EncryptionAlg, sa.EncryptionKey)
 }
 
 // NextSequenceNumber returns the next outbound ESP sequence number.
 func (sa *SecurityAssociation) NextSequenceNumber() uint32 {
-	sequence, _ := sa.reserveSequenceNumber()
-	return sequence
+	return uint32(atomic.AddUint64(&sa.SequenceNumber, 1))
 }
 
 func (sa *SecurityAssociation) reserveSequenceNumber() (uint32, error) {
-	sa.mu.Lock()
-	defer sa.mu.Unlock()
-	if sa.seqNo == ^uint32(0) {
-		return 0, errSequenceExhausted
+	for {
+		current := atomic.LoadUint64(&sa.SequenceNumber)
+		if current >= uint64(^uint32(0)) {
+			return 0, errSequenceExhausted
+		}
+		if atomic.CompareAndSwapUint64(&sa.SequenceNumber, current, current+1) {
+			return uint32(current + 1), nil
+		}
 	}
-	sa.seqNo++
-	return sa.seqNo, nil
 }
 
 func (sa *SecurityAssociation) acceptInboundSequence(sequence uint32) error {
 	if sequence == 0 {
 		return errInvalidSequence
 	}
-	sa.mu.Lock()
-	defer sa.mu.Unlock()
+	sa.replayMu.Lock()
+	defer sa.replayMu.Unlock()
+	return sa.updateReplayWindow(sequence)
+}
+
+func (sa *SecurityAssociation) updateReplayWindow(sequence uint32) error {
 	if sa.inboundHighest == 0 {
 		sa.inboundHighest, sa.inboundBitmap = sequence, 1
 		return nil
@@ -108,56 +161,48 @@ func (sa *SecurityAssociation) acceptInboundSequence(sequence uint32) error {
 	return nil
 }
 
-// cipher returns the lazily-prepared encryption transform.
 func (sa *SecurityAssociation) cipher() (crypto.PreparedCipher, error) {
+	if sa == nil {
+		return nil, errInvalidSA
+	}
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
-	if sa.prepared != nil {
-		return sa.prepared, nil
+	if sa.preparedCipher == nil && sa.preparedCipherErr == nil && sa.EncryptionAlg != nil {
+		sa.prepare(nil)
 	}
-	if sa.cipherName == 0 {
-		return nil, errNoCipher
-	}
-	c, err := crypto.PrepareCipher(sa.cipherName, sa.key)
-	if err != nil {
-		return nil, err
-	}
-	sa.prepared = c
-	return c, nil
+	return sa.preparedCipher, sa.preparedCipherErr
 }
 
-// overhead is the number of extra bytes appended by the encryption layer:
-// the 16-byte GCM tag for AEAD, or the integrity output for CBC.
 func (sa *SecurityAssociation) overhead() int {
-	if sa.aead {
-		return 16 // GCM tag (NewGCMWithNonceSize keeps the default 16-byte tag)
+	if sa.IsAEAD {
+		return 16
 	}
-	if sa.integ != nil {
-		return sa.integ.OutputSize()
+	if sa.IntegrityAlg2 != nil {
+		return sa.IntegrityAlg2.OutputSize()
 	}
 	return 0
 }
 
-// Errors returned by the ESP layer.
 var (
-	errInvalidSA         = errors.New("invalid security association")
-	errNoCipher          = errors.New("no cipher configured")
-	errCipherUnavailable = errors.New("cipher not available")
-	errSPIMismatch       = errors.New("SPI mismatch")
-	errPacketTooShort    = errors.New("packet too short")
-	errIntegrityFailed   = errors.New("integrity check failed")
-	errPayloadTooShort   = errors.New("payload too short")
-	errBadPaddingLength  = errors.New("bad padding length")
+	errInvalidSA         = errors.New("ESP security association is nil")
+	errNoCipher          = errors.New("ESP encryption algorithm is nil")
+	errCipherUnavailable = errors.New("ESP cipher is nil")
+	errSPIMismatch       = errors.New("ESP SPI 不匹配")
+	errPacketTooShort    = errors.New("ESP packet too short")
+	errIVTooShort        = errors.New("ESP packet too short for IV")
+	errICVTooShort       = errors.New("ESP packet too short for ICV")
+	errIntegrityFailed   = errors.New("ESP integrity check failed")
+	errPayloadTooShort   = errors.New("decrypted payload too short")
+	errBadPaddingLength  = errors.New("invalid padding length")
 	errInvalidPadding    = errors.New("invalid ESP padding bytes")
-	errInvalidBlockSize  = errors.New("invalid block size")
+	errInvalidBlockSize  = errors.New("ESP encryption block size is invalid")
 	errSequenceExhausted = errors.New("ESP sequence number exhausted")
 	errInvalidSequence   = errors.New("invalid ESP sequence number zero")
 	errSequenceReplay    = errors.New("replayed ESP sequence number")
 	errSequenceTooOld    = errors.New("ESP sequence number outside replay window")
 )
 
-// marshalESPHeader writes SPI and sequence number in network byte order.
-func marshalESPHeader(b []byte, spi, seq uint32) {
-	binary.BigEndian.PutUint32(b[0:4], spi)
-	binary.BigEndian.PutUint32(b[4:8], seq)
+func marshalESPHeader(b []byte, spi, sequence uint32) {
+	binary.BigEndian.PutUint32(b[:4], spi)
+	binary.BigEndian.PutUint32(b[4:8], sequence)
 }

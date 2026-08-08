@@ -203,8 +203,12 @@ func (s *Session) loopTUNToESP(transport ipsec.Transport, tun *driver.TUNDevice)
 		if err != nil {
 			continue
 		}
-		transport.SendESP(lease.data)
+		err = transport.SendESP(lease.data)
 		lease.Release()
+		if err != nil {
+			s.failDataPlane(fmt.Errorf("swu: send ESP packet: %w", err))
+			return
+		}
 	}
 }
 

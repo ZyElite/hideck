@@ -11,345 +11,231 @@ import (
 	"time"
 )
 
-// Socks5Transport is a Transport that carries IKE/ESP traffic over a SOCKS5
-// UDP associate relay (RFC 1928 §7). It is used when the device has no direct
-// route to the ePDG and must traverse a SOCKS5 proxy.
+const (
+	defaultSocks5Timeout = 10 * time.Second
+	socksIKEQueueSize    = 128
+	socksESPQueueSize    = 512
+	socksEventQueueSize  = 16
+)
+
+// Socks5TransportStats is a snapshot of the legacy SOCKS5 counters.
+type Socks5TransportStats struct {
+	UDPReadTotal        uint64
+	UDPDecodeErrorTotal uint64
+	UDPFragDropTotal    uint64
+	NATKeepaliveDrop    uint64
+	LastUDPReadLen      uint64
+	LastESPReadLen      uint64
+	ReceivedIKETotal    uint64
+	ReceivedESPTotal    uint64
+	DroppedIKETotal     uint64
+	DroppedESPTotal     uint64
+}
+
+// Socks5Transport carries IKE and ESP over an RFC 1928 UDP association.
 type Socks5Transport struct {
-	// Receive counters.
-	totalReceived  uint64
-	invalidDropped uint64
-	natKeepalives  uint64
-	lastPacketLen  uint64
-	espReceived    uint64
-	ikeReceived    uint64
-	espForwarded   uint64
-	ikeDropped     uint64
-	espDropped     uint64
+	udpReadTotal        uint64
+	udpDecodeErrorTotal uint64
+	udpFragDropTotal    uint64
+	natKeepaliveDrop    uint64
+	lastUDPReadLen      uint64
+	lastESPReadLen      uint64
+	receivedIKE         uint64
+	receivedESP         uint64
+	droppedIKE          uint64
+	droppedESP          uint64
 
-	targetStr  string       // ePDG "IP:port", for logs
-	clientAddr *net.UDPAddr // ePDG endpoint announced in datagrams
-	mu         sync.RWMutex // guards remotePort
-	remotePort uint16
-
-	tcpConn   net.Conn     // SOCKS5 control connection
-	udpConn   *net.UDPConn // local UDP socket talking to the relay
-	relayAddr *net.UDPAddr // relay returned by UDP associate
-	localIP   net.IP
-	localPort uint16
-
-	ikePackets chan []byte
-	espPackets chan []byte
+	cfg        Socks5Config
+	tcpConn    net.Conn
+	udpConn    *net.UDPConn
+	relayAddr  *net.UDPAddr
+	remoteIP   net.IP
+	remotePort int
+	remoteMu   sync.RWMutex
+	localIP    net.IP
+	localPort  uint16
+	ikeChan    chan []byte
+	espChan    chan []byte
 	netEvents  chan NetEvent
-	stop       chan struct{}
-	stopOnce   sync.Once
+	ctx        context.Context
+	cancel     context.CancelFunc
 	wg         sync.WaitGroup
+	stopOnce   sync.Once
+	lifecycle  sync.Mutex
+	started    bool
+	stopped    bool
+	startErr   error
 }
 
-// NewSocks5Transport connects to a SOCKS5 proxy, performs the handshake and
-// UDP associate, and returns a ready transport. targetAddr is the ePDG
-// endpoint; config carries optional credentials.
-func NewSocks5Transport(config Socks5Config, socks5Addr string, targetAddr string, timeout time.Duration) (*Socks5Transport, error) {
-	addrs, err := ResolveUDPAddrAll(targetAddr, "")
-	if err != nil {
-		return nil, fmt.Errorf("resolve target address: %w", err)
-	}
-	if len(addrs) == 0 {
-		return nil, errors.New("target address resolved to zero endpoints")
-	}
-	clientAddr := addrs[0]
-
-	host, port, err := parseSocks5Addr(socks5Addr)
-	if err != nil {
-		return nil, fmt.Errorf("parse socks5 address: %w", err)
-	}
-	proxyAddr := net.JoinHostPort(host, strconv.Itoa(port))
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	conn, err := net.DialTimeout("tcp", proxyAddr, timeout)
-	if err != nil {
-		return nil, fmt.Errorf("connect to socks5 proxy %s: %w", proxyAddr, err)
-	}
-
-	if err := socks5Handshake(conn, &config); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("socks5 handshake: %w", err)
-	}
-	clientForReq := socks5UDPAssociateClientAddr(conn)
-	relay, err := socks5UDPAssociate(conn, &config, clientForReq)
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("socks5 udp associate: %w", err)
-	}
-
-	lc := net.ListenConfig{Control: reuseSocketOptions}
-	pc, err := lc.ListenPacket(context.Background(), "udp", ":0")
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("bind udp relay socket: %w", err)
-	}
-	udpConn := pc.(*net.UDPConn)
-	local := udpConn.LocalAddr().(*net.UDPAddr)
-
-	t := &Socks5Transport{
-		targetStr:  clientAddr.String(),
-		clientAddr: clientAddr,
-		remotePort: uint16(clientAddr.Port),
-		tcpConn:    conn,
-		udpConn:    udpConn,
-		relayAddr:  relay,
-		localIP:    ipv4Compat(local.IP),
-		localPort:  uint16(local.Port),
-		ikePackets: make(chan []byte, 100),
-		espPackets: make(chan []byte, 1000),
-		netEvents:  make(chan NetEvent, 10),
-		stop:       make(chan struct{}),
-	}
-	return t, nil
+type socks5Connections struct {
+	tcp   net.Conn
+	udp   *net.UDPConn
+	relay *net.UDPAddr
 }
 
-// socks5UDPAssociateClientAddr computes the address announced in the UDP
-// associate request: the local IP of the TCP connection (or 0.0.0.0).
-func socks5UDPAssociateClientAddr(conn net.Conn) *net.UDPAddr {
-	if conn != nil {
-		if la := conn.LocalAddr(); la != nil {
-			if addr, ok := la.(*net.TCPAddr); ok && addr.IP != nil && !addr.IP.IsUnspecified() {
-				return &net.UDPAddr{IP: ipv4Compat(addr.IP), Port: 0}
-			}
+// NewSocks5Transport creates the legacy config-based transport. The optional
+// arguments retain source compatibility with the earlier reconstructed API:
+// proxy address, remote address, and dial timeout.
+func NewSocks5Transport(cfg Socks5Config, compatibility ...any) (*Socks5Transport, error) {
+	timeout, err := applySocks5Compatibility(&cfg, compatibility)
+	if err != nil {
+		return nil, err
+	}
+	remoteAddr, _, err := ResolveUDPAddrAll(cfg.RemoteAddr, cfg.DNSServer)
+	if err != nil {
+		return nil, fmt.Errorf("resolve SOCKS5 target %q: %w", cfg.RemoteAddr, err)
+	}
+	tcpConn, err := connectSocks5(cfg, timeout)
+	if err != nil {
+		return nil, err
+	}
+	relayAddr, err := establishUDPAssociation(tcpConn, &cfg)
+	if err != nil {
+		_ = tcpConn.Close()
+		return nil, err
+	}
+	udpConn, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		_ = tcpConn.Close()
+		return nil, fmt.Errorf("create SOCKS5 UDP socket: %w", err)
+	}
+	connections := socks5Connections{tcp: tcpConn, udp: udpConn, relay: relayAddr}
+	return newSocks5Transport(cfg, connections, remoteAddr), nil
+}
+
+func applySocks5Compatibility(cfg *Socks5Config, values []any) (time.Duration, error) {
+	timeout := defaultSocks5Timeout
+	if len(values) == 0 {
+		return timeout, nil
+	}
+	if len(values) != 3 {
+		return 0, errors.New("SOCKS5 compatibility constructor requires proxy, target, and timeout")
+	}
+	proxy, proxyOK := values[0].(string)
+	target, targetOK := values[1].(string)
+	duration, durationOK := values[2].(time.Duration)
+	if !proxyOK || !targetOK || !durationOK {
+		return 0, errors.New("invalid SOCKS5 compatibility constructor arguments")
+	}
+	cfg.ProxyAddr, cfg.RemoteAddr = proxy, target
+	if duration > 0 {
+		timeout = duration
+	}
+	return timeout, nil
+}
+
+func connectSocks5(cfg Socks5Config, timeout time.Duration) (net.Conn, error) {
+	host, port, err := parseSocks5Addr(cfg.ProxyAddr)
+	if err != nil {
+		return nil, fmt.Errorf("parse SOCKS5 address %q: %w", cfg.ProxyAddr, err)
+	}
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", address, timeout)
+	if err != nil {
+		return nil, fmt.Errorf("connect to SOCKS5 proxy %s: %w", address, err)
+	}
+	return conn, nil
+}
+
+func establishUDPAssociation(conn net.Conn, cfg *Socks5Config) (*net.UDPAddr, error) {
+	if err := socks5Handshake(conn, cfg); err != nil {
+		return nil, fmt.Errorf("SOCKS5 handshake: %w", err)
+	}
+	relay, err := socks5UDPAssociate(conn, socks5UDPAssociateClientAddr(conn))
+	if err != nil {
+		return nil, fmt.Errorf("SOCKS5 UDP associate: %w", err)
+	}
+	if relay.IP.IsUnspecified() {
+		if remote, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+			relay.IP = append(net.IP(nil), remote.IP...)
 		}
 	}
-	return &net.UDPAddr{IP: net.IPv4zero, Port: 0}
+	return relay, nil
 }
 
-// --- Transport accessors ---
+func newSocks5Transport(
+	cfg Socks5Config,
+	connections socks5Connections,
+	remoteAddr *net.UDPAddr,
+) *Socks5Transport {
+	localAddr := connections.udp.LocalAddr().(*net.UDPAddr)
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Socks5Transport{
+		cfg: cfg, tcpConn: connections.tcp, udpConn: connections.udp, relayAddr: connections.relay,
+		remoteIP: append(net.IP(nil), remoteAddr.IP...), remotePort: remoteAddr.Port,
+		localIP: append(net.IP(nil), localAddr.IP...), localPort: uint16(localAddr.Port),
+		ikeChan: make(chan []byte, socksIKEQueueSize), espChan: make(chan []byte, socksESPQueueSize),
+		netEvents: make(chan NetEvent, socksEventQueueSize), ctx: ctx, cancel: cancel,
+	}
+}
 
-func (t *Socks5Transport) IKEPackets() <-chan []byte      { return t.ikePackets }
-func (t *Socks5Transport) ESPPackets() <-chan []byte      { return t.espPackets }
+func socks5UDPAssociateClientAddr(conn net.Conn) *net.UDPAddr {
+	if conn != nil {
+		if addr, ok := conn.LocalAddr().(*net.TCPAddr); ok && addr.IP != nil && !addr.IP.IsUnspecified() {
+			return &net.UDPAddr{IP: ipv4Compat(addr.IP)}
+		}
+	}
+	return &net.UDPAddr{IP: net.IPv4zero}
+}
+
+func (t *Socks5Transport) IKEPackets() <-chan []byte      { return t.ikeChan }
+func (t *Socks5Transport) ESPPackets() <-chan []byte      { return t.espChan }
 func (t *Socks5Transport) NetEventsChan() <-chan NetEvent { return t.netEvents }
-
-func (t *Socks5Transport) LocalIP() net.IP {
-	return t.localIP
-}
+func (t *Socks5Transport) LocalIP() net.IP                { return append(net.IP(nil), t.localIP...) }
+func (t *Socks5Transport) LocalPort() uint16              { return t.localPort }
 
 func (t *Socks5Transport) RemoteIP() net.IP {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if t.clientAddr == nil {
-		return nil
-	}
-	return t.clientAddr.IP
+	t.remoteMu.RLock()
+	defer t.remoteMu.RUnlock()
+	return append(net.IP(nil), t.remoteIP...)
 }
 
-func (t *Socks5Transport) LocalPort() uint16 { return t.localPort }
-
-func (t *Socks5Transport) RemotePort() uint16 {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+func (t *Socks5Transport) RemotePort() int {
+	t.remoteMu.RLock()
+	defer t.remoteMu.RUnlock()
 	return t.remotePort
 }
 
-func (t *Socks5Transport) SetRemotePort(port uint16) {
-	t.mu.Lock()
+func (t *Socks5Transport) SetRemotePort(port int) {
+	t.remoteMu.Lock()
 	t.remotePort = port
-	t.mu.Unlock()
-	logDebug(fmt.Sprintf("remote port set to %d (target %s)", port, t.targetStr))
+	t.remoteMu.Unlock()
+	logDebug(fmt.Sprintf("SOCKS5 remote port set to %d for %s", port, t.cfg.DeviceID))
 }
 
 func (t *Socks5Transport) LocalAddrString() string {
-	return fmt.Sprintf("%s:%d", t.localIP.String(), t.localPort)
+	return fmt.Sprintf("%s:%d (via socks5 %s)", t.localIP, t.localPort, t.cfg.ProxyAddr)
 }
 
 func (t *Socks5Transport) RemoteAddrString() string {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return fmt.Sprintf("%s:%d", t.clientAddr.IP.String(), t.remotePort)
+	t.remoteMu.RLock()
+	defer t.remoteMu.RUnlock()
+	return fmt.Sprintf("%s:%d", t.remoteIP, t.remotePort)
 }
 
-// RawFD is not applicable to a SOCKS5 transport.
-func (t *Socks5Transport) RawFD() (int, error) {
-	return -1, errors.New("socks5 transport has no raw file descriptor")
+func (*Socks5Transport) RawFD() (int, error) {
+	return -1, errors.New("SOCKS5 transport has no raw file descriptor")
 }
 
-// Stats is a no-op on the SOCKS5 transport (the original returns nothing;
-// counters are logged periodically by logStatsLoop).
-func (t *Socks5Transport) Stats() {}
-
-// SetUDPEncap is not supported over SOCKS5.
-func (t *Socks5Transport) SetUDPEncap(enable bool) error {
-	return errors.New("udp encapsulation is not supported on socks5 transport")
+func (*Socks5Transport) SetUDPEncap() error {
+	return errors.New("UDP encapsulation is not supported on SOCKS5 transport")
 }
 
-// --- Lifecycle ---
-
-// Start launches the datagram receive loop, the statistics logger and the TCP
-// keepalive goroutine.
-func (t *Socks5Transport) Start() {
-	t.wg.Add(3)
-	go t.readLoop()
-	go t.logStatsLoop()
-	go t.tcpKeepalive()
-}
-
-// Stop tears the transport down.
-func (t *Socks5Transport) Stop() {
-	t.stopOnce.Do(func() {
-		close(t.stop)
-		if t.tcpConn != nil {
-			t.tcpConn.Close()
-		}
-		if t.udpConn != nil {
-			t.udpConn.Close()
-		}
-		t.wg.Wait()
-		close(t.ikePackets)
-		close(t.espPackets)
-		close(t.netEvents)
-	})
-}
-
-// --- Send paths ---
-
-// SendIKE sends an IKE packet, prepending the RFC 3948 non-ESP marker when
-// talking to port 4500.
-func (t *Socks5Transport) SendIKE(packet []byte) {
-	t.mu.RLock()
-	port := t.remotePort
-	t.mu.RUnlock()
-	if port == 4500 {
-		packet = append([]byte{0, 0, 0, 0}, packet...)
-	}
-	t.sendUDP(packet)
-}
-
-// SendESP sends an ESP packet.
-func (t *Socks5Transport) SendESP(packet []byte) {
-	t.sendUDP(packet)
-}
-
-// SendNATKeepalive sends the RFC 3948 keepalive (a single 0xff byte).
-func (t *Socks5Transport) SendNATKeepalive() {
-	t.sendUDP([]byte{0xff})
-}
-
-// sendUDP wraps data in a SOCKS5 UDP datagram addressed to the ePDG and sends
-// it to the relay.
-func (t *Socks5Transport) sendUDP(data []byte) error {
-	t.mu.RLock()
-	addr := &net.UDPAddr{IP: t.clientAddr.IP, Port: int(t.remotePort)}
-	t.mu.RUnlock()
-	dgram := EncodeSocks5UDPDatagram(addr, data)
-	if _, err := t.udpConn.WriteToUDP(dgram, t.relayAddr); err != nil {
-		return fmt.Errorf("failed to send UDP datagram to relay %s: %w", t.relayAddr, err)
-	}
-	return nil
-}
-
-// readLoop receives relayed datagrams and dispatches IKE/ESP packets.
-func (t *Socks5Transport) readLoop() {
-	defer t.wg.Done()
-	buf := make([]byte, 0xffff)
-	for {
-		n, _, err := t.udpConn.ReadFromUDP(buf)
-		if err != nil {
-			return
-		}
-		atomic.AddUint64(&t.totalReceived, 1)
-		atomic.StoreUint64(&t.lastPacketLen, uint64(n))
-
-		dgram, err := DecodeSocks5UDPDatagram(buf[:n])
-		if err != nil || dgram.Frag != 0 {
-			atomic.AddUint64(&t.invalidDropped, 1)
-			logWarn(fmt.Sprintf("invalid socks5 udp datagram (frag=%d, len=%d): %v", dgram.Frag, n, err))
-			continue
-		}
-		data := dgram.Data
-		// NAT keepalive: empty or a single 0xff byte.
-		if len(data) == 0 || (len(data) == 1 && data[0] == 0xff) {
-			atomic.AddUint64(&t.natKeepalives, 1)
-			continue
-		}
-		// Strip a defensive 4-byte non-ESP marker.
-		if len(data) > 4 && data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 0 {
-			data = data[4:]
-		}
-
-		if ikePkt, ok := parseIKEPayload(data, n); ok {
-			atomic.AddUint64(&t.ikeReceived, 1)
-			pkt := append([]byte{}, ikePkt...)
-			select {
-			case t.ikePackets <- pkt:
-			default:
-				atomic.AddUint64(&t.ikeDropped, 1)
-				logWarn("IKE packet dropped (queue full)")
-			}
-			continue
-		}
-		if len(data) == 0 {
-			continue
-		}
-		atomic.AddUint64(&t.espReceived, 1)
-		pkt := append([]byte{}, data...)
-		select {
-		case t.espPackets <- pkt:
-			atomic.AddUint64(&t.espForwarded, 1)
-		default:
-			atomic.AddUint64(&t.espDropped, 1)
-			logWarn("ESP packet dropped (queue full)")
-		}
+// Stats returns the legacy ten-counter snapshot without resetting it.
+func (t *Socks5Transport) Stats() Socks5TransportStats {
+	return Socks5TransportStats{
+		UDPReadTotal:        atomic.LoadUint64(&t.udpReadTotal),
+		UDPDecodeErrorTotal: atomic.LoadUint64(&t.udpDecodeErrorTotal),
+		UDPFragDropTotal:    atomic.LoadUint64(&t.udpFragDropTotal),
+		NATKeepaliveDrop:    atomic.LoadUint64(&t.natKeepaliveDrop),
+		LastUDPReadLen:      atomic.LoadUint64(&t.lastUDPReadLen),
+		LastESPReadLen:      atomic.LoadUint64(&t.lastESPReadLen),
+		ReceivedIKETotal:    atomic.LoadUint64(&t.receivedIKE),
+		ReceivedESPTotal:    atomic.LoadUint64(&t.receivedESP),
+		DroppedIKETotal:     atomic.LoadUint64(&t.droppedIKE),
+		DroppedESPTotal:     atomic.LoadUint64(&t.droppedESP),
 	}
 }
 
-// logStatsLoop periodically logs the receive counters.
-func (t *Socks5Transport) logStatsLoop() {
-	defer t.wg.Done()
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-t.stop:
-			return
-		case <-ticker.C:
-			logDebug(fmt.Sprintf(
-				"socks5 transport stats: total=%d invalid=%d keepalive=%d last=%d ike=%d esp=%d ikeDrop=%d espDrop=%d",
-				atomic.LoadUint64(&t.totalReceived), atomic.LoadUint64(&t.invalidDropped),
-				atomic.LoadUint64(&t.natKeepalives), atomic.LoadUint64(&t.lastPacketLen),
-				atomic.LoadUint64(&t.ikeReceived), atomic.LoadUint64(&t.espReceived),
-				atomic.LoadUint64(&t.ikeDropped), atomic.LoadUint64(&t.espDropped)))
-		}
-	}
-}
-
-// tcpKeepalive keeps the SOCKS5 control connection alive and detects when the
-// proxy drops it.
-func (t *Socks5Transport) tcpKeepalive() {
-	defer t.wg.Done()
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-t.stop:
-			return
-		case <-ticker.C:
-		}
-		if t.tcpConn == nil {
-			return
-		}
-		if err := t.tcpConn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-			continue
-		}
-		if _, err := t.tcpConn.Write([]byte{0}); err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue // transient; keep the connection
-			}
-			if errors.Is(err, net.ErrClosed) {
-				return
-			}
-			logWarn(fmt.Sprintf("TCP keepalive to %s failed: %v", t.targetStr, err))
-			select {
-			case t.netEvents <- NetEvent{Type: NetEventUnreachable, Detail: err.Error()}:
-			default:
-			}
-			return
-		}
-	}
-}
+// SnapshotStats retains the reconstructed accessor name.
+func (t *Socks5Transport) SnapshotStats() Socks5TransportStats { return t.Stats() }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/iniwex5/netlink"
 	"github.com/iniwex5/vowifi-go/engine/driver"
+	"github.com/iniwex5/vowifi-go/engine/ipsec"
 )
 
 const defaultXFRMInterface = "ipsec0"
@@ -65,13 +66,16 @@ func (s *Session) setupKernelXFRMDataPlane(keys *childSAKeys) error {
 	if err := validateXFRMTuple(localIP, remoteIP, localPort, remotePort); err != nil {
 		return err
 	}
-	if err := s.socket.SetUDPEncap(true); err != nil {
+	if err := s.socket.SetUDPEncap(); err != nil {
 		return fmt.Errorf("swu: enable UDP encapsulation for XFRM: %w", err)
 	}
-	transport := s.socket
+	transport, ok := s.socket.(*ipsec.SocketManager)
+	if !ok {
+		return errors.New("swu: XFRM requires a direct UDP transport")
+	}
 	plane := &xfrmDataPlane{
 		manager: driver.NewXFRMManager(), network: driver.NewNetTools().Begin(),
-		disableUDPEncap: func() error { return transport.SetUDPEncap(false) },
+		disableUDPEncap: transport.DisableUDPEncap,
 	}
 	if err := s.installXFRMDataPlane(
 		plane, keys, localIP, remoteIP, localPort, remotePort, underlyingIndex,
