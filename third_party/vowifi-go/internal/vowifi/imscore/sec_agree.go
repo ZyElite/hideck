@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 type securityMechanism struct {
@@ -243,6 +244,10 @@ func (s *Service) installNegotiatedIPSec(ctx context.Context, session *registerS
 	if err := s.InstallIPSec3GPP(policy); err != nil {
 		return fmt.Errorf("imscore: install negotiated 3GPP IPsec: %w", err)
 	}
+	logging.Info("IMS 3GPP IPsec policy installed",
+		"auth", policy.Authentication, "encryption", policy.Encryption,
+		"local_client_port", policy.LocalClientPort, "local_server_port", policy.LocalServerPort,
+		"remote_client_port", policy.RemoteClientPort, "remote_server_port", policy.RemoteServerPort)
 	if err := s.setProtectedRegistrarPort(server.PortS); err != nil {
 		return err
 	}

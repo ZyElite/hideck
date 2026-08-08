@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 // sipResponse is a minimal parsed SIP response.
@@ -107,6 +109,10 @@ func (t *sipTransport) DeliverResponse(r *sipResponse) {
 			}
 			return
 		}
+	}
+	if r != nil {
+		logging.WarnRate("ims-unmatched-sip-response", "IMS response did not match an active transaction",
+			"status", r.StatusCode, "cseq", r.CSeq)
 	}
 	select {
 	case t.responses <- r:

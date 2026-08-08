@@ -20,6 +20,8 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/icmp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 const (
@@ -137,6 +139,8 @@ func (g *gvisorNetwork) fail(operation string, err error) {
 	g.mu.Lock()
 	if g.terminalErr == nil {
 		g.terminalErr = fmt.Errorf("netstack: %s: %w", operation, err)
+		logging.WarnRate("ims-netstack-terminal-"+operation, "IMS user-space network failed",
+			"operation", operation, "err", err)
 	}
 	g.mu.Unlock()
 	g.cancel()

@@ -120,6 +120,8 @@ func (s *Service) dialProtectedRegistrationTCP(ctx context.Context, client, serv
 	if err != nil {
 		return fmt.Errorf("imscore: connect protected REGISTER TCP: %w", err)
 	}
+	logging.Info("IMS protected REGISTER TCP connected",
+		"local_port", local.Port, "remote_port", remote.Port)
 	s.activateProtectedRegistrationTCP(conn)
 	return nil
 }
