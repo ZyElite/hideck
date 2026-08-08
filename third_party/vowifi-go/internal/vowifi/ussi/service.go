@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
+
+const dialogFailureCleanupTimeout = 5 * time.Second
 
 // Send starts a USSI dialog and waits for a real network result.
 func (s *Service) Send(command string) (*Result, error) {
@@ -50,7 +53,7 @@ func (s *Service) SendContext(ctx context.Context, command string) (*Result, err
 	if result, found, parseErr := parseResponseResult(session.id, response); found || parseErr != nil {
 		return s.finishNetworkResult(session, result, parseErr)
 	}
-	return s.waitResult(ctx, session)
+	return s.waitResult(ctx, cfg, session)
 }
 
 // Continue sends an in-dialog INFO and waits for the network result.
@@ -82,7 +85,8 @@ func (s *Service) ContinueContext(ctx context.Context, sessionID, input string) 
 	session.mu.Unlock()
 	response, err := cfg.Transport.RoundTrip(ctx, request)
 	if err != nil {
-		return nil, fmt.Errorf("ussi: INFO transaction failed: %w", err)
+		cause := fmt.Errorf("ussi: INFO transaction failed: %w", err)
+		return nil, s.cleanupFailedDialog(cfg, session, cause)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		s.clearSession(session.id)
@@ -91,7 +95,7 @@ func (s *Service) ContinueContext(ctx context.Context, sessionID, input string) 
 	if result, found, parseErr := parseResponseResult(session.id, response); found || parseErr != nil {
 		return s.finishNetworkResult(session, result, parseErr)
 	}
-	return s.waitResult(ctx, session)
+	return s.waitResult(ctx, cfg, session)
 }
 
 // Cancel sends a real in-dialog BYE before clearing the session.
@@ -287,16 +291,37 @@ func (s *Service) clearSession(sessionID string) {
 	}
 }
 
-func (s *Service) waitResult(ctx context.Context, session *Session) (*Result, error) {
+func (s *Service) waitResult(ctx context.Context, cfg Config, session *Session) (*Result, error) {
 	select {
 	case <-ctx.Done():
-		return nil, fmt.Errorf("ussi: wait for network result: %w", ctx.Err())
+		cause := fmt.Errorf("ussi: wait for network result: %w", ctx.Err())
+		return nil, s.cleanupFailedDialog(cfg, session, cause)
 	case event := <-session.results:
 		if event.err != nil {
 			return nil, event.err
 		}
 		return &event.result, nil
 	}
+}
+
+func (s *Service) cleanupFailedDialog(cfg Config, session *Session, cause error) error {
+	session.mu.Lock()
+	session.cseq++
+	request := buildDialogRequest(cfg, session, "BYE", nil)
+	session.mu.Unlock()
+	s.clearSession(session.id)
+
+	ctx, cancel := context.WithTimeout(context.Background(), dialogFailureCleanupTimeout)
+	defer cancel()
+	response, err := cfg.Transport.RoundTrip(ctx, request)
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("ussi: cleanup BYE transaction failed: %w", err))
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		cleanupErr := fmt.Errorf("ussi: cleanup BYE rejected: %d %s", response.StatusCode, strings.TrimSpace(response.Reason))
+		return errors.Join(cause, cleanupErr)
+	}
+	return cause
 }
 
 func (s *Service) finishNetworkResult(session *Session, result Result, err error) (*Result, error) {

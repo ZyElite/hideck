@@ -135,6 +135,77 @@ func TestServiceWaitsForInboundINFO(t *testing.T) {
 	}
 }
 
+func TestServiceWaitTimeoutCleansDialogAndAllowsNextSend(t *testing.T) {
+	invites := 0
+	transport := &scriptedTransport{}
+	transport.roundTrip = func(_ context.Context, request string) (Response, error) {
+		switch requestMethod(request) {
+		case "INVITE":
+			invites++
+			if invites == 1 {
+				return ussiResponse(nil), nil
+			}
+			return ussiResponse(requestBodyXML(t, "Recovered", true)), nil
+		case "BYE":
+			return Response{StatusCode: 200, Reason: "OK"}, nil
+		default:
+			return Response{}, errors.New("unexpected request")
+		}
+	}
+	svc := configuredService(t, transport)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := svc.SendContext(ctx, "*100#"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("SendContext error = %v", err)
+	}
+	if active := svc.ActiveSessionID(); active != "" {
+		t.Fatalf("active session after timeout = %q", active)
+	}
+	result, err := svc.Send("*101#")
+	if err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+	if !result.Done || result.Message != "Recovered" {
+		t.Fatalf("second result = %#v", result)
+	}
+	if methods := requestMethods(transport.Requests()); strings.Join(methods, ",") != "INVITE,ACK,BYE,INVITE,ACK" {
+		t.Fatalf("SIP sequence = %v", methods)
+	}
+}
+
+func TestServiceINFOTimeoutCleansEstablishedDialog(t *testing.T) {
+	transport := &scriptedTransport{}
+	transport.roundTrip = func(ctx context.Context, request string) (Response, error) {
+		switch requestMethod(request) {
+		case "INVITE":
+			return ussiResponse(requestBodyXML(t, "1. Continue", false)), nil
+		case "INFO":
+			<-ctx.Done()
+			return Response{}, ctx.Err()
+		case "BYE":
+			return Response{StatusCode: 200, Reason: "OK"}, nil
+		default:
+			return Response{}, errors.New("unexpected request")
+		}
+	}
+	svc := configuredService(t, transport)
+	result, err := svc.Send("*100#")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := svc.ContinueContext(ctx, result.SessionID, "1"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ContinueContext error = %v", err)
+	}
+	if active := svc.ActiveSessionID(); active != "" {
+		t.Fatalf("active session after INFO timeout = %q", active)
+	}
+	if methods := requestMethods(transport.Requests()); strings.Join(methods, ",") != "INVITE,ACK,INFO,BYE" {
+		t.Fatalf("SIP sequence = %v", methods)
+	}
+}
+
 func TestServiceRejectsSIPFailure(t *testing.T) {
 	transport := &scriptedTransport{roundTrip: func(context.Context, string) (Response, error) {
 		return Response{StatusCode: 503, Reason: "Service Unavailable"}, nil
