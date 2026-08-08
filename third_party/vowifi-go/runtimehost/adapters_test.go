@@ -73,6 +73,9 @@ func startTestRegistrar(t *testing.T) *net.UDPConn {
 			request := string(buffer[:n])
 			body := ""
 			extraHeaders := ""
+			if strings.HasPrefix(request, "REGISTER ") {
+				extraHeaders = "P-Associated-URI: <sip:+15551234567@ims.example.com>\r\n"
+			}
 			if strings.HasPrefix(request, "INVITE ") {
 				body = `<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>Balance: 10</ussd-string><UnstructuredSS-Notify/></ussd-data>`
 				extraHeaders = "To: <sip:ussi@ims.example.com>;tag=test-remote\r\n" +
@@ -228,6 +231,9 @@ func startVoiceAdapterRegistrar(t *testing.T, mediaPort int, requests chan<- str
 				continue
 			}
 			body, extra := "", ""
+			if strings.HasPrefix(request, "REGISTER ") {
+				extra = "P-Associated-URI: <sip:+15551234567@ims.example.com>\r\n"
+			}
 			if strings.HasPrefix(request, "INVITE ") {
 				body = fmt.Sprintf("v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP 0\r\n", mediaPort)
 				extra = "To: <sip:callee@ims.example.com>;tag=voice-remote\r\nContact: <sip:callee@ims.example.com>\r\nContent-Type: application/sdp\r\n"
@@ -277,7 +283,8 @@ func assertProductionVoiceRequests(t *testing.T, requests <-chan string) {
 
 // memDeliveryStore is an in-memory delivery store for adapter tests.
 type memDeliveryStore struct {
-	status *messaging.DeliveryStatus
+	status  *messaging.DeliveryStatus
+	sipCode int
 }
 
 func (m *memDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, at time.Time) error {
@@ -285,6 +292,10 @@ func (m *memDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer, co
 	return nil
 }
 func (m *memDeliveryStore) UpsertSMSDeliveryPart(messageID string, partNo int, callID string, rpMR int, state string, sentAt time.Time) error {
+	return nil
+}
+func (m *memDeliveryStore) MarkSMSDeliveryPartSIPResult(messageID string, partNo, sipCode int, state, errText string, at time.Time) error {
+	m.sipCode = sipCode
 	return nil
 }
 func (m *memDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID string, rpMR int, state string, sipCode int, rpCause int, errText string, at time.Time) (messaging.DeliveryPartMatch, error) {
@@ -313,6 +324,16 @@ func TestDeliveryStoreAdapter(t *testing.T) {
 	}
 	if st.MessageID != "msg-1" || st.State != "accepted" {
 		t.Errorf("status = %+v", st)
+	}
+	sipResults, ok := adapter.(imscore.SMSDeliverySIPResultStore)
+	if !ok {
+		t.Fatal("adapter did not preserve SIP result capability")
+	}
+	if err := sipResults.MarkSMSDeliveryPartSIPResult("msg-1", 1, 202, "pending", "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if store.sipCode != 202 {
+		t.Fatalf("persisted SIP code = %d", store.sipCode)
 	}
 }
 

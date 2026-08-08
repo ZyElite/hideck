@@ -146,6 +146,39 @@ func UpsertSMSDeliveryPart(messageID string, partNo int, callID string, rpMR int
 	}).Create(&part).Error
 }
 
+func MarkSMSDeliveryPartSIPResult(
+	messageID string,
+	partNo, sipCode int,
+	state, errText string,
+	at time.Time,
+) error {
+	if DB == nil {
+		return nil
+	}
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" || partNo <= 0 {
+		return errors.New("message_id/part_no 非法")
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	result := DB.Model(&SMSDeliveryPart{}).
+		Where("message_id = ? AND part_no = ?", messageID, partNo).
+		Updates(map[string]any{
+			"state":      strings.TrimSpace(state),
+			"sip_code":   sipCode,
+			"error_text": strings.TrimSpace(errText),
+			"updated_at": at,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID string, rpMR int, state string, sipCode int, rpCause int, errText string, at time.Time) (SMSDeliveryPart, error) {
 	if DB == nil {
 		return SMSDeliveryPart{}, gorm.ErrRecordNotFound
@@ -208,11 +241,13 @@ func MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID string, rpMR int, sta
 	updates := map[string]any{
 		"in_reply_to": inReplyTo,
 		"state":       state,
-		"sip_code":    sipCode,
 		"rp_cause":    rpCause,
 		"error_text":  strings.TrimSpace(errText),
 		"report_at":   &reportAt,
 		"updated_at":  at,
+	}
+	if part.SIPCode == 0 && sipCode > 0 {
+		updates["sip_code"] = sipCode
 	}
 	if err := DB.Model(&SMSDeliveryPart{}).Where("id = ?", part.ID).Updates(updates).Error; err != nil {
 		return SMSDeliveryPart{}, err

@@ -42,6 +42,13 @@ func TestRegisteredSIPDialogProfileUsesNegotiatedIdentityAndBinding(t *testing.T
 	if profile.ContactHeader != wantContact {
 		t.Fatalf("Contact = %q, want %q", profile.ContactHeader, wantContact)
 	}
+	nextProfile, err := service.RegisteredSIPDialogProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nextProfile.InitialCSeq != 7 {
+		t.Fatalf("next registered CSeq = %d, want 7", nextProfile.InitialCSeq)
+	}
 }
 
 type recordingVoiceHandler struct {

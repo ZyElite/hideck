@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -31,35 +30,6 @@ func (s *Service) SendSMSWithResult(ctx context.Context, to, text string) (*SMSS
 // SendSMSWithOptions sends an SMS with options.
 func (s *Service) SendSMSWithOptions(ctx context.Context, to, text string, opts SMSSendOptions) (*SMSSendOutcome, error) {
 	return s.sendOutboundSMS(ctx, to, text, opts)
-}
-
-// buildSMSRequest builds a SIP MESSAGE request for an SMS.
-func (s *Service) buildSMSRequest(to, text, ref string) string {
-	cfg := s.cfg
-	callID := newCallID()
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("MESSAGE sip:%s@%s SIP/2.0\r\n", sanitizePhone(to), cfg.Domain))
-	b.WriteString(fmt.Sprintf("Via: SIP/2.0/%s %s;branch=z9hG4bK%s;rport\r\n", transportUpper(cfg.Transport), formatHostPort(cfg.LocalIP), newBranch()))
-	b.WriteString(fmt.Sprintf("From: <sip:%s@%s>;tag=%s\r\n", cfg.IMPI, cfg.Domain, newTag()))
-	b.WriteString(fmt.Sprintf("To: <sip:%s@%s>\r\n", sanitizePhone(to), cfg.Domain))
-	b.WriteString(fmt.Sprintf("Call-ID: %s\r\n", callID))
-	b.WriteString("CSeq: 1 MESSAGE\r\n")
-	b.WriteString("Content-Type: text/plain\r\n")
-	b.WriteString(fmt.Sprintf("X-VoWiFi-Message-ID: %s\r\n", ref))
-	b.WriteString(fmt.Sprintf("Content-Length: %d\r\n\r\n", len(text)))
-	b.WriteString(text)
-	return b.String()
-}
-
-// sanitizePhone strips non-digit characters from a phone number.
-func sanitizePhone(p string) string {
-	var b strings.Builder
-	for _, c := range p {
-		if c >= '0' && c <= '9' {
-			b.WriteRune(c)
-		}
-	}
-	return b.String()
 }
 
 // GetSMSDeliveryStatus returns the delivery status of an SMS.

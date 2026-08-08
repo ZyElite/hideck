@@ -19,6 +19,15 @@ func (vowifiDeliveryStore) UpsertSMSDeliveryPart(messageID string, partNo int, c
 	return db.UpsertSMSDeliveryPart(messageID, partNo, callID, rpMR, state, sentAt)
 }
 
+func (vowifiDeliveryStore) MarkSMSDeliveryPartSIPResult(
+	messageID string,
+	partNo, sipCode int,
+	state, errText string,
+	at time.Time,
+) error {
+	return db.MarkSMSDeliveryPartSIPResult(messageID, partNo, sipCode, state, errText, at)
+}
+
 func (vowifiDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID string, rpMR int, state string, sipCode int, rpCause int, errText string, at time.Time) (messaging.DeliveryPartMatch, error) {
 	part, err := db.MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID, rpMR, state, sipCode, rpCause, errText, at)
 	if err != nil {

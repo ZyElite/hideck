@@ -76,6 +76,9 @@ func startVoiceTestRegistrarWithAnswer(t *testing.T, inviteStatus int, answerSDP
 			extra := ""
 			body := ""
 			status := 200
+			if strings.HasPrefix(request, "REGISTER ") {
+				extra = "P-Associated-URI: <sip:+15551234567@ims.example.com>\r\n"
+			}
 			if strings.HasPrefix(request, "INVITE ") {
 				status = inviteStatus
 				extra = "To: <sip:callee@ims.example.com>;tag=remote\r\n" +

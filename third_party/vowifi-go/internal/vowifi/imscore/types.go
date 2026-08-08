@@ -228,13 +228,15 @@ type Service struct {
 	delivery DeliveryStore
 
 	// Callbacks and SMS capability state.
-	onRegistered     func()
-	onSMSReadiness   func(SMSReadiness)
-	smsReceiverReady bool
-	nextSMSRPMR      byte
-	nextSMSConcatRef byte
-	smsReassembler   *smscodec.Reassembler
-	smsReportTimeout time.Duration
+	onRegistered          func()
+	onSMSReadiness        func(SMSReadiness)
+	smsReceiverReady      bool
+	nextSMSRPMR           byte
+	nextSMSConcatRef      byte
+	nextSIPCSeq           int
+	smsReassembler        *smscodec.Reassembler
+	smsTransactionTimeout time.Duration
+	smsReportTimeout      time.Duration
 
 	lastPingAt     time.Time
 	securityVerify string
@@ -245,6 +247,7 @@ type Service struct {
 // SMSReadiness describes the independently verifiable IMS SMS prerequisites.
 type SMSReadiness struct {
 	Registered    bool
+	ProfileReady  bool
 	ReceiverReady bool
 	SMSCPresent   bool
 	Ready         bool
@@ -274,6 +277,12 @@ type DeliveryStore interface {
 	RecomputeSMSDelivery(messageID string, at time.Time) error
 	UpdateSMSDeliveryState(messageID, state, lastError string, acks int, at time.Time) error
 	GetSMSDeliveryStatus(messageID string) (*DeliveryStatus, error)
+}
+
+// SMSDeliverySIPResultStore persists the final response to the outbound
+// MESSAGE transaction separately from the later RP delivery report.
+type SMSDeliverySIPResultStore interface {
+	MarkSMSDeliveryPartSIPResult(messageID string, partNo, sipCode int, state, errText string, at time.Time) error
 }
 
 // DeliveryPartMatch identifies a delivery part.

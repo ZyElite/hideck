@@ -55,6 +55,23 @@ func (s *memoryDeliveryStore) UpsertSMSDeliveryPart(messageID string, partNo int
 	return nil
 }
 
+func (s *memoryDeliveryStore) MarkSMSDeliveryPartSIPResult(
+	messageID string,
+	partNo, sipCode int,
+	state, errText string,
+	_ time.Time,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, part := range s.parts[messageID] {
+		if part.partNo == partNo {
+			part.state, part.sipCode, part.errorText = state, sipCode, errText
+			return nil
+		}
+	}
+	return errors.New("delivery part not found")
+}
+
 func (s *memoryDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, _ string, rpMR int, state string, sipCode int, rpCause int, errText string, _ time.Time) (DeliveryPartMatch, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -62,7 +79,10 @@ func (s *memoryDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, _ str
 	if part == nil {
 		return DeliveryPartMatch{}, errors.New("delivery part not found")
 	}
-	part.state, part.sipCode = state, sipCode
+	part.state = state
+	if part.sipCode == 0 && sipCode > 0 {
+		part.sipCode = sipCode
+	}
 	part.rpCause, part.errorText = rpCause, errText
 	return DeliveryPartMatch{
 		MessageID: part.messageID, PartNo: part.partNo, State: state, Matched: true,

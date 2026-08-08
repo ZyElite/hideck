@@ -175,6 +175,7 @@ type registrationFailureSource interface {
 // SMSReadiness describes the independently verifiable IMS SMS prerequisites.
 type SMSReadiness struct {
 	Registered    bool
+	ProfileReady  bool
 	ReceiverReady bool
 	SMSCPresent   bool
 	Ready         bool

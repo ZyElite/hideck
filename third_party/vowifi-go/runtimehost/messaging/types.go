@@ -135,6 +135,12 @@ type DeliveryStore interface {
 	GetSMSDeliveryStatus(messageID string) (*DeliveryStatus, error)
 }
 
+// SIPResultStore is an optional delivery-store capability used to preserve
+// the initial SIP MESSAGE result while the part is still waiting for RP-ACK.
+type SIPResultStore interface {
+	MarkSMSDeliveryPartSIPResult(messageID string, partNo, sipCode int, state, errText string, at time.Time) error
+}
+
 // ServiceStatus is the IMS service registration status.
 type ServiceStatus struct {
 	Registered bool

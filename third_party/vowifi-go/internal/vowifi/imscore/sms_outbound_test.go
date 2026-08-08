@@ -17,9 +17,16 @@ type captureDeliveryStore struct {
 	mu          sync.Mutex
 	created     *DeliveryStatus
 	partStates  []string
+	sipResults  []capturedSIPResult
 	finalState  string
 	finalError  string
 	createError error
+}
+
+type capturedSIPResult struct {
+	code  int
+	state string
+	err   string
 }
 
 func (s *captureDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, _ time.Time) error {
@@ -38,6 +45,18 @@ func (s *captureDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer
 func (s *captureDeliveryStore) UpsertSMSDeliveryPart(_ string, _ int, _ string, _ int, state string, _ time.Time) error {
 	s.mu.Lock()
 	s.partStates = append(s.partStates, state)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *captureDeliveryStore) MarkSMSDeliveryPartSIPResult(
+	_ string,
+	_, sipCode int,
+	state, errText string,
+	_ time.Time,
+) error {
+	s.mu.Lock()
+	s.sipResults = append(s.sipResults, capturedSIPResult{code: sipCode, state: state, err: errText})
 	s.mu.Unlock()
 	return nil
 }
@@ -106,6 +125,9 @@ func TestSendOutboundSMSWaitsForSIPSuccess(t *testing.T) {
 	if store.created == nil || store.created.Peer != "+447700900123" || len(store.partStates) != 1 || store.partStates[0] != smsDeliveryStatePending {
 		t.Fatalf("delivery store = %+v, parts = %v", store.created, store.partStates)
 	}
+	if len(store.sipResults) != 1 || store.sipResults[0].code != 200 || store.sipResults[0].state != smsDeliveryStatePending {
+		t.Fatalf("SIP results = %+v", store.sipResults)
+	}
 }
 
 func TestSendOutboundSMSRejectsNon2xxWithoutSuccessEvent(t *testing.T) {
@@ -128,19 +150,25 @@ func TestSendOutboundSMSRejectsNon2xxWithoutSuccessEvent(t *testing.T) {
 	if store.finalState != smsDeliveryStateFailed || !strings.Contains(store.finalError, "503") {
 		t.Fatalf("failure state = %q, error = %q", store.finalState, store.finalError)
 	}
+	if len(store.sipResults) != 1 || store.sipResults[0].code != 503 || store.sipResults[0].state != smsDeliveryStateFailed {
+		t.Fatalf("SIP results = %+v", store.sipResults)
+	}
 	want := []string{smsDeliveryStatePending, smsDeliveryStateFailed}
 	if strings.Join(store.partStates, ",") != strings.Join(want, ",") {
 		t.Fatalf("part states = %v", store.partStates)
 	}
 }
 
-func TestSendOutboundSMSSurfacesTransactionTimeout(t *testing.T) {
+func TestSendOutboundSMSSurfacesCallerDeadline(t *testing.T) {
 	service, subscriber, store := newOutboundSMSTestService(t)
 	service.transport.SetSendFn(func(string) error { return nil })
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	_, err := service.SendSMSWithResult(ctx, "+447700900123", "hello")
 	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("send error = %v", err)
+	}
+	if !strings.Contains(err.Error(), "caller deadline exceeded") {
 		t.Fatalf("send error = %v", err)
 	}
 	select {
@@ -150,6 +178,32 @@ func TestSendOutboundSMSSurfacesTransactionTimeout(t *testing.T) {
 	}
 	if store.finalState != smsDeliveryStateFailed {
 		t.Fatalf("failure state = %q", store.finalState)
+	}
+}
+
+func TestSendOutboundSMSSurfacesInternalFinalResponseTimeout(t *testing.T) {
+	service, _, store := newOutboundSMSTestService(t)
+	service.smsTransactionTimeout = 20 * time.Millisecond
+	service.transport.SetSendFn(func(string) error { return nil })
+
+	_, err := service.SendSMSWithResult(context.Background(), "+447700900123", "hello")
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "final response timeout after 20ms") {
+		t.Fatalf("send error = %v", err)
+	}
+	if len(store.sipResults) != 1 || store.sipResults[0].code != 0 || store.sipResults[0].state != smsDeliveryStateFailed {
+		t.Fatalf("SIP results = %+v", store.sipResults)
+	}
+}
+
+func TestSendOutboundSMSSurfacesCallerCancellation(t *testing.T) {
+	service, _, _ := newOutboundSMSTestService(t)
+	service.transport.SetSendFn(func(string) error { return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := service.SendSMSWithResult(ctx, "+447700900123", "hello")
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "canceled by caller") {
+		t.Fatalf("send error = %v", err)
 	}
 }
 
@@ -170,6 +224,12 @@ func newOutboundSMSTestService(t *testing.T) (*Service, *captureIMSEventSubscrib
 	service.mu.Lock()
 	service.regState = regRegistered
 	service.smsReceiverReady = true
+	service.regSession = &registerSession{
+		contactUser: "registered-contact", cseq: 3,
+		publicID:     "sip:+447840844894@o2.co.uk",
+		serviceRoute: "<sip:pcscf.ims.example;lr>",
+		security:     &securityAgreement{verifyHeader: "ipsec-3gpp;alg=hmac-sha-1-96"},
+	}
 	service.mu.Unlock()
 	t.Cleanup(service.Stop)
 	return service, subscriber, store
@@ -182,6 +242,30 @@ func assertOutboundSMSRequest(t *testing.T, request, recipient, smsc string) {
 	}
 	if got := rawSIPHeaderValue(request, "Content-Type"); got != imsSMSContentType {
 		t.Fatalf("Content-Type = %q", got)
+	}
+	wantHeaders := map[string]string{
+		"From":                 "<sip:+447840844894@o2.co.uk>",
+		"Contact":              "<sip:registered-contact@10.0.0.2:5060>",
+		"Route":                "<sip:pcscf.ims.example;lr>",
+		"P-Preferred-Identity": "<sip:+447840844894@o2.co.uk>",
+		"Security-Verify":      "ipsec-3gpp;alg=hmac-sha-1-96",
+		"Supported":            smsSupportedHeader + ", sec-agree",
+		"Request-Disposition":  "no-fork",
+	}
+	for name, want := range wantHeaders {
+		got := rawSIPHeaderValue(request, name)
+		if name == "From" {
+			got = strings.SplitN(got, ";tag=", 2)[0]
+		}
+		if got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if got := rawSIPHeaderValue(request, "CSeq"); got != "6 MESSAGE" {
+		t.Fatalf("CSeq = %q", got)
+	}
+	if strings.Contains(request, "\r\nRequire: sec-agree\r\n") || strings.Contains(request, "\r\nProxy-Require: sec-agree\r\n") {
+		t.Fatalf("MESSAGE unexpectedly requires sec-agree: %q", request)
 	}
 	body, err := rawSIPBody(request)
 	if err != nil {
@@ -197,5 +281,53 @@ func assertOutboundSMSRequest(t *testing.T, request, recipient, smsc string) {
 	}
 	if originator != "" || destination != smsc || len(submit) == 0 || submit[0]&0x03 != 0x01 {
 		t.Fatalf("RP addresses originator=%q destination=%q TPDU=%x", originator, destination, submit)
+	}
+}
+
+func TestBuildSMSMESSAGEAllocatesUniqueCSeqAcrossConcurrentRequests(t *testing.T) {
+	service, _, _ := newOutboundSMSTestService(t)
+	const requests = 32
+	results := make(chan string, requests)
+	errorsCh := make(chan error, requests)
+	var wg sync.WaitGroup
+	for range requests {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			request, err := service.buildSMSMESSAGE("sip:+447700900123@ims.example;user=phone", []byte{0x00})
+			if err != nil {
+				errorsCh <- err
+				return
+			}
+			results <- rawSIPHeaderValue(request, "CSeq")
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Fatal(err)
+	}
+	seen := make(map[string]bool, requests)
+	for cseq := range results {
+		if seen[cseq] {
+			t.Fatalf("duplicate CSeq %q", cseq)
+		}
+		seen[cseq] = true
+	}
+	if len(seen) != requests {
+		t.Fatalf("CSeq count = %d, want %d", len(seen), requests)
+	}
+}
+
+func TestBuildSMSMESSAGERequiresNegotiatedRegistrationIdentity(t *testing.T) {
+	service, _, _ := newOutboundSMSTestService(t)
+	service.mu.Lock()
+	service.regSession.publicID = ""
+	service.mu.Unlock()
+
+	_, err := service.buildSMSMESSAGE("sip:+447700900123@ims.example;user=phone", []byte{0x00})
+	if err == nil || !strings.Contains(err.Error(), "registered public identity is unavailable") {
+		t.Fatalf("build error = %v", err)
 	}
 }

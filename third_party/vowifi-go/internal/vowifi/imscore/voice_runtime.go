@@ -86,46 +86,56 @@ func (s *Service) SetVoiceRequestHandler(handler VoiceRequestHandler) {
 
 // RegisteredSIPDialogProfile returns the active IMS registration binding.
 func (s *Service) RegisteredSIPDialogProfile() (SIPDialogProfile, error) {
+	return s.reserveRegisteredSIPProfile()
+}
+
+func (s *Service) reserveRegisteredSIPProfile() (SIPDialogProfile, error) {
 	if s == nil || s.cfg == nil {
 		return SIPDialogProfile{}, errors.New("imscore: service is not configured")
 	}
-	if !s.IsRegistered() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.regState != regRegistered {
 		return SIPDialogProfile{}, errors.New("imscore: IMS is not registered")
 	}
-	clientAddress, serverAddress, route, securityVerify, transport := s.smsMessageRoute()
-	if clientAddress == "" || serverAddress == "" {
-		return SIPDialogProfile{}, errors.New("imscore: registered SIP transport is unavailable")
-	}
-	s.mu.RLock()
 	session := s.regSession
 	if session == nil {
-		s.mu.RUnlock()
 		return SIPDialogProfile{}, errors.New("imscore: registered SIP session is unavailable")
 	}
 	localURI := strings.TrimSpace(session.publicID)
 	registeredContactUser := strings.TrimSpace(session.contactUser)
-	initialCSeq := session.cseq + 1
-	s.mu.RUnlock()
-	if localURI == "" {
-		localURI = firstPublicIdentity(s.cfg)
-	}
 	if localURI == "" {
 		return SIPDialogProfile{}, errors.New("imscore: registered public identity is unavailable")
 	}
 	if registeredContactUser == "" {
 		return SIPDialogProfile{}, errors.New("imscore: registered Contact identity is unavailable")
 	}
-	if securityVerify != "" {
-		initialCSeq += 2 // REGISTER subscription consumes the next two sequence slots.
+	route := s.registeredSIPRouteLocked()
+	if route.clientAddress == "" || route.serverAddress == "" {
+		return SIPDialogProfile{}, errors.New("imscore: registered SIP transport is unavailable")
 	}
-	contactURI, contactHeader := registeredVoiceContact(s.cfg, registeredContactUser, serverAddress)
+	initialCSeq := s.reserveSIPCSeqLocked(session, route.securityVerify != "")
+	contactURI, contactHeader := registeredVoiceContact(s.cfg, registeredContactUser, route.serverAddress)
 	return SIPDialogProfile{
 		LocalURI: localURI, Domain: strings.TrimSpace(s.cfg.Domain),
-		LocalAddress: clientAddress, Transport: transport, ServiceRoute: route,
+		LocalAddress: route.clientAddress, Transport: route.transport, ServiceRoute: route.serviceRoute,
 		ContactURI: contactURI, ContactHeader: contactHeader,
-		SecurityVerify: securityVerify, PANI: s.GetPAccessNetworkInfo(),
+		SecurityVerify: route.securityVerify, PANI: s.GetPAccessNetworkInfo(),
 		UserAgent: strings.TrimSpace(s.cfg.UserAgent), InitialCSeq: initialCSeq,
 	}, nil
+}
+
+func (s *Service) reserveSIPCSeqLocked(session *registerSession, subscriptionConsumed bool) int {
+	minimum := session.cseq + 1
+	if subscriptionConsumed {
+		minimum += 2
+	}
+	if s.nextSIPCSeq < minimum {
+		s.nextSIPCSeq = minimum
+		return minimum
+	}
+	s.nextSIPCSeq++
+	return s.nextSIPCSeq
 }
 
 func registeredVoiceContact(cfg *IMSConfig, user, address string) (string, string) {

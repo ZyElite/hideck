@@ -28,11 +28,28 @@ func TestVoWiFiDeliveryStoreReportsMatchedPart(t *testing.T) {
 	if err := store.UpsertSMSDeliveryPart("message-1", 1, "call-1", 17, "pending", now); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.MarkSMSDeliveryPartSIPResult("message-1", 1, 202, "pending", "", now); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := store.GetSMSDeliveryStatus("message-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.State != "pending" || pending.Parts[0].SIPCode != 202 || pending.Parts[0].ReportAt != nil {
+		t.Fatalf("pending SIP result = %+v", pending)
+	}
 	match, err := store.MarkSMSDeliveryPartReport("call-1", "report-1", "wwan0", 17, "acked", 200, 0, "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !match.Matched || match.MessageID != "message-1" || match.PartNo != 1 || match.State != "acked" {
 		t.Fatalf("delivery match = %+v", match)
+	}
+	completed, err := store.GetSMSDeliveryStatus("message-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State != "acked" || completed.Parts[0].SIPCode != 202 || completed.Parts[0].ReportAt == nil {
+		t.Fatalf("completed delivery result = %+v", completed)
 	}
 }

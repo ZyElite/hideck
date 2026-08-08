@@ -97,15 +97,63 @@ func (s *Service) sendOutboundSMSPart(ctx context.Context, messageID string, par
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	transactionCtx, cancel := context.WithTimeout(ctx, outboundSMSTransactionTimeout)
+	if s.smsTransactionTimeout <= 0 {
+		return s.recordOutboundSMSFailure(messageID, part, errors.New("SMS transaction timeout is not configured"))
+	}
+	transactionCtx, cancel := context.WithTimeout(ctx, s.smsTransactionTimeout)
 	defer cancel()
 	response, err := s.transport.RoundTrip(transactionCtx, part.request)
 	if err != nil {
-		return s.recordOutboundSMSFailure(messageID, part, fmt.Errorf("MESSAGE transaction: %w", err))
+		transactionErr := classifySMSTransactionError(ctx, transactionCtx, s.smsTransactionTimeout, err)
+		persistErr := s.persistOutboundSIPResult(messageID, part.number, 0, smsDeliveryStateFailed, transactionErr.Error())
+		return s.recordOutboundSMSFailure(messageID, part, errors.Join(transactionErr, persistErr))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		err = fmt.Errorf("MESSAGE rejected with status %d (%s)", response.StatusCode, strings.TrimSpace(response.Reason))
+		persistErr := s.persistOutboundSIPResult(
+			messageID, part.number, response.StatusCode, smsDeliveryStateFailed, err.Error(),
+		)
+		return s.recordOutboundSMSFailure(messageID, part, errors.Join(err, persistErr))
+	}
+	if err := s.persistOutboundSIPResult(messageID, part.number, response.StatusCode, smsDeliveryStatePending, ""); err != nil {
 		return s.recordOutboundSMSFailure(messageID, part, err)
+	}
+	return nil
+}
+
+func classifySMSTransactionError(
+	callerCtx, transactionCtx context.Context,
+	timeout time.Duration,
+	transactionErr error,
+) error {
+	if callerErr := callerCtx.Err(); callerErr != nil {
+		if errors.Is(callerErr, context.Canceled) {
+			return fmt.Errorf("MESSAGE transaction canceled by caller: %w", callerErr)
+		}
+		return fmt.Errorf("MESSAGE transaction caller deadline exceeded: %w", callerErr)
+	}
+	if errors.Is(transactionCtx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("MESSAGE final response timeout after %s: %w", timeout, context.DeadlineExceeded)
+	}
+	return fmt.Errorf("MESSAGE transaction failed: %w", transactionErr)
+}
+
+func (s *Service) persistOutboundSIPResult(
+	messageID string,
+	partNo, sipCode int,
+	state, errText string,
+) error {
+	if s.delivery == nil {
+		return nil
+	}
+	store, ok := s.delivery.(SMSDeliverySIPResultStore)
+	if !ok {
+		return errors.New("persist MESSAGE result: delivery store does not support SIP result persistence")
+	}
+	if err := store.MarkSMSDeliveryPartSIPResult(
+		messageID, partNo, sipCode, state, errText, time.Now(),
+	); err != nil {
+		return fmt.Errorf("persist MESSAGE result: %w", err)
 	}
 	return nil
 }

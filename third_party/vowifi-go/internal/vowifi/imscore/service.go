@@ -27,19 +27,20 @@ func New(cfg *IMSConfig) (*Service, error) {
 		bus = newIMSEventBus()
 	}
 	s := &Service{
-		cfg:              cfg,
-		state:            regIdle,
-		regState:         regIdle,
-		dialogs:          newDialogRegistry(),
-		bus:              bus,
-		delivery:         cfg.DeliveryStore,
-		stop:             make(chan struct{}),
-		registerErrors:   make(chan error, 1),
-		protectedConns:   make(map[net.Conn]struct{}),
-		transport:        newSIPTransport(),
-		ussd:             ussi.NewService(),
-		smsReassembler:   smscodec.NewReassembler(),
-		smsReportTimeout: defaultSMSDeliveryReportTimeout,
+		cfg:                   cfg,
+		state:                 regIdle,
+		regState:              regIdle,
+		dialogs:               newDialogRegistry(),
+		bus:                   bus,
+		delivery:              cfg.DeliveryStore,
+		stop:                  make(chan struct{}),
+		registerErrors:        make(chan error, 1),
+		protectedConns:        make(map[net.Conn]struct{}),
+		transport:             newSIPTransport(),
+		ussd:                  ussi.NewService(),
+		smsReassembler:        smscodec.NewReassembler(),
+		smsTransactionTimeout: outboundSMSTransactionTimeout,
+		smsReportTimeout:      defaultSMSDeliveryReportTimeout,
 	}
 	return s, nil
 }

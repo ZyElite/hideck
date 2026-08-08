@@ -116,6 +116,14 @@ func newInboundSMSTestService(t *testing.T) (*Service, *captureIMSEventSubscribe
 	if err != nil {
 		t.Fatal(err)
 	}
+	service.mu.Lock()
+	service.regState = regRegistered
+	service.regSession = &registerSession{
+		contactUser: "registered-contact", cseq: 3,
+		publicID: "sip:+447840844894@o2.co.uk", serviceRoute: "<sip:pcscf.ims.example;lr>",
+		security: &securityAgreement{verifyHeader: "ipsec-3gpp;alg=hmac-sha-1-96"},
+	}
+	service.mu.Unlock()
 	outbound := make(chan string, 2)
 	service.transport.SetSendFn(func(request string) error {
 		outbound <- request

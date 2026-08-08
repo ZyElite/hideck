@@ -168,8 +168,9 @@ func (a *serviceAdapter) SetOnSMSReadinessChanged(fn func(SMSReadiness)) {
 
 func adaptSMSReadiness(readiness imscore.SMSReadiness) SMSReadiness {
 	return SMSReadiness{
-		Registered: readiness.Registered, ReceiverReady: readiness.ReceiverReady,
-		SMSCPresent: readiness.SMSCPresent, Ready: readiness.Ready, Reason: readiness.Reason,
+		Registered: readiness.Registered, ProfileReady: readiness.ProfileReady,
+		ReceiverReady: readiness.ReceiverReady,
+		SMSCPresent:   readiness.SMSCPresent, Ready: readiness.Ready, Reason: readiness.Reason,
 	}
 }
 
@@ -325,9 +326,31 @@ type deliveryStoreAdapter struct {
 	store messaging.DeliveryStore
 }
 
+type sipResultDeliveryStoreAdapter struct {
+	*deliveryStoreAdapter
+	store messaging.SIPResultStore
+}
+
 // newDeliveryStoreAdapter wraps a delivery store.
-func newDeliveryStoreAdapter(store messaging.DeliveryStore) *deliveryStoreAdapter {
-	return &deliveryStoreAdapter{store: store}
+func newDeliveryStoreAdapter(store messaging.DeliveryStore) imscore.DeliveryStore {
+	base := &deliveryStoreAdapter{store: store}
+	sipResults, ok := store.(messaging.SIPResultStore)
+	if !ok {
+		return base
+	}
+	return &sipResultDeliveryStoreAdapter{deliveryStoreAdapter: base, store: sipResults}
+}
+
+func (a *sipResultDeliveryStoreAdapter) MarkSMSDeliveryPartSIPResult(
+	messageID string,
+	partNo, sipCode int,
+	state, errText string,
+	at time.Time,
+) error {
+	if a == nil || a.store == nil {
+		return errors.New("runtimehost: no SIP result store")
+	}
+	return a.store.MarkSMSDeliveryPartSIPResult(messageID, partNo, sipCode, state, errText, at)
 }
 
 // CreateSMSDelivery creates a delivery record.
