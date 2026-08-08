@@ -1,116 +1,122 @@
-// Package logger is a thin zap wrapper used by the SWu session and the IMS
-// stack. Reconstructed from the decompiled engine/logger.
+// Package logger provides the process-wide logger used by the protocol engine.
 package logger
 
 import (
 	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-var (
-	mu     sync.RWMutex
-	global *zap.Logger
+const (
+	defaultLevel        = "info"
+	defaultFormat       = "console"
+	jsonFormat          = "json"
+	consoleTimeLayout   = "[2006-01-02 15:04:05]"
+	consoleCallerWidth  = 28
+	logWrapperCallerGap = 1
 )
 
-// Init configures the global logger. When filePath is non-empty the output is
-// appended to that file; otherwise it goes to stderr.
-func Init(level zapcore.Level, filePath string) error {
-	cfg := zap.NewProductionConfig()
-	cfg.Level = zap.NewAtomicLevelAt(level)
-	cfg.EncoderConfig.EncodeLevel = fixedWidthColorLevelEncoder
-	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+var (
+	initOnce    sync.Once
+	global      atomic.Pointer[zap.Logger]
+	globalSugar atomic.Pointer[zap.SugaredLogger]
+)
 
-	var core zapcore.Core
-	if filePath != "" {
-		f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			return err
-		}
-		core = zapcore.NewCore(
-			zapcore.NewConsoleEncoder(cfg.EncoderConfig),
-			zapcore.AddSync(f),
-			cfg.Level,
-		)
+// Init initializes the process logger once. Unknown levels use info and every
+// format other than "json" uses the console encoder.
+func Init(level, format string) error {
+	var initErr error
+	initOnce.Do(func() {
+		initErr = initLogger(level, format)
+	})
+	return initErr
+}
+
+func initLogger(level, format string) error {
+	encoderConfig := zap.NewDevelopmentEncoderConfig()
+	if format == jsonFormat {
+		encoderConfig = zap.NewProductionEncoderConfig()
 	} else {
-		core = zapcore.NewCore(
-			zapcore.NewConsoleEncoder(cfg.EncoderConfig),
-			zapcore.AddSync(os.Stderr),
-			cfg.Level,
-		)
+		encoderConfig.EncodeLevel = fixedWidthColorLevelEncoder
+		encoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout(consoleTimeLayout)
+		encoderConfig.EncodeCaller = func(caller zapcore.EntryCaller, encoder zapcore.PrimitiveArrayEncoder) {
+			path := caller.TrimmedPath()
+			if len(path) < consoleCallerWidth {
+				path += strings.Repeat(" ", consoleCallerWidth-len(path))
+			}
+			encoder.AppendString(path)
+		}
+		encoderConfig.ConsoleSeparator = " "
 	}
-	mu.Lock()
-	global = zap.New(core)
-	mu.Unlock()
+	encoderConfig.TimeKey = "time"
+	if format == jsonFormat {
+		encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	}
+
+	encoder := zapcore.NewConsoleEncoder(encoderConfig)
+	if format == jsonFormat {
+		encoder = zapcore.NewJSONEncoder(encoderConfig)
+	}
+	core := zapcore.NewCore(encoder, zapcore.AddSync(os.Stderr), parseLevel(level))
+	base := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+	global.Store(base)
+	globalSugar.Store(base.Sugar())
 	return nil
 }
 
-// initLogger is the internal initialiser (defaults to Info on stderr).
-func initLogger() {
-	_ = Init(zapcore.InfoLevel, "")
+func parseLevel(level string) zapcore.Level {
+	switch level {
+	case "debug":
+		return zapcore.DebugLevel
+	case "warn":
+		return zapcore.WarnLevel
+	case "error":
+		return zapcore.ErrorLevel
+	default:
+		return zapcore.InfoLevel
+	}
 }
 
-// L returns the global logger, initialising it on first use.
+// L returns the initialized process logger.
 func L() *zap.Logger {
-	mu.RLock()
-	l := global
-	mu.RUnlock()
-	if l == nil {
-		initLogger()
-		mu.RLock()
-		l = global
-		mu.RUnlock()
+	if logger := global.Load(); logger != nil {
+		return logger
 	}
-	return l
+	if err := Init(defaultLevel, defaultFormat); err != nil {
+		panic("engine/logger: initialize: " + err.Error())
+	}
+	logger := global.Load()
+	if logger == nil {
+		panic("engine/logger: initialization completed without a logger")
+	}
+	return logger
 }
 
 // Debug logs at debug level.
-func Debug(msg string, fields ...zap.Field) { L().Debug(msg, fields...) }
-
-// Info logs at info level.
-func Info(msg string, fields ...zap.Field) { L().Info(msg, fields...) }
-
-// Warn logs at warn level.
-func Warn(msg string, fields ...zap.Field) { L().Warn(msg, fields...) }
-
-// Error logs at error level.
-func Error(msg string, fields ...zap.Field) { L().Error(msg, fields...) }
-
-// With returns a child logger with the given fields.
-func With(fields ...zap.Field) *zap.Logger { return L().With(fields...) }
-
-// fixedWidthColorLevelEncoder renders the level as a fixed-width, coloured
-// token (e.g. "INFO " in green).
-func fixedWidthColorLevelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
-	text := l.CapitalString()
-	switch l {
-	case zapcore.DebugLevel:
-		text = "\x1b[36m" + text + "\x1b[0m" // cyan
-	case zapcore.InfoLevel:
-		text = "\x1b[32m" + text + "\x1b[0m" // green
-	case zapcore.WarnLevel:
-		text = "\x1b[33m" + text + "\x1b[0m" // yellow
-	case zapcore.ErrorLevel, zapcore.DPanicLevel, zapcore.PanicLevel, zapcore.FatalLevel:
-		text = "\x1b[31m" + text + "\x1b[0m" // red
-	}
-	for len(text) < 5 {
-		text += " "
-	}
-	enc.AppendString(text)
+func Debug(message string, fields ...zap.Field) {
+	L().WithOptions(zap.AddCallerSkip(logWrapperCallerGap)).Debug(message, fields...)
 }
 
-// AddCallerSkip returns a zap Option that adds the given number of caller
-// frames to skip (recovered from the binary's zap option chain).
-func AddCallerSkip(skip int) zap.Option { return zap.AddCallerSkip(skip) }
+// Info logs at info level.
+func Info(message string, fields ...zap.Field) {
+	L().WithOptions(zap.AddCallerSkip(logWrapperCallerGap)).Info(message, fields...)
+}
 
-// AddStacktrace returns a zap Option that enables stack traces at the given
-// level.
-func AddStacktrace(l zapcore.LevelEnabler) zap.Option { return zap.AddStacktrace(l) }
+// Warn logs at warn level.
+func Warn(message string, fields ...zap.Field) {
+	L().WithOptions(zap.AddCallerSkip(logWrapperCallerGap)).Warn(message, fields...)
+}
 
-// TimeEncoderOfLayout returns a zapcore.TimeEncoder using the given layout.
-func TimeEncoderOfLayout(layout string) zapcore.TimeEncoder { return zapcore.TimeEncoderOfLayout(layout) }
+// Error logs at error level.
+func Error(message string, fields ...zap.Field) {
+	L().WithOptions(zap.AddCallerSkip(logWrapperCallerGap)).Error(message, fields...)
+}
 
-// WithCaller returns a zap Option that enables or disables caller capture.
-func WithCaller(enabled bool) zap.Option { return zap.WithCaller(enabled) }
+// With returns a child logger with the supplied structured fields.
+func With(fields ...zap.Field) *zap.Logger {
+	return L().With(fields...)
+}
