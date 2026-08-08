@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
+	"github.com/iniwex5/vowifi-go/engine/driver"
 	engineeap "github.com/iniwex5/vowifi-go/engine/eap"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
@@ -60,6 +61,14 @@ type Config struct {
 	ESPEncryption        uint16
 	ESPEncryptionKeyBits uint16
 	ESPIntegrity         uint16
+	// DataplaneMode selects userspace, TUN, or Linux XFRM processing. Empty is
+	// equivalent to userspace so current callers keep their existing behavior.
+	DataplaneMode string
+	TUNName       string
+	TUNMTU        int
+	XFRMIfID      uint32
+	ReplayWindow  int
+	EnableESN     bool
 	// NonceLen is the initiator nonce length (default 32).
 	NonceLen int
 	// RekeyIKESeconds / RekeyChildSeconds drive the SA rekey timers.
@@ -95,9 +104,12 @@ const (
 	stateShutdown       = "shutdown"
 )
 
-// DataplaneModeUserspace selects the user-space data plane (recovered from
-// the decompiled dataplane selection).
-const DataplaneModeUserspace = "userspace"
+// Data-plane modes recovered from the original session configuration.
+const (
+	DataplaneModeUserspace = "userspace"
+	DataplaneModeTUN       = "tun"
+	DataplaneModeXFRMI     = "xfrmi"
+)
 
 // ikeAuthStage tracks the IKE_AUTH exchange progress.
 type ikeAuthStage int
@@ -174,6 +186,9 @@ type Session struct {
 
 	// --- data plane ---
 	innerEndpoint   *userspaceInnerPacketEndpoint
+	tun             *driver.TUNDevice
+	networkTxn      *driver.NetTxn
+	kernelDataPlane kernelDataPlane
 	espOutboundSA   *ipsec.SecurityAssociation
 	espInboundSA    *ipsec.SecurityAssociation
 	espLocalSPI     uint32
@@ -538,10 +553,17 @@ func (s *Session) Shutdown() {
 
 	s.cancel()
 	s.stopTimers()
+	cleanupErr := s.stopDataPlane()
 	s.controlWG.Wait()
 	s.dataPlaneWG.Wait()
-	s.stopDataPlane()
 	s.stopTransport()
+	if cleanupErr != nil {
+		s.mu.Lock()
+		if s.terminalErr == nil {
+			s.terminalErr = fmt.Errorf("swu: clean up data plane: %w", cleanupErr)
+		}
+		s.mu.Unlock()
+	}
 	s.signalDone()
 }
 

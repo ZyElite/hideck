@@ -1,82 +1,114 @@
-// Package driver implements the Linux network configuration surface used by the
-// SWu session: netlink address/route management, TUN devices and kernel XFRM
-// SA/SP installation.
-//
-// Reconstructed from the decompiled engine/driver. The algorithm mapping
-// (xfrm_algo.go) is platform-independent; the netlink/TUN/XFRM implementations
-// are Linux-only and compiled behind build tags.
 package driver
 
-// IKEv2 transform IDs (RFC 7296 §3.3.2) mapped to kernel XFRM algorithm names.
-const (
-	// Encryption transforms.
-	encrDESCBC   uint16 = 3  // ENCR_3DES
-	encrAESCBC   uint16 = 12 // ENCR_AES_CBC
-	encrAESGCM8  uint16 = 18 // ENCR_AES_GCM_8
-	encrAESGCM12 uint16 = 19 // ENCR_AES_GCM_12
-	encrAESGCM16 uint16 = 20 // ENCR_AES_GCM_16
-	encrAESCCM8  uint16 = 14 // ENCR_AES_CCM_8
-	encrAESCCM12 uint16 = 15 // ENCR_AES_CCM_12
-	encrAESCCM16 uint16 = 16 // ENCR_AES_CCM_16
-	encrNull     uint16 = 11 // ENCR_NULL
-	// Integrity transforms.
-	integHMACMD5    uint16 = 1 // AUTH_HMAC_MD5_96
-	integHMACSHA1   uint16 = 2 // AUTH_HMAC_SHA1_96
-	integHMACSHA256 uint16 = 5 // AUTH_HMAC_SHA2_256_128
-	integHMACSHA384 uint16 = 6 // AUTH_HMAC_SHA2_384_192
-	integHMACSHA512 uint16 = 7 // AUTH_HMAC_SHA2_512_256
-	integAESXCBC    uint16 = 9 // AUTH_AES_XCBC_96
-)
+import "fmt"
 
-// IKEv2AlgToXFRMCrypt maps an IKEv2 encryption transform ID to the kernel XFRM
-// cipher algorithm name (e.g. "cbc(aes)"), or "" if unsupported.
-func IKEv2AlgToXFRMCrypt(alg uint16) string {
-	switch alg {
-	case encrDESCBC:
-		return "cbc(des3_ede)"
-	case encrAESCBC:
-		return "cbc(aes)"
-	case encrAESGCM8, encrAESGCM12, encrAESGCM16:
-		return "rfc4106(gcm(aes))"
-	case encrAESCCM8, encrAESCCM12, encrAESCCM16:
-		return "rfc4309(ccm(aes))"
-	case encrNull:
-		return "ecb(cipher_null)"
+type XFRMCryptAlgo struct {
+	Name    string
+	KeyBits int
+}
+
+type XFRMAuthAlgo struct {
+	Name         string
+	KeyBits      int
+	TruncateBits int
+}
+
+type XFRMAeadAlgo struct {
+	Name    string
+	KeyBits int
+	ICVBits int
+}
+
+func IKEv2AlgToXFRMCrypt(algorithmID uint16, keyLengthBits int) (*XFRMCryptAlgo, error) {
+	if keyLengthBits == 0 {
+		keyLengthBits = 128
+	}
+	switch algorithmID {
+	case 2:
+		return &XFRMCryptAlgo{Name: "cbc(des)", KeyBits: 64}, nil
+	case 3:
+		return &XFRMCryptAlgo{Name: "cbc(des3_ede)", KeyBits: 192}, nil
+	case 12:
+		return &XFRMCryptAlgo{Name: "cbc(aes)", KeyBits: keyLengthBits}, nil
+	case 13:
+		return &XFRMCryptAlgo{Name: "rfc3686(ctr(aes))", KeyBits: keyLengthBits}, nil
 	default:
-		return ""
+		return nil, fmt.Errorf("不支持的 XFRM 加密算法 ID: %d", algorithmID)
 	}
 }
 
-// IKEv2AlgToXFRMAuth maps an IKEv2 integrity transform ID to the kernel XFRM
-// authentication algorithm name (e.g. "hmac(sha1)"), or "" if unsupported.
-func IKEv2AlgToXFRMAuth(alg uint16) string {
-	switch alg {
-	case integHMACMD5:
-		return "digest_null" // hmac(md5) is not available in all kernels
-	case integHMACSHA1:
-		return "hmac(sha1)"
-	case integHMACSHA256:
-		return "hmac(sha256)"
-	case integHMACSHA384:
-		return "hmac(sha384)"
-	case integHMACSHA512:
-		return "hmac(sha512)"
-	case integAESXCBC:
-		return "xcbc(aes)"
+func IKEv2AlgToXFRMAuth(algorithmID uint16) (*XFRMAuthAlgo, error) {
+	switch algorithmID {
+	case 1:
+		return &XFRMAuthAlgo{Name: "hmac(md5)", KeyBits: 128, TruncateBits: 96}, nil
+	case 2:
+		return &XFRMAuthAlgo{Name: "hmac(sha1)", KeyBits: 160, TruncateBits: 96}, nil
+	case 12:
+		return &XFRMAuthAlgo{Name: "hmac(sha256)", KeyBits: 256, TruncateBits: 128}, nil
+	case 13:
+		return &XFRMAuthAlgo{Name: "hmac(sha384)", KeyBits: 384, TruncateBits: 192}, nil
+	case 14:
+		return &XFRMAuthAlgo{Name: "hmac(sha512)", KeyBits: 512, TruncateBits: 256}, nil
 	default:
-		return ""
+		return nil, fmt.Errorf("不支持的 XFRM 完整性算法 ID: %d", algorithmID)
 	}
 }
 
-// IKEv2AlgToXFRMAead maps an IKEv2 AEAD transform ID to the kernel XFRM AEAD
-// algorithm name, or "" if the transform is not an AEAD.
-func IKEv2AlgToXFRMAead(alg uint16) string {
-	switch alg {
-	case encrAESGCM8, encrAESGCM12, encrAESGCM16:
-		return "rfc4106(gcm(aes))"
-	case encrAESCCM8, encrAESCCM12, encrAESCCM16:
-		return "rfc4309(ccm(aes))"
+func IKEv2AlgToXFRMAead(algorithmID uint16, keyLengthBits int) (*XFRMAeadAlgo, error) {
+	if keyLengthBits == 0 {
+		keyLengthBits = 128
+	}
+	name := "rfc4106(gcm(aes))"
+	saltBits := 32
+	icvBits := 0
+	switch algorithmID {
+	case 18:
+		icvBits = 64
+	case 19:
+		icvBits = 96
+	case 20:
+		icvBits = 128
+	case 14:
+		name, saltBits, icvBits = "rfc4309(ccm(aes))", 24, 64
+	case 15:
+		name, saltBits, icvBits = "rfc4309(ccm(aes))", 24, 96
+	case 16:
+		name, saltBits, icvBits = "rfc4309(ccm(aes))", 24, 128
 	default:
+		return nil, fmt.Errorf("不支持的 XFRM AEAD 算法 ID: %d", algorithmID)
+	}
+	return &XFRMAeadAlgo{Name: name, KeyBits: keyLengthBits + saltBits, ICVBits: icvBits}, nil
+}
+
+func IsAEADAlgorithm(algorithmID uint16) bool {
+	switch algorithmID {
+	case 14, 15, 16, 18, 19, 20:
+		return true
+	default:
+		return false
+	}
+}
+
+func IKEv2AlgToXFRMCryptName(algorithmID uint16) string {
+	algorithm, err := IKEv2AlgToXFRMCrypt(algorithmID, 0)
+	if err != nil {
 		return ""
 	}
+	return algorithm.Name
+}
+
+func IKEv2AlgToXFRMAuthName(algorithmID uint16) string {
+	algorithm, err := IKEv2AlgToXFRMAuth(algorithmID)
+	if err != nil {
+		return ""
+	}
+	return algorithm.Name
+}
+
+func IKEv2AlgToXFRMAeadName(algorithmID uint16) string {
+	algorithm, err := IKEv2AlgToXFRMAead(algorithmID, 0)
+	if err != nil {
+		return ""
+	}
+	return algorithm.Name
 }

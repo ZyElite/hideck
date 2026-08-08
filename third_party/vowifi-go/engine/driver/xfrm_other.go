@@ -5,61 +5,89 @@ package driver
 import (
 	"net"
 	"time"
+
+	"go.uber.org/multierr"
 )
 
-// XFRMManager is a non-Linux XFRM manager stub.
-type XFRMManager struct{}
+type XFRMManager struct {
+	undos []func() error
+}
 
-// NewXFRMManager creates an empty XFRM manager.
 func NewXFRMManager() *XFRMManager { return &XFRMManager{} }
 
-// AddSA is unsupported off Linux.
-func (m *XFRMManager) AddSA(sa interface{}) error { return errUnsupportedPlatform }
+type XFRMSAConfig struct {
+	Src           net.IP
+	Dst           net.IP
+	SPI           uint32
+	Proto         uint8
+	IsAEAD        bool
+	AeadAlgoName  string
+	AeadKey       []byte
+	AeadICVLen    int
+	CryptAlgoName string
+	CryptKey      []byte
+	AuthAlgoName  string
+	AuthKey       []byte
+	AuthTruncLen  int
+	EncapType     uint8
+	EncapSrcPort  int
+	EncapDstPort  int
+	Ifid          int
+	Mode          uint8
+	TimeLimitSoft uint64
+	TimeLimitHard uint64
+	ReplayWindow  int
+	SADir         uint8
+	ESN           bool
+}
 
-// UpdateSA is unsupported off Linux.
-func (m *XFRMManager) UpdateSA(sa interface{}) error { return errUnsupportedPlatform }
+type XFRMSPConfig struct {
+	Src       *net.IPNet
+	Dst       *net.IPNet
+	Dir       uint8
+	TmplSrc   net.IP
+	TmplDst   net.IP
+	TmplProto uint8
+	TmplMode  uint8
+	TmplSPI   int
+	Ifid      int
+}
 
-// DelSA is unsupported off Linux.
-func (m *XFRMManager) DelSA(sa interface{}) error { return errUnsupportedPlatform }
+func (x *XFRMManager) FlushAll()              { panic(errUnsupportedPlatform) }
+func (x *XFRMManager) FlushAllChecked() error { return errUnsupportedPlatform }
 
-// AddSP is unsupported off Linux.
-func (m *XFRMManager) AddSP(sp interface{}) error { return errUnsupportedPlatform }
-
-// UpdateSP is unsupported off Linux.
-func (m *XFRMManager) UpdateSP(sp interface{}) error { return errUnsupportedPlatform }
-
-// DelSP is unsupported off Linux.
-func (m *XFRMManager) DelSP(sp interface{}) error { return errUnsupportedPlatform }
-
-// AddXFRMInterface is unsupported off Linux.
-func (m *XFRMManager) AddXFRMInterface(name string, ifID uint32) error {
+func (x *XFRMManager) AddXFRMInterface(string, uint32, ...int) error {
 	return errUnsupportedPlatform
 }
 
-// DelXFRMInterface is unsupported off Linux.
-func (m *XFRMManager) DelXFRMInterface(name string) error { return errUnsupportedPlatform }
+func (x *XFRMManager) DelXFRMInterface(string) error { return errUnsupportedPlatform }
+func (x *XFRMManager) AddSA(any) error               { return errUnsupportedPlatform }
+func (x *XFRMManager) UpdateSA(any) error            { return errUnsupportedPlatform }
+func (x *XFRMManager) DelSA(...any) error            { return errUnsupportedPlatform }
+func (x *XFRMManager) AddSP(any) error               { return errUnsupportedPlatform }
+func (x *XFRMManager) UpdateSP(any) error            { return errUnsupportedPlatform }
+func (x *XFRMManager) DelSP(any) error               { return errUnsupportedPlatform }
+func (x *XFRMManager) FlushByIP(net.IP)              { panic(errUnsupportedPlatform) }
+func (x *XFRMManager) FlushByIPChecked(net.IP) error { return errUnsupportedPlatform }
 
-// FlushAll is unsupported off Linux.
-func (m *XFRMManager) FlushAll() error { return errUnsupportedPlatform }
+func (x *XFRMManager) GetSALastUsed(uint32, net.IP, net.IP, uint8) (uint64, error) {
+	return 0, errUnsupportedPlatform
+}
 
-// FlushByIP is unsupported off Linux.
-func (m *XFRMManager) FlushByIP(ip net.IP) error { return errUnsupportedPlatform }
-
-// GetSALastUsed is unsupported off Linux.
-func (m *XFRMManager) GetSALastUsed(sa interface{}) (time.Time, error) {
+func (x *XFRMManager) GetStateLastUsed(any) (time.Time, error) {
 	return time.Time{}, errUnsupportedPlatform
 }
 
-// Cleanup is a no-op off Linux.
-func (m *XFRMManager) Cleanup() error { return nil }
+func (x *XFRMManager) Cleanup()              { _ = x.cleanup() }
+func (x *XFRMManager) CleanupChecked() error { return x.cleanup() }
 
-// UndoFuncs returns nil off Linux.
-func (m *XFRMManager) UndoFuncs() []func() error { return nil }
-
-// addStateCompat is a no-op off Linux.
-func (m *XFRMManager) addStateCompat(sa interface{}) error { return errUnsupportedPlatform }
-
-// buildXfrmState is a no-op off Linux.
-func (m *XFRMManager) buildXfrmState(src, dst net.IP, spi uint32, proto, mode interface{}, key []byte, alg string) interface{} {
-	return nil
+func (x *XFRMManager) cleanup() error {
+	var result error
+	for index := len(x.undos) - 1; index >= 0; index-- {
+		result = multierr.Append(result, x.undos[index]())
+	}
+	x.undos = nil
+	return result
 }
+
+func (x *XFRMManager) UndoFuncs() []func() error { return x.undos }

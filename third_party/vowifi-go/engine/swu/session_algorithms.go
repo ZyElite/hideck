@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
+	"github.com/iniwex5/vowifi-go/engine/driver"
 )
 
 type encryptionParameters struct {
@@ -12,6 +13,17 @@ type encryptionParameters struct {
 }
 
 func initializeSessionAlgorithms(s *Session, cfg *Config) error {
+	mode := ""
+	if cfg != nil {
+		mode = cfg.DataplaneMode
+	}
+	normalizedMode, err := normalizeDataplaneMode(mode)
+	if err != nil {
+		return err
+	}
+	if err := validatePlatformDataplaneMode(normalizedMode); err != nil {
+		return err
+	}
 	plan := buildAlgorithmPlan(cfg.AlgorithmPolicy, cfg)
 	ikeEncryption, err := supportedEncryption(plan.IKEEncryption, plan.IKEEncryptionKeyBits)
 	if err != nil {
@@ -39,6 +51,9 @@ func initializeSessionAlgorithms(s *Session, cfg *Config) error {
 	if err := validateIntegrityMode("ESP", espEncryption.aead, plan.ESPIntegrity); err != nil {
 		return err
 	}
+	if err := validateDriverAlgorithms(plan, espEncryption.aead, cfg); err != nil {
+		return err
+	}
 	dh, err := crypto.NewDiffieHellman(plan.IKEDH)
 	if err != nil {
 		return fmt.Errorf("IKE DH: %w", err)
@@ -52,6 +67,33 @@ func initializeSessionAlgorithms(s *Session, cfg *Config) error {
 	s.prf, s.dh = prf, dh
 	s.encKeyLen, s.integKeyLen, s.aead = ikeEncryption.keyLen, ikeIntegrity.KeySize(), ikeEncryption.aead
 	s.espEncKeyLen, s.espIntegKeyLen, s.espAEAD = espEncryption.keyLen, espIntegrity.KeySize(), espEncryption.aead
+	return nil
+}
+
+func validateDriverAlgorithms(plan *AlgorithmPlan, isAEAD bool, cfg *Config) error {
+	if driver.IsAEADAlgorithm(plan.ESPEncryption) != isAEAD {
+		return fmt.Errorf("ESP transform %d has inconsistent AEAD classification", plan.ESPEncryption)
+	}
+	mode := ""
+	if cfg != nil {
+		mode = cfg.DataplaneMode
+	}
+	normalizedMode, err := normalizeDataplaneMode(mode)
+	if err != nil || normalizedMode != DataplaneModeXFRMI {
+		return err
+	}
+	if isAEAD {
+		if _, err = driver.IKEv2AlgToXFRMAead(plan.ESPEncryption, int(plan.ESPEncryptionKeyBits)); err != nil {
+			return fmt.Errorf("ESP XFRM algorithm: %w", err)
+		}
+		return nil
+	}
+	if _, err := driver.IKEv2AlgToXFRMCrypt(plan.ESPEncryption, int(plan.ESPEncryptionKeyBits)); err != nil {
+		return fmt.Errorf("ESP XFRM encryption algorithm: %w", err)
+	}
+	if _, err := driver.IKEv2AlgToXFRMAuth(plan.ESPIntegrity); err != nil {
+		return fmt.Errorf("ESP XFRM integrity algorithm: %w", err)
+	}
 	return nil
 }
 

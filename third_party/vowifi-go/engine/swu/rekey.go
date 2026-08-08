@@ -436,9 +436,23 @@ func (s *Session) startXFRMExpireMonitor() error {
 	return nil
 }
 
-// ensureIPv6RuntimeEnabled enables IPv6 on the runtime (no-op in user space).
+// ensureIPv6RuntimeEnabled enables IPv6 for an active kernel data plane.
 func (s *Session) ensureIPv6RuntimeEnabled() error {
-	return nil
+	if s.kernelDataPlane != nil {
+		return s.kernelDataPlane.EnsureIPv6Enabled()
+	}
+	iface := s.activeDriverInterface()
+	if iface == "" {
+		mode, err := normalizeDataplaneMode(s.cfg.DataplaneMode)
+		if err != nil || mode != DataplaneModeUserspace {
+			return errors.Join(errors.New("swu: no active kernel data-plane interface"), err)
+		}
+		return nil
+	}
+	if s.networkTxn == nil {
+		return errors.New("swu: no active network transaction")
+	}
+	return s.networkTxn.EnsureIPv6Enabled(iface)
 }
 
 // applyNetworkConfigOnTUN applies the inner address/routes to the TUN device.
@@ -446,17 +460,29 @@ func (s *Session) applyNetworkConfigOnTUN() error {
 	if s.primaryInnerIP() == nil {
 		return errors.New("swu: no inner address")
 	}
-	return nil
+	if s.tun == nil || s.networkTxn == nil {
+		return errors.New("swu: TUN data plane is not initialized")
+	}
+	return s.configureNetworkInterface(s.networkTxn, s.tun.DeviceName())
 }
 
 // cleanupNetworkConfig removes the network configuration on teardown.
 func (s *Session) cleanupNetworkConfig() error {
-	return nil
+	if s.networkTxn == nil {
+		return nil
+	}
+	err := s.networkTxn.Rollback()
+	s.networkTxn = nil
+	return err
 }
 
 // setupXFRMDataPlane installs the kernel XFRM data plane.
 func (s *Session) setupXFRMDataPlane() error {
-	return errors.New("swu: XFRM data plane not wired")
+	keys, err := s.deriveChildSAKeys()
+	if err != nil {
+		return err
+	}
+	return s.setupKernelXFRMDataPlane(keys)
 }
 
 // startUserspaceDataPlane starts the user-space data plane.

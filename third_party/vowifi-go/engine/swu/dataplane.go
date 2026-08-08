@@ -159,6 +159,13 @@ func (s *Session) setupDataPlane() error {
 	if err != nil {
 		return err
 	}
+	mode, err := normalizeDataplaneMode(s.cfg.DataplaneMode)
+	if err != nil {
+		return err
+	}
+	if mode == DataplaneModeXFRMI {
+		return s.setupKernelXFRMDataPlane(childKeys)
+	}
 
 	outbound, err := s.newESPAssociation(s.espRemoteSPI, childKeys.initiator)
 	if err != nil {
@@ -175,7 +182,9 @@ func (s *Session) setupDataPlane() error {
 	s.espIntegKey = append([]byte{}, childKeys.initiator.integ...)
 	s.childSAMu.Unlock()
 
-	// Create the inner packet endpoint.
+	if mode == DataplaneModeTUN {
+		return s.setupTUNDataPlane()
+	}
 	s.innerEndpoint = newUserspaceInnerPacketEndpoint(0, 0)
 	return nil
 }
@@ -248,21 +257,41 @@ func (s *Session) deriveChildSAKeysFor(initiatorNonce, responderNonce []byte) (*
 
 // startEstablishedDataPlane starts the data plane loops.
 func (s *Session) startEstablishedDataPlane() error {
-	if s.socket == nil || s.innerEndpoint == nil {
+	if s.socket == nil {
+		return errors.New("swu: data plane not ready")
+	}
+	if s.kernelDataPlane != nil {
+		s.markDataPlaneStarted()
+		return nil
+	}
+	if s.tun != nil {
+		if !s.markDataPlaneStarted() {
+			return nil
+		}
+		s.startTUNDataPlaneLoop()
+		return nil
+	}
+	if s.innerEndpoint == nil {
 		return errors.New("swu: data plane not ready")
 	}
 	if err := s.innerEndpoint.start(); err != nil {
 		return fmt.Errorf("swu: start inner endpoint: %w", err)
 	}
-	s.mu.Lock()
-	if s.dataPlaneStarted {
-		s.mu.Unlock()
+	if !s.markDataPlaneStarted() {
 		return nil
 	}
-	s.dataPlaneStarted = true
-	s.mu.Unlock()
 	s.startDataPlaneLoop()
 	return nil
+}
+
+func (s *Session) markDataPlaneStarted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dataPlaneStarted {
+		return false
+	}
+	s.dataPlaneStarted = true
+	return true
 }
 
 // startDataPlaneLoop runs the two data-plane loops: ESP → inner and inner → ESP.
@@ -384,9 +413,23 @@ func (e *userspaceInnerPacketEndpoint) readOuterESP() ([]byte, error) {
 }
 
 // stopDataPlane tears down the data plane.
-func (s *Session) stopDataPlane() {
+func (s *Session) stopDataPlane() error {
+	var cleanupErr error
 	if s.innerEndpoint != nil {
-		_ = s.innerEndpoint.Close()
+		cleanupErr = errors.Join(cleanupErr, s.innerEndpoint.Close())
+		s.innerEndpoint = nil
+	}
+	if s.networkTxn != nil {
+		cleanupErr = errors.Join(cleanupErr, s.networkTxn.Rollback())
+		s.networkTxn = nil
+	}
+	if s.tun != nil {
+		cleanupErr = errors.Join(cleanupErr, s.tun.Close())
+		s.tun = nil
+	}
+	if s.kernelDataPlane != nil {
+		cleanupErr = errors.Join(cleanupErr, s.kernelDataPlane.Close())
+		s.kernelDataPlane = nil
 	}
 	s.childSAMu.Lock()
 	s.espOutboundSA = nil
@@ -395,6 +438,7 @@ func (s *Session) stopDataPlane() {
 	s.mu.Lock()
 	s.dataPlaneStarted = false
 	s.mu.Unlock()
+	return cleanupErr
 }
 
 // packetLease wraps a buffer-pool lease for an outbound packet.
