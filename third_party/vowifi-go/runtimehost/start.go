@@ -131,9 +131,29 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 	if err := attachVoiceAgent(req, inst, ims); err != nil {
 		return failIMSStart(inst, fmt.Errorf("runtimehost: attach voice agent: %w", err))
 	}
+	go monitorTunnelFailure(runCtx, inst, tunnel)
 	go monitorRegistrationFailures(runCtx, inst, ims)
 	go stopRuntimeOnContext(runCtx, inst)
 	return inst, nil
+}
+
+func monitorTunnelFailure(ctx context.Context, inst *Instance, tunnel Tunnel) {
+	waitErr := tunnel.WaitDoneContext(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	failureErr := waitErr
+	if source, ok := tunnel.(tunnelFailureSource); ok {
+		if terminalErr := source.TerminalError(); terminalErr != nil {
+			failureErr = terminalErr
+		}
+	}
+	if failureErr == nil {
+		failureErr = errors.New("SWu tunnel stopped unexpectedly")
+	}
+	wrapped := fmt.Errorf("runtimehost: SWu tunnel control failed: %w", failureErr)
+	logger.Error("SWu tunnel control failed", "device", inst.State().DeviceID, "err", wrapped)
+	inst.setTunnelControlFailure(wrapped)
 }
 
 func wireSMSReadiness(inst *Instance, ims IMSLifecycle) {

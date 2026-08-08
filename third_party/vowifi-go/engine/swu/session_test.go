@@ -193,7 +193,7 @@ func TestSessionStateTransitions(t *testing.T) {
 	if s.State() != stateError {
 		t.Errorf("state = %q", s.State())
 	}
-	if s.terminalError() == nil {
+	if s.TerminalError() == nil {
 		t.Error("terminal error not recorded")
 	}
 	s.Shutdown()
@@ -202,6 +202,25 @@ func TestSessionStateTransitions(t *testing.T) {
 	default:
 		t.Error("done channel not closed after Shutdown")
 	}
+}
+
+func TestIKEReauthTimerSignalsFreshRuntimeRequirement(t *testing.T) {
+	s := NewSession(&Config{ReauthSeconds: time.Millisecond})
+	s.setState(stateEstablished)
+	s.startIKEReauthTimer()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := s.WaitDoneContext(ctx); err != nil {
+		t.Fatalf("WaitDoneContext: %v", err)
+	}
+	if s.State() != stateError {
+		t.Fatalf("state = %q, want error", s.State())
+	}
+	if err := s.TerminalError(); err == nil || !strings.Contains(err.Error(), "fresh runtime session") {
+		t.Fatalf("terminal error = %v, want fresh runtime requirement", err)
+	}
+	s.Shutdown()
 }
 
 func TestNewSessionInitializesDefaultAlgorithms(t *testing.T) {

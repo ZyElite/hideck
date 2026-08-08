@@ -413,9 +413,10 @@ func (s *Session) failEstablishedControl(err error) {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return
 	}
+	s.cancel()
 	s.stopTimers()
 	s.setTerminalError(err)
-	s.cancel()
+	s.signalDone()
 }
 
 // ensureIKEDispatcher ensures the IKE dispatcher is running.

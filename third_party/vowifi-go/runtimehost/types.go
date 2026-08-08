@@ -155,6 +155,10 @@ type Tunnel interface {
 	UpdateAddresses(oldIP, newIP net.IP) error
 }
 
+type tunnelFailureSource interface {
+	TerminalError() error
+}
+
 // IMSLifecycle is the registered IMS service owned by the runtime Instance.
 type IMSLifecycle interface {
 	Service

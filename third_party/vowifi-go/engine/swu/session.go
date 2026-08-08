@@ -184,9 +184,10 @@ type Session struct {
 	remotePort      uint16
 
 	// --- lifecycle ---
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   chan struct{}
+	ctx      context.Context
+	cancel   context.CancelFunc
+	done     chan struct{}
+	doneOnce sync.Once
 
 	mu               sync.RWMutex
 	childSAMu        sync.RWMutex
@@ -209,6 +210,7 @@ type Session struct {
 	nextOutboundID   uint32
 
 	// --- timers ---
+	timersMu        sync.Mutex
 	ikeReauthTimer  *time.Timer
 	ikeRekeyTimer   *time.Timer
 	childRekeyTimer *time.Timer
@@ -277,11 +279,15 @@ func (s *Session) setTerminalError(err error) {
 	s.setState(stateError)
 }
 
-// terminalError returns the recorded terminal error, if any.
-func (s *Session) terminalError() error {
+// TerminalError returns the error that ended an established session, if any.
+func (s *Session) TerminalError() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.terminalErr
+}
+
+func (s *Session) signalDone() {
+	s.doneOnce.Do(func() { close(s.done) })
 }
 
 // Connect establishes the SWu tunnel: IKE_SA_INIT → IKE_AUTH (EAP-AKA) →
@@ -506,17 +512,13 @@ func (s *Session) Shutdown() {
 	s.state = stateShutdown
 	s.mu.Unlock()
 
-	s.stopTimers()
 	s.cancel()
+	s.stopTimers()
 	s.controlWG.Wait()
 	s.dataPlaneWG.Wait()
 	s.stopDataPlane()
 	s.stopTransport()
-	select {
-	case <-s.done:
-	default:
-		close(s.done)
-	}
+	s.signalDone()
 }
 
 // WaitDone blocks until the session is shut down.
@@ -628,11 +630,28 @@ func (s *Session) startTimers() {
 
 // stopTimers stops all timers.
 func (s *Session) stopTimers() {
-	for _, t := range []*time.Timer{s.ikeReauthTimer, s.ikeRekeyTimer, s.childRekeyTimer, s.natKeepalive, s.dpdTimer} {
+	s.timersMu.Lock()
+	defer s.timersMu.Unlock()
+	timers := []*time.Timer{s.ikeReauthTimer, s.ikeRekeyTimer, s.childRekeyTimer, s.natKeepalive, s.dpdTimer}
+	for _, t := range timers {
 		if t != nil {
 			t.Stop()
 		}
 	}
+	s.ikeReauthTimer = nil
+	s.ikeRekeyTimer = nil
+	s.childRekeyTimer = nil
+	s.natKeepalive = nil
+	s.dpdTimer = nil
+}
+
+func (s *Session) armTimer(target **time.Timer, delay time.Duration, callback func()) {
+	s.timersMu.Lock()
+	defer s.timersMu.Unlock()
+	if s.ctx.Err() != nil {
+		return
+	}
+	*target = time.AfterFunc(delay, callback)
 }
 
 // startIKEReauthTimer arms the periodic re-authentication timer.
@@ -641,7 +660,7 @@ func (s *Session) startIKEReauthTimer() {
 	if every <= 0 {
 		every = 24 * time.Hour
 	}
-	s.ikeReauthTimer = time.AfterFunc(every, func() {
+	s.armTimer(&s.ikeReauthTimer, every, func() {
 		if err := s.Reauthenticate(); err != nil {
 			s.failEstablishedControl(fmt.Errorf("swu: IKE reauthentication failed: %w", err))
 			return
@@ -656,7 +675,7 @@ func (s *Session) startIKESARekeyTimer() {
 	if every <= 0 {
 		every = 8 * time.Hour
 	}
-	s.ikeRekeyTimer = time.AfterFunc(every, func() {
+	s.armTimer(&s.ikeRekeyTimer, every, func() {
 		if err := s.RekeyIKESA(); err != nil {
 			s.failEstablishedControl(fmt.Errorf("swu: IKE SA rekey failed: %w", err))
 			return
@@ -671,7 +690,7 @@ func (s *Session) startChildSARekeyTimer() {
 	if every <= 0 {
 		every = 1 * time.Hour
 	}
-	s.childRekeyTimer = time.AfterFunc(every, func() {
+	s.armTimer(&s.childRekeyTimer, every, func() {
 		if err := s.RekeyChildSA(); err != nil {
 			s.failEstablishedControl(fmt.Errorf("swu: CHILD_SA rekey failed: %w", err))
 			return
@@ -686,7 +705,7 @@ func (s *Session) startNATKeepalive() {
 	if every <= 0 {
 		every = 20 * time.Second
 	}
-	s.natKeepalive = time.AfterFunc(every, func() {
+	s.armTimer(&s.natKeepalive, every, func() {
 		s.sendNATKeepalive()
 		s.startNATKeepalive()
 	})
@@ -709,7 +728,7 @@ func (s *Session) startDPD() {
 	if every <= 0 {
 		every = 30 * time.Second
 	}
-	s.dpdTimer = time.AfterFunc(every, func() {
+	s.armTimer(&s.dpdTimer, every, func() {
 		if err := s.DPDProbe(); err != nil {
 			s.failEstablishedControl(fmt.Errorf("swu: DPD failed: %w", err))
 			return

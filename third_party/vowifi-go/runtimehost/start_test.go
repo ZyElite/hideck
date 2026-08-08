@@ -53,6 +53,7 @@ type lifecycleTunnel struct {
 	onStateChange func(string)
 	packetIO      *lifecyclePacketIO
 	updateErr     error
+	terminalErr   error
 	oldIP         net.IP
 	newIP         net.IP
 }
@@ -161,6 +162,20 @@ func (t *lifecycleTunnel) WaitDoneContext(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (t *lifecycleTunnel) TerminalError() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.terminalErr
+}
+
+func (t *lifecycleTunnel) fail(err error) {
+	t.mu.Lock()
+	t.terminalErr = err
+	t.mu.Unlock()
+	t.setState("error")
+	t.shutdownOnce.Do(func() { close(t.done) })
 }
 
 func (t *lifecycleTunnel) InnerNetwork() swu.InnerNetworkConfig {
@@ -374,6 +389,38 @@ func TestStartClearsIMSReadyWhenRegistrationRefreshFails(t *testing.T) {
 	if state.IMSState != "failed" || state.SMSReady || !state.TunnelReady {
 		t.Fatalf("runtime refresh failure state = %+v", state)
 	}
+}
+
+func TestStartSurfacesEstablishedTunnelFailure(t *testing.T) {
+	prepared := &identity.PreparedSession{
+		Profile:     identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},
+		IMSIdentity: identity.IMSIdentity{IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example", Domain: "ims.example"},
+		EPDGAddr:    "epdg.example.com",
+	}
+	tunnel := newLifecycleTunnel(nil)
+	inst, err := Start(context.Background(), runtimeTestRequest(prepared, tunnel))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	tunnel.fail(errors.New("full reauthentication requires a fresh runtime session"))
+
+	deadline := time.After(time.Second)
+	for inst.State().LastError == "" {
+		select {
+		case <-deadline:
+			t.Fatal("runtime did not expose terminal tunnel failure")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	state := inst.State()
+	if state.SessionState != "error" || state.TunnelReady || state.IMSReady || state.SMSReady {
+		t.Fatalf("terminal tunnel state = %+v", state)
+	}
+	if state.LastReason != "SWu tunnel control failed" || !strings.Contains(state.LastError, "fresh runtime session") {
+		t.Fatalf("terminal tunnel error = %+v", state)
+	}
+	_ = inst.Stop(context.Background())
 }
 
 func TestStartReturnsFailedInstanceWhenTunnelConnectFails(t *testing.T) {
