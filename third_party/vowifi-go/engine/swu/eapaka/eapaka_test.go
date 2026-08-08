@@ -1,6 +1,7 @@
 package eapaka
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"testing"
@@ -328,5 +329,18 @@ func TestParseRejectsInvalidLengths(t *testing.T) {
 	}
 	if _, err := ParseAttributes([]byte{AttributeIdentity, 0, 0, 0}); !errors.Is(err, ErrInvalidAttribute) {
 		t.Fatalf("ParseAttributes() err=%v, want ErrInvalidAttribute", err)
+	}
+}
+
+func TestMarshalBinaryRetainsRawAKADataCompatibility(t *testing.T) {
+	data := []byte{SubtypeIdentity, 0xaa, 0xbb, AttributeIdentity, 1, 0, 0}
+	raw, err := (Packet{
+		Code: CodeResponse, Identifier: 8, Type: TypeAKA, Data: data,
+	}).MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw[5:], data) {
+		t.Fatalf("raw AKA data = %x, want %x", raw[5:], data)
 	}
 }

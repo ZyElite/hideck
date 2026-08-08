@@ -1,49 +1,118 @@
 package eap
 
-import (
-	"encoding/binary"
-	"errors"
-)
+import "errors"
 
-// SaveReauthData stores the re-authentication state from a full EAP-AKA
-// authentication run, enabling fast re-authentication on the next exchange.
-func (c *FastReauthContext) SaveReauthData(identity, reauthID, mk []byte) {
-	c.available = true
-	c.identity = append([]byte{}, identity...)
-	c.reauthID = append([]byte{}, reauthID...)
-	c.mk = append([]byte{}, mk...)
-	c.counter = 0
+func NewFastReauthContext() *FastReauthContext {
+	return &FastReauthContext{}
 }
 
-// CanUseReauth reports whether fast re-authentication can be used: the context
-// must hold re-authentication data and a non-empty re-auth identity.
+// SaveReauthData supports the original (string, mk, kEncr, kAut) form and the
+// later ([]byte identity, []byte reauthID, []byte mk) reconstruction.
+func (c *FastReauthContext) SaveReauthData(identity any, material ...[]byte) {
+	switch value := identity.(type) {
+	case string:
+		c.saveOriginal(value, material)
+	case []byte:
+		c.saveCompatibility(value, material)
+	default:
+		panic("eap: invalid reauthentication identity")
+	}
+}
+
+func (c *FastReauthContext) saveOriginal(reauthID string, material [][]byte) {
+	if len(material) != 3 {
+		panic("eap: SaveReauthData requires MK, KEncr, and KAut")
+	}
+	c.ReauthID = reauthID
+	c.MK = material[0]
+	c.KEncr = material[1]
+	c.KAut = material[2]
+	c.Enabled = true
+	c.Counter = 0
+}
+
+func (c *FastReauthContext) saveCompatibility(_ []byte, material [][]byte) {
+	if len(material) != 2 {
+		panic("eap: compatibility SaveReauthData requires reauth ID and MK")
+	}
+	c.ReauthID = string(append([]byte(nil), material[0]...))
+	c.MK = append([]byte(nil), material[1]...)
+	c.Enabled = true
+	c.Counter = 0
+}
+
 func (c *FastReauthContext) CanUseReauth() bool {
-	return c.available && len(c.reauthID) > 0
+	return c.Enabled && c.ReauthID != ""
 }
 
-// BuildReauthResponse builds the EAP-AKA re-authentication response attribute
-// bytes: AT_COUNTER (carrying the current counter), optionally
-// AT_COUNTER_TOO_SMALL, and AT_MAC (the 16-byte MAC). The AT_MAC value is
-// appended with its two reserved bytes zeroed; the caller fills in the actual
-// MAC after the rest of the message is finalised (RFC 4187 §10.7).
-func (c *FastReauthContext) BuildReauthResponse(counter uint16, counterTooSmall bool, mac []byte) ([]byte, error) {
+// BuildReauthResponse supports the original (nonceS, counter,
+// counterTooSmall) form and the later (counter, counterTooSmall, mac) form.
+func (c *FastReauthContext) BuildReauthResponse(first, second, third any) ([]byte, error) {
+	switch value := first.(type) {
+	case []byte:
+		counter, okCounter := reauthCounter(second)
+		counterTooSmall, okSmall := third.(bool)
+		if !okCounter || !okSmall {
+			return nil, errors.New("eap: invalid reauthentication arguments")
+		}
+		return c.buildOriginal(value, counter, counterTooSmall), nil
+	case uint16:
+		counterTooSmall, okSmall := second.(bool)
+		mac, okMAC := third.([]byte)
+		if !okSmall || !okMAC {
+			return nil, errors.New("eap: invalid compatibility arguments")
+		}
+		return c.buildCompatibility(value, counterTooSmall, mac)
+	case int:
+		counter, okCounter := reauthCounter(value)
+		counterTooSmall, okSmall := second.(bool)
+		mac, okMAC := third.([]byte)
+		if !okCounter || !okSmall || !okMAC {
+			return nil, errors.New("eap: invalid compatibility arguments")
+		}
+		return c.buildCompatibility(counter, counterTooSmall, mac)
+	default:
+		return nil, errors.New("eap: invalid reauthentication arguments")
+	}
+}
+
+func reauthCounter(value any) (uint16, bool) {
+	switch counter := value.(type) {
+	case uint16:
+		return counter, true
+	case int:
+		if counter >= 0 && counter <= int(^uint16(0)) {
+			return uint16(counter), true
+		}
+	}
+	return 0, false
+}
+
+func (c *FastReauthContext) buildOriginal(nonceS []byte, counter uint16, counterTooSmall bool) []byte {
+	c.NonceS = nonceS
+	c.CounterSmall = counterTooSmall
+	if !counterTooSmall {
+		c.Counter = counter
+	}
+	return reauthAttributes(counter, counterTooSmall, nil)
+}
+
+func (c *FastReauthContext) buildCompatibility(counter uint16, counterTooSmall bool, mac []byte) ([]byte, error) {
 	if len(mac) != 16 {
 		return nil, errors.New("eap: AT_MAC must be 16 bytes")
 	}
-	c.counter = counter
+	c.Counter = counter
+	return reauthAttributes(counter, counterTooSmall, mac), nil
+}
 
-	var out []byte
-	// AT_COUNTER: Type(0x13) | Length(1) | Counter(2, big-endian).
-	out = append(out, AttrATCounter, 0x01)
-	out = binary.BigEndian.AppendUint16(out, counter)
-
+func reauthAttributes(counter uint16, counterTooSmall bool, mac []byte) []byte {
+	response := []byte{AT_COUNTER, 1, byte(counter >> 8), byte(counter)}
 	if counterTooSmall {
-		// AT_COUNTER_TOO_SMALL: Type(0x14) | Length(1) | 2 reserved bytes.
-		out = append(out, AttrATCounterTooSmall, 0x01, 0x00, 0x00)
+		response = append(response, AT_COUNTER_TOO_SMALL, 1, 0, 0)
 	}
-
-	// AT_MAC: Type(0x0B) | Length(5) | 2 reserved | 16 MAC.
-	out = append(out, AttrATMAC, 0x05, 0x00, 0x00)
-	out = append(out, mac...)
-	return out, nil
+	response = append(response, AT_MAC, 5, 0, 0)
+	if mac == nil {
+		return append(response, make([]byte, 16)...)
+	}
+	return append(response, mac...)
 }

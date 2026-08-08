@@ -38,6 +38,9 @@ func (s *Session) currentIKEIdentity() (byte, []byte) {
 
 // currentEAPIdentity returns the EAP identity (NAI) for the session.
 func (s *Session) currentEAPIdentity() string {
+	if s.fastReauthCtx != nil && s.fastReauthCtx.CanUseReauth() {
+		return s.fastReauthCtx.ReauthID
+	}
 	imsi := ""
 	if s.cfg != nil {
 		imsi = s.cfg.IMSI

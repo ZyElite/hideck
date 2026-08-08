@@ -64,6 +64,8 @@ func (s *Session) handleRFCEAPRequest(packet eapaka.Packet, raw []byte) error {
 		return s.sendEAPBytes(encoded)
 	case isAKAChallenge(packet):
 		return s.handleRFCChallenge(packet)
+	case isAKAReauthenticationRequest(packet):
+		return s.handleLegacyFastReauthentication(packet, raw)
 	case isAKANotification(packet):
 		return s.handleRFCNotification(packet)
 	default:
@@ -95,6 +97,11 @@ func isAKAChallenge(packet eapaka.Packet) bool {
 func isAKANotification(packet eapaka.Packet) bool {
 	return (packet.Type == eapaka.TypeAKA || packet.Type == eapaka.TypeAKAPrime) &&
 		packet.Subtype == eapaka.SubtypeNotification
+}
+
+func isAKAReauthenticationRequest(packet eapaka.Packet) bool {
+	return (packet.Type == eapaka.TypeAKA || packet.Type == eapaka.TypeAKAPrime) &&
+		packet.Subtype == eapaka.SubtypeReauthentication
 }
 
 func (s *Session) handleRFCChallenge(packet eapaka.Packet) error {
@@ -130,6 +137,9 @@ func (s *Session) handleRFCChallenge(packet eapaka.Packet) error {
 	_, s.eapResultIndicated = eapaka.FindAttribute(packet.Attributes, eapaka.AttributeResultInd)
 	s.eapResultConfirmed = false
 	s.eapKeys = keys
+	if err := s.captureFastReauthentication(packet, keys); err != nil {
+		return err
+	}
 	return s.sendEAPPacket(response)
 }
 

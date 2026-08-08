@@ -1,84 +1,117 @@
-// Package eap implements the EAP packet framing and EAP-AKA/AKA' attribute
-// handling used by the vowifi SWu client.
-//
-// Reconstructed from the decompiled engine/eap. It covers RFC 3748 (EAP
-// packet framing), RFC 4187 (EAP-AKA attributes) and the fast re-authentication
-// context (RFC 4187 §5).
+// Package eap implements the EAP and EAP-AKA packet surface used by SWu.
 package eap
 
-// EAP packet codes (RFC 3748 §4.1).
 const (
-	CodeRequest     byte = 1
-	CodeResponse    byte = 2
-	CodeSuccess     byte = 3
-	CodeFailure     byte = 4
+	CodeRequest  uint8 = 1
+	CodeResponse uint8 = 2
+	CodeSuccess  uint8 = 3
+	CodeFailure  uint8 = 4
 )
 
-// EAP types used by the SWu client.
 const (
-	TypeIdentity     byte = 1  // EAP-Identity
-	TypeAKA          byte = 23 // 0x17, EAP-AKA (RFC 4187)
-	TypeAKAPrime     byte = 50 // 0x32, EAP-AKA' (RFC 5448)
-	TypeNotification byte = 4
-	TypeNAK          byte = 3
+	TypeIdentity     uint8 = 1
+	TypeNAK          uint8 = 3
+	TypeNotification uint8 = 4
+	TypeAKA          uint8 = 23
+	TypeAKAPrime     uint8 = 50
 )
 
-// EAP-AKA/AKA' subtypes (RFC 4187 §8.1).
 const (
-	SubtypeAKAChallenge     byte = 0x01
-	SubtypeAKAAuthReject    byte = 0x02
-	SubtypeSyncFailure      byte = 0x04
-	SubtypeIdentity         byte = 0x05
-	SubtypeNotification     byte = 0x0C
-	SubtypeClientError      byte = 0x0E
-	SubtypeReauthentication byte = 0x02
+	SubtypeChallenge        uint8 = 1
+	SubtypeAuthReject       uint8 = 2
+	SubtypeSyncFailure      uint8 = 4
+	SubtypeIdentity         uint8 = 5
+	SubtypeNotification     uint8 = 12
+	SubtypeReauthentication uint8 = 13
+	SubtypeClientError      uint8 = 14
 )
 
-// EAP-AKA attribute types (RFC 4187 §9).
+// Compatibility names retained from the later reconstruction.
 const (
-	AttrATRAND            byte = 0x01
-	AttrATAUTN            byte = 0x02
-	AttrATRES             byte = 0x03
-	AttrATPadding         byte = 0x04
-	AttrATPermanentIDReq  byte = 0x0A
-	AttrATMAC             byte = 0x0B
-	AttrATNotification    byte = 0x0C
-	AttrATClientErrorCode byte = 0x0D
-	AttrATIdentity        byte = 0x0E
-	AttrATVersionList     byte = 0x10
-	AttrATSelectedVersion byte = 0x11
-	AttrATCounter         byte = 0x13
-	AttrATCounterTooSmall byte = 0x14
+	SubtypeAKAChallenge  = SubtypeChallenge
+	SubtypeAKAAuthReject = SubtypeAuthReject
 )
 
-// EAPPacket is a parsed EAP packet (RFC 3748). For Request/Response of type
-// EAP-AKA/AKA' the 8-byte AKA header (Code|ID|Len|Type|SubType|2 reserved) is
-// decoded into Type/SubType and the remaining bytes into Data; for other
-// Request/Response types the 5-byte header leaves the type-specific data in
-// Data; Success/Failure carry no data.
+const (
+	AT_RAND              uint8 = 1
+	AT_AUTN              uint8 = 2
+	AT_RES               uint8 = 3
+	AT_AUTS              uint8 = 4
+	AT_PADDING           uint8 = 6
+	AT_NONCE_MT          uint8 = 7
+	AT_PERMANENT_ID_REQ  uint8 = 10
+	AT_MAC               uint8 = 11
+	AT_NOTIFICATION      uint8 = 12
+	AT_ANY_ID_REQ        uint8 = 13
+	AT_IDENTITY          uint8 = 14
+	AT_VERSION_LIST      uint8 = 15
+	AT_SELECTED_VERSION  uint8 = 16
+	AT_FULLAUTH_ID_REQ   uint8 = 17
+	AT_COUNTER           uint8 = 19
+	AT_COUNTER_TOO_SMALL uint8 = 20
+	AT_NONCE_S           uint8 = 21
+	AT_CLIENT_ERROR_CODE uint8 = 22
+	AT_KDF_INPUT         uint8 = 23
+	AT_KDF               uint8 = 24
+	AT_IV                uint8 = 129
+	AT_ENCR_DATA         uint8 = 130
+	AT_NEXT_PSEUDONYM    uint8 = 132
+	AT_NEXT_REAUTH_ID    uint8 = 133
+	AT_CHECKCODE         uint8 = 134
+	AT_RESULT_IND        uint8 = 135
+	AT_BIDDING           uint8 = 136
+)
+
+// Compatibility names retained for existing callers in this tree.
+const (
+	AttrATRAND            = AT_RAND
+	AttrATAUTN            = AT_AUTN
+	AttrATRES             = AT_RES
+	AttrATPadding         = AT_PADDING
+	AttrATPermanentIDReq  = AT_PERMANENT_ID_REQ
+	AttrATMAC             = AT_MAC
+	AttrATNotification    = AT_NOTIFICATION
+	AttrATClientErrorCode = AT_CLIENT_ERROR_CODE
+	AttrATIdentity        = AT_IDENTITY
+	AttrATVersionList     = AT_VERSION_LIST
+	AttrATSelectedVersion = AT_SELECTED_VERSION
+	AttrATCounter         = AT_COUNTER
+	AttrATCounterTooSmall = AT_COUNTER_TOO_SMALL
+)
+
 type EAPPacket struct {
-	Code       byte
-	Identifier byte
-	Type       byte
-	SubType    byte // valid for EAP-AKA/AKA'
+	Code       uint8
+	Identifier uint8
+	Type       uint8
+	Subtype    uint8
 	Data       []byte
 }
 
-// EAPAttribute is one EAP-AKA attribute (RFC 4187 §9). Length is in 4-byte
-// words; Value is the (Length*4 - 2) payload bytes.
-type EAPAttribute struct {
-	Type   byte
-	Length byte // in 4-byte words
+type Attribute struct {
+	Type   uint8
+	Length uint8
 	Value  []byte
 }
 
-// FastReauthContext holds the state needed for EAP-AKA fast re-authentication
-// (RFC 4187 §5).
+type EAPAttribute = Attribute
+
+type ReauthState struct {
+	NextReauthID string
+	Counter      uint16
+	MK           []byte
+	KEncr        []byte
+	KAut         []byte
+	MSK          []byte
+	EMSK         []byte
+}
+
 type FastReauthContext struct {
-	available bool
-	identity  []byte
-	reauthID  []byte
-	counter   uint16
-	mk        []byte // re-authentication master key
-	data      []byte // additional preserved reauth data
+	Enabled      bool
+	ReauthID     string
+	Counter      uint16
+	NonceS       []byte
+	CounterSmall bool
+	KEncr        []byte
+	KAut         []byte
+	MK           []byte
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
+	engineeap "github.com/iniwex5/vowifi-go/engine/eap"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
@@ -39,6 +40,13 @@ type Config struct {
 	MNC string
 	// AKAProvider computes AKA from the network challenge (RAND, AUTN).
 	AKAProvider AKAProvider
+	// Fast reauthentication material can be restored by the runtime host.
+	FastReauthID    string
+	FastReauthMK    []byte
+	FastReauthKAut  []byte
+	FastReauthKEncr []byte
+	// OnFastReauthUpdate persists a newly issued reauthentication identity.
+	OnFastReauthUpdate func(reauthID string, mk, kAut, kEncr []byte)
 	// AlgorithmPolicy selects the IKE/ESP algorithm offer policy.
 	AlgorithmPolicy string
 	// IKEEncryption / IKEPRF / IKEIntegrity / IKEDH are the IKE algorithm
@@ -150,6 +158,7 @@ type Session struct {
 	eapID                  byte // current EAP identifier
 	eapType                byte // negotiated EAP method (AKA / AKA')
 	eapKeys                eapaka.Keys
+	fastReauthCtx          *engineeap.FastReauthContext
 	eapIdentityTranscript  [][]byte
 	eapResultIndicated     bool
 	eapResultConfirmed     bool
@@ -241,6 +250,7 @@ func NewSession(cfg *Config) *Session {
 		nonceLen:          cfg.NonceLen,
 		nextOutboundID:    1,
 		localIKEInitiator: true,
+		fastReauthCtx:     initFastReauthContext(cfg),
 	}
 	if s.nonceLen <= 0 {
 		s.nonceLen = 32
@@ -250,6 +260,14 @@ func NewSession(cfg *Config) *Session {
 		s.debug = NewWiresharkDebugger()
 	}
 	return s
+}
+
+func initFastReauthContext(cfg *Config) *engineeap.FastReauthContext {
+	context := engineeap.NewFastReauthContext()
+	if cfg != nil && cfg.FastReauthID != "" && len(cfg.FastReauthMK) > 0 {
+		context.SaveReauthData(cfg.FastReauthID, cfg.FastReauthMK, cfg.FastReauthKEncr, cfg.FastReauthKAut)
+	}
+	return context
 }
 
 // setState records a session state transition and fires the callback.

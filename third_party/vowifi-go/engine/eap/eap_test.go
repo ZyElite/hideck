@@ -8,7 +8,7 @@ import (
 
 func TestEAPPacketAKARoundTrip(t *testing.T) {
 	// EAP-AKA Challenge request: 8-byte header + 4 bytes of attr data.
-	orig := &EAPPacket{Code: CodeRequest, Identifier: 0x55, Type: TypeAKA, SubType: SubtypeAKAChallenge, Data: []byte{0xaa, 0xbb, 0xcc, 0xdd}}
+	orig := &EAPPacket{Code: CodeRequest, Identifier: 0x55, Type: TypeAKA, Subtype: SubtypeChallenge, Data: []byte{0xaa, 0xbb, 0xcc, 0xdd}}
 	enc := orig.Encode()
 	if len(enc) != 12 {
 		t.Fatalf("encoded length = %d, want 12", len(enc))
@@ -25,7 +25,7 @@ func TestEAPPacketAKARoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if p.Code != orig.Code || p.Identifier != orig.Identifier || p.Type != orig.Type || p.SubType != orig.SubType {
+	if p.Code != orig.Code || p.Identifier != orig.Identifier || p.Type != orig.Type || p.Subtype != orig.Subtype {
 		t.Errorf("parsed = %+v, want %+v", p, orig)
 	}
 	if !bytes.Equal(p.Data, orig.Data) {
@@ -43,8 +43,8 @@ func TestEAPPacketIdentityRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if p.Type != TypeIdentity || p.SubType != 0 {
-		t.Errorf("parsed type/subtype = %d/%d", p.Type, p.SubType)
+	if p.Type != TypeIdentity || p.Subtype != 0 {
+		t.Errorf("parsed type/subtype = %d/%d", p.Type, p.Subtype)
 	}
 	if string(p.Data) != "user@nai" {
 		t.Errorf("parsed data = %q", p.Data)
@@ -111,7 +111,7 @@ func TestParseAttributesErrors(t *testing.T) {
 }
 
 func TestNotificationCodeToString(t *testing.T) {
-	if got := NotificationCodeToString(0x0000); got != "notification: general success" {
+	if got := NotificationCodeToString(0x0000); got != "[IANA] General failure after authentication (通用认证后失败)" {
 		t.Errorf("code 0 = %q", got)
 	}
 	got := NotificationCodeToString(0x8001)

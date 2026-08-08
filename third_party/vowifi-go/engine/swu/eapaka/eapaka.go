@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+
+	engineeap "github.com/iniwex5/vowifi-go/engine/eap"
 )
 
 const (
@@ -108,33 +110,48 @@ type ReauthenticationRequest struct {
 
 func (p Packet) MarshalBinary() ([]byte, error) {
 	if p.Code == CodeSuccess || p.Code == CodeFailure {
-		out := []byte{p.Code, p.Identifier, 0, 4}
-		return out, nil
+		return (&engineeap.EAPPacket{Code: p.Code, Identifier: p.Identifier}).Encode(), nil
 	}
 	if p.Type == 0 {
 		p.Type = TypeAKA
 	}
-	var body []byte
-	body = append(body, p.Type)
+	if len(p.Data) > 0 && (p.Type == TypeAKA || p.Type == TypeAKAPrime) {
+		return marshalRawAKAData(p)
+	}
+	var data []byte
 	if len(p.Data) > 0 {
-		body = append(body, p.Data...)
+		data = append(data, p.Data...)
 	} else {
-		body = append(body, p.Subtype, 0, 0)
 		attrs, err := MarshalAttributes(p.Attributes)
 		if err != nil {
 			return nil, err
 		}
-		body = append(body, attrs...)
+		data = append(data, attrs...)
 	}
-	if len(body)+4 > 0xffff {
+	headerLength := 5
+	if p.Type == TypeAKA || p.Type == TypeAKAPrime {
+		headerLength = 8
+	}
+	if len(data)+headerLength > 0xffff {
 		return nil, fmt.Errorf("%w: packet too long", ErrInvalidPacket)
 	}
-	out := make([]byte, 4, len(body)+4)
-	out[0] = p.Code
-	out[1] = p.Identifier
-	binary.BigEndian.PutUint16(out[2:4], uint16(len(body)+4))
-	out = append(out, body...)
-	return out, nil
+	return (&engineeap.EAPPacket{
+		Code: p.Code, Identifier: p.Identifier, Type: p.Type, Subtype: p.Subtype, Data: data,
+	}).Encode(), nil
+}
+
+func marshalRawAKAData(packet Packet) ([]byte, error) {
+	length := len(packet.Data) + 5
+	if length > 0xffff {
+		return nil, fmt.Errorf("%w: packet too long", ErrInvalidPacket)
+	}
+	result := make([]byte, length)
+	result[0] = packet.Code
+	result[1] = packet.Identifier
+	binary.BigEndian.PutUint16(result[2:4], uint16(length))
+	result[4] = packet.Type
+	copy(result[5:], packet.Data)
+	return result, nil
 }
 
 func ParsePacket(data []byte) (Packet, error) {
@@ -145,7 +162,11 @@ func ParsePacket(data []byte) (Packet, error) {
 	if length < 4 || length > len(data) {
 		return Packet{}, fmt.Errorf("%w: length %d", ErrInvalidPacket, length)
 	}
-	p := Packet{Code: data[0], Identifier: data[1]}
+	framed, err := engineeap.Parse(data)
+	if err != nil {
+		return Packet{}, fmt.Errorf("%w: %v", ErrInvalidPacket, err)
+	}
+	p := Packet{Code: framed.Code, Identifier: framed.Identifier}
 	if p.Code == CodeSuccess || p.Code == CodeFailure {
 		if length != 4 {
 			return Packet{}, fmt.Errorf("%w: terminal packet length %d", ErrInvalidPacket, length)
@@ -155,16 +176,16 @@ func ParsePacket(data []byte) (Packet, error) {
 	if length < 5 {
 		return Packet{}, ErrInvalidPacket
 	}
-	p.Type = data[4]
+	p.Type = framed.Type
 	if p.Type != TypeAKA && p.Type != TypeAKAPrime {
-		p.Data = append([]byte(nil), data[5:length]...)
+		p.Data = append([]byte(nil), framed.Data...)
 		return p, nil
 	}
 	if length < 8 {
 		return Packet{}, ErrInvalidPacket
 	}
-	p.Subtype = data[5]
-	attrs, err := ParseAttributes(data[8:length])
+	p.Subtype = framed.Subtype
+	attrs, err := ParseAttributes(framed.Data)
 	if err != nil {
 		return Packet{}, err
 	}
@@ -194,9 +215,14 @@ func ParseAttributes(data []byte) ([]Attribute, error) {
 		if length < 4 || length > len(data) {
 			return nil, fmt.Errorf("%w: length %d", ErrInvalidAttribute, length)
 		}
+		parsed, err := engineeap.ParseAttributes(data[:length])
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidAttribute, err)
+		}
+		attribute := parsed[data[0]]
 		out = append(out, Attribute{
-			Type: data[0],
-			Data: append([]byte(nil), data[2:length]...),
+			Type: attribute.Type,
+			Data: append([]byte(nil), attribute.Value...),
 		})
 		data = data[length:]
 	}
@@ -210,14 +236,8 @@ func (a Attribute) MarshalBinary() ([]byte, error) {
 	if total < 4 || total > 0xff*4 {
 		return nil, fmt.Errorf("%w: length %d", ErrInvalidAttribute, total)
 	}
-	out := make([]byte, 2, total)
-	out[0] = a.Type
-	out[1] = byte(total / 4)
-	out = append(out, a.Data...)
-	if pad > 0 {
-		out = append(out, make([]byte, pad)...)
-	}
-	return out, nil
+	legacy := &engineeap.Attribute{Type: a.Type, Value: append([]byte(nil), a.Data...)}
+	return legacy.Encode(), nil
 }
 
 func FixedAttribute(attributeType uint8, value []byte) Attribute {
