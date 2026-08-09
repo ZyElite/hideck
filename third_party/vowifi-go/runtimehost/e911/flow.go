@@ -44,6 +44,9 @@ func StartEmergencyAddressUpdate(ctx context.Context, req Request) (Response, er
 		}
 		return Response{URL: websheetURL, ContentType: "text/html", Title: "Emergency address"}, nil
 	}
+	if provider == "att-ts43" {
+		return startATTS43Flow(ctx, req, endpoint, websheetURL)
+	}
 	return startEntitlementFlow(ctx, req, endpoint, websheetURL)
 }
 

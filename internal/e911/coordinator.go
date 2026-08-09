@@ -122,6 +122,7 @@ func buildATTSIPUsername(imsi string) string {
 func buildRuntimeE911Identity(status modem.DeviceStatus, mcc, mnc, name string) runtimee911.Identity {
 	return runtimee911.Identity{
 		IMSI:        status.IMSI,
+		ICCID:       status.ICCID,
 		IMEI:        status.IMEI,
 		MCC:         mcc,
 		MNC:         mnc,

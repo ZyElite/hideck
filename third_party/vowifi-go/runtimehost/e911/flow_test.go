@@ -1,6 +1,8 @@
 package e911
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -38,14 +40,21 @@ func (p *testAKAProvider) CalculateAKA(rand16, autn16 []byte) (enginesim.AKAResu
 func TestStartEmergencyAddressUpdateUsesRealDefaultHTTPClient(t *testing.T) {
 	var requestBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.Header.Get("x-protocol-version") != "2" {
+		if r.Method != http.MethodPost || r.Header.Get("x-protocol-version") != "2" || r.Header.Get("content-encoding") != "gzip" {
 			t.Errorf("request = %s protocol=%q", r.Method, r.Header.Get("x-protocol-version"))
 		}
-		requestBody, _ = io.ReadAll(r.Body)
+		compressed, _ := io.ReadAll(r.Body)
+		reader, err := gzip.NewReader(bytes.NewReader(compressed))
+		if err != nil {
+			t.Errorf("gzip request: %v", err)
+			return
+		}
+		requestBody, _ = io.ReadAll(reader)
+		_ = reader.Close()
 		w.Header().Set("X-Entitlement", "accepted")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`[{"status":1000,"token":"abc123","title":"E911"}]`))
+		_, _ = w.Write([]byte(`[{"status":6000,"response-id":5,"response":[{"entitlement-name":"VoWiFi","entitlement-status":1}],"address-update-url":"https://example.test/address","address-update-url-post-data":"auth=abc123"}]`))
 	}))
 	defer server.Close()
 
@@ -59,10 +68,10 @@ func TestStartEmergencyAddressUpdateUsesRealDefaultHTTPClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartEmergencyAddressUpdate: %v", err)
 	}
-	if !strings.Contains(response.URL, "token=abc123") || response.UserData != "abc123" || response.Title != "E911" {
+	if response.URL != "https://example.test/address" || response.UserData != "auth=abc123" || response.Title != "E911地址" {
 		t.Fatalf("response = %+v", response)
 	}
-	if !strings.Contains(string(requestBody), `"operation":"emergency-address-update"`) || !strings.Contains(string(requestBody), `"imsi":"310280233641503"`) {
+	if !strings.Contains(string(requestBody), `"action-name":"getAuthentication"`) || !strings.Contains(string(requestBody), `"subscriber-id"`) {
 		t.Fatalf("request body = %s", requestBody)
 	}
 }
@@ -92,7 +101,7 @@ func TestStartEmergencyAddressUpdateAnswersAKAChallenge(t *testing.T) {
 
 	response, err := StartEmergencyAddressUpdate(context.Background(), Request{
 		Carrier: carrier.EffectiveCarrierConfig{E911: carrier.E911Config{
-			Provider: "att-ts43", Websheet: "https://example.test/e911",
+			Provider: "att", Websheet: "https://example.test/e911",
 			EntitlementEndpoint: server.URL,
 		}},
 		Identity:    Identity{IMSI: "310280233641503", IMEI: "356306952701762", SIPUsername: "310280233641503@private.att.net"},
@@ -135,7 +144,7 @@ func TestStartEmergencyAddressUpdateAnswersEAPRelayIdentity(t *testing.T) {
 
 	response, err := StartEmergencyAddressUpdate(context.Background(), Request{
 		Carrier: carrier.EffectiveCarrierConfig{E911: carrier.E911Config{
-			Provider: "att-ts43", Websheet: "https://example.test/e911", EntitlementEndpoint: server.URL,
+			Provider: "att", Websheet: "https://example.test/e911", EntitlementEndpoint: server.URL,
 		}},
 		Identity: Identity{IMSI: "310280233641503", IMEI: "356306952701762", SIPUsername: identity},
 	})

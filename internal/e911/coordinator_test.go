@@ -78,8 +78,9 @@ func TestBuildRuntimeE911IdentityIgnoresDebugCachedTokenEnv(t *testing.T) {
 	t.Setenv("VOHIVE_E911_ATT_CACHED_TOKEN", " cached-token-value ")
 
 	got := buildRuntimeE911Identity(modem.DeviceStatus{
-		IMSI: "310280233641503",
-		IMEI: "356306952701762",
+		IMSI:  "310280233641503",
+		ICCID: "89014103212345678901",
+		IMEI:  "356306952701762",
 	}, "310", "280", "VoHive")
 
 	if got.CachedToken != "" {
@@ -87,6 +88,9 @@ func TestBuildRuntimeE911IdentityIgnoresDebugCachedTokenEnv(t *testing.T) {
 	}
 	if got.SIPUsername != "310280233641503@private.att.net" {
 		t.Fatalf("sip username=%q", got.SIPUsername)
+	}
+	if got.ICCID != "89014103212345678901" {
+		t.Fatalf("ICCID=%q", got.ICCID)
 	}
 }
 

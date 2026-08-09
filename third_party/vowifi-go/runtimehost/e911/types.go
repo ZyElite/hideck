@@ -25,6 +25,7 @@ var (
 
 type Identity struct {
 	IMSI        string
+	ICCID       string
 	IMEI        string
 	MCC         string
 	MNC         string
