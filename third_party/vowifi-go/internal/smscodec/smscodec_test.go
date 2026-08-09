@@ -28,7 +28,7 @@ func TestNormalizeSMSEncoding(t *testing.T) {
 		if (err != nil) != c.wantErr {
 			t.Errorf("NormalizeSMSEncoding(%q) err=%v, wantErr=%v", c.in, err, c.wantErr)
 		}
-		if !c.wantErr && got != c.want {
+		if !c.wantErr && string(got) != c.want {
 			t.Errorf("NormalizeSMSEncoding(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
@@ -77,7 +77,7 @@ func buildDeliverTPDU(t *testing.T, from, text string) []byte {
 
 func TestDecodeDeliverTPDU(t *testing.T) {
 	pdu := buildDeliverTPDU(t, "+8613800138000", "hello world")
-	got := DecodeDeliverTPDU(pdu)
+	got := DecodeDeliverTPDUMessage(pdu)
 	if got.Err != nil {
 		t.Fatalf("DecodeDeliverTPDU err: %v", got.Err)
 	}
@@ -97,7 +97,10 @@ func TestTrimDeliverTPDUToDeclaredLength(t *testing.T) {
 	pdu := buildDeliverTPDU(t, "+15551234567", "trim me")
 	// Append garbage after the declared user-data length.
 	extended := append(append([]byte{}, pdu...), 0xAA, 0xBB, 0xCC)
-	got := TrimDeliverTPDUToDeclaredLength(extended)
+	got, trimmed := TrimDeliverTPDUToDeclaredLength(extended)
+	if !trimmed {
+		t.Fatal("TrimDeliverTPDUToDeclaredLength did not report trimming")
+	}
 	if len(got) != len(pdu) {
 		t.Errorf("trimmed len = %d, want %d (declared)", len(got), len(pdu))
 	}
@@ -139,7 +142,7 @@ func TestKnownDeliverPDU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reference decode: %v", err)
 	}
-	got := DecodeDeliverTPDU(pdu)
+	got := DecodeDeliverTPDUMessage(pdu)
 	if got.Err != nil {
 		t.Fatalf("DecodeDeliverTPDU: %v", got.Err)
 	}

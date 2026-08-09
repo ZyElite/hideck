@@ -1,16 +1,13 @@
 package smscodec
 
 import (
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 )
 
-// RPDUKind is the classification of an RP PDU (3GPP TS 24.011).
 type RPDUKind string
 
-// RP PDU kinds.
 const (
 	RPDUKindUnknown RPDUKind = "UNKNOWN"
 	RPDUKindData    RPDUKind = "RP-DATA"
@@ -18,7 +15,6 @@ const (
 	RPDUKindError   RPDUKind = "RP-ERROR"
 )
 
-// RPDUInfo describes a classified RP PDU.
 type RPDUInfo struct {
 	Kind    RPDUKind
 	RawType byte
@@ -26,7 +22,47 @@ type RPDUInfo struct {
 	Cause   int
 }
 
-// ClassifyRPDU classifies an RP PDU by its message type indicator.
+// ParseRPData 解析 RP-DATA（RPDU）并提取 RP-MR 与 TPDU。
+func ParseRPData(body []byte) (byte, []byte, error) {
+	if len(body) < 3 {
+		return 0, nil, fmt.Errorf("RPDU 过短")
+	}
+	i := 0
+	i++
+	rpMR := body[i]
+	i++
+	if i >= len(body) {
+		return 0, nil, fmt.Errorf("RP-DA 缺失")
+	}
+	daLen := int(body[i])
+	i++
+	if i+daLen > len(body) {
+		return 0, nil, fmt.Errorf("RP-DA 超界")
+	}
+	i += daLen
+
+	if i >= len(body) {
+		return 0, nil, fmt.Errorf("RP-OA 缺失")
+	}
+	oaLen := int(body[i])
+	i++
+	if i+oaLen > len(body) {
+		return 0, nil, fmt.Errorf("RP-OA 超界")
+	}
+	i += oaLen
+
+	if i >= len(body) {
+		return 0, nil, fmt.Errorf("RP-UD 缺失")
+	}
+	udLen := int(body[i])
+	i++
+	if i+udLen > len(body) {
+		return 0, nil, fmt.Errorf("RP-UD 超界")
+	}
+	tpduBytes := body[i : i+udLen]
+	return rpMR, tpduBytes, nil
+}
+
 func ClassifyRPDU(body []byte) RPDUInfo {
 	if len(body) == 0 {
 		return RPDUInfo{Kind: RPDUKindUnknown}
@@ -49,165 +85,170 @@ func ClassifyRPDU(body []byte) RPDUInfo {
 	return info
 }
 
-// ParseRPErrorCause parses the cause from an RP-ERROR PDU (TS 24.011 §8.2.5.4).
+// ParseRPErrorCause 解析 RP-ERROR cause（支持可变长度 Cause IE）。
 func ParseRPErrorCause(body []byte) (byte, error) {
 	if len(body) < 4 {
-		return 0, errors.New("smscodec: RP-ERROR too short")
+		return 0, fmt.Errorf("RP-ERROR 长度不足")
 	}
 	if body[0] != 0x04 && body[0] != 0x05 {
-		return 0, fmt.Errorf("smscodec: not RP-ERROR mti=0x%02x", body[0])
+		return 0, fmt.Errorf("非 RP-ERROR: mti=0x%02x", body[0])
 	}
 	causeIELen := int(body[2])
 	if causeIELen <= 0 {
-		return 0, errors.New("smscodec: empty cause IE")
+		return 0, fmt.Errorf("RP-ERROR cause IE 为空")
 	}
 	if 3+causeIELen > len(body) {
-		return 0, errors.New("smscodec: cause IE out of bounds")
+		return 0, fmt.Errorf("RP-ERROR cause IE 越界")
 	}
+	// 3GPP TS 24.011 cause 为首字节低 7 位，后续诊断字节按需忽略。
 	return body[3] & 0x7F, nil
 }
 
-// ParseRPDataWithAddresses parses an RP-DATA PDU into (MR, OA, DA, TPUD, err).
 func ParseRPDataWithAddresses(body []byte) (byte, string, string, []byte, error) {
 	if len(body) < 5 {
-		return 0, "", "", nil, errors.New("smscodec: RP-DATA too short")
+		return 0, "", "", nil, fmt.Errorf("RPDU 过短")
 	}
 	i := 0
-	i++ // MTI
-	if i >= len(body) {
-		return 0, "", "", nil, errors.New("smscodec: missing MR")
-	}
-	rpMr := body[i]
+	i++
+	rpMR := body[i]
 	i++
 
+	var oa, da string
 	if i >= len(body) {
-		return 0, "", "", nil, errors.New("smscodec: missing RP-OA")
+		return 0, "", "", nil, fmt.Errorf("RP-OA 缺失")
 	}
 	oaLen := int(body[i])
 	i++
 	if i+oaLen > len(body) {
-		return 0, "", "", nil, errors.New("smscodec: RP-OA out of bounds")
+		return 0, "", "", nil, fmt.Errorf("RP-OA 超界")
 	}
-	oa := decodeAddressValue(body[i : i+oaLen])
+	if oaLen > 0 {
+		oa, _ = DecodeAddressValue(body[i : i+oaLen])
+	}
 	i += oaLen
 
 	if i >= len(body) {
-		return 0, "", "", nil, errors.New("smscodec: missing RP-DA")
+		return 0, oa, "", nil, fmt.Errorf("RP-DA 缺失")
 	}
 	daLen := int(body[i])
 	i++
 	if i+daLen > len(body) {
-		return 0, "", "", nil, errors.New("smscodec: RP-DA out of bounds")
+		return 0, oa, "", nil, fmt.Errorf("RP-DA 超界")
 	}
-	da := decodeAddressValue(body[i : i+daLen])
+	if daLen > 0 {
+		da, _ = DecodeAddressValue(body[i : i+daLen])
+	}
 	i += daLen
 
 	if i >= len(body) {
-		return 0, "", "", nil, errors.New("smscodec: missing RP-UD")
+		return 0, oa, da, nil, fmt.Errorf("RP-UD 缺失")
 	}
 	udLen := int(body[i])
 	i++
 	if i+udLen > len(body) {
-		return 0, "", "", nil, errors.New("smscodec: RP-UD out of bounds")
+		return 0, oa, da, nil, fmt.Errorf("RP-UD 超界")
 	}
-	return rpMr, oa, da, body[i : i+udLen], nil
+	tpduBytes := body[i : i+udLen]
+	return rpMR, oa, da, tpduBytes, nil
 }
 
-// BuildRPData builds an RP-DATA PDU (TS 24.011 §8.2.2).
-func BuildRPData(mr byte, oa, da string, tpdu []byte) []byte {
-	oaEnc, _ := EncodeAddress(oa)
-	daEnc, _ := EncodeAddress(da)
-	out := make([]byte, 0, 3+len(oaEnc)+len(daEnc)+len(tpdu))
-	out = append(out, 0x00) // RP-DATA MTI, direction mobile-originated
-	out = append(out, mr)
-	out = append(out, oaEnc...)
-	out = append(out, daEnc...)
-	out = append(out, byte(len(tpdu)))
-	out = append(out, tpdu...)
+func DecodeAddressValue(v []byte) (string, error) {
+	if len(v) < 1 {
+		return "", errors.New("address value 为空")
+	}
+	ton := v[0]
+	bcd := v[1:]
+
+	prefix := ""
+	if ton&0x70 == 0x10 {
+		prefix = "+"
+	}
+
+	var sb strings.Builder
+	sb.WriteString(prefix)
+	for _, b := range bcd {
+		lo := b & 0x0F
+		hi := (b >> 4) & 0x0F
+		if lo <= 9 {
+			sb.WriteByte('0' + lo)
+		} else if lo == 0x0F {
+		} else {
+			return "", fmt.Errorf("非法 BCD digit: %x", lo)
+		}
+		if hi <= 9 {
+			sb.WriteByte('0' + hi)
+		} else if hi == 0x0F {
+		} else {
+			return "", fmt.Errorf("非法 BCD digit: %x", hi)
+		}
+	}
+	return sb.String(), nil
+}
+
+// EncodeAddress 将号码编码为 LV 格式的 RP-Address（Length + Type + BCD）。
+// Length 是 Value 部分（Type + BCD）的字节数。
+func EncodeAddress(number string) []byte {
+	number = strings.TrimSpace(number)
+	if number == "" {
+		return []byte{0x00}
+	}
+
+	ton := byte(0x81) // Unknown, ISDN/telephone numbering plan
+	if strings.HasPrefix(number, "+") {
+		ton = 0x91 // International, ISDN/telephone numbering plan
+		number = number[1:]
+	}
+
+	// BCD 编码：每两个数字一组，低位在前，高位在后
+	// 如果是奇数个数字，最后补 F
+	length := len(number)
+	bcdLen := (length + 1) / 2
+	bcd := make([]byte, bcdLen)
+	for i := 0; i < length; i++ {
+		digit := byte(number[i] - '0')
+		if i%2 == 0 {
+			bcd[i/2] |= digit
+		} else {
+			bcd[i/2] |= digit << 4
+		}
+	}
+	if length%2 != 0 {
+		bcd[length/2] |= 0xF0
+	}
+
+	// RP-Address Value 部分 = Type (1 byte) + BCD
+	// RP-Address IE = Length (1 byte) + Value
+	totalLen := 1 + len(bcd)
+	out := make([]byte, 1+totalLen)
+	out[0] = byte(totalLen)
+	out[1] = ton
+	copy(out[2:], bcd)
 	return out
 }
 
-// BuildRPAck builds an RP-ACK in the mobile-to-network direction.
-func BuildRPAck(mr byte) []byte {
-	return []byte{0x02, mr}
+// BuildRPData 构造 RP-DATA（RPDU），携带指定 RP-MR 与 TPDU。
+func BuildRPData(rpMR byte, tpduBytes []byte, smsc string) []byte {
+	smscAddr := EncodeAddress(smsc)
+
+	out := make([]byte, 0, 2+1+len(smscAddr)+1+len(tpduBytes))
+	out = append(out, 0x00) // RP-Message Type: RP-DATA (MS -> Network)
+	out = append(out, rpMR) // RP-Message Reference
+	out = append(out, 0x00) // RP-Originator Address Length = 0
+	out = append(out, smscAddr...)
+	out = append(out, byte(len(tpduBytes)))
+	out = append(out, tpduBytes...)
+	return out
 }
 
-// BuildRPError builds an RP-ERROR in the mobile-to-network direction.
-func BuildRPError(mr, cause byte) []byte {
-	return []byte{0x04, mr, 0x01, cause, 0x00}
+// BuildRPAck 构造 RP-ACK（确认收到 RP-DATA）。
+func BuildRPAck(rpMR byte) []byte {
+	return []byte{0x02, rpMR}
 }
 
-// EncodeAddress encodes a phone number as a TS 24.011 address field.
-func EncodeAddress(number string) ([]byte, error) {
-	digits := onlyDigits(number)
-	if len(digits) == 0 {
-		return []byte{0x00}, nil
-	}
-	ton := byte(0x81)
-	if strings.HasPrefix(strings.TrimSpace(number), "+") {
-		ton = 0x91
-	}
-	// Address: [Value length][TON/NPI][semi-octet digits].
-	addr := make([]byte, 0, 2+(len(digits)+1)/2)
-	addr = append(addr, byte((len(digits)+1)/2+1))
-	addr = append(addr, ton)
-	for i := 0; i+1 < len(digits); i += 2 {
-		addr = append(addr, (digits[i+1]-'0')<<4|(digits[i]-'0'))
-	}
-	if len(digits)%2 == 1 {
-		addr = append(addr, 0xF0|(digits[len(digits)-1]-'0'))
-	}
-	return addr, nil
-}
+// RPCauseTemporaryFailure 临时故障（3GPP TS 24.011 §8.2.5.4），SMSC 应稍后重试
+const RPCauseTemporaryFailure byte = 41
 
-// DecodeAddressValue decodes a TS 24.011 address value (without the length
-// prefix) into a phone number.
-func DecodeAddressValue(addr []byte) string {
-	return decodeAddressValue(addr)
-}
-
-// decodeAddressValue decodes a TS 24.011 address value.
-func decodeAddressValue(addr []byte) string {
-	if len(addr) == 0 {
-		return ""
-	}
-	// First byte is TON/NPI.
-	var b strings.Builder
-	if addr[0]&0x70 == 0x10 {
-		b.WriteByte('+')
-	}
-	for _, octet := range addr[1:] {
-		lo := octet & 0x0F
-		if lo <= 9 {
-			b.WriteByte('0' + lo)
-		}
-		hi := octet >> 4
-		if hi <= 9 {
-			b.WriteByte('0' + hi)
-		}
-	}
-	return b.String()
-}
-
-// DecodeBodyMaybeHex decodes a body that may be hex-encoded.
-func DecodeBodyMaybeHex(body []byte) []byte {
-	if len(body) == 0 {
-		return nil
-	}
-	decoded, err := hex.DecodeString(string(body))
-	if err == nil && len(decoded) > 0 {
-		return decoded
-	}
-	return body
-}
-
-// onlyDigits keeps only the digit characters.
-func onlyDigits(s string) string {
-	var b strings.Builder
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			b.WriteRune(c)
-		}
-	}
-	return b.String()
+// BuildRPError 构造 RP-ERROR（拒收 RP-DATA，通知 SMSC 投递失败）。
+func BuildRPError(rpMR byte, cause byte) []byte {
+	return []byte{0x04, rpMR, 0x01, cause, 0x00}
 }

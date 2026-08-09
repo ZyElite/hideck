@@ -158,10 +158,7 @@ func inboundSMSRequest(t *testing.T, contentType string, body []byte) string {
 
 func inboundRPData(t *testing.T, mr byte, sender, text string) []byte {
 	t.Helper()
-	originator, err := smscodec.EncodeAddress("+447802002606")
-	if err != nil {
-		t.Fatal(err)
-	}
+	originator := smscodec.EncodeAddress("+447802002606")
 	tpduBytes := deliverTPDU(t, sender, text)
 	body := []byte{0x01, mr}
 	body = append(body, originator...)

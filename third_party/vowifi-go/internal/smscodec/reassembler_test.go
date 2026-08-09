@@ -127,3 +127,16 @@ func TestReassemblerCleanup(t *testing.T) {
 	}
 	_ = bytes.Compare // silence unused import
 }
+
+func TestReassemblerOwnsFragmentData(t *testing.T) {
+	r := NewReassembler()
+	first := []byte("hello ")
+	if _, complete := r.Add("alice", 5, 8, 2, 1, first, time.Now()); complete {
+		t.Fatal("first fragment completed the message")
+	}
+	copy(first, "xxxxxx")
+	content, complete := r.Add("alice", 5, 8, 2, 2, []byte("world"), time.Now())
+	if !complete || string(content) != "hello world" {
+		t.Fatalf("Add() = (%q, %v)", content, complete)
+	}
+}

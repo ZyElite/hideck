@@ -1,401 +1,462 @@
 package smscodec
 
 import (
-	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"github.com/warthog618/sms/encoding/tpdu"
 )
 
-// WAP push port numbers carried in the TP-UDH destination-port IE.
+// 常见 WAP Push / OTA 端口
 const (
-	wapPushPort    = 0x0b84 // WSP application port (push)
-	wapPushPortAlt = 0x0b85
-	udhDestPortIE  = 0x05
-	udhConcatIE    = 0x00 // 8-bit concatenation
-	udhConcatIE16  = 0x08 // 16-bit concatenation
+	wapPushPort16 = 2948
 )
 
-// BinaryClassification describes the human-readable result of classifying a
-// binary SMS (the output of formatBinaryClassification in the original).
-type BinaryClassification struct {
-	Kind        string // "MMS Notification", "SIM OTA 23.048", "OMA CP", "WAP Push", …
-	ContentType string // normalized content type
-	URL         string // content-location / href when present
-	Raw         string // printable hint of the payload
+// binaryKind 二进制短信分类类型
+type binaryKind string
+
+const (
+	binaryKindUnknown         binaryKind = "unknown"
+	binaryKindOmaCP           binaryKind = "oma_cp"
+	binaryKindWAPSI           binaryKind = "wap_si"
+	binaryKindWAPSL           binaryKind = "wap_sl"
+	binaryKindMMSNotification binaryKind = "mms_notification"
+	binaryKindSIMOTA          binaryKind = "sim_ota_23048"
+)
+
+// udhPorts 统一承载 UDH 端口寻址解析结果。
+// 16-bit (IEI 0x05) 和 8-bit (IEI 0x04) 可能同时存在，优先使用 16-bit。
+type udhPorts struct {
+	DestPort16 uint16
+	SrcPort16  uint16
+	Has16Bit   bool
+
+	DestPort8 uint8
+	SrcPort8  uint8
+	Has8Bit   bool
 }
 
-func (c BinaryClassification) String() string {
-	var b strings.Builder
-	b.WriteString(c.Kind)
-	if c.ContentType != "" {
-		fmt.Fprintf(&b, " (%s)", c.ContentType)
+func (p udhPorts) preferredDestPort() (uint16, bool) {
+	if p.Has16Bit {
+		return p.DestPort16, true
 	}
-	if c.URL != "" {
-		fmt.Fprintf(&b, " url=%s", c.URL)
+	if p.Has8Bit {
+		return uint16(p.DestPort8), true
 	}
-	if c.Raw != "" {
-		fmt.Fprintf(&b, " [%s]", c.Raw)
-	}
-	return b.String()
+	return 0, false
 }
 
-// classifyBinarySMS inspects an 8-bit (binary) decoded TPDU and returns a
-// human-readable classification. The ok result reports whether the message
-// was recognised as a structured binary SMS.
-func classifyBinarySMS(t *tpdu.TPDU) (string, bool) {
-	// 8-bit data: DCS 0x04/0x06 (general 8-bit class 0/1) or the 0xF4..0xFF
-	// message-class range with the 8-bit indicator (bit 2) set.
-	if !isBinaryDCS(t.DCS) {
-		return "", false
-	}
-	ports := parseUDHPorts(t.UDH)
-	data := []byte(t.UD)
-
-	switch {
-	case ports.DestPort == wapPushPort || ports.DestPort == wapPushPortAlt:
-		cls := parseWSPPush(data)
-		return formatBinaryClassification(cls, t), true
-
-	case isLikelySIMOTA(data):
-		cls := BinaryClassification{Kind: "SIM OTA 23.048"}
-		cls.Raw = extractPrintableHint(data)
-		return cls.String(), true
-
-	case isLikelySIWBXML(data) || isLikelySLWBXML(data) || isLikelyMMSContentType(data):
-		cls := classifyContent(data)
-		return cls.String(), true
-	}
-	return "", false
-}
-
-func isBinaryDCS(dcs tpdu.DCS) bool {
-	b := byte(dcs)
-	return b == 0x04 || b == 0x06 || (b&0xf0 == 0xf0 && b&0x04 != 0)
-}
-
-// UDHPorts carries the concatenation and destination-port info from a TPDU
-// user data header.
-type UDHPorts struct {
-	DestPort    int
-	ConcatRef   int
-	ConcatTotal int
-	ConcatSeq   int
-}
-
-// parseUDHPorts extracts the destination port and concatenation info from the
-// TP-UDH information elements.
-func parseUDHPorts(udh tpdu.UserDataHeader) UDHPorts {
-	var p UDHPorts
+func parseUDHPorts(udh tpdu.UserDataHeader) udhPorts {
+	out := udhPorts{}
 	for _, ie := range udh {
-		d := ie.Data
 		switch ie.ID {
-		case udhDestPortIE:
-			if len(d) >= 2 {
-				p.DestPort = int(binary.BigEndian.Uint16(d))
+		case 0x05: // 16-bit application port addressing
+			if len(ie.Data) >= 4 {
+				out.DestPort16 = uint16(ie.Data[0])<<8 | uint16(ie.Data[1])
+				out.SrcPort16 = uint16(ie.Data[2])<<8 | uint16(ie.Data[3])
+				out.Has16Bit = true
 			}
-		case udhConcatIE:
-			if len(d) >= 3 {
-				p.ConcatRef, p.ConcatTotal, p.ConcatSeq = int(d[0]), int(d[1]), int(d[2])
-			}
-		case udhConcatIE16:
-			if len(d) >= 4 {
-				p.ConcatRef = int(binary.BigEndian.Uint16(d))
-				p.ConcatTotal, p.ConcatSeq = int(d[2]), int(d[3])
+		case 0x04: // 8-bit application port addressing
+			if len(ie.Data) >= 2 {
+				out.DestPort8 = ie.Data[0]
+				out.SrcPort8 = ie.Data[1]
+				out.Has8Bit = true
 			}
 		}
 	}
-	return p
+	return out
 }
 
-// ---------------------------------------------------------------------------
-// WSP push parsing (WAP-230)
-// ---------------------------------------------------------------------------
-
-// parseWSPPush parses the start of a WSP push payload and returns its
-// classification. The first bytes are:
-//
-//	[0]  TID (transaction id)
-//	[1]  PDU type (0x06 = PUSH)
-//	[2:] headers: content-type (token or length-prefixed), then fields.
-func parseWSPPush(data []byte) BinaryClassification {
-	cls := BinaryClassification{Kind: "WAP Push"}
-	if len(data) < 2 {
-		cls.Raw = extractPrintableHint(data)
-		return cls
-	}
-	pos := 2
-	// content-type: a well-known token byte, or a length-prefixed string.
-	// The well-known WSP content-type tokens (application/vnd.wap.mms-message
-	// etc.) live in the 0x20..0x3F range; a byte that maps to one is a token.
-	if pos < len(data) {
-		if ct, ok := knownWSPContentType(data[pos]); ok {
-			cls.ContentType = ct
-			pos++
-		} else {
-			n := int(data[pos])
-			pos++
-			if pos+n <= len(data) {
-				cls.ContentType = normalizeContentType(string(data[pos : pos+n]))
-				pos += n
-			}
-		}
-	}
-	// scan remaining header fields for content-location / X-Wap-Application-Id
-	cls.URL = scanWSPHeaders(data[pos:])
-	if cls.URL == "" {
-		cls.URL = extractURL(data)
-	}
-	return cls
+type binarySMSClassification struct {
+	Kind            binaryKind
+	Label           string
+	SummaryLines    []string
+	RawHex          string
+	Payload         []byte
+	ContentType     string
+	DestPort        uint16
+	HasDestPort     bool
+	IsPossEncrypted bool
 }
 
-// scanWSPHeaders walks WSP header fields looking for a content location.
-func scanWSPHeaders(data []byte) string {
-	i := 0
-	for i+1 < len(data) {
-		// header field: name (token byte, or length-prefixed string), value
-		var name string
-		if data[i] >= 0x80 {
-			name = mapWSPHeaderName(data[i])
-			i++
+func classifyBinarySMS(t *tpdu.TPDU, msg []byte) binarySMSClassification {
+	rawHex := hex.EncodeToString(msg)
+	ports := parseUDHPorts(t.UDH)
+	destPort, hasDestPort := ports.preferredDestPort()
+
+	c := binarySMSClassification{
+		Kind:        binaryKindUnknown,
+		Label:       "二进制数据",
+		RawHex:      rawHex,
+		Payload:     msg,
+		DestPort:    destPort,
+		HasDestPort: hasDestPort,
+	}
+
+	wsp := parseWSPPush(msg)
+	if wsp.Ok {
+		c.Payload = wsp.Body
+		c.ContentType = wsp.ContentType
+		if c.ContentType != "" {
+			c.SummaryLines = append(c.SummaryLines, "content_type="+c.ContentType)
+		}
+		c.SummaryLines = append(c.SummaryLines, fmt.Sprintf("wsp_tid=0x%02x pdu=0x%02x", wsp.TransactionID, wsp.PDUType))
+	}
+
+	// OMA CP：优先由端口识别，其次由 content-type 识别。
+	if (hasDestPort && destPort == wapPushPort16) || isLikelyOMAContentType(c.ContentType) {
+		c.Kind = binaryKindOmaCP
+		c.Label = "OMA CP 运营商配置短信"
+		if cfg, err := DecodeOmaCPFromTPDU(c.Payload); err == nil {
+			summary := strings.Split(strings.TrimSpace(FormatOmaCPSummary(cfg)), "\n")
+			c.SummaryLines = append(c.SummaryLines, summary...)
 		} else {
-			n := int(data[i])
-			i++
-			if i+n > len(data) {
-				break
-			}
-			name = string(data[i : i+n])
-			i += n
+			c.IsPossEncrypted = true
+			c.SummaryLines = append(c.SummaryLines, "wbxml_decode=failed (可能加密/非明文)")
 		}
-		if i >= len(data) {
-			break
+		return c
+	}
+
+	// WAP SI / SL
+	if isLikelySIContentType(c.ContentType) || isLikelySIWBXML(c.Payload) {
+		c.Kind = binaryKindWAPSI
+		c.Label = "WAP SI Push"
+		addSISLHints(&c, c.Payload)
+		return c
+	}
+	if isLikelySLContentType(c.ContentType) || isLikelySLWBXML(c.Payload) {
+		c.Kind = binaryKindWAPSL
+		c.Label = "WAP SL Push"
+		addSISLHints(&c, c.Payload)
+		return c
+	}
+
+	// MMS Notification
+	if isLikelyMMSContentType(c.ContentType) || isLikelyMMSNotification(c.Payload) {
+		c.Kind = binaryKindMMSNotification
+		c.Label = "MMS Notification"
+		addMMSHints(&c, c.Payload)
+		return c
+	}
+
+	// SIM OTA (23.048) 分类识别（不解密）
+	if isLikelySIMOTA(t, c.Payload, c.ContentType, hasDestPort, destPort) {
+		c.Kind = binaryKindSIMOTA
+		c.Label = "SIM OTA 23.048"
+		if spi, kic, kid, ok := tryParseSIMOTAHeader(c.Payload); ok {
+			c.SummaryLines = append(c.SummaryLines,
+				fmt.Sprintf("spi=0x%04x kic=0x%02x kid=0x%02x", spi, kic, kid))
 		}
-		var val string
-		if data[i] >= 0x80 {
-			// token value (e.g. well-known header value) — no URL
-			i++
+		c.IsPossEncrypted = true
+		c.SummaryLines = append(c.SummaryLines, "decrypt=not_attempted")
+		return c
+	}
+
+	return c
+}
+
+func formatBinaryClassification(c binarySMSClassification) string {
+	var sb strings.Builder
+	sb.WriteString("[")
+	sb.WriteString(c.Label)
+	sb.WriteString("]")
+	sb.WriteString("\n")
+	if c.HasDestPort {
+		sb.WriteString(fmt.Sprintf("dest_port=%d\n", c.DestPort))
+	}
+	for _, line := range c.SummaryLines {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
-		n := int(data[i])
-		i++
-		if i+n > len(data) {
-			break
-		}
-		val = string(data[i : i+n])
-		i += n
-		if strings.EqualFold(name, "content-location") {
-			return val
-		}
+		sb.WriteString(line)
+		sb.WriteString("\n")
 	}
+	if c.IsPossEncrypted {
+		sb.WriteString("security=可能加密\n")
+	}
+	sb.WriteString("raw=")
+	sb.WriteString(c.RawHex)
+	return sb.String()
+}
+
+type wspPush struct {
+	Ok            bool
+	TransactionID byte
+	PDUType       byte
+	ContentType   string
+	Body          []byte
+}
+
+func parseWSPPush(data []byte) wspPush {
+	// 简化实现：按最常见 Push 结构解析
+	// [TID][PDU Type][HeadersLen][Headers...][Body...]
+	if len(data) < 4 {
+		return wspPush{}
+	}
+	tid := data[0]
+	pduType := data[1]
+	if pduType != 0x06 && pduType != 0x07 {
+		return wspPush{}
+	}
+	headersLen := int(data[2])
+	if headersLen < 0 || 3+headersLen > len(data) {
+		return wspPush{}
+	}
+	headers := data[3 : 3+headersLen]
+	body := data[3+headersLen:]
+	ct := parseWSPContentType(headers)
+	return wspPush{
+		Ok:            true,
+		TransactionID: tid,
+		PDUType:       pduType,
+		ContentType:   ct,
+		Body:          body,
+	}
+}
+
+func parseWSPContentType(headers []byte) string {
+	if len(headers) == 0 {
+		return ""
+	}
+
+	// 常见短整型编码：bit7=1，value=低7位
+	if headers[0]&0x80 != 0 {
+		return mapWSPContentTypeToken(headers[0] & 0x7F)
+	}
+
+	// 文本字符串 content-type（null 结尾）
+	if isLikelyASCII(headers[0]) {
+		ct := readCString(headers)
+		return normalizeContentType(ct)
+	}
+
+	// Value-length + media-type
+	// 这里仅做轻量容错解析，避免误判。
+	valueLen := int(headers[0])
+	if valueLen > 0 && 1+valueLen <= len(headers) {
+		v := headers[1 : 1+valueLen]
+		if len(v) > 0 && v[0]&0x80 != 0 {
+			return mapWSPContentTypeToken(v[0] & 0x7F)
+		}
+		return normalizeContentType(readCString(v))
+	}
+
 	return ""
 }
 
-func mapWSPHeaderName(tok byte) string {
-	switch tok & 0x7f {
-	case 0x0d:
-		return "content-location"
-	default:
-		return fmt.Sprintf("hdr-0x%02x", tok&0x7f)
-	}
-}
-
-// knownWSPContentType reports whether b is a well-known WSP content-type token
-// and, if so, its media type.
-func knownWSPContentType(b byte) (string, bool) {
-	switch b {
-	case 0x2c:
-		return "application/vnd.wap.mms-message", true
-	case 0x2e:
-		return "application/vnd.wap.connectivity-wbxml", true
-	case 0x30:
-		return "application/vnd.wap.sic", true
-	case 0x31:
-		return "application/vnd.wap.slc", true
-	case 0x33:
-		return "application/vnd.wap.si", true
-	case 0x34:
-		return "application/vnd.wap.sl", true
-	case 0x37:
-		return "application/vnd.wap.syncml-notification", true
-	default:
-		return "", false
-	}
-}
-
-// mapWSPContentTypeToken maps the well-known WSP content-type tokens.
 func mapWSPContentTypeToken(tok byte) string {
-	if ct, ok := knownWSPContentType(tok); ok {
-		return ct
+	switch tok {
+	case 0x2e:
+		return "application/vnd.wap.sic"
+	case 0x30:
+		return "application/vnd.wap.connectivity-wbxml"
+	case 0x31:
+		return "application/vnd.wap.slc"
+	case 0x3e:
+		return "application/vnd.wap.mms-message"
+	default:
+		return fmt.Sprintf("token:0x%02x", tok)
 	}
-	return fmt.Sprintf("application/x-wap-token-0x%02x", tok)
 }
 
-// parseWSPContentType parses a raw content-type string.
-func parseWSPContentType(s string) string { return normalizeContentType(s) }
-
-// normalizeContentType trims parameters (e.g. ";charset=…") and whitespace.
-func normalizeContentType(s string) string {
-	if i := strings.IndexByte(s, ';'); i >= 0 {
-		s = s[:i]
+func readCString(b []byte) string {
+	n := 0
+	for n < len(b) && b[n] != 0x00 {
+		n++
 	}
+	return string(b[:n])
+}
+
+func normalizeContentType(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
-// classifyContent decides MMS / SIS / OMA CP based on content type.
-func classifyContent(data []byte) BinaryClassification {
-	if isLikelyMMSContentType(data) {
-		cls := BinaryClassification{Kind: "MMS Notification"}
-		cls.URL = extractURL(data)
-		return cls
+func isLikelyASCII(b byte) bool {
+	return b >= 0x20 && b <= 0x7e
+}
+
+func isLikelyOMAContentType(ct string) bool {
+	return ct == "application/vnd.wap.connectivity-wbxml"
+}
+
+func isLikelySIContentType(ct string) bool {
+	return ct == "application/vnd.wap.sic" || ct == "application/vnd.wap.si"
+}
+
+func isLikelySLContentType(ct string) bool {
+	return ct == "application/vnd.wap.slc" || ct == "application/vnd.wap.sl"
+}
+
+func isLikelyMMSContentType(ct string) bool {
+	return ct == "application/vnd.wap.mms-message"
+}
+
+func wbxmlPublicID(data []byte) (uint32, bool) {
+	if len(data) < 3 {
+		return 0, false
 	}
-	if isLikelySLWBXML(data) || isLikelySIWBXML(data) {
-		cls := BinaryClassification{Kind: "SIS Download"}
-		cls.URL = extractURL(data)
-		return cls
+	if data[0] < 0x01 || data[0] > 0x03 {
+		return 0, false
 	}
-	cls := BinaryClassification{Kind: "OMA CP"}
-	cls.Raw = extractPrintableHint(data)
-	return cls
+	pid, _, ok := parseMBUint32At(data, 1)
+	return pid, ok
 }
 
-// isLikelyMMSContentType reports whether the payload declares the MMS message
-// content type.
-func isLikelyMMSContentType(data []byte) bool {
-	s := string(data)
-	low := strings.ToLower(s)
-	return strings.Contains(low, "application/vnd.wap.mms-message") ||
-		strings.Contains(low, "application/vnd.wap.multipart.related")
+func isLikelySIWBXML(data []byte) bool {
+	pid, ok := wbxmlPublicID(data)
+	// 常见 SI public id
+	return ok && (pid == 0x05 || pid == 0x06)
 }
 
-// isLikelySIWBXML / isLikelySLWBXML report whether the body looks like the
-// corresponding WAP service indication / loading WBXML document.
-func isLikelySIWBXML(data []byte) bool { return looksLikeWAPWBXML(data, "si") }
-func isLikelySLWBXML(data []byte) bool { return looksLikeWAPWBXML(data, "sl") }
-func isLikelySLContentType(s string) bool {
-	s = normalizeContentType(s)
-	return s == "application/vnd.wap.sl" || s == "application/vnd.wap.slc"
+func isLikelySLWBXML(data []byte) bool {
+	pid, ok := wbxmlPublicID(data)
+	// 常见 SL public id
+	return ok && (pid == 0x06 || pid == 0x07)
 }
 
-func looksLikeWAPWBXML(data []byte, doc string) bool {
-	if !isWBXMLHeader(data) {
-		return false
+func addSISLHints(c *binarySMSClassification, payload []byte) {
+	if u := extractURL(payload); u != "" {
+		c.SummaryLines = append(c.SummaryLines, "url="+u)
 	}
-	s := string(data)
-	low := strings.ToLower(s)
-	return strings.Contains(low, "si") && doc == "si" ||
-		strings.Contains(low, "sl") && doc == "sl" ||
-		strings.Contains(low, doc)
-}
-
-// wbxmlPublicID returns the known WBXML public ID tokens as strings.
-func wbxmlPublicID(pid uint32) string {
-	switch pid {
-	case 0x0b:
-		return "OMA CP (wap-provisioningdoc)"
-	case 0x02:
-		return "WAP SI"
-	case 0x03:
-		return "WAP SL"
-	default:
-		return fmt.Sprintf("0x%X", pid)
+	if hint := extractPrintableHint(payload, 80); hint != "" {
+		c.SummaryLines = append(c.SummaryLines, "hint="+hint)
 	}
 }
 
-// isLikelySIMOTA reports whether the payload resembles a SIM OTA (STK)
-// proactive-command message: a BER-TLV with tag 0xD0 (proactive command)
-// inside 0x81/0x82 envelope.
-func isLikelySIMOTA(data []byte) bool {
-	return len(data) > 2 && data[0] == 0xd0 && (data[1]&0x80) != 0
-}
-
-// addMMSHints appends MMS-specific hints (subject/size) to the classification.
-func addMMSHints(cls *BinaryClassification, data []byte) {
-	cls.URL = extractURL(data)
-	if s := extractTaggedUint(data, "size"); s > 0 {
-		cls.Raw = fmt.Sprintf("%d bytes", s)
-	}
-}
-
-// addSISLHints appends SIS-specific hints to the classification.
-func addSISLHints(cls *BinaryClassification, data []byte) {
-	cls.URL = extractURL(data)
-	cls.Raw = extractPrintableHint(data)
-}
-
-// extractURL pulls a URL out of a WAP push body (content-location / href).
 func extractURL(data []byte) string {
 	s := string(data)
-	low := strings.ToLower(s)
-	for _, key := range []string{"content-location:", "href=", "url=", "si" + string([]byte{0})} {
-		if i := strings.Index(low, key); i >= 0 {
-			rest := s[i+len(key):]
-			end := strings.IndexAny(rest, "\x00\r\n\x01")
-			if end < 0 {
-				end = len(rest)
+	for _, prefix := range []string{"https://", "http://"} {
+		i := strings.Index(s, prefix)
+		if i < 0 {
+			continue
+		}
+		j := i
+		for j < len(s) {
+			ch := s[j]
+			if ch == 0 || ch == ' ' || ch == '\r' || ch == '\n' || ch == '"' || ch == '\'' || ch == '<' || ch == '>' {
+				break
 			}
-			if end > 0 {
-				u := strings.TrimSpace(rest[:end])
-				if strings.Contains(u, "://") || strings.HasPrefix(u, "http") {
-					return u
-				}
-			}
+			j++
+		}
+		return s[i:j]
+	}
+	return ""
+}
+
+func extractPrintableHint(data []byte, max int) string {
+	var sb strings.Builder
+	for _, b := range data {
+		if (b >= 0x20 && b <= 0x7e) || b == '\n' || b == '\r' || b == '\t' {
+			sb.WriteByte(b)
+		}
+		if sb.Len() >= max {
+			break
+		}
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func isLikelyMMSNotification(payload []byte) bool {
+	// X-Mms-Message-Type (0x8C) == m-notification-ind (0x82)
+	for i := 0; i+1 < len(payload); i++ {
+		if payload[i] == 0x8C && payload[i+1] == 0x82 {
+			return true
+		}
+	}
+	return false
+}
+
+func addMMSHints(c *binarySMSClassification, payload []byte) {
+	if txid := extractTaggedCString(payload, 0x98); txid != "" {
+		c.SummaryLines = append(c.SummaryLines, "x_mms_transaction_id="+txid)
+	}
+	if loc := extractTaggedCString(payload, 0x83); loc != "" {
+		c.SummaryLines = append(c.SummaryLines, "content_location="+loc)
+	}
+	if size, ok := extractTaggedUint(payload, 0x8e); ok {
+		c.SummaryLines = append(c.SummaryLines, fmt.Sprintf("message_size=%d", size))
+	}
+	if u := extractURL(payload); u != "" {
+		c.SummaryLines = append(c.SummaryLines, "url="+u)
+	}
+}
+
+func extractTaggedCString(data []byte, tag byte) string {
+	for i := 0; i+1 < len(data); i++ {
+		if data[i] != tag {
+			continue
+		}
+		v := readCString(data[i+1:])
+		if v != "" {
+			return v
 		}
 	}
 	return ""
 }
 
-// extractPrintableHint renders the printable run of the payload for display.
-func extractPrintableHint(data []byte) string {
-	var b strings.Builder
-	for _, c := range data {
-		if c >= 0x20 && c < 0x7f {
-			b.WriteByte(c)
-		} else if c == '\n' {
-			b.WriteByte(' ')
-		} else {
-			if b.Len() > 0 {
-				break // stop at first binary run
-			}
+func extractTaggedUint(data []byte, tag byte) (uint32, bool) {
+	for i := 0; i+1 < len(data); i++ {
+		if data[i] != tag {
+			continue
+		}
+		v, _, ok := parseMBUint32At(data, i+1)
+		if ok {
+			return v, true
 		}
 	}
-	if b.Len() > 48 {
-		return b.String()[:48] + "…"
-	}
-	return b.String()
+	return 0, false
 }
 
-// extractTaggedUint finds "<name>N</name>" style unsigned ints in the payload.
-func extractTaggedUint(data []byte, tag string) uint64 {
-	s := string(data)
-	low := strings.ToLower(s)
-	open := "<" + strings.ToLower(tag) + ">"
-	close_ := "</" + strings.ToLower(tag) + ">"
-	if i := strings.Index(low, open); i >= 0 {
-		start := i + len(open)
-		if j := strings.Index(low[start:], close_); j >= 0 {
-			var v uint64
-			for _, c := range s[start : start+j] {
-				if c < '0' || c > '9' {
-					break
-				}
-				v = v*10 + uint64(c-'0')
-			}
-			return v
+func isLikelySIMOTA(t *tpdu.TPDU, payload []byte, ct string, hasDestPort bool, destPort uint16) bool {
+	// 不把已识别的 WAP Push 家族误判成 SIM OTA
+	if ct != "" {
+		if isLikelyOMAContentType(ct) || isLikelySIContentType(ct) || isLikelySLContentType(ct) || isLikelyMMSContentType(ct) {
+			return false
 		}
 	}
-	return 0
+	if hasDestPort && destPort == wapPushPort16 {
+		return false
+	}
+
+	pidVal := byte(t.PID)
+	dcsVal := byte(t.DCS)
+
+	// SMS-PP 下载常见 PID=0x7F；DCS class2 也常见于 SIM 下载。
+	if pidVal == 0x7f {
+		return true
+	}
+	if isLikelyClass2(dcsVal) {
+		_, _, _, ok := tryParseSIMOTAHeader(payload)
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
-// formatBinaryClassification renders the final summary of a classification.
-func formatBinaryClassification(cls BinaryClassification, t *tpdu.TPDU) string {
-	switch {
-	case cls.Kind == "WAP Push" && strings.Contains(cls.ContentType, "mms"):
-		cls.Kind = "MMS Notification"
-	case strings.Contains(cls.ContentType, "connectivity-wbxml"):
-		cls.Kind = "OMA CP"
-	case strings.Contains(cls.ContentType, "sic") || strings.Contains(cls.ContentType, "slc"):
-		cls.Kind = "SIS Download"
+func isLikelyClass2(dcs byte) bool {
+	// 轻量判定：当 DCS 指示消息类且 class==2
+	// 对常见一般数据编码组生效，避免引入复杂 DCS 全解析。
+	if dcs&0x10 == 0 {
+		return false
 	}
-	return cls.String()
+	return dcs&0x03 == 0x02
+}
+
+// tryParseSIMOTAHeader 尝试解析 23.048 可见安全头字段（仅分类用途）。
+func tryParseSIMOTAHeader(payload []byte) (spi uint16, kic byte, kid byte, ok bool) {
+	if len(payload) < 6 {
+		return 0, 0, 0, false
+	}
+	// 常见首字节 CPL、次字节 CHL。CHL 至少应覆盖 SPI/KIC/KID。
+	chl := int(payload[1])
+	if chl < 5 || 2+chl > len(payload) {
+		return 0, 0, 0, false
+	}
+	spi = uint16(payload[2])<<8 | uint16(payload[3])
+	kic = payload[4]
+	kid = payload[5]
+	return spi, kic, kid, true
 }

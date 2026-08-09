@@ -9,7 +9,7 @@ import (
 )
 
 func TestBuildSubmitTPDUsPreservesTextAndDestination(t *testing.T) {
-	parts, err := BuildSubmitTPDUsWithOptions("+447700900123", " hello ", SubmitOptions{})
+	parts, err := BuildSubmitTPDUObjectsWithOptions("+447700900123", " hello ", SubmitOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestBuildSubmitTPDUsPreservesTextAndDestination(t *testing.T) {
 }
 
 func TestBuildSubmitTPDUsUsesRealUCS2AndShortCodeTON(t *testing.T) {
-	parts, err := BuildSubmitTPDUsWithOptions("10086", "你好", SubmitOptions{Encoding: "ucs2"})
+	parts, err := BuildSubmitTPDUObjectsWithOptions("10086", "你好", SubmitOptions{Encoding: "ucs2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestBuildSubmitTPDUsUsesRealUCS2AndShortCodeTON(t *testing.T) {
 }
 
 func TestBuildSubmitTPDUsUsesProvidedConcatReference(t *testing.T) {
-	parts, err := BuildSubmitTPDUsWithOptions(
+	parts, err := BuildSubmitTPDUObjectsWithOptions(
 		"+447700900123", strings.Repeat("multipart ", 40),
 		SubmitOptions{ConcatReference: 37},
 	)
@@ -64,5 +64,26 @@ func TestBuildSubmitTPDUsUsesProvidedConcatReference(t *testing.T) {
 		if !ok || total != len(parts) || sequence != index+1 || reference != 37 {
 			t.Fatalf("part %d concat=(%d,%d,%d,%v)", index+1, total, sequence, reference, ok)
 		}
+	}
+}
+
+func TestSetSubmitMessageReference(t *testing.T) {
+	encoded, _, err := BuildSubmitTPDUs("85075", "INFO")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := SetSubmitMessageReference(encoded[0], 0x5a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := tpdu.TPDU{Direction: tpdu.MO}
+	if err := message.UnmarshalBinary(updated); err != nil {
+		t.Fatal(err)
+	}
+	if message.MR != 0x5a || message.SmsType() != tpdu.SmsSubmit {
+		t.Fatalf("message = %+v", message)
+	}
+	if _, err := SetSubmitMessageReference([]byte{0xff}, 1); err == nil {
+		t.Fatal("malformed TPDU did not fail")
 	}
 }

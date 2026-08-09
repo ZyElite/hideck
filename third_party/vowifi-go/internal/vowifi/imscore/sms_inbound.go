@@ -40,7 +40,10 @@ func (s *Service) handleInboundSMS(raw string) (inboundSIPResult, error) {
 	if err != nil {
 		return s.inboundSMSProtocolError(raw, 400, 0, false, err)
 	}
-	rpdu := smscodec.DecodeBodyMaybeHex(body)
+	rpdu, err := smscodec.DecodeBodyMaybeHex(body)
+	if err != nil {
+		return s.inboundSMSProtocolError(raw, 400, 0, false, fmt.Errorf("decode RPDU body: %w", err))
+	}
 	info := smscodec.ClassifyRPDU(rpdu)
 	switch {
 	case info.Kind == smscodec.RPDUKindData && info.RawType == 0x01:
@@ -89,19 +92,19 @@ func decodeInboundRPData(raw string, rpdu []byte) (inboundSMS, error) {
 	if len(tpdu) == 0 || tpdu[0]&0x03 != 0 {
 		return inboundSMS{}, errors.New("inbound RP-DATA does not contain SMS-DELIVER")
 	}
-	decoded := smscodec.DecodeDeliverTPDU(tpdu)
-	if decoded.Err != nil {
-		return inboundSMS{}, fmt.Errorf("decode SMS-DELIVER: %w", decoded.Err)
+	sender, content, timestamp, concat, err := smscodec.DecodeDeliverTPDU(tpdu)
+	if err != nil {
+		return inboundSMS{}, fmt.Errorf("decode SMS-DELIVER: %w", err)
 	}
-	sender := strings.TrimSpace(decoded.Sender)
+	sender = strings.TrimSpace(sender)
 	if sender == "" {
 		sender = strings.TrimSpace(originator)
 	}
 	return inboundSMS{
 		sender: sender, targetURI: firstSIPHeaderURI(rawSIPHeaderValue(raw, "To")),
-		content: decoded.Text, timestamp: decoded.Timestamp, rpMR: rpMR,
-		concatRef: decoded.ConcatReference, refBits: decoded.ConcatRefBits,
-		total: decoded.TotalParts, partNo: decoded.PartNo,
+		content: content, timestamp: timestamp, rpMR: rpMR,
+		concatRef: concat.Ref, refBits: concat.RefBits,
+		total: concat.Total, partNo: concat.Seq,
 	}, nil
 }
 

@@ -63,8 +63,8 @@ func (s *Service) sendOutboundSMS(ctx context.Context, to, text string, opts SMS
 }
 
 func (s *Service) buildOutboundSMSParts(recipient, text string, opts SMSSendOptions) ([]outboundSMSPart, error) {
-	tpdus, err := smscodec.BuildSubmitTPDUsWithOptions(recipient, text, smscodec.SubmitOptions{
-		Encoding: opts.Encoding, ConcatReference: int(s.allocateSMSConcatReference()),
+	tpdus, _, err := smscodec.BuildSubmitTPDUsWithOptions(recipient, text, smscodec.SubmitOptions{
+		Encoding: smscodec.SMSEncoding(opts.Encoding), ConcatReference: int(s.allocateSMSConcatReference()),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("imscore: encode SMS-SUBMIT: %w", err)
@@ -73,12 +73,11 @@ func (s *Service) buildOutboundSMSParts(recipient, text string, opts SMSSendOpti
 	parts := make([]outboundSMSPart, 0, len(tpdus))
 	for index := range tpdus {
 		rpMR := s.allocateSMSRPMR()
-		tpdus[index].MR = rpMR
-		tpduBytes, err := tpdus[index].MarshalBinary()
+		tpduBytes, err := smscodec.SetSubmitMessageReference(tpdus[index], rpMR)
 		if err != nil {
 			return nil, fmt.Errorf("imscore: encode SMS-SUBMIT part %d: %w", index+1, err)
 		}
-		request, err := s.buildSMSMESSAGE(remoteURI, smscodec.BuildRPData(rpMR, "", s.cfg.SMSC, tpduBytes))
+		request, err := s.buildSMSMESSAGE(remoteURI, smscodec.BuildRPData(rpMR, tpduBytes, s.cfg.SMSC))
 		if err != nil {
 			return nil, fmt.Errorf("imscore: build SMS MESSAGE part %d: %w", index+1, err)
 		}

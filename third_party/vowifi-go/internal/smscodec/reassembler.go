@@ -71,7 +71,7 @@ func (r *Reassembler) Add(from string, ref, seqNo uint64, total, partNo int, dat
 			return nil, false // duplicate part
 		}
 	}
-	parts = append(parts, Fragment{PartNo: partNo, Data: data, Timestamp: ts})
+	parts = append(parts, Fragment{PartNo: partNo, Data: append([]byte(nil), data...), Timestamp: ts})
 	if len(parts) != total {
 		r.fragments[key] = parts
 		return nil, false // still waiting for more parts
@@ -80,11 +80,15 @@ func (r *Reassembler) Add(from string, ref, seqNo uint64, total, partNo int, dat
 	// All parts present: order by part number and concatenate.
 	sort.Slice(parts, func(i, j int) bool { return parts[i].PartNo < parts[j].PartNo })
 	var buf bytes.Buffer
+	completedAt := ts
 	for _, f := range parts {
 		buf.Write(f.Data)
+		if f.Timestamp.After(completedAt) {
+			completedAt = f.Timestamp
+		}
 	}
 	delete(r.fragments, key)
-	r.completed[key] = ts
+	r.completed[key] = completedAt
 	return buf.Bytes(), true
 }
 

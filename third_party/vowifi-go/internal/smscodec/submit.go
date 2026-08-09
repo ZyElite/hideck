@@ -2,20 +2,23 @@ package smscodec
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
-	"github.com/warthog618/sms"
+	smspdu "github.com/warthog618/sms"
 	"github.com/warthog618/sms/encoding/tpdu"
 	"github.com/warthog618/sms/encoding/ucs2"
 )
 
-// SubmitOptions controls how BuildSubmitTPDUsWithOptions encodes a message.
+type SMSEncoding string
+
+const (
+	SMSEncodingAuto SMSEncoding = "auto"
+	SMSEncodingUCS2 SMSEncoding = "ucs2"
+)
+
 type SubmitOptions struct {
-	// Encoding is the SMS alphabet to use: "auto" (default, GSM-7 when the
-	// text fits, else UCS-2) or "ucs2". See NormalizeSMSEncoding.
-	Encoding string
-	// ConcatReference identifies all parts of a multipart message. Zero lets
-	// the encoder select its default reference.
+	Encoding        SMSEncoding
 	ConcatReference int
 }
 
@@ -23,45 +26,67 @@ type fixedConcatCounter int
 
 func (c fixedConcatCounter) Count() int { return int(c) }
 
-// BuildSubmitTPDUsWithOptions builds one or more SMS-SUBMIT TPDUs for a
-// message, splitting it into a concatenated (multipart) series when it does
-// not fit in a single user data payload (140 octets).
-//
-// The original: normalizes the requested encoding, then hands the work to
-// github.com/warthog618/sms — sms.To(dest) fixes the destination address on
-// the submit template and sms.Encode performs the (segmented) encoding.
-func BuildSubmitTPDUsWithOptions(dest, text string, opts SubmitOptions) ([]tpdu.TPDU, error) {
-	enc, err := NormalizeSMSEncoding(opts.Encoding)
+func NormalizeSMSEncoding(raw string) (SMSEncoding, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", string(SMSEncodingAuto):
+		return SMSEncodingAuto, nil
+	case string(SMSEncodingUCS2):
+		return SMSEncodingUCS2, nil
+	default:
+		return "", fmt.Errorf("unsupported SMS encoding: %s", raw)
+	}
+}
+
+// BuildSubmitTPDUs 编码上行短信为一组 SUBMIT TPDU（支持长短信切片）。
+// 返回 TPDU 字节数组列表 和 对应的长度列表（不含 SMSC），以及可能的错误。
+func BuildSubmitTPDUs(to, text string) ([][]byte, []int, error) {
+	return BuildSubmitTPDUsWithOptions(to, text, SubmitOptions{})
+}
+
+// BuildSubmitTPDUsWithOptions 编码上行短信为一组 SUBMIT TPDU，并允许调用方指定文本编码策略。
+func BuildSubmitTPDUsWithOptions(to, text string, opts SubmitOptions) ([][]byte, []int, error) {
+	normalizedTo := strings.TrimSpace(to)
+	encoding, err := NormalizeSMSEncoding(string(opts.Encoding))
 	if err != nil {
-		return nil, err
-	}
-	dest = strings.TrimSpace(dest)
-
-	options := []sms.EncoderOption{sms.AsSubmit, sms.To(dest)}
-	message := []byte(text)
-	if enc == "ucs2" {
-		message = ucs2.Encode([]rune(text))
-		options = append(options, sms.AsUCS2)
+		return nil, nil, err
 	}
 
-	encoder := sms.NewEncoder(options...)
+	msg := []byte(text)
+	encoderOptions := []smspdu.EncoderOption{smspdu.AsSubmit, smspdu.To(normalizedTo)}
+	if encoding == SMSEncodingUCS2 {
+		msg = ucs2.Encode([]rune(text))
+		encoderOptions = append(encoderOptions, smspdu.AsUCS2)
+	}
+
+	encoder := smspdu.NewEncoder(encoderOptions...)
 	if opts.ConcatReference != 0 {
 		encoder.ConcatRef = fixedConcatCounter(opts.ConcatReference)
 	}
-	parts, err := encoder.Encode(message)
+	tpdus, err := encoder.Encode(msg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if len(parts) == 0 {
-		return nil, errors.New("smscodec: TPDU encoding returned no parts")
+	if len(tpdus) == 0 {
+		return nil, nil, errors.New("TPDU 编码结果为空")
 	}
-	if IsShortCode(dest) {
-		for index := range parts {
-			address := parts[index].DA
-			address.SetTypeOfNumber(tpdu.TonUnknown)
-			address.SetNumberingPlan(tpdu.NpISDN)
-			parts[index].DA = address
+
+	bytesList := make([][]byte, 0, len(tpdus))
+	lenList := make([]int, 0, len(tpdus))
+	for _, pdu := range tpdus {
+		if IsShortCode(normalizedTo) {
+			da := pdu.DA
+			da.SetTypeOfNumber(tpdu.TonUnknown)
+			da.SetNumberingPlan(tpdu.NpISDN)
+			pdu.DA = da
 		}
+
+		b, err := pdu.MarshalBinary()
+		if err != nil {
+			return nil, nil, err
+		}
+		bytesList = append(bytesList, b)
+		lenList = append(lenList, len(b))
 	}
-	return parts, nil
+
+	return bytesList, lenList, nil
 }

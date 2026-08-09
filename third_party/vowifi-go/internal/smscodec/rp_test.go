@@ -7,7 +7,7 @@ import (
 
 func TestBuildAndParseRPDataPreservesAddressOrder(t *testing.T) {
 	tpdu := []byte{0x01, 0x02, 0x03}
-	body := BuildRPData(0x22, "", "+447802002606", tpdu)
+	body := BuildRPData(0x22, tpdu, "+447802002606")
 	if body[0] != 0x00 || body[2] != 0x00 {
 		t.Fatalf("mobile-originated RP-DATA prefix = %x", body[:3])
 	}

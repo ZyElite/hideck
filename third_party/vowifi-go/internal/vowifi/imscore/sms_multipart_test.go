@@ -116,20 +116,24 @@ func TestInboundMultipartSMSPublishesOnceAfterOutOfOrderCompletion(t *testing.T)
 
 func multipartDeliverTPDUs(t *testing.T, sender, text string) [][]byte {
 	t.Helper()
-	submits, err := smscodec.BuildSubmitTPDUsWithOptions("+447700900000", text, smscodec.SubmitOptions{})
+	submits, _, err := smscodec.BuildSubmitTPDUsWithOptions("+447700900000", text, smscodec.SubmitOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	result := make([][]byte, 0, len(submits))
 	for index := range submits {
+		submit := tpdu.TPDU{Direction: tpdu.MO}
+		if unmarshalErr := submit.UnmarshalBinary(submits[index]); unmarshalErr != nil {
+			t.Fatal(unmarshalErr)
+		}
 		deliver, newErr := tpdu.NewDeliver(tpdu.WithOA(tpdu.NewAddress(tpdu.FromNumber(sender))))
 		if newErr != nil {
 			t.Fatal(newErr)
 		}
-		deliver.SetPID(submits[index].PID)
-		deliver.SetDCS(byte(submits[index].DCS))
-		deliver.SetUDH(submits[index].UDH)
-		deliver.SetUD(submits[index].UD)
+		deliver.SetPID(submit.PID)
+		deliver.SetDCS(byte(submit.DCS))
+		deliver.SetUDH(submit.UDH)
+		deliver.SetUD(submit.UD)
 		raw, marshalErr := deliver.MarshalBinary()
 		if marshalErr != nil {
 			t.Fatal(marshalErr)

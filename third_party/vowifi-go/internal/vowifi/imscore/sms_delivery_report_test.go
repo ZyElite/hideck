@@ -178,10 +178,7 @@ func deliveryReportRequest(body []byte, inReplyTo string) string {
 
 func networkRPData(t *testing.T, rpMR byte, payload []byte) []byte {
 	t.Helper()
-	originator, err := smscodec.EncodeAddress("+447802002606")
-	if err != nil {
-		t.Fatal(err)
-	}
+	originator := smscodec.EncodeAddress("+447802002606")
 	body := []byte{0x01, rpMR}
 	body = append(body, originator...)
 	body = append(body, 0x00, byte(len(payload)))
