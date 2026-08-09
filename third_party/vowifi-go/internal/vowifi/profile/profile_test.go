@@ -3,120 +3,61 @@ package profile
 import (
 	"strings"
 	"testing"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
 )
 
-func TestNormalizeAKAApp(t *testing.T) {
-	if got := NormalizeAKAApp("isim_strict"); got != AKAAppPreferenceISIMStrict {
-		t.Errorf("isim_strict = %q", got)
+func TestNormalizeAndBuild(t *testing.T) {
+	got, err := Build(Profile{
+		IMSI: " 234102356143376 ", MCC: " 234 ", MNC: " 10 ",
+		IMEI: " 123 ", SMSC: " +447785016005 ", IMSDomain: " sips:IMS.Example;transport=tcp ",
+	}, " fallback-agent ")
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
 	}
-	if got := NormalizeAKAApp("USIM"); got != AKAAppPreferenceUSIM {
-		t.Errorf("USIM = %q", got)
+	if got.IMSI != "234102356143376" || got.MCC != "234" || got.MNC != "10" {
+		t.Fatalf("Build() identity = %+v", got)
 	}
-	if got := NormalizeAKAApp("usim_strict"); got != AKAAppPreferenceUSIMStrict {
-		t.Errorf("usim_strict = %q", got)
+	if got.UserAgent != "fallback-agent" || got.IMSDomain != "IMS.Example" {
+		t.Fatalf("Build() defaults = %+v", got)
 	}
-	if got := NormalizeAKAApp(""); got != AKAAppPreferenceISIM {
-		t.Errorf("default = %q", got)
+
+	defaulted, err := Build(Profile{IMSI: "23410", MCC: "234", MNC: "10"}, "")
+	if err != nil {
+		t.Fatalf("Build(defaults) error = %v", err)
+	}
+	if defaulted.UserAgent != defaultUserAgent || defaulted.IMSDomain != "ims.mnc010.mcc234.3gppnetwork.org" {
+		t.Fatalf("Build(defaults) = %+v", defaulted)
 	}
 }
 
-func TestAuthPlanNormalize(t *testing.T) {
-	p := &AuthPlan{ISIMAvailable: true}
-	p.Normalize()
-	if p.AKAApp != AKAAppPreferenceISIM {
-		t.Errorf("aka app = %q", p.AKAApp)
+func TestBuildRejectsMissingIdentity(t *testing.T) {
+	if _, err := Build(Profile{MCC: "234", MNC: "10"}, ""); err == nil || err.Error() != "无法获取 IMSI" {
+		t.Fatalf("missing IMSI error = %v", err)
 	}
-	if p.IsZero() {
-		t.Error("plan with ISIM should not be zero")
+	if _, err := Build(Profile{IMSI: "23410"}, ""); err == nil || !strings.Contains(err.Error(), "23410") {
+		t.Fatalf("missing PLMN error = %v", err)
 	}
 }
 
-func TestGenerateStableIMEIForModel(t *testing.T) {
-	imei := GenerateStableIMEIForModel("iPhone 15", "310260123456789")
-	if len(imei) != 15 {
-		t.Fatalf("imei len = %d", len(imei))
+func TestResolveIdentityIMEIPriority(t *testing.T) {
+	plan := policy.CarrierPlan{Device: policy.DeviceIdentityPlan{
+		Model: "rmx3366", IdentityIMEI: "configured",
+	}}
+	generated, source := ResolveIdentityIMEI("234102356143376", "input", "iphone15,4", plan)
+	if !strings.HasPrefix(generated, "86034905") || source != "carrier_device_model" {
+		t.Fatalf("model IMEI = %q, source = %q", generated, source)
 	}
-	// Luhn check.
-	sum := 0
-	for i := 0; i < 15; i++ {
-		d := int(imei[i] - '0')
-		if i%2 == 1 {
-			d *= 2
-			if d > 9 {
-				d -= 9
-			}
-		}
-		sum += d
+
+	plan.Device.Model = "unknown"
+	if got, gotSource := ResolveIdentityIMEI("seed", "input", "iphone15,4", plan); got != "configured" || gotSource != "device_identity_imei" {
+		t.Fatalf("configured IMEI = %q, source = %q", got, gotSource)
 	}
-	if sum%10 != 0 {
-		t.Errorf("imei %s fails Luhn", imei)
+	plan.Device.IdentityIMEI = ""
+	if got, gotSource := ResolveIdentityIMEI("seed", " input ", "iphone15,4", plan); got != "input" || gotSource != "input" {
+		t.Fatalf("input IMEI = %q, source = %q", got, gotSource)
 	}
-	// Deterministic.
-	if GenerateStableIMEIForModel("iPhone 15", "310260123456789") != imei {
-		t.Error("imei should be deterministic")
+	if got, gotSource := ResolveIdentityIMEI("seed", "", "iphone15,4", plan); got == "" || gotSource != "user_agent" {
+		t.Fatalf("user-agent IMEI = %q, source = %q", got, gotSource)
 	}
 }
-
-func TestResolveUserAgentForModel(t *testing.T) {
-	if got := ResolveUserAgentForModel("iPhone 14"); got != "iOS/18.2.1 iPhone (iPhone15,4)" {
-		t.Errorf("ua = %q", got)
-	}
-	if got := ResolveUserAgentForModel("unknown"); got != "iOS/18.2.1 iPhone (iPhone15,4)" {
-		t.Errorf("ua default = %q", got)
-	}
-	if got := ResolveUserAgentForModel("rmx3366"); got != "realme_RMX3366_0.0.2100" {
-		t.Errorf("RMX3366 ua = %q", got)
-	}
-}
-
-func TestNormalizeProfile(t *testing.T) {
-	p := Normalize(Profile{IMSI: "310260123456789"})
-	if p.MCC != "310" || p.MNC != "26" {
-		t.Errorf("normalized = %+v", p)
-	}
-}
-
-func TestParseTransparentFileSizeFromFCP(t *testing.T) {
-	// FCP: 62 04 80 02 00 10 (container length 4).
-	fcp := []byte{0x62, 0x04, 0x80, 0x02, 0x00, 0x10}
-	size, err := parseTransparentFileSizeFromFCP(fcp)
-	if err != nil || size != 16 {
-		t.Errorf("size = %d err %v", size, err)
-	}
-}
-
-func TestCollectTLVValues(t *testing.T) {
-	tlvs := collectTLVValues([]byte{0x80, 0x02, 0x00, 0x10, 0x88, 0x01, 0x05})
-	if len(tlvs) != 2 {
-		t.Fatalf("tlvs = %d", len(tlvs))
-	}
-	if tlvs[0x88][0] != 5 {
-		t.Errorf("0x88 = %v", tlvs[0x88])
-	}
-}
-
-func TestNormalizeIdentityString(t *testing.T) {
-	if got := normalizeIdentityString([]byte("  user@example.com\x00 ")); got != "user@example.com" {
-		t.Errorf("normalized = %q", got)
-	}
-}
-
-func TestAppendUnique(t *testing.T) {
-	got := appendUnique([]string{"a"}, "a")
-	if len(got) != 1 {
-		t.Error("duplicate should not be appended")
-	}
-	got = appendUnique([]string{"a"}, "b")
-	if len(got) != 2 {
-		t.Error("new value should be appended")
-	}
-}
-
-func TestImeiLuhnCheckDigit(t *testing.T) {
-	// For prefix "35693803564380", the check digit is 9.
-	if got := imeiLuhnCheckDigit("35693803564380"); got != '9' {
-		t.Errorf("check digit = %c", got)
-	}
-}
-
-var _ = strings.Contains

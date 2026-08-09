@@ -8,6 +8,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/runtimehostcarrier"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
+	internalprofile "github.com/iniwex5/vowifi-go/internal/vowifi/profile"
 	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 )
 
@@ -18,11 +19,9 @@ var ErrISIMUnavailable = errors.New("identity: ISIM application unavailable")
 // NormalizeProfile trims and normalises the profile fields.
 func NormalizeProfile(p Profile) Profile {
 	return Profile{
-		IMSI: strings.TrimSpace(p.IMSI),
-		MCC:  strings.TrimSpace(p.MCC),
-		MNC:  strings.TrimSpace(p.MNC),
-		IMEI: strings.TrimSpace(p.IMEI),
-		SMSC: strings.TrimSpace(p.SMSC),
+		IMSI: strings.TrimSpace(p.IMSI), MCC: strings.TrimSpace(p.MCC), MNC: strings.TrimSpace(p.MNC),
+		IMEI: strings.TrimSpace(p.IMEI), UserAgent: strings.TrimSpace(p.UserAgent),
+		SMSC: strings.TrimSpace(p.SMSC), IMSDomain: policy.NormalizeIMSDomain(p.IMSDomain),
 	}
 }
 
@@ -36,6 +35,16 @@ func ReadISIMIdentity(access Access) (Identity, error) {
 		return Identity{}, errors.New("identity: no IMS identity provider")
 	}
 	return provider.GetISIMIdentity()
+}
+
+func trimIdentityValues(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 // PrepareStart prepares the IMS identity and session profile for a VoWiFi
@@ -52,7 +61,23 @@ func PrepareStart(input PrepareStartInput) (PreparedSession, error) {
 		return PreparedSession{}, err
 	}
 
-	carrierConfig := runtimehostcarrier.FromInternal(policy.ResolveEffectiveCarrierConfig(profile.MCC, profile.MNC))
+	internalCarrier := policy.ResolveEffectiveCarrierConfig(profile.MCC, profile.MNC)
+	carrierPlan := policy.CarrierPlanFromEffectiveConfig(internalCarrier)
+	built, err := internalprofile.Build(internalprofile.Profile{
+		IMSI: profile.IMSI, MCC: profile.MCC, MNC: profile.MNC, IMEI: profile.IMEI,
+		UserAgent: profile.UserAgent, SMSC: profile.SMSC, IMSDomain: profile.IMSDomain,
+	}, carrierPlan.IMS.UserAgent)
+	if err != nil {
+		return PreparedSession{}, fmt.Errorf("identity: build profile: %w", err)
+	}
+	resolvedIMEI, imeiSource := internalprofile.ResolveIdentityIMEI(
+		built.IMSI, built.IMEI, built.UserAgent, carrierPlan,
+	)
+	profile = Profile{
+		IMSI: built.IMSI, MCC: built.MCC, MNC: built.MNC, IMEI: resolvedIMEI,
+		UserAgent: built.UserAgent, SMSC: built.SMSC, IMSDomain: built.IMSDomain,
+	}
+	carrierConfig := runtimehostcarrier.FromInternal(internalCarrier)
 	effectiveCarrier := EffectiveCarrier{
 		MCC: carrierConfig.MCC, MNC: carrierConfig.MNC, PresetID: carrierConfig.PresetID,
 	}
@@ -67,7 +92,7 @@ func PrepareStart(input PrepareStartInput) (PreparedSession, error) {
 		CarrierConfig:      carrierConfig,
 		EPDGSource:         epdgSource,
 		EPDGAddr:           epdgAddr,
-		IdentityIMEISource: string(imsIdentity.ActualSource),
+		IdentityIMEISource: imeiSource,
 		NetworkMode:        "",
 		StartupState:       StartupState{},
 	}, nil

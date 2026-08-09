@@ -14,6 +14,22 @@ type recordingAKAProvider struct {
 	calls int
 }
 
+func TestPrepareSessionStartBuildsLegacyProfile(t *testing.T) {
+	prepared, err := PrepareSessionStart(RuntimeConfig{Profile: profile.Profile{
+		IMSI: "234102356143376", MCC: "234", MNC: "10",
+	}})
+	if err != nil {
+		t.Fatalf("PrepareSessionStart() error = %v", err)
+	}
+	if prepared.Profile.UserAgent != "iOS/18.2.1 iPhone (iPhone15,4)" ||
+		prepared.Profile.IMSDomain != "ims.mnc010.mcc234.3gppnetwork.org" {
+		t.Fatalf("prepared profile = %+v", prepared.Profile)
+	}
+	if _, err := PrepareSessionStart(RuntimeConfig{Profile: profile.Profile{IMSI: "23410"}}); err == nil {
+		t.Fatal("PrepareSessionStart() accepted missing MCC/MNC")
+	}
+}
+
 func (p *recordingAKAProvider) CalculateAKA(rand16, autn16 []byte) (enginesim.AKAResult, error) {
 	p.calls++
 	return enginesim.AKAResult{RES: append([]byte(nil), rand16...), CK: append([]byte(nil), autn16...)}, nil

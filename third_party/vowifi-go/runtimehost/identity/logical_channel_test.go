@@ -4,10 +4,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
 const testFullISIMAID = "A0000000871004FFFFFFFF8903020000"
+
+const (
+	efIMPI   uint16 = 0x6F02
+	efDomain uint16 = 0x6F03
+	efIMPU   uint16 = 0x6F04
+)
 
 type logicalChannelStub struct {
 	files       map[uint16][][]byte
@@ -112,15 +119,15 @@ func TestReadISIMIdentityFromLogicalChannel(t *testing.T) {
 	}
 }
 
-func TestReadISIMIdentityFromLogicalChannelStopsOnResolverError(t *testing.T) {
+func TestReadISIMIdentityFromLogicalChannelFallsBackOnResolverError(t *testing.T) {
 	stub := &logicalChannelStub{resolverErr: errors.New("card status unavailable")}
 
 	_, err := ReadISIMIdentityFromLogicalChannel(stub)
-	if err == nil || err.Error() != "identity: resolve ISIM AID: card status unavailable" {
+	if err == nil || !strings.Contains(err.Error(), "ISIM 未读取到") {
 		t.Fatalf("error = %v", err)
 	}
-	if stub.openCalls != 0 || stub.closeCalls != 0 {
-		t.Fatalf("logical channel used after resolver error: open=%d close=%d", stub.openCalls, stub.closeCalls)
+	if stub.openedAID != "A0000000871004" || stub.openCalls != 1 || stub.closeCalls != 1 {
+		t.Fatalf("fallback lifecycle: aid=%q open=%d close=%d", stub.openedAID, stub.openCalls, stub.closeCalls)
 	}
 }
 

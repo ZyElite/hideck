@@ -34,6 +34,7 @@ type workerStatusBackendStub struct {
 	resolvedSIMAuthAID       string
 	resolvedSIMAuthSource    string
 	resolveSIMAuthAIDErr     error
+	openLogicalChannelErr    error
 }
 
 func (s *workerStatusBackendStub) GetIMEI(ctx context.Context) (string, error)      { return "", nil }
@@ -87,7 +88,7 @@ func (s *workerStatusBackendStub) GetOperatingMode(ctx context.Context) (backend
 func (s *workerStatusBackendStub) Reboot(ctx context.Context) error { return nil }
 func (s *workerStatusBackendStub) OpenLogicalChannel(ctx context.Context, aid string) (int, error) {
 	s.openLogicalChannelCalls++
-	return 2, nil
+	return 2, s.openLogicalChannelErr
 }
 func (s *workerStatusBackendStub) CloseLogicalChannel(ctx context.Context, channelID int) error {
 	s.closeLogicalChannelCalls++
@@ -444,8 +445,8 @@ func TestQMIModemAdapterGetISIMIdentityDoesNotReenterProvider(t *testing.T) {
 	adapter := newQMIModemAdapter("dev-qmi", backendStub)
 
 	_, err := adapter.GetISIMIdentity()
-	if err == nil || !strings.Contains(err.Error(), "APDU response too short") {
-		t.Fatalf("GetISIMIdentity() error = %v, want explicit APDU error", err)
+	if err == nil || !strings.Contains(err.Error(), "ISIM 未读取到 IMPI/IMPU/DOMAIN") {
+		t.Fatalf("GetISIMIdentity() error = %v, want empty identity error", err)
 	}
 	if backendStub.openLogicalChannelCalls != 1 {
 		t.Fatalf("openLogicalChannelCalls = %d, want 1", backendStub.openLogicalChannelCalls)
@@ -457,8 +458,9 @@ func TestQMIModemAdapterGetISIMIdentityDoesNotReenterProvider(t *testing.T) {
 
 func TestQMIModemAdapterMapsMissingISIMApplication(t *testing.T) {
 	backendStub := &workerStatusBackendStub{
-		mode:                 backend.BackendQMI,
-		resolveSIMAuthAIDErr: backend.ErrSIMAuthApplicationUnavailable,
+		mode:                  backend.BackendQMI,
+		resolveSIMAuthAIDErr:  backend.ErrSIMAuthApplicationUnavailable,
+		openLogicalChannelErr: backend.ErrSIMAuthApplicationUnavailable,
 	}
 	adapter := newQMIModemAdapter("dev-qmi", backendStub)
 
@@ -466,8 +468,8 @@ func TestQMIModemAdapterMapsMissingISIMApplication(t *testing.T) {
 	if !errors.Is(err, identity.ErrISIMUnavailable) {
 		t.Fatalf("GetISIMIdentity() error = %v, want ErrISIMUnavailable", err)
 	}
-	if backendStub.openLogicalChannelCalls != 0 {
-		t.Fatalf("openLogicalChannelCalls = %d, want 0", backendStub.openLogicalChannelCalls)
+	if backendStub.openLogicalChannelCalls != 1 {
+		t.Fatalf("openLogicalChannelCalls = %d, want fallback open", backendStub.openLogicalChannelCalls)
 	}
 }
 

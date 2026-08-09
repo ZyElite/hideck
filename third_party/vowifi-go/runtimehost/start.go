@@ -268,17 +268,25 @@ func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.Pre
 	return &runtimecore.PreparedSessionStart{
 		Profile: profile.Profile{
 			IMSI: prepared.Profile.IMSI, MCC: prepared.Profile.MCC, MNC: prepared.Profile.MNC,
-			IMEI: prepared.Profile.IMEI, SMSC: prepared.Profile.SMSC,
+			IMEI: prepared.Profile.IMEI, UserAgent: prepared.Profile.UserAgent,
+			SMSC: prepared.Profile.SMSC, IMSDomain: prepared.Profile.IMSDomain,
 		},
 		IMSIdentity: profile.IMSIdentity{
 			IMPI: prepared.IMSIdentity.IMPI, IMPU: []string{prepared.IMSIdentity.IMPU},
 			Domain: prepared.IMSIdentity.Domain,
 		},
-		AuthPlan: profile.AuthPlan{AKAApp: profile.NormalizeAKAApp(string(prepared.IMSIdentity.AKAAppPreference))},
+		AuthPlan: authPlanForPreference(string(prepared.IMSIdentity.AKAAppPreference)),
 		EPDGAddr: prepared.EPDGAddr, EPDGSource: prepared.EPDGSource,
 		APN:     imsAPNFromDomain(prepared.IMSIdentity.Domain),
 		Carrier: prepared.CarrierConfig,
 	}
+}
+
+func authPlanForPreference(preference string) profile.AuthPlan {
+	normalized := profile.NormalizeAKAApp(preference)
+	plan := profile.NewAuthPlan(normalized, normalized)
+	plan.AKAApp = normalized
+	return plan
 }
 
 func imsAPNFromDomain(domain string) string {

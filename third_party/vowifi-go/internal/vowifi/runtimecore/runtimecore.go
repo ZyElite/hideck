@@ -83,14 +83,19 @@ type PreparedSessionStart struct {
 
 // PrepareSessionStart prepares a session start from the config.
 func PrepareSessionStart(cfg RuntimeConfig) (*PreparedSessionStart, error) {
-	p := profile.Normalize(cfg.Profile)
+	p, err := profile.Build(cfg.Profile, "")
+	if err != nil {
+		return nil, fmt.Errorf("runtimecore: build profile: %w", err)
+	}
 	plan := profile.AuthPlan{}
 	if cfg.Access != nil {
 		caps := cfg.Access.Capabilities()
 		plan.ISIMAvailable = caps.HasISIM
 		plan.USIMAvailable = caps.HasUSIM
-		plan.AKAApp = cfg.AKAApp
-		plan.Normalize()
+		plan.AKAApp = profile.NormalizeAKAApp(cfg.AKAApp)
+		plan.EPDGApp = plan.AKAApp
+		plan.IMSApp = plan.AKAApp
+		plan = plan.Normalize()
 	}
 
 	identity := cfg.IMSIdentity

@@ -9,11 +9,13 @@ import "github.com/iniwex5/vowifi-go/runtimehost/carrier"
 
 // Profile is the raw IMS profile of a device.
 type Profile struct {
-	IMSI string
-	MCC  string
-	MNC  string
-	IMEI string
-	SMSC string
+	IMSI      string
+	MCC       string
+	MNC       string
+	IMEI      string
+	UserAgent string
+	SMSC      string
+	IMSDomain string
 }
 
 // IMSIdentitySource is where the IMS identity was read from.

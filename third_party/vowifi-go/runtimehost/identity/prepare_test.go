@@ -118,6 +118,13 @@ func TestPrepareStartUsesUSIMOnlyWhenISIMUnavailable(t *testing.T) {
 		prepared.CarrierConfig.DeviceModel != "rmx3366" {
 		t.Fatalf("carrier config = %+v", prepared.CarrierConfig)
 	}
+	if !strings.HasPrefix(prepared.Profile.IMEI, "86034905") ||
+		prepared.IdentityIMEISource != "carrier_device_model" {
+		t.Fatalf("device identity = %q, source = %q", prepared.Profile.IMEI, prepared.IdentityIMEISource)
+	}
+	if prepared.Profile.UserAgent == "" || prepared.Profile.IMSDomain != wantDomain {
+		t.Fatalf("built profile = %+v", prepared.Profile)
+	}
 }
 
 func TestPrepareStartDoesNotHideISIMTransportFailure(t *testing.T) {
