@@ -13,7 +13,7 @@ import (
 )
 
 func (x *xfrmDataPlane) UpdateOuterAddresses(s *Session, tuple xfrmOuterTuple) error {
-	if x == nil || x.manager == nil || s == nil {
+	if x == nil || s == nil {
 		return errors.New("swu: XFRM MOBIKE requires an active data plane")
 	}
 	if err := validateXFRMTuple(tuple.localIP, tuple.remoteIP, tuple.localPort, tuple.remotePort); err != nil {
@@ -28,6 +28,12 @@ func (x *xfrmDataPlane) UpdateOuterAddresses(s *Session, tuple xfrmOuterTuple) e
 	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
+	if x.manager == nil {
+		return errors.Join(
+			errors.New("swu: XFRM MOBIKE requires an active data plane"),
+			direct.DisableUDPEncap(),
+		)
+	}
 	if x.matchesOuterTuple(tuple) {
 		x.disableUDPEncap = direct.DisableUDPEncap
 		return nil

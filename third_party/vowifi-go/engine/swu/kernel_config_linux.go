@@ -9,6 +9,8 @@ import (
 
 	"github.com/iniwex5/netlink"
 	"github.com/iniwex5/vowifi-go/engine/driver"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 type xfrmSAConfigSpec struct {
@@ -36,6 +38,7 @@ type xfrmPolicySpec struct {
 	direction netlink.Dir
 	state     driver.XFRMSAConfig
 	ifID      uint32
+	bindSPI   bool
 }
 
 func (s *Session) xfrmSAConfigsFor(spec xfrmSAConfigSpec) (driver.XFRMSAConfig, driver.XFRMSAConfig, error) {
@@ -67,7 +70,7 @@ func (s *Session) baseXFRMSA(spec xfrmStateSpec) driver.XFRMSAConfig {
 		Mode: netlink.XFRM_MODE_TUNNEL, IsAEAD: driver.IsAEADAlgorithm(s.espCipher),
 		EncapType: netlink.XFRM_ENCAP_ESPINUDP, EncapSrcPort: int(spec.sourcePort),
 		EncapDstPort: int(spec.destinationPort), Ifid: int(spec.ifID), ReplayWindow: s.cfg.ReplayWindow,
-		SADir: spec.direction, ESN: s.cfg.EnableESN,
+		SADir: spec.direction, ESN: s.espESN,
 	}
 }
 
@@ -104,24 +107,32 @@ func validateXFRMKeyLength(kind string, key []byte, expectedBits int) error {
 }
 
 func installXFRMPolicies(
-	manager *driver.XFRMManager,
+	manager xfrmManager,
 	set xfrmPolicySet,
 ) error {
-	for _, policy := range xfrmPolicies(set.outbound, set.inbound, set.ifID) {
+	for index, policy := range xfrmPolicies(set.outbound, set.inbound, set.ifID) {
 		if err := manager.AddSP(policy); err != nil {
-			return err
+			if index < 2 {
+				return err
+			}
+			logger.Warn("optional XFRM policy installation failed",
+				zap.Int("index", index), zap.Error(err))
 		}
 	}
 	return nil
 }
 
 func updateXFRMPolicies(
-	manager *driver.XFRMManager,
+	manager xfrmManager,
 	set xfrmPolicySet,
 ) error {
-	for _, policy := range xfrmPolicies(set.outbound, set.inbound, set.ifID) {
+	for index, policy := range xfrmPolicies(set.outbound, set.inbound, set.ifID) {
 		if err := manager.UpdateSP(policy); err != nil {
-			return err
+			if index < 2 {
+				return err
+			}
+			logger.Warn("optional XFRM policy update failed",
+				zap.Int("index", index), zap.Error(err))
 		}
 	}
 	return nil
@@ -130,22 +141,24 @@ func updateXFRMPolicies(
 func xfrmPolicies(outbound, inbound driver.XFRMSAConfig, ifID uint32) []driver.XFRMSPConfig {
 	allIPv4 := &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}
 	allIPv6 := &net.IPNet{IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)}
-	policies := make([]driver.XFRMSPConfig, 0, 6)
-	for _, network := range []*net.IPNet{allIPv4, allIPv6} {
-		policies = append(policies,
-			xfrmPolicy(xfrmPolicySpec{network: network, direction: netlink.XFRM_DIR_OUT, state: outbound, ifID: ifID}),
-			xfrmPolicy(xfrmPolicySpec{network: network, direction: netlink.XFRM_DIR_IN, state: inbound, ifID: ifID}),
-			xfrmPolicy(xfrmPolicySpec{network: network, direction: netlink.XFRM_DIR_FWD, state: inbound, ifID: ifID}),
-		)
+	return []driver.XFRMSPConfig{
+		xfrmPolicy(xfrmPolicySpec{network: allIPv4, direction: netlink.XFRM_DIR_OUT, state: outbound, ifID: ifID, bindSPI: true}),
+		xfrmPolicy(xfrmPolicySpec{network: allIPv4, direction: netlink.XFRM_DIR_IN, state: inbound, ifID: ifID, bindSPI: true}),
+		xfrmPolicy(xfrmPolicySpec{network: allIPv4, direction: netlink.XFRM_DIR_FWD, state: inbound, ifID: ifID}),
+		xfrmPolicy(xfrmPolicySpec{network: allIPv6, direction: netlink.XFRM_DIR_OUT, state: outbound, ifID: ifID, bindSPI: true}),
+		xfrmPolicy(xfrmPolicySpec{network: allIPv6, direction: netlink.XFRM_DIR_IN, state: inbound, ifID: ifID, bindSPI: true}),
 	}
-	return policies
 }
 
 func xfrmPolicy(spec xfrmPolicySpec) driver.XFRMSPConfig {
-	return driver.XFRMSPConfig{
+	policy := driver.XFRMSPConfig{
 		Src: spec.network, Dst: spec.network, Dir: spec.direction,
 		TmplSrc: spec.state.Src, TmplDst: spec.state.Dst,
 		TmplProto: netlink.XFRM_PROTO_ESP, TmplMode: netlink.XFRM_MODE_TUNNEL,
-		TmplSPI: int(spec.state.SPI), Ifid: int(spec.ifID),
+		Ifid: int(spec.ifID),
 	}
+	if spec.bindSPI {
+		policy.TmplSPI = int(spec.state.SPI)
+	}
+	return policy
 }

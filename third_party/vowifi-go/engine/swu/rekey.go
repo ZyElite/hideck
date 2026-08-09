@@ -8,25 +8,27 @@ import (
 	"net"
 
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
-// startXFRMExpireMonitor starts the XFRM SA expiry monitor.
-func (s *Session) startXFRMExpireMonitor() error {
-	return nil
-}
-
 // ensureIPv6RuntimeEnabled enables IPv6 for an active kernel data plane.
-func (s *Session) ensureIPv6RuntimeEnabled() error {
+func (s *Session) ensureIPv6RuntimeEnabled(iface string) error {
 	if s.kernelDataPlane != nil {
 		return s.kernelDataPlane.EnsureIPv6Enabled()
 	}
-	iface := s.activeDriverInterface()
 	if iface == "" {
-		mode, err := normalizeDataplaneMode(s.cfg.DataplaneMode)
+		iface = s.activeDriverInterface()
+	}
+	if iface == "" {
+		mode, err := configuredDataplaneMode(s.cfg)
 		if err != nil || mode != DataplaneModeUserspace {
 			return errors.Join(errors.New("swu: no active kernel data-plane interface"), err)
 		}
 		return nil
+	}
+	if s.legacyNetwork != nil {
+		return s.legacyNetwork.EnsureIPv6Enabled(iface)
 	}
 	if s.networkTxn == nil {
 		return errors.New("swu: no active network transaction")
@@ -35,24 +37,40 @@ func (s *Session) ensureIPv6RuntimeEnabled() error {
 }
 
 // applyNetworkConfigOnTUN applies the inner address/routes to the TUN device.
-func (s *Session) applyNetworkConfigOnTUN() error {
+func (s *Session) applyNetworkConfigOnTUN(iface string) error {
 	if s.primaryInnerIP() == nil {
 		return errors.New("swu: no inner address")
 	}
-	if s.tun == nil || s.networkTxn == nil {
-		return errors.New("swu: TUN data plane is not initialized")
+	if iface == "" {
+		return errors.New("swu: data-plane interface name is empty")
 	}
-	return s.configureNetworkInterface(s.networkTxn, s.tun.DeviceName())
+	if s.networkTxn != nil {
+		return s.configureNetworkInterface(s.networkTxn, iface)
+	}
+	if s.legacyNetwork != nil {
+		return s.configureLegacyNetworkInterface(s.legacyNetwork, iface)
+	}
+	return errors.New("swu: network configuration is not initialized")
 }
 
 // cleanupNetworkConfig removes the network configuration on teardown.
-func (s *Session) cleanupNetworkConfig() error {
-	if s.networkTxn == nil {
-		return nil
+func (s *Session) cleanupNetworkConfig() {
+	if err := s.rollbackNetworkConfig(); err != nil {
+		logger.Warn("SWu network rollback failed", zap.Error(err))
 	}
-	err := s.networkTxn.Rollback()
-	s.networkTxn = nil
-	return err
+}
+
+func (s *Session) rollbackNetworkConfig() error {
+	var result error
+	if s.networkTxn != nil {
+		result = errors.Join(result, s.networkTxn.Rollback())
+		s.networkTxn = nil
+	}
+	if s.legacyNetwork != nil {
+		result = errors.Join(result, s.legacyNetwork.Rollback())
+		s.legacyNetwork = nil
+	}
+	return result
 }
 
 // setupXFRMDataPlane installs the kernel XFRM data plane.

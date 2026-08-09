@@ -78,7 +78,8 @@ func (s *Session) completeInitiatedChildSARekeyWithOld(rekey initiatedChildRekey
 	tsi, tsr := s.currentChildSelectors()
 	selection, err := validateChildSAResponse(rekey.payloads, childSAOffer{
 		encryption: s.espCipher, encryptionKeyBits: s.espEncKeyBits, integrity: s.espInteg,
-		dhGroup: childDHGroup(rekey.newDH), tsi: tsi, tsr: tsr, localIPs: configuredInnerIPs(s),
+		dhGroup: childDHGroup(rekey.newDH), esn: s.espESN,
+		tsi: tsi, tsr: tsr, localIPs: configuredInnerIPs(s),
 		requireSA: true, requireNonce: true,
 	})
 	if err != nil {

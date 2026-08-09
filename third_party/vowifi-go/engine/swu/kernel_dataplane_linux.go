@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/iniwex5/netlink"
 	"github.com/iniwex5/vowifi-go/engine/driver"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
 )
@@ -18,8 +17,12 @@ const defaultXFRMInterface = "ipsec0"
 
 type xfrmDataPlane struct {
 	mu              sync.Mutex
-	manager         *driver.XFRMManager
-	network         *driver.NetTxn
+	closeOnce       sync.Once
+	closeErr        error
+	manager         xfrmManager
+	configure       func(string) error
+	enableIPv6      func(string) error
+	rollbackNetwork func() error
 	name            string
 	disableUDPEncap func() error
 	localIP         net.IP
@@ -30,6 +33,11 @@ type xfrmDataPlane struct {
 	outbound        driver.XFRMSAConfig
 	inbound         driver.XFRMSAConfig
 	retiredInbound  map[uint32]driver.XFRMSAConfig
+	monitorMu       sync.Mutex
+	monitorCancel   func()
+	monitorWG       sync.WaitGroup
+	monitorOpen     xfrmMonitorOpen
+	monitorClosed   bool
 }
 
 type xfrmInstallSpec struct {
@@ -52,31 +60,44 @@ func (x *xfrmDataPlane) CurrentSPIs() (uint32, uint32) {
 }
 
 func (x *xfrmDataPlane) EnsureIPv6Enabled() error {
-	if x == nil || x.network == nil || x.name == "" {
+	if x == nil {
 		return errors.New("swu: XFRM network transaction is not initialized")
 	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	return x.network.EnsureIPv6Enabled(x.name)
+	if x.manager == nil || x.enableIPv6 == nil || x.name == "" {
+		return errors.New("swu: XFRM network transaction is not initialized")
+	}
+	return x.enableIPv6(x.name)
 }
 
 func (x *xfrmDataPlane) Close() error {
 	if x == nil {
 		return nil
 	}
-	x.mu.Lock()
-	defer x.mu.Unlock()
-	var networkErr, managerErr, socketErr error
-	if x.network != nil {
-		networkErr = x.network.Rollback()
-	}
-	if x.manager != nil {
-		managerErr = x.manager.CleanupChecked()
-	}
-	if x.disableUDPEncap != nil {
-		socketErr = x.disableUDPEncap()
-	}
-	return errors.Join(networkErr, managerErr, socketErr)
+	x.closeOnce.Do(func() {
+		x.stopExpireMonitor()
+		x.mu.Lock()
+		defer x.mu.Unlock()
+		var networkErr, managerErr, socketErr error
+		if x.rollbackNetwork != nil {
+			networkErr = x.rollbackNetwork()
+			x.rollbackNetwork = nil
+		}
+		if x.manager != nil {
+			managerErr = x.manager.CleanupChecked()
+			x.manager = nil
+		}
+		if x.disableUDPEncap != nil {
+			socketErr = x.disableUDPEncap()
+			x.disableUDPEncap = nil
+		}
+		x.outbound = driver.XFRMSAConfig{}
+		x.inbound = driver.XFRMSAConfig{}
+		clear(x.retiredInbound)
+		x.closeErr = errors.Join(networkErr, managerErr, socketErr)
+	})
+	return x.closeErr
 }
 
 func (s *Session) setupKernelXFRMDataPlane(keys *childSAKeys) error {
@@ -105,11 +126,22 @@ func (s *Session) setupKernelXFRMDataPlane(keys *childSAKeys) error {
 	if err := activeTransport.SetUDPEncap(); err != nil {
 		return fmt.Errorf("swu: enable UDP encapsulation for XFRM: %w", err)
 	}
+	managerFactory := s.xfrmManagerNew
+	if managerFactory == nil {
+		managerFactory = func() xfrmManager { return driver.NewXFRMManager() }
+	}
 	plane := &xfrmDataPlane{
-		manager: driver.NewXFRMManager(), network: driver.NewNetTools().Begin(),
+		manager:         managerFactory(),
 		disableUDPEncap: transport.DisableUDPEncap,
 		retiredInbound:  make(map[uint32]driver.XFRMSAConfig),
 	}
+	if plane.manager == nil {
+		return errors.Join(
+			errors.New("swu: XFRM manager factory returned nil"),
+			plane.disableUDPEncap(),
+		)
+	}
+	s.configureXFRMNetworkPlane(plane)
 	if err := s.installXFRMDataPlane(xfrmInstallSpec{
 		plane: plane, keys: keys, localIP: localIP, remoteIP: remoteIP,
 		localPort: localPort, remotePort: remotePort, underlyingIndex: underlyingIndex,
@@ -120,24 +152,37 @@ func (s *Session) setupKernelXFRMDataPlane(keys *childSAKeys) error {
 	return nil
 }
 
+func (s *Session) configureXFRMNetworkPlane(plane *xfrmDataPlane) {
+	if network, ok := s.net.(*driver.NetTools); ok {
+		transaction := network.Begin()
+		plane.configure = func(iface string) error {
+			return s.configureNetworkInterface(transaction, iface)
+		}
+		plane.enableIPv6 = transaction.EnsureIPv6Enabled
+		plane.rollbackNetwork = transaction.Rollback
+		return
+	}
+	transaction := newLegacyNetTxn(s.net)
+	plane.configure = func(iface string) error {
+		return s.configureLegacyNetworkInterface(transaction, iface)
+	}
+	plane.enableIPv6 = transaction.EnsureIPv6Enabled
+	plane.rollbackNetwork = transaction.Rollback
+}
+
 func resolveXFRMLocalRoute(localIP, remoteIP net.IP) (net.IP, int, error) {
 	if localIP != nil && !localIP.IsUnspecified() {
 		index, err := interfaceIndexForIP(localIP)
 		return localIP, index, err
 	}
-	routes, err := netlink.RouteGet(remoteIP)
+	routedIP, index, _, err := detectOutboundRoute(remoteIP)
 	if err != nil {
 		return nil, 0, fmt.Errorf("swu: resolve XFRM outbound route: %w", err)
 	}
-	for _, route := range routes {
-		if route.Src != nil && !route.Src.IsUnspecified() {
-			if route.LinkIndex <= 0 {
-				return nil, 0, errors.New("swu: outbound XFRM route has no interface")
-			}
-			return route.Src, route.LinkIndex, nil
-		}
+	if index <= 0 {
+		return nil, 0, errors.New("swu: outbound XFRM route has no interface")
 	}
-	return nil, 0, errors.New("swu: outbound route has no source address")
+	return routedIP, index, nil
 }
 
 func validateXFRMRemoteTuple(remoteIP net.IP, localPort, remotePort uint16) error {
@@ -193,7 +238,10 @@ func (s *Session) installXFRMDataPlane(spec xfrmInstallSpec) error {
 	if err := installXFRMPolicies(spec.plane.manager, policySet); err != nil {
 		return err
 	}
-	if err := s.configureNetworkInterface(spec.plane.network, name); err != nil {
+	if spec.plane.configure == nil {
+		return errors.New("swu: XFRM network configuration is not initialized")
+	}
+	if err := spec.plane.configure(name); err != nil {
 		return fmt.Errorf("swu: configure XFRM interface: %w", err)
 	}
 	spec.plane.localIP = append(net.IP(nil), spec.localIP...)

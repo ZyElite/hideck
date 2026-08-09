@@ -36,19 +36,40 @@ func normalizeDataplaneMode(mode string) (string, error) {
 }
 
 func (s *Session) setupTUNDataPlane() error {
-	tun, err := driver.NewTUNDevice(strings.TrimSpace(s.cfg.TUNName))
+	tun, err := s.openTUNDevice(strings.TrimSpace(s.cfg.TUNName))
 	if err != nil {
 		return err
 	}
-	network := driver.NewNetTools().Begin()
 	s.tun = tun
-	s.networkTxn = network
-	if err := s.applyNetworkConfigOnTUN(); err != nil {
+	if network, ok := s.net.(*driver.NetTools); ok {
+		s.networkTxn = network.Begin()
+	} else {
+		s.legacyNetwork = newLegacyNetTxn(s.net)
+	}
+	if err := s.applyNetworkConfigOnTUN(tun.DeviceName()); err != nil {
 		s.tun = nil
-		s.networkTxn = nil
-		return errors.Join(err, network.Rollback(), tun.Close())
+		return errors.Join(err, s.rollbackNetworkConfig(), tun.Close())
 	}
 	return nil
+}
+
+func (s *Session) openTUNDevice(name string) (TUN, error) {
+	var (
+		tun TUN
+		err error
+	)
+	if s.cfg.TUNFactory != nil {
+		tun, err = s.cfg.TUNFactory(name)
+	} else {
+		tun, err = driver.NewTUNDevice(name)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if tun == nil {
+		return nil, errors.New("swu: TUN factory returned nil")
+	}
+	return tun, nil
 }
 
 func (s *Session) activeDriverInterface() string {
@@ -84,6 +105,57 @@ func (s *Session) configureNetworkInterface(transaction *driver.NetTxn, iface st
 		return err
 	}
 	return s.addPolicyRoutes(transaction, iface, routes)
+}
+
+func (s *Session) configureLegacyNetworkInterface(transaction *legacyNetTxn, iface string) error {
+	if transaction == nil {
+		return errors.New("swu: nil injected network transaction")
+	}
+	if err := transaction.SetLinkUp(iface); err != nil {
+		return err
+	}
+	if err := transaction.SetMTU(iface, s.tunnelMTU()); err != nil {
+		return err
+	}
+	routes, hasIPv6, err := s.dataPlaneRoutes()
+	if err != nil {
+		return err
+	}
+	if s.innerIPv6 != nil || hasIPv6 {
+		if err := transaction.EnsureIPv6Enabled(iface); err != nil {
+			return err
+		}
+	}
+	if err := s.addLegacyInnerAddresses(transaction, iface); err != nil {
+		return err
+	}
+	return s.addLegacyRoutes(transaction, iface, routes)
+}
+
+func (s *Session) addLegacyInnerAddresses(transaction *legacyNetTxn, iface string) error {
+	if s.innerIP != nil {
+		prefix := validPrefix(s.innerPrefix, 32)
+		if err := transaction.AddAddress(iface, fmt.Sprintf("%s/%d", s.innerIP, prefix)); err != nil {
+			return err
+		}
+	}
+	if s.innerIPv6 == nil {
+		return nil
+	}
+	prefix := validPrefix(s.innerIPv6Prefix, 128)
+	return transaction.AddAddress6(iface, fmt.Sprintf("%s/%d", s.innerIPv6, prefix))
+}
+
+func (s *Session) addLegacyRoutes(transaction *legacyNetTxn, iface string, routes []dataPlaneRoute) error {
+	for _, route := range routes {
+		if route.cidr == "0.0.0.0/0" || route.cidr == "::/0" {
+			continue
+		}
+		if err := transaction.AddRoute(route.cidr, "", iface, route.ipv6); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Session) tunnelMTU() int {
@@ -160,7 +232,7 @@ func (s *Session) startTUNDataPlaneLoop() {
 	go s.loopTUNToESP(transport, s.tun)
 }
 
-func (s *Session) loopESPToTUN(transport ipsec.Transport, tun *driver.TUNDevice) {
+func (s *Session) loopESPToTUN(transport ipsec.Transport, tun TUN) {
 	defer s.dataPlaneWG.Done()
 	for {
 		select {
@@ -192,7 +264,7 @@ func (s *Session) loopESPToTUN(transport ipsec.Transport, tun *driver.TUNDevice)
 	}
 }
 
-func (s *Session) loopTUNToESP(transport ipsec.Transport, tun *driver.TUNDevice) {
+func (s *Session) loopTUNToESP(transport ipsec.Transport, tun TUN) {
 	defer s.dataPlaneWG.Done()
 	buffer := make([]byte, maximumIPPacket)
 	for {

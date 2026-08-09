@@ -14,6 +14,7 @@ type childSAOffer struct {
 	encryptionKeyBits uint16
 	integrity         uint16
 	dhGroup           uint16
+	esn               bool
 	tsi               *ikev2.EncryptedPayloadTS
 	tsr               *ikev2.EncryptedPayloadTS
 	localIPs          []net.IP
@@ -29,6 +30,7 @@ type childSASelection struct {
 	encryption uint16
 	integrity  uint16
 	dhGroup    uint16
+	esn        bool
 }
 
 func validateChildSAResponse(payloads []ikev2.Payload, offer childSAOffer) (*childSASelection, error) {
@@ -48,7 +50,7 @@ func validateChildSAResponse(payloads []ikev2.Payload, offer childSAOffer) (*chi
 	if len(sa.Proposals) != 1 {
 		return nil, fmt.Errorf("swu: CHILD_SA response selected %d proposals, want 1", len(sa.Proposals))
 	}
-	spi, encryption, integrity, dhGroup, err := validateESPSelection(sa.Proposals[0], offer)
+	spi, encryption, integrity, dhGroup, esn, err := validateESPSelection(sa.Proposals[0], offer)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +69,7 @@ func validateChildSAResponse(payloads []ikev2.Payload, offer childSAOffer) (*chi
 	return &childSASelection{
 		remoteSPI: spi, nonce: nonce,
 		tsi: cloneTrafficSelectorPayload(tsi), tsr: cloneTrafficSelectorPayload(tsr),
-		encryption: encryption, integrity: integrity, dhGroup: dhGroup,
+		encryption: encryption, integrity: integrity, dhGroup: dhGroup, esn: esn,
 	}, nil
 }
 

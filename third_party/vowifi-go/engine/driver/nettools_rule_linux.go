@@ -12,18 +12,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func (n *NetTools) AddRule(arguments ...any) error {
-	if len(arguments) == 1 {
-		rule, ok := arguments[0].(*netlink.Rule)
-		if !ok || rule == nil {
-			return fmt.Errorf("AddRule: expected *netlink.Rule")
-		}
-		return wrapErr("rule add", "", netlink.RuleAdd(rule))
-	}
-	source, table, err := ruleArguments(arguments)
-	if err != nil {
-		return err
-	}
+func (n *NetTools) AddRule(source string, table int) error {
 	rule, err := sourceRule(source, table)
 	if err != nil {
 		return wrapErr("rule add", source, err)
@@ -36,18 +25,7 @@ func (n *NetTools) AddRule(arguments ...any) error {
 	return wrapErr("rule add", fmt.Sprintf("from %s lookup %d", source, table), err)
 }
 
-func (n *NetTools) DelRule(arguments ...any) error {
-	if len(arguments) == 1 {
-		rule, ok := arguments[0].(*netlink.Rule)
-		if !ok || rule == nil {
-			return fmt.Errorf("DelRule: expected *netlink.Rule")
-		}
-		return wrapErr("rule del", "", netlink.RuleDel(rule))
-	}
-	source, table, err := ruleArguments(arguments)
-	if err != nil {
-		return err
-	}
+func (n *NetTools) DelRule(source string, table int) error {
 	rule, err := sourceRule(source, table)
 	if err != nil {
 		return wrapErr("rule del", source, err)
@@ -58,18 +36,6 @@ func (n *NetTools) DelRule(arguments ...any) error {
 		return nil
 	}
 	return wrapErr("rule del", fmt.Sprintf("from %s lookup %d", source, table), err)
-}
-
-func ruleArguments(arguments []any) (string, int, error) {
-	if len(arguments) != 2 {
-		return "", 0, fmt.Errorf("rule operation expects source CIDR and table")
-	}
-	source, sourceOK := arguments[0].(string)
-	table, tableOK := arguments[1].(int)
-	if !sourceOK || !tableOK {
-		return "", 0, fmt.Errorf("rule operation expects (string, int)")
-	}
-	return source, table, nil
 }
 
 func sourceRule(source string, table int) (*netlink.Rule, error) {
@@ -99,19 +65,8 @@ func removeRulesMatchingSource(family int, source *net.IPNet) {
 	}
 }
 
-func (n *NetTools) AddInputRule(first any, table int) error {
-	if iface, ok := first.(string); ok {
-		return addInputRules(iface, table)
-	}
-	mark, ok := first.(int)
-	if !ok {
-		return fmt.Errorf("AddInputRule: expected interface name or mark")
-	}
-	rule := netlink.NewRule()
-	rule.Mark = uint32(mark)
-	rule.Table = table
-	rule.Priority = 1000
-	return n.AddRule(rule)
+func (n *NetTools) AddInputRule(iface string, table int) error {
+	return addInputRules(iface, table)
 }
 
 func addInputRules(iface string, table int) error {
@@ -131,26 +86,15 @@ func addInputRules(iface string, table int) error {
 	return nil
 }
 
-func (n *NetTools) DelInputRule(first any, table int) error {
-	if iface, ok := first.(string); ok {
-		rule := netlink.NewRule()
-		rule.IifName = iface
-		rule.Table = table
-		err := netlink.RuleDel(rule)
-		if isRouteNotFound(err) {
-			return nil
-		}
-		return wrapErr("rule del", fmt.Sprintf("iif %s lookup %d", iface, table), err)
-	}
-	mark, ok := first.(int)
-	if !ok {
-		return fmt.Errorf("DelInputRule: expected interface name or mark")
-	}
+func (n *NetTools) DelInputRule(iface string, table int) error {
 	rule := netlink.NewRule()
-	rule.Mark = uint32(mark)
+	rule.IifName = iface
 	rule.Table = table
-	rule.Priority = 1000
-	return n.DelRule(rule)
+	err := netlink.RuleDel(rule)
+	if isRouteNotFound(err) {
+		return nil
+	}
+	return wrapErr("rule del", fmt.Sprintf("iif %s lookup %d", iface, table), err)
 }
 
 func removeRulesMatchingInterface(family int, iface string) {
@@ -172,28 +116,17 @@ func familyNumber(family int) int {
 	return 4
 }
 
-func (n *NetTools) FlushRules(arguments ...any) error {
-	return n.flushRules(arguments, false)
+func (n *NetTools) FlushRules(table int, iface string) error {
+	return n.flushRules(table, iface, false)
 }
 
 // FlushRulesChecked reports every list/delete failure instead of preserving
 // the original best-effort cleanup behavior.
 func (n *NetTools) FlushRulesChecked(table int, iface string) error {
-	return n.flushRules([]any{table, iface}, true)
+	return n.flushRules(table, iface, true)
 }
 
-func (n *NetTools) flushRules(arguments []any, checked bool) error {
-	if len(arguments) == 0 {
-		return flushInterimRules()
-	}
-	if len(arguments) != 2 {
-		return fmt.Errorf("FlushRules: expected table and interface")
-	}
-	table, tableOK := arguments[0].(int)
-	iface, ifaceOK := arguments[1].(string)
-	if !tableOK || !ifaceOK {
-		return fmt.Errorf("FlushRules: expected (int, string)")
-	}
+func (n *NetTools) flushRules(table int, iface string, checked bool) error {
 	var result error
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
 		rules, err := netlink.RuleList(family)
@@ -213,22 +146,6 @@ func (n *NetTools) flushRules(arguments []any, checked bool) error {
 		}
 	}
 	return result
-}
-
-func flushInterimRules() error {
-	rules, err := netlink.RuleList(netlink.FAMILY_ALL)
-	if err != nil {
-		return wrapErr("list rules", "", err)
-	}
-	for index := range rules {
-		if rules[index].Priority < 1000 {
-			continue
-		}
-		if err := netlink.RuleDel(&rules[index]); err != nil {
-			return wrapErr("flush rule", "", err)
-		}
-	}
-	return nil
 }
 
 func (n *NetTools) CleanConflictRoutes(cidrs []string, keepIface string, family int) {

@@ -4,7 +4,6 @@ package driver
 
 import (
 	"fmt"
-	"net"
 	"time"
 
 	"github.com/iniwex5/netlink"
@@ -16,62 +15,19 @@ const (
 	addressRetryDelay  = 80 * time.Millisecond
 )
 
-func (n *NetTools) AddAddress(arguments ...any) error {
-	iface, cidr, err := n.addressArguments(arguments, false)
-	if err != nil {
-		return err
-	}
+func (n *NetTools) AddAddress(iface, cidr string) error {
 	return addAddress(iface, cidr, false)
 }
 
-func (n *NetTools) DelAddress(arguments ...any) error {
-	iface, cidr, err := n.addressArguments(arguments, false)
-	if err != nil {
-		return err
-	}
+func (n *NetTools) DelAddress(iface, cidr string) error {
 	return deleteAddress(iface, cidr, false)
 }
 
-func (n *NetTools) AddAddress6(arguments ...any) error {
-	iface, cidr, err := n.addressArguments(arguments, true)
-	if err != nil {
-		return err
-	}
+func (n *NetTools) AddAddress6(iface, cidr string) error {
 	return addAddress(iface, cidr, true)
 }
 
-func (n *NetTools) DelAddress6(arguments ...any) error {
-	return n.DelAddress(arguments...)
-}
-
-func (n *NetTools) addressArguments(arguments []any, ipv6 bool) (string, string, error) {
-	if len(arguments) != 2 {
-		return "", "", fmt.Errorf("address operation expects two arguments")
-	}
-	if iface, ok := arguments[0].(string); ok {
-		cidr, cidrOK := arguments[1].(string)
-		if cidrOK {
-			return iface, cidr, nil
-		}
-	}
-	ip, ipOK := arguments[0].(net.IP)
-	prefix, prefixOK := arguments[1].(int)
-	if !ipOK || !prefixOK {
-		return "", "", fmt.Errorf("address operation expects (interface, CIDR) or (IP, prefix)")
-	}
-	iface, err := n.interfaceName(nil)
-	if err != nil {
-		return "", "", err
-	}
-	bits := net.IPv4len * 8
-	if ipv6 {
-		bits = net.IPv6len * 8
-	}
-	if prefix < 0 || prefix > bits {
-		return "", "", fmt.Errorf("invalid prefix length %d for %d-bit address", prefix, bits)
-	}
-	return iface, fmt.Sprintf("%s/%d", ip.String(), prefix), nil
-}
+func (n *NetTools) DelAddress6(iface, cidr string) error { return deleteAddress(iface, cidr, true) }
 
 func addAddress(iface, cidr string, ipv6 bool) error {
 	operation := "addr add"

@@ -86,8 +86,8 @@ func (s *Session) applyInitialChildSAResponse(exchange initialChildSAExchange) e
 	}
 	selection, err := validateChildSAResponse(payloads, childSAOffer{
 		encryption: s.espCipher, encryptionKeyBits: s.espEncKeyBits, integrity: s.espInteg,
-		dhGroup: childDHGroup(exchange.dh),
-		tsi:     exchange.tsi, tsr: exchange.tsr, localIPs: configuredInnerIPs(s),
+		dhGroup: childDHGroup(exchange.dh), esn: s.espESN,
+		tsi: exchange.tsi, tsr: exchange.tsr, localIPs: configuredInnerIPs(s),
 		requireSA: true, requireNonce: true,
 	})
 	if err != nil {
@@ -98,7 +98,7 @@ func (s *Session) applyInitialChildSAResponse(exchange initialChildSAExchange) e
 		return err
 	}
 	s.espLocalSPI, s.espRemoteSPI = exchange.localSPI, selection.remoteSPI
-	s.espCipher, s.espInteg = selection.encryption, selection.integrity
+	s.espCipher, s.espInteg, s.espESN = selection.encryption, selection.integrity, selection.esn
 	s.childNi = append([]byte(nil), exchange.initiatorNonce...)
 	s.childNr = append([]byte(nil), selection.nonce...)
 	s.childDH, s.childDHSecret = exchange.dh, append([]byte(nil), sharedSecret...)

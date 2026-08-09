@@ -14,11 +14,7 @@ type encryptionParameters struct {
 }
 
 func initializeSessionAlgorithms(s *Session, cfg *Config) error {
-	mode := ""
-	if cfg != nil {
-		mode = cfg.DataplaneMode
-	}
-	normalizedMode, err := normalizeDataplaneMode(mode)
+	normalizedMode, err := configuredDataplaneMode(cfg)
 	if err != nil {
 		return err
 	}
@@ -68,6 +64,7 @@ func initializeSessionAlgorithms(s *Session, cfg *Config) error {
 	s.integAlg, s.dhGroup = plan.IKEIntegrity, plan.IKEDH
 	s.espCipher, s.espInteg = plan.ESPEncryption, plan.ESPIntegrity
 	s.espEncKeyBits = plan.ESPEncryptionKeyBits
+	s.espESN = configuredXFRMESN(cfg)
 	s.prf, s.dh = prf, dh
 	s.encKeyLen, s.integKeyLen, s.aead = ikeEncryption.keyLen, ikeIntegrity.KeySize(), ikeEncryption.aead
 	s.espEncKeyLen, s.espIntegKeyLen, s.espAEAD = espEncryption.keyLen, espIntegrity.KeySize(), espEncryption.aead
@@ -189,11 +186,7 @@ func validateDriverAlgorithms(plan *AlgorithmPlan, isAEAD bool, cfg *Config) err
 	if driver.IsAEADAlgorithm(plan.ESPEncryption) != isAEAD {
 		return fmt.Errorf("ESP transform %d has inconsistent AEAD classification", plan.ESPEncryption)
 	}
-	mode := ""
-	if cfg != nil {
-		mode = cfg.DataplaneMode
-	}
-	normalizedMode, err := normalizeDataplaneMode(mode)
+	normalizedMode, err := configuredDataplaneMode(cfg)
 	if err != nil || normalizedMode != DataplaneModeXFRMI {
 		return err
 	}

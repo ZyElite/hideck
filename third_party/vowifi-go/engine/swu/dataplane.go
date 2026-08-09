@@ -27,7 +27,7 @@ func (s *Session) setupDataPlane() error {
 	if err != nil {
 		return err
 	}
-	mode, err := normalizeDataplaneMode(s.cfg.DataplaneMode)
+	mode, err := configuredDataplaneMode(s.cfg)
 	if err != nil {
 		return err
 	}
@@ -237,13 +237,11 @@ func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, uint32, error) {
 // stopDataPlane tears down the data plane.
 func (s *Session) stopDataPlane() error {
 	var cleanupErr error
+	s.stopXFRMActions()
 	if endpoint := s.swapInnerPacketEndpoint(nil); endpoint != nil {
 		cleanupErr = errors.Join(cleanupErr, endpoint.Close())
 	}
-	if s.networkTxn != nil {
-		cleanupErr = errors.Join(cleanupErr, s.networkTxn.Rollback())
-		s.networkTxn = nil
-	}
+	cleanupErr = errors.Join(cleanupErr, s.rollbackNetworkConfig())
 	if s.tun != nil {
 		cleanupErr = errors.Join(cleanupErr, s.tun.Close())
 		s.tun = nil

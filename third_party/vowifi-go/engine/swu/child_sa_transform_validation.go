@@ -11,29 +11,30 @@ import (
 
 const transformAttributeKeyLength uint16 = 14
 
-func validateESPSelection(proposal *ikev2.Proposal, offer childSAOffer) (uint32, uint16, uint16, uint16, error) {
+func validateESPSelection(proposal *ikev2.Proposal, offer childSAOffer) (uint32, uint16, uint16, uint16, bool, error) {
 	if proposal == nil || proposal.ProposalNum != 1 || proposal.ProtocolID != ikev2.ProtoESP {
-		return 0, 0, 0, 0, errors.New("swu: CHILD_SA response selected an invalid ESP proposal")
+		return 0, 0, 0, 0, false, errors.New("swu: CHILD_SA response selected an invalid ESP proposal")
 	}
 	if len(proposal.SPI) != 4 {
-		return 0, 0, 0, 0, errors.New("swu: CHILD_SA response SPI must be four bytes")
+		return 0, 0, 0, 0, false, errors.New("swu: CHILD_SA response SPI must be four bytes")
 	}
 	spi := binary.BigEndian.Uint32(proposal.SPI)
 	if spi == 0 {
-		return 0, 0, 0, 0, errors.New("swu: CHILD_SA response SPI is zero")
+		return 0, 0, 0, 0, false, errors.New("swu: CHILD_SA response SPI is zero")
 	}
 	transforms, err := indexESPTransforms(proposal.Transforms)
 	if err != nil {
-		return 0, 0, 0, 0, err
+		return 0, 0, 0, 0, false, err
 	}
 	encryption, integrity, err := validateESPAlgorithms(transforms, offer)
 	if err != nil {
-		return 0, 0, 0, 0, err
+		return 0, 0, 0, 0, false, err
 	}
-	if err := validateESPPFSAndESN(transforms, offer.dhGroup); err != nil {
-		return 0, 0, 0, 0, err
+	esn, err := validateESPPFSAndESN(transforms, offer.dhGroup, offer.esn)
+	if err != nil {
+		return 0, 0, 0, 0, false, err
 	}
-	return spi, encryption, integrity, offer.dhGroup, nil
+	return spi, encryption, integrity, offer.dhGroup, esn, nil
 }
 
 func validateESPAlgorithms(
@@ -61,19 +62,24 @@ func validateESPAlgorithms(
 func validateESPPFSAndESN(
 	transforms map[ikev2.TransformType]*ikev2.Transform,
 	dhGroup uint16,
-) error {
+	expectESN bool,
+) (bool, error) {
 	dh := transforms[ikev2.TransformTypeDH]
 	if dhGroup == 0 && dh != nil {
-		return errors.New("swu: CHILD_SA response selected unoffered PFS")
+		return false, errors.New("swu: CHILD_SA response selected unoffered PFS")
 	}
 	if dhGroup != 0 && (dh == nil || uint16(dh.ID) != dhGroup) {
-		return fmt.Errorf("swu: CHILD_SA PFS selection %v does not match offer %d", transformID(dh), dhGroup)
+		return false, fmt.Errorf("swu: CHILD_SA PFS selection %v does not match offer %d", transformID(dh), dhGroup)
 	}
 	esn := transforms[ikev2.TypeESN]
-	if esn == nil || esn.ID != 0 {
-		return errors.New("swu: CHILD_SA response did not select ESN disabled")
+	want := ikev2.AlgorithmType(0)
+	if expectESN {
+		want = 1
 	}
-	return nil
+	if esn == nil || esn.ID != want {
+		return false, fmt.Errorf("swu: CHILD_SA response selected ESN %v, want %d", transformID(esn), want)
+	}
+	return esn.ID == 1, nil
 }
 
 func indexESPTransforms(transforms []*ikev2.Transform) (map[ikev2.TransformType]*ikev2.Transform, error) {

@@ -11,7 +11,7 @@ import (
 )
 
 func (x *xfrmDataPlane) Rekey(s *Session, runtime *childSARuntime) error {
-	if x == nil || x.manager == nil || runtime == nil {
+	if x == nil || runtime == nil {
 		return errors.New("swu: XFRM rekey requires an active data plane and CHILD_SA")
 	}
 	if runtime.localSPI == 0 || runtime.remoteSPI == 0 {
@@ -19,6 +19,9 @@ func (x *xfrmDataPlane) Rekey(s *Session, runtime *childSARuntime) error {
 	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
+	if x.manager == nil {
+		return errors.New("swu: XFRM rekey requires an active data plane and CHILD_SA")
+	}
 	keys := &childSAKeys{initiator: runtime.outboundKeys, responder: runtime.inboundKeys}
 	outbound, inbound, err := s.xfrmSAConfigsFor(xfrmSAConfigSpec{
 		keys: keys, localIP: x.localIP, remoteIP: x.remoteIP,
@@ -50,11 +53,14 @@ func (x *xfrmDataPlane) Rekey(s *Session, runtime *childSARuntime) error {
 }
 
 func (x *xfrmDataPlane) RetireInbound(spi uint32) error {
-	if x == nil || x.manager == nil {
+	if x == nil {
 		return errors.New("swu: XFRM data plane is not active")
 	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
+	if x.manager == nil {
+		return errors.New("swu: XFRM data plane is not active")
+	}
 	config, ok := x.retiredInbound[spi]
 	if !ok {
 		return nil

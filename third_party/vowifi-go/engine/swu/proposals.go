@@ -70,6 +70,7 @@ func buildESPProposals(cfg *Config, spi []byte) ([]*ikev2.Proposal, error) {
 	}
 	result := make([]*ikev2.Proposal, 0, len(source))
 	for _, proposal := range source {
+		setESPProposalESN(proposal, configuredXFRMESN(cfg))
 		if filtered, ok := filterESPProposal(proposal); ok {
 			result = append(result, filtered)
 		}
@@ -267,5 +268,23 @@ func buildESPProposalsForSession(session *Session, spi uint32) []*ikev2.Proposal
 	if spi != 0 {
 		proposals[0].SPI = spiBytes(spi)
 	}
+	setESPProposalESN(proposals[0], session.espESN)
 	return proposals
+}
+
+func setESPProposalESN(proposal *ikev2.Proposal, enabled bool) {
+	if proposal == nil {
+		return
+	}
+	id := ikev2.AlgorithmType(0)
+	if enabled {
+		id = 1
+	}
+	for _, transform := range proposal.Transforms {
+		if transform != nil && transform.Type == ikev2.TransformTypeESN {
+			transform.ID = id
+			return
+		}
+	}
+	proposal.AddTransform(ikev2.TransformTypeESN, id, 0)
 }

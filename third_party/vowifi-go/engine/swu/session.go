@@ -24,6 +24,24 @@ var ErrFreshRuntimeRequired = errors.New("swu: full reauthentication requires a 
 // Transport is the original injectable SWu network boundary.
 type Transport = ipsec.Transport
 
+// TUN is the original injectable inner-packet device boundary.
+type TUN interface {
+	Close() error
+	DeviceName() string
+	Read([]byte) (int, error)
+	Write([]byte) (int, error)
+}
+
+// NetTools is the original injectable network-configuration boundary.
+type NetTools interface {
+	AddAddress(string, string) error
+	AddAddress6(string, string) error
+	AddRoute(string, string, string) error
+	AddRoute6(string, string, string) error
+	SetLinkUp(string) error
+	SetMTU(string, int) error
+}
+
 // Config carries the SWu session configuration recovered from the decompiled
 // engine/swu. It is the input to NewSession.
 type Config struct {
@@ -49,6 +67,9 @@ type Config struct {
 	Proxy     *ipsec.Socks5Config
 	// TransportFactory restores the original injectable transport constructor.
 	TransportFactory func(local, remote string) (Transport, error)
+	// TUNFactory and NetTools restore the original injectable driver boundaries.
+	TUNFactory func(name string) (TUN, error)
+	NetTools   NetTools
 	// IMSI is the subscriber IMSI used for the EAP-AKA identity.
 	IMSI string
 	// MCC/MNC override the MCC/MNC derived from the IMSI in the NAI.
@@ -103,8 +124,10 @@ type Config struct {
 	ESPEncryption        uint16
 	ESPEncryptionKeyBits uint16
 	ESPIntegrity         uint16
-	// DataplaneMode selects userspace, TUN, or Linux XFRM processing. Empty is
-	// equivalent to userspace so current callers keep their existing behavior.
+	// EnableDriver restores the original empty-mode TUN switch. An explicit
+	// DataplaneMode takes precedence so current callers retain their behavior.
+	EnableDriver bool
+	// DataplaneMode selects userspace, TUN, or Linux XFRM processing.
 	DataplaneMode string
 	TUNName       string
 	TUNMTU        int
@@ -238,9 +261,12 @@ type Session struct {
 	// --- data plane ---
 	innerEndpointMu sync.RWMutex
 	innerEndpoint   *userspaceInnerPacketEndpoint
-	tun             *driver.TUNDevice
+	tun             TUN
+	net             NetTools
 	networkTxn      *driver.NetTxn
+	legacyNetwork   *legacyNetTxn
 	kernelDataPlane kernelDataPlane
+	xfrmManagerNew  func() xfrmManager
 	espOutboundSA   *ipsec.SecurityAssociation
 	espInboundSA    *ipsec.SecurityAssociation
 	espInboundSAs   map[uint32]*ipsec.SecurityAssociation
@@ -255,6 +281,7 @@ type Session struct {
 	childTSr        *ikev2.EncryptedPayloadTS
 	espCipher       uint16
 	espInteg        uint16
+	espESN          bool
 	espKey          []byte
 	espIntegKey     []byte
 	innerIP         net.IP // inner IP assigned by the ePDG (CP payload)
@@ -334,6 +361,15 @@ type Session struct {
 	resumeOldSKd             []byte
 	ikeFragmentMTU           uint32
 	fragmentBuf              *fragmentBuffer
+
+	// Original session lifecycle callbacks. OnSessionDown is used by XFRM
+	// hard-expire handling; OnReauthNeeded is consumed by the lifecycle stage.
+	OnSessionDown     func()
+	OnReauthNeeded    func()
+	xfrmRekey         func() error
+	xfrmActionMu      sync.Mutex
+	xfrmActionWG      sync.WaitGroup
+	xfrmActionClosing bool
 }
 
 // NewSession builds a SWu session from the configuration.
@@ -364,6 +400,8 @@ func NewSession(cfg *Config) *Session {
 		netEventMonitors:  make(map[<-chan ipsec.NetEvent]struct{}),
 		resumeTicket:      append([]byte(nil), cfg.ResumeTicket...),
 		resumeOldSKd:      append([]byte(nil), cfg.ResumeOldSKd...),
+		net:               configuredNetTools(cfg),
+		xfrmManagerNew:    func() xfrmManager { return driver.NewXFRMManager() },
 	}
 	if s.nonceLen <= 0 {
 		s.nonceLen = 32
@@ -685,7 +723,7 @@ func configuredLocalIP(cfg *Config) net.IP {
 // detectOutboundIPv4ByHost resolves a configured hostname before invoking the
 // original IP-based outbound-route detector.
 func detectOutboundIPv4ByHost(host, port string) (net.IP, error) {
-	remoteIP, err := detectOutboundRoute(host)
+	remoteIP, err := resolveEPDGAddress(host)
 	if err != nil {
 		return nil, err
 	}
@@ -697,7 +735,7 @@ func detectOutboundIPv4ByHost(host, port string) (net.IP, error) {
 }
 
 // detectOutboundRoute resolves the ePDG host to an IP (used by buildTransport).
-func detectOutboundRoute(host string) (net.IP, error) {
+func resolveEPDGAddress(host string) (net.IP, error) {
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return nil, err
@@ -857,6 +895,7 @@ func (s *Session) startTimers() {
 	s.startChildSARekeyTimer(childInterval)
 	s.startNATKeepalive()
 	s.startDPD()
+	s.startXFRMExpireMonitor()
 }
 
 // stopTimers stops all timers.
