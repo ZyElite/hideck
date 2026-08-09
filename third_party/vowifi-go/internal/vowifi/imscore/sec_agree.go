@@ -234,20 +234,26 @@ func (s *Service) installNegotiatedIPSec(ctx context.Context, session *registerS
 	client := session.security.client
 	policy := ipsec3gpp.Policy{
 		LocalIP: s.cfg.LocalIP, RemoteIP: remote.IP,
-		LocalClientPort: client.PortC, LocalServerPort: client.PortS,
-		RemoteClientPort: server.PortC, RemoteServerPort: server.PortS,
-		LocalClientSPI: client.SPIC, LocalServerSPI: client.SPIS,
-		RemoteClientSPI: server.SPIC, RemoteServerSPI: server.SPIS,
-		Authentication: server.Auth, Encryption: server.Encryption,
-		Protocol: server.Protocol, Mode: server.Mode, CK: aka.CK, IK: aka.IK,
+		LocalPortC: int(client.PortC), LocalPortS: int(client.PortS),
+		RemotePortC: int(server.PortC), RemotePortS: int(server.PortS),
+		FlowC: ipsec3gpp.Flow{
+			OutboundSPI: server.SPIS, InboundSPI: client.SPIC,
+			LocalPort: int(client.PortC), RemotePort: int(server.PortS),
+			AuthAlg: server.Auth, EncAlg: server.Encryption, CK: aka.CK, IK: aka.IK,
+		},
+		FlowS: ipsec3gpp.Flow{
+			OutboundSPI: server.SPIC, InboundSPI: client.SPIS,
+			LocalPort: int(client.PortS), RemotePort: int(server.PortC),
+			AuthAlg: server.Auth, EncAlg: server.Encryption, CK: aka.CK, IK: aka.IK,
+		},
 	}
 	if err := s.InstallIPSec3GPP(policy); err != nil {
 		return fmt.Errorf("imscore: install negotiated 3GPP IPsec: %w", err)
 	}
 	logging.Info("IMS 3GPP IPsec policy installed",
-		"auth", policy.Authentication, "encryption", policy.Encryption,
-		"local_client_port", policy.LocalClientPort, "local_server_port", policy.LocalServerPort,
-		"remote_client_port", policy.RemoteClientPort, "remote_server_port", policy.RemoteServerPort)
+		"auth", policy.FlowC.AuthAlg, "encryption", policy.FlowC.EncAlg,
+		"local_client_port", policy.LocalPortC, "local_server_port", policy.LocalPortS,
+		"remote_client_port", policy.RemotePortC, "remote_server_port", policy.RemotePortS)
 	if err := s.setProtectedRegistrarPort(server.PortS); err != nil {
 		return err
 	}

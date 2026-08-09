@@ -28,8 +28,8 @@ type bridgeStats struct {
 }
 
 type PacketTransformer interface {
-	TransformOutbound(inner []byte) ([]byte, error)
-	TransformInbound(tunnel []byte) ([]byte, error)
+	TransformOutbound(inner []byte) ([]byte, bool, error)
+	TransformInbound(tunnel []byte) ([]byte, bool, error)
 }
 
 func NewPacketBridge() *PacketBridge {
@@ -106,7 +106,7 @@ func (b *PacketBridge) transformOutbound(packet []byte) ([]byte, bool) {
 	if transformer == nil {
 		return packet, true
 	}
-	transformed, err := transformer.TransformOutbound(packet)
+	transformed, _, err := transformer.TransformOutbound(packet)
 	return transformed, err == nil
 }
 
@@ -115,7 +115,7 @@ func (b *PacketBridge) transformInbound(packet []byte) ([]byte, bool) {
 	if transformer == nil {
 		return packet, true
 	}
-	transformed, err := transformer.TransformInbound(packet)
+	transformed, _, err := transformer.TransformInbound(packet)
 	return transformed, err == nil
 }
 

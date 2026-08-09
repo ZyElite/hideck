@@ -2,56 +2,78 @@ package ipsec3gpp
 
 import "sync"
 
-// ReplayWindow implements the RFC 4303 anti-replay window.
+type ReplayStats struct {
+	Accepted  uint64
+	Duplicate uint64
+	TooOld    uint64
+}
+
 type ReplayWindow struct {
-	mu      sync.Mutex
-	window  uint64
-	highest uint32
-	size    int
+	mu          sync.Mutex
+	size        uint32
+	initialized bool
+	highest     uint32
+	bitmap      uint64
+	stats       ReplayStats
 }
 
 func NewReplayWindow(size int) *ReplayWindow {
 	if size <= 0 || size > 64 {
 		size = 32
 	}
-	return &ReplayWindow{size: size}
+	return &ReplayWindow{size: uint32(size)}
 }
 
-func (w *ReplayWindow) Accept(sequence uint32) bool {
+func (window *ReplayWindow) Accept(sequence uint32) bool {
+	window.mu.Lock()
+	defer window.mu.Unlock()
 	if sequence == 0 {
+		window.stats.TooOld++
 		return false
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.highest == 0 {
-		w.highest = sequence
-		w.window = 1
+	if !window.initialized {
+		window.initialized = true
+		window.highest = sequence
+		window.bitmap = 1
+		window.stats.Accepted++
 		return true
 	}
-	if sequence > w.highest {
-		shift := uint64(sequence - w.highest)
-		if shift >= uint64(w.size) {
-			w.window = 1
-		} else {
-			w.window = (w.window << shift) | 1
-		}
-		w.highest = sequence
-		return true
+	if sequence <= window.highest {
+		return window.acceptOlder(sequence)
 	}
-	shift := uint64(w.highest - sequence)
-	if shift >= uint64(w.size) {
-		return false
-	}
-	bit := uint64(1) << shift
-	if w.window&bit != 0 {
-		return false
-	}
-	w.window |= bit
+	window.advance(sequence)
+	window.stats.Accepted++
 	return true
 }
 
-func (w *ReplayWindow) Snapshot() (uint32, uint64) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.highest, w.window
+func (window *ReplayWindow) acceptOlder(sequence uint32) bool {
+	difference := window.highest - sequence
+	if difference >= window.size {
+		window.stats.TooOld++
+		return false
+	}
+	bit := uint64(1) << difference
+	if window.bitmap&bit != 0 {
+		window.stats.Duplicate++
+		return false
+	}
+	window.bitmap |= bit
+	window.stats.Accepted++
+	return true
+}
+
+func (window *ReplayWindow) advance(sequence uint32) {
+	difference := sequence - window.highest
+	if difference < window.size {
+		window.bitmap = (window.bitmap << difference) | 1
+	} else {
+		window.bitmap = 1
+	}
+	window.highest = sequence
+}
+
+func (window *ReplayWindow) Snapshot() ReplayStats {
+	window.mu.Lock()
+	defer window.mu.Unlock()
+	return window.stats
 }

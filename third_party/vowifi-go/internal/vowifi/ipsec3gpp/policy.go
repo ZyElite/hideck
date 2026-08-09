@@ -2,9 +2,7 @@ package ipsec3gpp
 
 import (
 	"errors"
-	"fmt"
 	"net"
-	"strings"
 )
 
 const (
@@ -16,10 +14,30 @@ const (
 	ModeTransport  = "trans"
 )
 
-// Policy describes the four unidirectional SAs negotiated by IMS sec-agree.
-// Client/Server names are relative to LocalIP (the UE).
+type Flow struct {
+	OutboundSPI uint32
+	InboundSPI  uint32
+	LocalPort   int
+	RemotePort  int
+	AuthAlg     string
+	EncAlg      string
+	CK          []byte
+	IK          []byte
+}
+
 type Policy struct {
-	LocalIP, RemoteIP                  net.IP
+	LocalIP     net.IP
+	RemoteIP    net.IP
+	LocalPortC  int
+	LocalPortS  int
+	RemotePortC int
+	RemotePortS int
+	FlowC       Flow
+	FlowS       Flow
+
+	// These fields preserve the policy shape introduced by the reconstructed
+	// tree. NewPolicy projects it into FlowC/FlowS when the original fields are
+	// absent.
 	LocalClientPort, LocalServerPort   uint16
 	RemoteClientPort, RemoteServerPort uint16
 	LocalClientSPI, LocalServerSPI     uint32
@@ -29,90 +47,73 @@ type Policy struct {
 	CK, IK                             []byte
 }
 
+type SecurityMechanism struct {
+	Alg   string
+	EAlg  string
+	Prot  string
+	Mode  string
+	SPIc  uint32
+	SPIs  uint32
+	PortC int
+	PortS int
+	Raw   string
+}
+
 func NewPolicy(policy Policy) (Policy, error) {
-	policy = clonePolicy(policy)
-	policy.Authentication = normalize(policy.Authentication, AuthHMACSHA196)
-	policy.Encryption = normalize(policy.Encryption, EncryptionNull)
-	policy.Protocol = normalize(policy.Protocol, ProtocolESP)
-	policy.Mode = normalize(policy.Mode, ModeTransport)
-	if err := policy.validate(); err != nil {
-		return Policy{}, err
+	if len(policy.LocalIP) == 0 || len(policy.RemoteIP) == 0 {
+		return Policy{}, errors.New("ipsec3gpp: local/remote IP must not be nil")
 	}
-	return policy, nil
+	projectCompatibilityPolicy(&policy)
+	return clonePolicy(policy), nil
+}
+
+func projectCompatibilityPolicy(policy *Policy) {
+	if policy.LocalPortC == 0 && policy.LocalPortS == 0 && policy.RemotePortC == 0 && policy.RemotePortS == 0 &&
+		(policy.LocalClientPort != 0 || policy.LocalServerPort != 0 || policy.RemoteClientPort != 0 || policy.RemoteServerPort != 0) {
+		policy.LocalPortC = int(policy.LocalClientPort)
+		policy.LocalPortS = int(policy.LocalServerPort)
+		policy.RemotePortC = int(policy.RemoteClientPort)
+		policy.RemotePortS = int(policy.RemoteServerPort)
+	}
+	if flowConfigured(policy.FlowC) || flowConfigured(policy.FlowS) {
+		return
+	}
+	policy.FlowC = compatibilityFlow(
+		policy.RemoteServerSPI, policy.LocalClientSPI,
+		policy.LocalClientPort, policy.RemoteServerPort, policy,
+	)
+	policy.FlowS = compatibilityFlow(
+		policy.RemoteClientSPI, policy.LocalServerSPI,
+		policy.LocalServerPort, policy.RemoteClientPort, policy,
+	)
+}
+
+func flowConfigured(flow Flow) bool {
+	return flow.OutboundSPI != 0 || flow.InboundSPI != 0 || flow.LocalPort != 0 || flow.RemotePort != 0 ||
+		flow.AuthAlg != "" || flow.EncAlg != "" || len(flow.CK) != 0 || len(flow.IK) != 0
+}
+
+func compatibilityFlow(outboundSPI, inboundSPI uint32, localPort, remotePort uint16, policy *Policy) Flow {
+	return Flow{
+		OutboundSPI: outboundSPI, InboundSPI: inboundSPI,
+		LocalPort: int(localPort), RemotePort: int(remotePort),
+		AuthAlg: policy.Authentication, EncAlg: policy.Encryption,
+		CK: policy.CK, IK: policy.IK,
+	}
 }
 
 func clonePolicy(policy Policy) Policy {
 	policy.LocalIP = append(net.IP(nil), policy.LocalIP...)
 	policy.RemoteIP = append(net.IP(nil), policy.RemoteIP...)
+	policy.FlowC = cloneFlow(policy.FlowC)
+	policy.FlowS = cloneFlow(policy.FlowS)
 	policy.CK = append([]byte(nil), policy.CK...)
 	policy.IK = append([]byte(nil), policy.IK...)
 	return policy
 }
 
-func normalize(value, defaultValue string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if value == "" {
-		return defaultValue
-	}
-	return value
-}
-
-func (p Policy) validate() error {
-	if !sameSupportedIPFamily(p.LocalIP, p.RemoteIP) {
-		return errors.New("ipsec3gpp: transport mode requires matching IPv4 or IPv6 endpoints")
-	}
-	if p.Protocol != ProtocolESP || p.Mode != ModeTransport {
-		return fmt.Errorf("ipsec3gpp: unsupported protocol/mode %s/%s", p.Protocol, p.Mode)
-	}
-	if p.Authentication != AuthHMACSHA196 {
-		return fmt.Errorf("ipsec3gpp: unsupported authentication %q", p.Authentication)
-	}
-	if len(p.IK) < 16 {
-		return errors.New("ipsec3gpp: IK must contain at least 16 bytes")
-	}
-	if err := validateEncryption(p.Encryption, p.CK); err != nil {
-		return err
-	}
-	ports := []uint16{p.LocalClientPort, p.LocalServerPort, p.RemoteClientPort, p.RemoteServerPort}
-	for _, port := range ports {
-		if port == 0 {
-			return errors.New("ipsec3gpp: protected ports must be non-zero")
-		}
-	}
-	if p.LocalClientPort == p.LocalServerPort || p.RemoteClientPort == p.RemoteServerPort {
-		return errors.New("ipsec3gpp: client and server ports must differ")
-	}
-	spis := []uint32{p.LocalClientSPI, p.LocalServerSPI, p.RemoteClientSPI, p.RemoteServerSPI}
-	seen := make(map[uint32]struct{}, len(spis))
-	for _, spi := range spis {
-		if spi == 0 {
-			return errors.New("ipsec3gpp: SPIs must be non-zero")
-		}
-		if _, exists := seen[spi]; exists {
-			return errors.New("ipsec3gpp: SPIs must be unique")
-		}
-		seen[spi] = struct{}{}
-	}
-	return nil
-}
-
-func sameSupportedIPFamily(local, remote net.IP) bool {
-	if local.To4() != nil {
-		return remote.To4() != nil
-	}
-	return local.To16() != nil && remote.To4() == nil && remote.To16() != nil
-}
-
-func validateEncryption(algorithm string, ck []byte) error {
-	switch algorithm {
-	case EncryptionAES, Encryption3DES:
-		if len(ck) < 16 {
-			return errors.New("ipsec3gpp: CK must contain at least 16 bytes")
-		}
-		return nil
-	case EncryptionNull:
-		return nil
-	default:
-		return fmt.Errorf("ipsec3gpp: unsupported encryption %q", algorithm)
-	}
+func cloneFlow(flow Flow) Flow {
+	flow.CK = append([]byte(nil), flow.CK...)
+	flow.IK = append([]byte(nil), flow.IK...)
+	return flow
 }

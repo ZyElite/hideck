@@ -1,44 +1,36 @@
 package ipsec3gpp
 
 import (
-	"encoding/binary"
 	"errors"
-	"fmt"
-	"math"
-	"sync"
+	"net"
 	"sync/atomic"
+
+	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
+	engineipsec "github.com/iniwex5/vowifi-go/engine/ipsec"
 )
 
-const espICVLength = 12
-
-type outboundSA struct {
-	localPort, remotePort uint16
-	spi                   uint32
-	sequence              uint32
-	mu                    sync.Mutex
-}
-
-type inboundSA struct {
-	remotePort, localPort uint16
-	spi                   uint32
-	replay                *ReplayWindow
+type transportFlow struct {
+	flow   Flow
+	sa     *engineipsec.SecurityAssociation
+	replay *ReplayWindow
 }
 
 type Transport struct {
-	policy   Policy
-	outbound []outboundSA
-	inbound  map[uint32]*inboundSA
-	stats    transportCounters
+	policy             Policy
+	outbound           []transportFlow
+	inbound            map[uint32]*transportFlow
+	outboundPackets    atomic.Uint64
+	inboundPackets     atomic.Uint64
+	passthroughPackets atomic.Uint64
+	transformErrors    atomic.Uint64
 }
 
 type TransportStats struct {
-	InboundPackets, OutboundPackets uint64
-	InboundBytes, OutboundBytes     uint64
-}
-
-type transportCounters struct {
-	inboundPackets, outboundPackets atomic.Uint64
-	inboundBytes, outboundBytes     atomic.Uint64
+	OutboundPackets    uint64
+	InboundPackets     uint64
+	PassthroughPackets uint64
+	TransformErrors    uint64
+	Replay             ReplayStats
 }
 
 func NewTransport(policy Policy) (*Transport, error) {
@@ -46,140 +38,201 @@ func NewTransport(policy Policy) (*Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Transport{
-		policy: policy,
-		outbound: []outboundSA{
-			{localPort: policy.LocalClientPort, remotePort: policy.RemoteServerPort, spi: policy.RemoteServerSPI},
-			{localPort: policy.LocalServerPort, remotePort: policy.RemoteClientPort, spi: policy.RemoteClientSPI},
-		},
-		inbound: map[uint32]*inboundSA{
-			policy.LocalClientSPI: {remotePort: policy.RemoteServerPort, localPort: policy.LocalClientPort, spi: policy.LocalClientSPI, replay: NewReplayWindow(32)},
-			policy.LocalServerSPI: {remotePort: policy.RemoteClientPort, localPort: policy.LocalServerPort, spi: policy.LocalServerSPI, replay: NewReplayWindow(32)},
-		},
-	}, nil
+	outbound, err := newTransportFlows(policy, false)
+	if err != nil {
+		return nil, err
+	}
+	inboundFlows, err := newTransportFlows(policy, true)
+	if err != nil {
+		return nil, err
+	}
+	inbound := make(map[uint32]*transportFlow, len(inboundFlows))
+	for index := range inboundFlows {
+		flow := &inboundFlows[index]
+		inbound[flow.sa.SPI] = flow
+	}
+	return &Transport{policy: policy, outbound: outbound, inbound: inbound}, nil
 }
 
-func (t *Transport) TransformOutbound(packet []byte) ([]byte, error) {
-	parsed, err := parseIPPacket(packet)
-	if err != nil {
-		return nil, err
+func newTransportFlows(policy Policy, inbound bool) ([]transportFlow, error) {
+	flows := []Flow{policy.FlowC, policy.FlowS}
+	result := make([]transportFlow, 0, len(flows))
+	for _, flow := range flows {
+		transportFlow, err := newTransportFlow(flow, inbound)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, transportFlow)
 	}
-	flow := t.matchOutbound(parsed)
-	if flow == nil {
-		return t.passOrRejectOutbound(packet, parsed)
-	}
-	sequence, err := flow.nextSequence()
-	if err != nil {
-		return nil, err
-	}
-	espPayload, err := t.seal(flow.spi, sequence, parsed.protocol, parsed.payload)
-	if err != nil {
-		return nil, err
-	}
-	out, err := replaceIPPayload(packet, protocolESP, espPayload)
-	if err != nil {
-		return nil, err
-	}
-	t.stats.outboundPackets.Add(1)
-	t.stats.outboundBytes.Add(uint64(len(out)))
-	return out, nil
+	return result, nil
 }
 
-func (t *Transport) TransformInbound(packet []byte) ([]byte, error) {
+func newTransportFlow(flow Flow, inbound bool) (transportFlow, error) {
+	sa, err := newSAForFlow(flow, inbound)
+	if err != nil {
+		return transportFlow{}, err
+	}
+	result := transportFlow{flow: cloneFlow(flow), sa: sa}
+	if inbound {
+		result.replay = NewReplayWindow(32)
+	}
+	return result, nil
+}
+
+func newSAForFlow(flow Flow, inbound bool) (*engineipsec.SecurityAssociation, error) {
+	encrypter, encryptionKey, err := encrypterForFlow(flow)
+	if err != nil {
+		return nil, err
+	}
+	integrity, integrityKey, err := integrityForFlow(flow)
+	if err != nil {
+		return nil, err
+	}
+	spi := flow.OutboundSPI
+	if inbound {
+		spi = flow.InboundSPI
+	}
+	return engineipsec.NewSecurityAssociationCBC(spi, encrypter, encryptionKey, integrity, integrityKey), nil
+}
+
+func encrypterForFlow(flow Flow) (enginecrypto.Encrypter, []byte, error) {
+	key, err := deriveEncKey(flow.CK, flow.EncAlg)
+	if err != nil {
+		return nil, nil, err
+	}
+	var algorithmID uint16
+	switch normalizedAlgorithm(flow.EncAlg) {
+	case "", "aes-cbc", "cbc(aes)":
+		algorithmID = enginecrypto.EncrAESCBC
+	case "des3-cbc", "des-ede3-cbc", "cbc(des3_ede)":
+		algorithmID = enginecrypto.Encr3DESCBC
+	case "null", "cipher_null", "ecb(cipher_null)":
+		algorithmID = enginecrypto.EncrNull
+	default:
+		return nil, nil, errors.New("ipsec3gpp: unreachable encryption algorithm")
+	}
+	encrypter, err := enginecrypto.GetEncrypterWithKeyLen(algorithmID, len(key)*8)
+	return encrypter, key, err
+}
+
+func integrityForFlow(flow Flow) (enginecrypto.IntegrityAlgorithm, []byte, error) {
+	key, err := deriveAuthKey(flow.IK, flow.AuthAlg)
+	if err != nil {
+		return nil, nil, err
+	}
+	var algorithmID uint16
+	switch normalizedAlgorithm(flow.AuthAlg) {
+	case "hmac(md5)", "hmac-md5-96":
+		algorithmID = 1
+	case "hmac(sha1)", "hmac-sha-1-96":
+		algorithmID = 2
+	default:
+		return nil, nil, errors.New("ipsec3gpp: unreachable authentication algorithm")
+	}
+	return enginecrypto.NewIntegrity(algorithmID), key, nil
+}
+
+func (transport *Transport) TransformOutbound(packet []byte) ([]byte, bool, error) {
 	parsed, err := parseIPPacket(packet)
 	if err != nil {
-		return nil, err
+		transport.transformErrors.Add(1)
+		return nil, false, err
 	}
-	if parsed.protocol != protocolESP {
-		return t.passOrRejectInbound(packet, parsed)
-	}
-	if !parsed.source.Equal(t.policy.RemoteIP) || !parsed.destination.Equal(t.policy.LocalIP) {
-		return packet, nil
-	}
-	if len(parsed.payload) < 8+espICVLength {
-		return nil, errors.New("ipsec3gpp: ESP packet too short")
-	}
-	spi := binary.BigEndian.Uint32(parsed.payload[:4])
-	flow := t.inbound[spi]
+	flow := transport.matchOutbound(parsed)
 	if flow == nil {
-		return nil, fmt.Errorf("ipsec3gpp: unknown inbound SPI %d", spi)
+		transport.passthroughPackets.Add(1)
+		return append([]byte(nil), packet...), false, nil
 	}
-	sequence := binary.BigEndian.Uint32(parsed.payload[4:8])
-	plaintext, nextHeader, err := t.open(parsed.payload)
+	espPayload, err := engineipsec.EncapsulateWithNextHeaderInto(nil, parsed.payload, parsed.protocol, flow.sa)
 	if err != nil {
-		return nil, err
+		transport.transformErrors.Add(1)
+		return nil, true, err
+	}
+	out, err := replaceIPPayload(payloadReplacement{packet: packet, parsed: parsed, protocol: protocolESP, payload: espPayload})
+	if err != nil {
+		transport.transformErrors.Add(1)
+		return nil, true, err
+	}
+	transport.outboundPackets.Add(1)
+	return out, true, nil
+}
+
+func (transport *Transport) TransformInbound(packet []byte) ([]byte, bool, error) {
+	parsed, err := parseIPPacket(packet)
+	if err != nil {
+		transport.transformErrors.Add(1)
+		return nil, false, err
+	}
+	if !transport.matchesInboundPacket(parsed) {
+		transport.passthroughPackets.Add(1)
+		return append([]byte(nil), packet...), false, nil
+	}
+	if len(parsed.payload) < 8 {
+		return transport.inboundError(errors.New("ipsec3gpp: ESP payload too short"))
+	}
+	flow := transport.inbound[readSPI(parsed.payload)]
+	if flow == nil {
+		return transport.inboundError(errors.New("ipsec3gpp: unknown inbound ESP SPI"))
+	}
+	plaintext, nextHeader, sequence, err := engineipsec.DecapsulateWithSequenceInto(nil, parsed.payload, flow.sa)
+	if err != nil {
+		return transport.inboundError(err)
 	}
 	if !flow.replay.Accept(sequence) {
-		return nil, fmt.Errorf("ipsec3gpp: rejected replay sequence %d", sequence)
+		return nil, true, errors.New("ipsec3gpp: replay packet rejected")
 	}
-	if err := validatePorts(nextHeader, plaintext, flow.remotePort, flow.localPort); err != nil {
-		return nil, err
-	}
-	out, err := replaceIPPayload(packet, nextHeader, plaintext)
+	out, err := replaceIPPayload(payloadReplacement{packet: packet, parsed: parsed, protocol: nextHeader, payload: plaintext})
 	if err != nil {
-		return nil, err
+		return transport.inboundError(err)
 	}
-	t.stats.inboundPackets.Add(1)
-	t.stats.inboundBytes.Add(uint64(len(out)))
-	return out, nil
+	transport.inboundPackets.Add(1)
+	return out, true, nil
 }
 
-func (t *Transport) matchOutbound(packet ipPacket) *outboundSA {
-	if !packet.source.Equal(t.policy.LocalIP) || !packet.destination.Equal(t.policy.RemoteIP) {
+func (transport *Transport) inboundError(err error) ([]byte, bool, error) {
+	transport.transformErrors.Add(1)
+	return nil, true, err
+}
+
+func (transport *Transport) matchesInboundPacket(packet ipPacket) bool {
+	return packet.protocol == protocolESP && ipEqual(packet.source, transport.policy.RemoteIP) &&
+		ipEqual(packet.destination, transport.policy.LocalIP)
+}
+
+func readSPI(payload []byte) uint32 {
+	return uint32(payload[0])<<24 | uint32(payload[1])<<16 | uint32(payload[2])<<8 | uint32(payload[3])
+}
+
+func (transport *Transport) matchOutbound(packet ipPacket) *transportFlow {
+	if packet.fragmented || (packet.protocol != protocolTCP && packet.protocol != protocolUDP) {
 		return nil
 	}
-	source, destination, ok := transportPorts(packet.protocol, packet.payload)
-	if !ok {
+	if !ipEqual(packet.source, transport.policy.LocalIP) || !ipEqual(packet.destination, transport.policy.RemoteIP) {
 		return nil
 	}
-	for index := range t.outbound {
-		flow := &t.outbound[index]
-		if flow.localPort == source && flow.remotePort == destination {
+	for index := range transport.outbound {
+		flow := &transport.outbound[index]
+		if packet.sourcePort == uint16(flow.flow.LocalPort) && packet.destinationPort == uint16(flow.flow.RemotePort) {
 			return flow
 		}
 	}
 	return nil
 }
 
-func (t *Transport) passOrRejectOutbound(packet []byte, parsed ipPacket) ([]byte, error) {
-	_, destination, ok := transportPorts(parsed.protocol, parsed.payload)
-	if !parsed.destination.Equal(t.policy.RemoteIP) || !ok {
-		return packet, nil
-	}
-	for index := range t.outbound {
-		if t.outbound[index].remotePort == destination {
-			return nil, errors.New("ipsec3gpp: outbound packet missed protected selector")
-		}
-	}
-	return packet, nil
+func ipEqual(left, right []byte) bool {
+	return len(left) != 0 && len(right) != 0 && net.IP(left).Equal(net.IP(right))
 }
 
-func (t *Transport) passOrRejectInbound(packet []byte, parsed ipPacket) ([]byte, error) {
-	source, destination, ok := transportPorts(parsed.protocol, parsed.payload)
-	if !parsed.source.Equal(t.policy.RemoteIP) || !parsed.destination.Equal(t.policy.LocalIP) || !ok {
-		return packet, nil
+func (transport *Transport) Stats() TransportStats {
+	stats := TransportStats{
+		OutboundPackets: transport.outboundPackets.Load(), InboundPackets: transport.inboundPackets.Load(),
+		PassthroughPackets: transport.passthroughPackets.Load(), TransformErrors: transport.transformErrors.Load(),
 	}
-	for _, flow := range t.inbound {
-		if flow.remotePort == source && flow.localPort == destination {
-			return nil, errors.New("ipsec3gpp: unprotected packet matched protected selector")
-		}
+	for _, flow := range transport.inbound {
+		replay := flow.replay.Snapshot()
+		stats.Replay.Accepted += replay.Accepted
+		stats.Replay.Duplicate += replay.Duplicate
+		stats.Replay.TooOld += replay.TooOld
 	}
-	return packet, nil
-}
-
-func (flow *outboundSA) nextSequence() (uint32, error) {
-	flow.mu.Lock()
-	defer flow.mu.Unlock()
-	if flow.sequence == math.MaxUint32 {
-		return 0, errors.New("ipsec3gpp: ESP sequence exhausted")
-	}
-	flow.sequence++
-	return flow.sequence, nil
-}
-
-func (t *Transport) Stats() TransportStats {
-	return TransportStats{
-		InboundPackets: t.stats.inboundPackets.Load(), OutboundPackets: t.stats.outboundPackets.Load(),
-		InboundBytes: t.stats.inboundBytes.Load(), OutboundBytes: t.stats.outboundBytes.Load(),
-	}
+	return stats
 }

@@ -180,35 +180,49 @@ func Decapsulate(packet []byte, target any, compatibility ...*SecurityAssociatio
 // DecapsulateWithNextHeaderInto verifies and unwraps an ESP frame, returning
 // the inner packet (appended to dst) and the inner-protocol next header.
 func DecapsulateWithNextHeaderInto(dst []byte, packet []byte, sa *SecurityAssociation) ([]byte, byte, error) {
-	if len(packet) < 8 {
-		return nil, 0, errPacketTooShort
-	}
-	if sa == nil {
-		return nil, 0, errInvalidSA
-	}
-	if sa.EncryptionAlg == nil {
-		return nil, 0, errNoCipher
-	}
-	c, err := sa.cipher()
+	inner, nextHeader, sequence, err := DecapsulateWithSequenceInto(dst, packet, sa)
 	if err != nil {
 		return nil, 0, err
 	}
+	if err := sa.acceptInboundSequence(sequence); err != nil {
+		return nil, 0, err
+	}
+	return inner, nextHeader, nil
+}
+
+// DecapsulateWithSequenceInto verifies and unwraps an ESP frame without
+// applying the SA replay window. Protocols with their own replay accounting
+// use the returned sequence number after integrity verification succeeds.
+func DecapsulateWithSequenceInto(dst []byte, packet []byte, sa *SecurityAssociation) ([]byte, byte, uint32, error) {
+	if len(packet) < 8 {
+		return nil, 0, 0, errPacketTooShort
+	}
+	if sa == nil {
+		return nil, 0, 0, errInvalidSA
+	}
+	if sa.EncryptionAlg == nil {
+		return nil, 0, 0, errNoCipher
+	}
+	c, err := sa.cipher()
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	if c == nil {
-		return nil, 0, errCipherUnavailable
+		return nil, 0, 0, errCipherUnavailable
 	}
 
 	spi := binary.BigEndian.Uint32(packet[0:4])
 	if sa.SPI != 0 && sa.SPI != spi {
-		return nil, 0, errSPIMismatch
+		return nil, 0, 0, errSPIMismatch
 	}
 	sequence := binary.BigEndian.Uint32(packet[4:8])
 	if sequence == 0 {
-		return nil, 0, errInvalidSequence
+		return nil, 0, 0, errInvalidSequence
 	}
 
 	ivSize := c.IVSize()
 	if len(packet) < 8+ivSize {
-		return nil, 0, errIVTooShort
+		return nil, 0, 0, errIVTooShort
 	}
 	iv := packet[8 : 8+ivSize]
 
@@ -216,12 +230,12 @@ func DecapsulateWithNextHeaderInto(dst []byte, packet []byte, sa *SecurityAssoci
 	if !sa.IsAEAD && sa.IntegrityAlg2 != nil {
 		integSize := sa.IntegrityAlg2.OutputSize()
 		if len(packet) < 8+ivSize+integSize {
-			return nil, 0, errICVTooShort
+			return nil, 0, 0, errICVTooShort
 		}
 		// Verify the ICV over everything up to (not including) it.
 		dataLen := len(packet) - integSize
 		if !sa.IntegrityAlg2.Verify(sa.IntegrityKey, packet[:dataLen], packet[dataLen:]) {
-			return nil, 0, errIntegrityFailed
+			return nil, 0, 0, errIntegrityFailed
 		}
 		payload = packet[8+ivSize : dataLen]
 	} else {
@@ -231,25 +245,22 @@ func DecapsulateWithNextHeaderInto(dst []byte, packet []byte, sa *SecurityAssoci
 	// AAD is the 8-byte ESP header.
 	plaintext, err := c.Open(nil, payload, iv, packet[:8])
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	if len(plaintext) < 2 {
-		return nil, 0, errPayloadTooShort
+		return nil, 0, 0, errPayloadTooShort
 	}
 	padLen := int(plaintext[len(plaintext)-2])
 	nextHeader := plaintext[len(plaintext)-1]
 	if padLen+2 > len(plaintext) {
-		return nil, 0, errBadPaddingLength
+		return nil, 0, 0, errBadPaddingLength
 	}
 	padding := plaintext[len(plaintext)-padLen-2 : len(plaintext)-2]
 	for index, value := range padding {
 		if value != byte(index+1) {
-			return nil, 0, errInvalidPadding
+			return nil, 0, 0, errInvalidPadding
 		}
 	}
-	if err := sa.acceptInboundSequence(sequence); err != nil {
-		return nil, 0, err
-	}
 	inner := plaintext[:len(plaintext)-padLen-2]
-	return append(dst, inner...), nextHeader, nil
+	return append(dst, inner...), nextHeader, sequence, nil
 }

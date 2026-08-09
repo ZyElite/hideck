@@ -121,7 +121,8 @@ func (g *gvisorNetwork) transformOutbound(packet []byte) ([]byte, error) {
 	if transformer == nil {
 		return packet, nil
 	}
-	return transformer.TransformOutbound(packet)
+	transformed, _, err := transformer.TransformOutbound(packet)
+	return transformed, err
 }
 
 func (g *gvisorNetwork) transformInbound(packet []byte) ([]byte, error) {
@@ -131,7 +132,8 @@ func (g *gvisorNetwork) transformInbound(packet []byte) ([]byte, error) {
 	if transformer == nil {
 		return packet, nil
 	}
-	return transformer.TransformInbound(packet)
+	transformed, _, err := transformer.TransformInbound(packet)
+	return transformed, err
 }
 
 func (g *gvisorNetwork) fail(operation string, err error) {

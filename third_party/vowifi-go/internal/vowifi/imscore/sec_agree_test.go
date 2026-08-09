@@ -422,11 +422,18 @@ func assertInstalledPolicy(t *testing.T, policy ipsec3gpp.Policy) {
 	if !policy.LocalIP.Equal(net.IPv4(10, 0, 0, 2)) || !policy.RemoteIP.Equal(net.IPv4(10, 0, 0, 1)) {
 		t.Fatalf("policy endpoints = %s -> %s", policy.LocalIP, policy.RemoteIP)
 	}
-	if policy.LocalClientPort != 41000 || policy.LocalServerPort != 41001 ||
-		policy.RemoteClientPort != 51000 || policy.RemoteServerPort != 51001 {
+	if policy.LocalPortC != 41000 || policy.LocalPortS != 41001 ||
+		policy.RemotePortC != 51000 || policy.RemotePortS != 51001 {
 		t.Fatalf("policy ports = %+v", policy)
 	}
-	if policy.Encryption != ipsec3gpp.EncryptionAES || !bytes.Equal(policy.CK, bytes.Repeat([]byte{0x11}, 16)) || !bytes.Equal(policy.IK, bytes.Repeat([]byte{0x22}, 16)) {
+	if policy.FlowC.OutboundSPI != 0x44444444 || policy.FlowS.OutboundSPI != 0x33333333 ||
+		policy.FlowC.InboundSPI == 0 || policy.FlowS.InboundSPI == 0 ||
+		policy.FlowC.InboundSPI == policy.FlowS.InboundSPI {
+		t.Fatalf("policy flow SPIs = C:%+v S:%+v", policy.FlowC, policy.FlowS)
+	}
+	if policy.FlowC.EncAlg != ipsec3gpp.EncryptionAES ||
+		!bytes.Equal(policy.FlowC.CK, bytes.Repeat([]byte{0x11}, 16)) ||
+		!bytes.Equal(policy.FlowC.IK, bytes.Repeat([]byte{0x22}, 16)) {
 		t.Fatal("policy did not retain negotiated algorithm and AKA keys")
 	}
 }
