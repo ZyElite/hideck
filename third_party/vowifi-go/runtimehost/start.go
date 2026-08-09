@@ -11,6 +11,7 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
 	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/epdg"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/netstack"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
@@ -22,8 +23,9 @@ import (
 )
 
 const (
-	imsRegistrationTimeout = 30 * time.Second
-	defaultIMSSIPPort      = 5060
+	imsRegistrationTimeout   = 30 * time.Second
+	epdgEstablishmentTimeout = 45 * time.Second
+	defaultIMSSIPPort        = 5060
 )
 
 // StartMode selects the runtime host mode.
@@ -251,7 +253,10 @@ func newTunnel(req StartRequest, inst *Instance) (Tunnel, error) {
 	factory := req.TunnelFactory
 	if factory == nil {
 		factory = func(cfg *swu.Config) (Tunnel, error) {
-			return &swuTunnelAdapter{Session: swu.NewSession(cfg)}, nil
+			return newSWUTunnelAdapter(swuTunnelAdapterConfig{
+				Manager: epdg.New(), DeviceID: req.DeviceID, SessionConfig: cfg,
+				EstablishmentTimeout: epdgEstablishmentTimeout,
+			}), nil
 		}
 	}
 	tunnel, err := factory(cfg)

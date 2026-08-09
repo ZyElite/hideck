@@ -195,15 +195,16 @@ func sessionDoneChan(session *swu.Session) <-chan struct{} {
 	return ch
 }
 
-// StartAndWaitEPDG starts the ePDG manager and waits for it to stop.
+// StartAndWaitEPDG retains the address-only compatibility entrypoint while
+// running it through the restored manager and SWu configuration path.
 func StartAndWaitEPDG(addr string) error {
-	m := epdg.New(addr)
-	if err := m.Start(); err != nil {
+	const sessionID = "runtimecore"
+	m := epdg.New()
+	if _, err := m.Start(context.Background(), sessionID, &swu.Config{EPDGAddr: addr}); err != nil {
 		return err
 	}
-	defer m.Stop()
-	m.Wait()
-	return nil
+	_, waitErr := m.Wait(context.Background(), sessionID, 45*time.Second)
+	return errors.Join(waitErr, m.Stop(sessionID))
 }
 
 // CleanupDataplaneInterface preserves the legacy API while exposing that the

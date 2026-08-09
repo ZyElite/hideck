@@ -1,64 +1,79 @@
-// Package epdg manages ePDG selection for the SWu tunnel.
-//
-// Reconstructed from the decompiled internal/vowifi/epdg.
+// Package epdg manages SWu sessions by device identity.
 package epdg
 
 import (
 	"context"
-	"sync"
+	"errors"
+	"time"
+
+	"github.com/iniwex5/vowifi-go/engine/swu"
+	"go.uber.org/zap"
 )
 
-// defaultEPDGFQDN is the default ePDG FQDN (AT&T).
-const defaultEPDGFQDN = "epdg.epc.att.net"
+const waitPollInterval = 200 * time.Millisecond
 
-// Manager selects and tracks the ePDG endpoint.
 type Manager struct {
-	mu      sync.RWMutex
-	ctx     context.Context
-	cancel  context.CancelFunc
-	started bool
-	addr    string
+	mgr *swu.SessionManager
 }
 
-// New creates an ePDG manager with the given address ("" for the default).
-func New(addr string) *Manager {
-	if addr == "" {
-		addr = defaultEPDGFQDN
+func New() *Manager {
+	zap.ReplaceGlobals(zap.L().WithOptions(zap.AddCallerSkip(-1)))
+	return &Manager{mgr: swu.NewSessionManager()}
+}
+
+func (m *Manager) Start(
+	ctx context.Context,
+	deviceID string,
+	config *swu.Config,
+) (*swu.Session, error) {
+	return m.mgr.Start(ctx, deviceID, config)
+}
+
+func (m *Manager) Stop(deviceID string) error {
+	return m.mgr.Stop(deviceID)
+}
+
+func (m *Manager) Snapshot(deviceID string) (swu.SessionSnapshot, bool) {
+	session, exists := m.mgr.Get(deviceID)
+	if !exists || session == nil {
+		return swu.SessionSnapshot{}, false
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{ctx: ctx, cancel: cancel, addr: addr}
+	return session.Snapshot(), true
 }
 
-// Start begins the manager.
-func (m *Manager) Start() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.started {
-		return nil
+func (m *Manager) Wait(
+	ctx context.Context,
+	deviceID string,
+	timeout time.Duration,
+) (swu.SessionSnapshot, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(waitPollInterval)
+	defer ticker.Stop()
+	for {
+		if snapshot, done, err := m.waitResult(deviceID); done {
+			return snapshot, err
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			return swu.SessionSnapshot{}, errors.New("等待 ePDG 隧道建立超时")
+		case <-ctx.Done():
+			return swu.SessionSnapshot{}, ctx.Err()
+		}
 	}
-	m.started = true
-	return nil
 }
 
-// Stop stops the manager.
-func (m *Manager) Stop() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.started {
-		return
+func (m *Manager) waitResult(deviceID string) (swu.SessionSnapshot, bool, error) {
+	snapshot, exists := m.Snapshot(deviceID)
+	if !exists {
+		return swu.SessionSnapshot{}, false, nil
 	}
-	m.started = false
-	m.cancel()
-}
-
-// Wait blocks until the manager is stopped.
-func (m *Manager) Wait() {
-	<-m.ctx.Done()
-}
-
-// Snapshot returns the current ePDG address.
-func (m *Manager) Snapshot() string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.addr
+	if snapshot.Established {
+		return snapshot, true, nil
+	}
+	if snapshot.LastError != "" {
+		return swu.SessionSnapshot{}, true, errors.New("ePDG 会话失败: " + snapshot.LastError)
+	}
+	return swu.SessionSnapshot{}, false, nil
 }
