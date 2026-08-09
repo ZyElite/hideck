@@ -82,10 +82,10 @@ func TestRegisterSwitchesFromInitialUDPToProtectedTCP(t *testing.T) {
 	network := &captureIPSecNetwork{SystemIMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1))}
 	svc, err := New(&IMSConfig{
 		DeviceID: "dev-sec-tcp", IMEI: "860349055895064", IMSI: "234102356143376",
-		IMPI: "234102356143376@ims.example", IMPU: []string{"sip:234102356143376@ims.example"},
+		IMPI: "234102356143376@ims.example", IMPU: "sip:234102356143376@ims.example",
 		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "auto",
 		Registrar: udpServer.LocalAddr().String(), IMSNetwork: network,
-		AKAProvider: stubAKAProvider{}, IPSec3GPPEnabled: true,
+		AKAProvider: stubAKAProvider{}, EnableIPSec3GPP: enabledBoolPointer(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -121,10 +121,10 @@ func TestRegisterKeepsInitialTCPUntilProtectedRegisterCompletes(t *testing.T) {
 	network := &captureIPSecNetwork{SystemIMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1))}
 	svc, err := New(&IMSConfig{
 		DeviceID: "dev-sec-mbb", IMEI: "860349055895064", IMSI: "234102356143376",
-		IMPI: "234102356143376@ims.example", IMPU: []string{"sip:234102356143376@ims.example"},
+		IMPI: "234102356143376@ims.example", IMPU: "sip:234102356143376@ims.example",
 		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "tcp",
 		Registrar: initial.Addr().String(), IMSNetwork: network,
-		AKAProvider: stubAKAProvider{}, IPSec3GPPEnabled: true,
+		AKAProvider: stubAKAProvider{}, EnableIPSec3GPP: enabledBoolPointer(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -332,9 +332,9 @@ func newSecurityAgreementTestService(t *testing.T, network IMSNetwork) *Service 
 	t.Helper()
 	svc, err := New(&IMSConfig{
 		DeviceID: "dev-sec", IMEI: "356938035643809", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
-		IMPU: []string{"sip:310260123456789@ims.example"}, Domain: "ims.example",
+		IMPU: "sip:310260123456789@ims.example", Domain: "ims.example",
 		LocalIP: net.IPv4(10, 0, 0, 2), LocalPort: 41000, Transport: "udp", Expires: time.Hour,
-		AKAProvider: stubAKAProvider{}, IMSNetwork: network, IPSec3GPPEnabled: true,
+		AKAProvider: stubAKAProvider{}, IMSNetwork: network, EnableIPSec3GPP: enabledBoolPointer(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

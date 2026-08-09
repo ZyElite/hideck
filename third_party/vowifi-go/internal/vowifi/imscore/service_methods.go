@@ -53,7 +53,7 @@ func (s *Service) IPSec3GPPEnabled() bool {
 	if s == nil || s.cfg == nil {
 		return false
 	}
-	return s.cfg.IPSec3GPPEnabled
+	return s.cfg.IPSec3GPPEnabled()
 }
 
 // SetEnableIPSec3GPP toggles 3GPP IPsec.
@@ -61,7 +61,7 @@ func (s *Service) SetEnableIPSec3GPP(enabled bool) {
 	if s == nil || s.cfg == nil {
 		return
 	}
-	s.cfg.IPSec3GPPEnabled = enabled
+	s.cfg.SetEnableIPSec3GPP(enabled)
 }
 
 // InstallIPSec3GPP installs the 3GPP IPsec policy on the network surface.

@@ -62,7 +62,9 @@ func (s *Service) sendOutboundSMS(ctx context.Context, to, text string, opts SMS
 			return outcome, err
 		}
 	}
-	s.publishOutboundSMS(recipient, text, len(parts))
+	if shouldSendTGSuccess(ctx) {
+		s.publishOutboundSMS(recipient, text, len(parts))
+	}
 	s.scheduleSMSDeliveryTimeout(messageID, parts)
 	return outcome, nil
 }

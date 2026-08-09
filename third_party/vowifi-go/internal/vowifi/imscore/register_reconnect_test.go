@@ -77,10 +77,10 @@ func assertLocalNumberLearned(t *testing.T, received <-chan events.Event) {
 func protectedReconnectConfig(registrar string) *IMSConfig {
 	return &IMSConfig{
 		DeviceID: "dev-reconnect", IMEI: "860349055895064", IMSI: "234102356143376",
-		IMPI: "234102356143376@ims.example", IMPU: []string{"sip:234102356143376@ims.example"},
+		IMPI: "234102356143376@ims.example", IMPU: "sip:234102356143376@ims.example",
 		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp",
 		Registrar: registrar, IMSNetwork: &captureIPSecNetwork{SystemIMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1))},
-		AKAProvider: stubAKAProvider{}, IPSec3GPPEnabled: true, Expires: 600000 * time.Second,
+		AKAProvider: stubAKAProvider{}, EnableIPSec3GPP: enabledBoolPointer(), Expires: 600000 * time.Second,
 	}
 }
 

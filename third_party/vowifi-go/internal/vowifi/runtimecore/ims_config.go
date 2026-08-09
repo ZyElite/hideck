@@ -35,34 +35,32 @@ func resolveIPSec3GPPInstaller(
 	return imscore.SystemIPSec3GPPInstaller{}
 }
 
-func buildIMSConfig(input imsConfigInput) *imscore.IMSConfig {
+func buildIMSConfig(input imsConfigInput) (*imscore.IMSConfig, error) {
 	prepared := input.session.Prepared
 	imsPlan := prepared.CarrierPlan.IMS
 	identity := prepared.IMSIdentity
-	domain := firstNonEmpty(identity.Domain, imsPlan.Domain, prepared.Profile.IMSDomain)
-	impi := strings.TrimSpace(identity.IMPI)
-	if impi == "" && prepared.Profile.IMSI != "" && domain != "" {
-		impi = prepared.Profile.IMSI + "@" + domain
-	}
 	localIP := net.ParseIP(input.result.LocalAddr)
-	return &imscore.IMSConfig{
-		DeviceID: input.session.DeviceID, IMEI: prepared.Profile.IMEI, IMSI: prepared.Profile.IMSI,
-		IMPI: impi, IMPU: nonEmptyIdentities(identity.IMPU, impi),
-		Domain: domain, SMSC: prepared.Profile.SMSC, Realm: firstNonEmpty(imsPlan.Realm, domain),
-		EPDGAddr: prepared.EPDGAddr, LocalIP: localIP, Transport: firstNonEmpty(imsPlan.Transport, "auto"),
-		Registrar: firstNonEmpty(
-			assignedPCSCF(input.result.Snapshot, localIP), imsPlan.PCSCF, imsPlan.Registrar, domain,
-		),
-		LocalPort:         imsPlan.LocalPort,
-		KeepaliveInterval: time.Duration(imsPlan.OptionsPingIntervalSeconds) * time.Second,
-		AKAProvider:       input.aka, IMSNetwork: input.network,
-		DeliveryStore: adaptDeliveryStore(input.session.DeliveryStore),
-		EventBus:      input.eventBus, IPSec3GPPEnabled: true, TraceID: input.session.TraceID,
-		UserAgent:             firstNonEmpty(imsPlan.UserAgent, prepared.Profile.UserAgent),
-		CellularNetworkInfo:   imscore.GenerateDefaultCellularNetworkInfo(prepared.Profile.MCC, prepared.Profile.MNC),
-		PAccessNetworkCountry: imscore.CountryISO2FromMCC(prepared.Profile.MCC),
-		RegisterTemplate:      convertRegisterTemplate(imsPlan.RegisterTemplate, imsPlan.Transport),
+	value := imscore.BuildIMSConfigFromCarrier(
+		input.session.DeviceID, prepared.Profile.IMSI, prepared.Profile.IMEI,
+		prepared.Profile.MCC, prepared.Profile.MNC, prepared.Profile.IMSDomain,
+		prepared.Profile.UserAgent, input.result.LocalAddr, prepared.CarrierPlan,
+	)
+	if err := imscore.ApplyResolvedIMSIdentityToConfig(&value, identity, prepared.Profile.MCC); err != nil {
+		return nil, fmt.Errorf("runtimecore: apply IMS identity: %w", err)
 	}
+	value.SMSC = prepared.Profile.SMSC
+	value.EPDGAddr = prepared.EPDGAddr
+	value.LocalIP = localIP
+	value.Registrar = firstNonEmpty(
+		assignedPCSCF(input.result.Snapshot, localIP), imsPlan.PCSCF, imsPlan.Registrar, value.Domain,
+	)
+	value.KeepaliveInterval = time.Duration(imsPlan.OptionsPingIntervalSeconds) * time.Second
+	value.AKAProvider, value.IMSNetwork = input.aka, input.network
+	value.DeliveryStore = adaptDeliveryStore(input.session.DeliveryStore)
+	value.EventBus, value.TraceID = input.eventBus, input.session.TraceID
+	value.PAccessNetworkCountry = imscore.CountryISO2FromMCC(prepared.Profile.MCC)
+	value.RegisterTemplate = convertRegisterTemplate(imsPlan.RegisterTemplate, imsPlan.Transport)
+	return &value, nil
 }
 
 func assignedPCSCF(snapshot swu.SessionSnapshot, localIP net.IP) string {
@@ -89,14 +87,4 @@ func convertRegisterTemplate(
 		IncludePANIAuthenticated:  template.IncludePANIAuthenticated,
 		StrictSecurityServerOffer: template.StrictSecurityServerOffer,
 	}
-}
-
-func nonEmptyIdentities(impu, impi string) []string {
-	if value := strings.TrimSpace(impu); value != "" {
-		return []string{value}
-	}
-	if value := strings.TrimSpace(impi); value != "" {
-		return []string{"sip:" + value}
-	}
-	return nil
 }

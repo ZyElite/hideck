@@ -26,9 +26,10 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 
 	svc, err := New(&IMSConfig{
 		DeviceID: "dev-1", IMEI: "356938035643809", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
-		IMPU: []string{"sip:310260123456789@ims.example"}, Domain: "ims.example",
+		IMPU: "sip:310260123456789@ims.example", Domain: "ims.example",
 		LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp", Registrar: registrar.LocalAddr().String(),
 		IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)), AKAProvider: stubAKAProvider{},
+		EnableIPSec3GPP: disabledBoolPointer(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -131,10 +132,10 @@ func TestRegisterAutoFallsBackToUDPWhenTCPConnectFails(t *testing.T) {
 func registerTransportTestConfig(transport, registrar string) *IMSConfig {
 	return &IMSConfig{
 		DeviceID: "dev-auto", IMEI: "356938035643809", IMSI: "310260123456789",
-		IMPI: "310260123456789@ims.example", IMPU: []string{"sip:310260123456789@ims.example"},
+		IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example",
 		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: transport,
 		Registrar: registrar, IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)),
-		AKAProvider: stubAKAProvider{},
+		AKAProvider: stubAKAProvider{}, EnableIPSec3GPP: disabledBoolPointer(),
 		RegisterTemplate: IMSRegisterTemplate{
 			AccessType: "wlan1", ContactOrder: []string{"access_type"},
 		},
@@ -195,7 +196,7 @@ func TestBuildRegisterUsesRecoveredTemplateHeaders(t *testing.T) {
 	const allow = "OPTIONS, REGISTER, SUBSCRIBE, NOTIFY, PUBLISH, INVITE, ACK, BYE, CANCEL, UPDATE, PRACK, REFER, INFO, MESSAGE"
 	config := &IMSConfig{
 		IMSI: "234102356143376", IMPI: "234102356143376@ims.example",
-		IMPU: []string{"sip:234102356143376@ims.example"}, Domain: "ims.example",
+		IMPU: "sip:234102356143376@ims.example", Domain: "ims.example",
 		LocalIP: net.IPv4(192, 0, 2, 10), Transport: "udp",
 		UserAgent:             "iOS/18.2.1 iPhone (iPhone15,4)",
 		CellularNetworkInfo:   "3GPP-E-UTRAN-TDD;utran-cell-id-3gpp=2340100123456789;cell-info-age=1000",
@@ -248,9 +249,10 @@ func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 
 	svc, err := New(&IMSConfig{
 		DeviceID: "dev-refresh", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
-		IMPU: []string{"sip:310260123456789@ims.example"}, Domain: "ims.example",
+		IMPU: "sip:310260123456789@ims.example", Domain: "ims.example",
 		LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp", Registrar: registrar.LocalAddr().String(),
 		IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)), AKAProvider: stubAKAProvider{},
+		EnableIPSec3GPP: disabledBoolPointer(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -333,7 +335,7 @@ func TestRegisterRecoversFromAKASQNSynchronizationFailure(t *testing.T) {
 		DeviceID: "dev-sync", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
 		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp",
 		Registrar: registrar.LocalAddr().String(), IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)),
-		AKAProvider: provider,
+		AKAProvider: provider, EnableIPSec3GPP: disabledBoolPointer(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -363,7 +365,7 @@ func TestProcessAKAChallengeRejectsInvalidSynchronizationToken(t *testing.T) {
 func TestRegisterLimitsAKAChallenges(t *testing.T) {
 	svc, err := New(&IMSConfig{
 		DeviceID: "dev-limit", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
-		Domain: "ims.example", AKAProvider: stubAKAProvider{},
+		Domain: "ims.example", AKAProvider: stubAKAProvider{}, EnableIPSec3GPP: disabledBoolPointer(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -432,7 +434,7 @@ func TestRegisterPropagatesRegistrarRejection(t *testing.T) {
 		DeviceID: "dev-1", IMSI: "310260123456789", IMPI: "310260123456789@ims.example",
 		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "udp",
 		Registrar: registrar.LocalAddr().String(), IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)),
-		IPSec3GPPEnabled: true,
+		EnableIPSec3GPP: enabledBoolPointer(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

@@ -16,6 +16,7 @@ func New(cfg *IMSConfig) (*Service, error) {
 	if cfg == nil {
 		return nil, errors.New("imscore: nil config")
 	}
+	cfg.syncCompatibilityFields()
 	if cfg.IMSNetwork == nil {
 		cfg.IMSNetwork = NewSystemIMSNetwork(cfg.LocalIP)
 	}
@@ -98,7 +99,7 @@ func (s *Service) Status() *ServiceStatus {
 		Registered: s.regState == regRegistered,
 		State:      s.state,
 		RegState:   s.regState,
-		IMPU:       append([]string{}, s.cfg.IMPU...),
+		IMPU:       s.cfg.publicIdentities(),
 		Domain:     s.cfg.Domain,
 	}
 }
@@ -129,7 +130,7 @@ func (s *Service) GetIMPU() []string {
 	if s == nil || s.cfg == nil {
 		return nil
 	}
-	return append([]string{}, s.cfg.IMPU...)
+	return s.cfg.publicIdentities()
 }
 
 // GetIMEI returns the configured mobile equipment identity.
@@ -198,9 +199,9 @@ func (s *Service) GetPAccessNetworkInfo() string {
 	if cfg == nil {
 		return ""
 	}
-	impu := ""
-	if len(cfg.IMPU) > 0 {
-		impu = cfg.IMPU[0]
+	impu := firstNonBlank(cfg.publicIdentities()...)
+	if cfg.PAccessNetworkInfo != "" {
+		return cfg.PAccessNetworkInfo
 	}
 	seed := stablePANIGenerationSeed([]string{cfg.IMSI, cfg.IMPI, impu, cfg.Domain, cfg.DeviceID})
 	return AppendPAccessNetworkCountry(

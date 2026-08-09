@@ -331,8 +331,9 @@ func imeiCheckDigit(prefix string) byte {
 	return byte('0' + (10-sum%10)%10)
 }
 
-// ResolveIMSIdentitySource resolves the IMS identity source preference.
-func ResolveIMSIdentitySource(pref string, hasISIM, hasUSIM bool) string {
+// ResolveIMSIdentitySourceByCapabilities preserves the capability-only helper
+// added by the reconstructed runtime.
+func ResolveIMSIdentitySourceByCapabilities(pref string, hasISIM, hasUSIM bool) string {
 	switch strings.ToLower(strings.TrimSpace(pref)) {
 	case "usim":
 		return "usim"
@@ -372,9 +373,9 @@ func mccMncFromIdentity(ident identity.IMSIdentity) (mcc, mnc string) {
 	return mcc, mnc
 }
 
-// BuildIMSConfigFromCarrier builds an IMSConfig from a carrier prepared
-// session.
-func BuildIMSConfigFromCarrier(deviceID string, ident identity.IMSIdentity, epdgAddr string) *IMSConfig {
+// BuildCompatibilityIMSConfig preserves the convenience constructor added by
+// the reconstructed runtimehost API.
+func BuildCompatibilityIMSConfig(deviceID string, ident identity.IMSIdentity, epdgAddr string) *IMSConfig {
 	mcc, mnc := mccMncFromIdentity(ident)
 	domain := ident.Domain
 	if domain == "" {
@@ -384,9 +385,9 @@ func BuildIMSConfigFromCarrier(deviceID string, ident identity.IMSIdentity, epdg
 	if impi == "" {
 		impi = deviceID + "@" + domain
 	}
-	impu := []string{ident.IMPU}
-	if len(impu) == 0 || impu[0] == "" {
-		impu = []string{"sip:" + impi}
+	impu := strings.TrimSpace(ident.IMPU)
+	if impu == "" {
+		impu = "sip:" + impi
 	}
 	return &IMSConfig{
 		DeviceID:  deviceID,
@@ -402,9 +403,8 @@ func BuildIMSConfigFromCarrier(deviceID string, ident identity.IMSIdentity, epdg
 	}
 }
 
-// ApplyResolvedIMSIdentityToConfig applies a resolved IMS identity to an
-// existing config.
-func ApplyResolvedIMSIdentityToConfig(cfg *IMSConfig, ident identity.IMSIdentity) {
+// ApplyRuntimeIMSIdentityToConfig applies the runtimehost identity projection.
+func ApplyRuntimeIMSIdentityToConfig(cfg *IMSConfig, ident identity.IMSIdentity) {
 	if cfg == nil {
 		return
 	}
@@ -412,7 +412,8 @@ func ApplyResolvedIMSIdentityToConfig(cfg *IMSConfig, ident identity.IMSIdentity
 		cfg.IMPI = ident.IMPI
 	}
 	if ident.IMPU != "" {
-		cfg.IMPU = []string{ident.IMPU}
+		cfg.IMPU = ident.IMPU
+		cfg.IMPUs = nil
 	}
 	if ident.Domain != "" {
 		cfg.Domain = ident.Domain
@@ -436,7 +437,7 @@ func SetupService(deviceID string, cfg *IMSConfig) (*Service, error) {
 
 // StartSessionIMSCore starts the IMS core session for a prepared identity.
 func StartSessionIMSCore(deviceID string, ident identity.IMSIdentity, epdgAddr string) (*Service, error) {
-	cfg := BuildIMSConfigFromCarrier(deviceID, ident, epdgAddr)
+	cfg := BuildCompatibilityIMSConfig(deviceID, ident, epdgAddr)
 	return New(cfg)
 }
 

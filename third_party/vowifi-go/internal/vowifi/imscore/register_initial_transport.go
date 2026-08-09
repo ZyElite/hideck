@@ -40,7 +40,7 @@ func (s *Service) openInitialRegistrationTransport(
 	if err != nil {
 		return err
 	}
-	if s.cfg.IPSec3GPPEnabled && isAutoRegisterTransport(s.cfg.Transport) {
+	if s.cfg.IPSec3GPPEnabled() && isAutoRegisterTransport(s.cfg.Transport) {
 		candidates = []string{"udp", "tcp"}
 	}
 	var failures []error

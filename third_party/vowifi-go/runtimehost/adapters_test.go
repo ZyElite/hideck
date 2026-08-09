@@ -35,15 +35,17 @@ func newTestService(t *testing.T) *imscore.Service {
 
 func newTestServiceWithRegistrar(t *testing.T, registrar *net.UDPConn) *imscore.Service {
 	t.Helper()
+	plainSIP := false
 	cfg := &imscore.IMSConfig{
-		DeviceID:    "dev-1",
-		IMSI:        "310260123456789",
-		IMPI:        "310260123456789@ims.example.com",
-		Domain:      "ims.example.com",
-		SMSC:        "+123",
-		LocalIP:     net.IPv4(127, 0, 0, 1),
-		Registrar:   registrar.LocalAddr().String(),
-		AKAProvider: stubAKA{},
+		DeviceID:        "dev-1",
+		IMSI:            "310260123456789",
+		IMPI:            "310260123456789@ims.example.com",
+		Domain:          "ims.example.com",
+		SMSC:            "+123",
+		LocalIP:         net.IPv4(127, 0, 0, 1),
+		Registrar:       registrar.LocalAddr().String(),
+		AKAProvider:     stubAKA{},
+		EnableIPSec3GPP: &plainSIP,
 	}
 	svc, err := imscore.New(cfg)
 	if err != nil {

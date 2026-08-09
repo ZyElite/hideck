@@ -52,9 +52,12 @@ func startIMS(ctx context.Context, cfg SessionConfig, result *SessionResult) err
 		return errors.New("runtimecore: IMS AKA provider is unavailable")
 	}
 	eventBus := buildEventBus(ctx, cfg.Dispatch)
-	imsConfig := buildIMSConfig(imsConfigInput{
+	imsConfig, err := buildIMSConfig(imsConfigInput{
 		session: cfg, result: result, aka: imsAKA, network: imsNetwork, eventBus: eventBus,
 	})
+	if err != nil {
+		return err
+	}
 	service, err := imscore.New(imsConfig)
 	if err != nil {
 		return fmt.Errorf("runtimecore: create IMS service: %w", err)

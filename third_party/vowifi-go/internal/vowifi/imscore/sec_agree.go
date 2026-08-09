@@ -30,7 +30,7 @@ type securityAgreement struct {
 }
 
 func (s *Service) prepareSecurityAgreement() (*securityAgreement, error) {
-	if !s.cfg.IPSec3GPPEnabled {
+	if !s.cfg.IPSec3GPPEnabled() {
 		return nil, nil
 	}
 	s.mu.RLock()

@@ -77,7 +77,7 @@ func firstPublicIdentity(cfg *IMSConfig) string {
 	if cfg == nil {
 		return ""
 	}
-	for _, identity := range cfg.IMPU {
+	for _, identity := range cfg.publicIdentities() {
 		if identity = strings.TrimSpace(identity); identity != "" {
 			if strings.HasPrefix(strings.ToLower(identity), "sip:") {
 				return identity

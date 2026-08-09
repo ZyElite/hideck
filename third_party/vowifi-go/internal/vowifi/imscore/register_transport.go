@@ -51,7 +51,7 @@ func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 }
 
 func (s *Service) reserveProtectedTCPPorts() (net.Listener, net.Listener, error) {
-	if !s.cfg.IPSec3GPPEnabled {
+	if !s.cfg.IPSec3GPPEnabled() {
 		return nil, nil, nil
 	}
 	server, err := s.cfg.IMSNetwork.ListenTCP(&net.TCPAddr{IP: s.cfg.LocalIP})

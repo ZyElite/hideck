@@ -131,14 +131,15 @@ func TestProcessAKAChallengeWithoutQOPUsesLegacyDigest(t *testing.T) {
 
 func TestNewAndRegister(t *testing.T) {
 	cfg := &IMSConfig{
-		DeviceID:    "dev-1",
-		IMSI:        "310260123456789",
-		IMPI:        "310260123456789@ims.example.com",
-		Domain:      "ims.example.com",
-		LocalIP:     net.IPv4(10, 0, 0, 1),
-		Transport:   "udp",
-		Expires:     time.Hour,
-		AKAProvider: stubAKAProvider{},
+		DeviceID:        "dev-1",
+		IMSI:            "310260123456789",
+		IMPI:            "310260123456789@ims.example.com",
+		Domain:          "ims.example.com",
+		LocalIP:         net.IPv4(10, 0, 0, 1),
+		Transport:       "udp",
+		Expires:         time.Hour,
+		AKAProvider:     stubAKAProvider{},
+		EnableIPSec3GPP: disabledBoolPointer(),
 	}
 	svc, err := New(cfg)
 	if err != nil {
@@ -196,7 +197,7 @@ func TestPAccessNetworkInfo(t *testing.T) {
 func TestUSSDLifecycle(t *testing.T) {
 	cfg := &IMSConfig{
 		IMSI: "310260123456789", DeviceID: "dev-1",
-		IMPI: "310260123456789@ims.example", IMPU: []string{"sip:+15551234567@ims.example"},
+		IMPI: "310260123456789@ims.example", IMPU: "sip:+15551234567@ims.example",
 		Domain: "ims.example", LocalIP: net.IPv4(192, 0, 2, 10), LocalPort: 5060,
 		Transport: "udp", UserAgent: "test",
 	}

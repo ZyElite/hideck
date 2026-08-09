@@ -21,9 +21,10 @@ func TestReceiverRuntimeRespondsToUDPOptionsAndStops(t *testing.T) {
 
 	service, err := New(&IMSConfig{
 		DeviceID: "dev-udp", IMSI: "234100000000001", IMPI: "234100000000001@ims.example",
-		IMPU: []string{"sip:234100000000001@ims.example"}, Domain: "ims.example", SMSC: "+123",
+		IMPU: "sip:234100000000001@ims.example", Domain: "ims.example", SMSC: "+123",
 		LocalIP: net.IPv4(127, 0, 0, 1), Registrar: registrar.LocalAddr().String(),
-		IMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)),
+		IMSNetwork:      NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1)),
+		EnableIPSec3GPP: disabledBoolPointer(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

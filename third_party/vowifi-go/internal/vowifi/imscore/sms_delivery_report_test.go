@@ -115,7 +115,7 @@ func newDeliveryReportTestService(t *testing.T) (*Service, *captureIMSEventSubsc
 	store := newMemoryDeliveryStore()
 	service, err := New(&IMSConfig{
 		DeviceID: "wwan0", IMSI: "234102356143376", IMPI: "234102356143376@ims.example",
-		IMPU: []string{"sip:234102356143376@ims.example"}, Domain: "ims.example", SMSC: "+447802002606",
+		IMPU: "sip:234102356143376@ims.example", Domain: "ims.example", SMSC: "+447802002606",
 		LocalIP: net.IPv4(10, 0, 0, 2), LocalPort: 5060, Transport: "tcp", EventBus: bus, DeliveryStore: store,
 	})
 	if err != nil {

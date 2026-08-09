@@ -29,63 +29,6 @@ const (
 	regUnregister  = "unregistering"
 )
 
-// IMSConfig is the IMS configuration for a session.
-type IMSConfig struct {
-	// DeviceID identifies the device.
-	DeviceID string
-	// IMEI identifies the mobile equipment used for the IMS instance URN.
-	IMEI string
-	// IMSI is the subscriber IMSI.
-	IMSI string
-	// IMPI / IMPU are the IMS identities.
-	IMPI string
-	IMPU []string
-	// Domain is the IMS domain.
-	Domain string
-	// SMSC is the service-centre address used for RP-DATA messages.
-	SMSC string
-	// Realm is the digest realm.
-	Realm string
-	// EPDGAddr is the ePDG address.
-	EPDGAddr string
-	// LocalIP is the local SIP address.
-	LocalIP net.IP
-	// Transport is the SIP transport ("auto"/"tcp"/"udp").
-	Transport string
-	// Registrar is the registrar host:port.
-	Registrar string
-	// LocalPort is the local SIP port selected on IMSNetwork.
-	LocalPort int
-	// Expires is the registration interval.
-	Expires time.Duration
-	// KeepaliveInterval controls idle SIP OPTIONS probing after registration.
-	KeepaliveInterval time.Duration
-	// KeepaliveTimeout bounds one SIP OPTIONS transaction.
-	KeepaliveTimeout time.Duration
-	// AKAProvider computes AKA (RAND, AUTN) -> (RES, CK, IK).
-	AKAProvider AKAProvider
-	// IMSNetwork is the network surface.
-	IMSNetwork IMSNetwork
-	// DeliveryStore persists SMS delivery state.
-	DeliveryStore DeliveryStore
-	// EventBus receives IMS events.
-	EventBus *imsEventBus
-	// IPSec3GPPEnabled enables the 3GPP IPsec security.
-	IPSec3GPPEnabled bool
-	// TraceID is the session trace ID.
-	TraceID string
-	// UserAgent is the SIP User-Agent header value.
-	UserAgent string
-	// CellularNetworkInfo is the 3GPP cellular network snapshot advertised by
-	// the recovered client on REGISTER requests.
-	CellularNetworkInfo string
-	// PAccessNetworkCountry is appended to authenticated PANI headers.
-	PAccessNetworkCountry string
-	// RegisterTemplate carries the recovered carrier-specific REGISTER wire
-	// policy selected by the runtime host.
-	RegisterTemplate IMSRegisterTemplate
-}
-
 // IMSRegisterTemplate is the carrier-specific REGISTER wire policy.
 type IMSRegisterTemplate struct {
 	Expires                   time.Duration

@@ -26,14 +26,16 @@ func newTestAgent(t *testing.T) *Agent {
 
 func newVoiceTestAgent(t *testing.T, registrar *net.UDPConn) *Agent {
 	t.Helper()
+	plainSIP := false
 	cfg := &imscore.IMSConfig{
-		DeviceID:    "dev-1",
-		IMSI:        "310260123456789",
-		IMPI:        "310260123456789@ims.example.com",
-		Domain:      "ims.example.com",
-		LocalIP:     net.IPv4(127, 0, 0, 1),
-		Registrar:   registrar.LocalAddr().String(),
-		AKAProvider: stubAKA{},
+		DeviceID:        "dev-1",
+		IMSI:            "310260123456789",
+		IMPI:            "310260123456789@ims.example.com",
+		Domain:          "ims.example.com",
+		LocalIP:         net.IPv4(127, 0, 0, 1),
+		Registrar:       registrar.LocalAddr().String(),
+		AKAProvider:     stubAKA{},
+		EnableIPSec3GPP: &plainSIP,
 	}
 	svc, err := imscore.New(cfg)
 	if err != nil {
@@ -100,11 +102,12 @@ func startVoiceTestRegistrarWithAnswer(t *testing.T, inviteStatus int, answerSDP
 func newVoiceTestAgentWithInviteStatus(t *testing.T, status int) *Agent {
 	t.Helper()
 	registrar := startVoiceTestRegistrarWithInviteStatus(t, status)
+	plainSIP := false
 	svc, err := imscore.New(&imscore.IMSConfig{
 		DeviceID: "dev-reject", IMSI: "310260123456789",
-		IMPI: "310260123456789@ims.example.com", IMPU: []string{"sip:310260123456789@ims.example.com"},
+		IMPI: "310260123456789@ims.example.com", IMPU: "sip:310260123456789@ims.example.com",
 		Domain: "ims.example.com", LocalIP: net.IPv4(127, 0, 0, 1),
-		Registrar: registrar.LocalAddr().String(), AKAProvider: stubAKA{},
+		Registrar: registrar.LocalAddr().String(), AKAProvider: stubAKA{}, EnableIPSec3GPP: &plainSIP,
 	})
 	if err != nil {
 		t.Fatal(err)

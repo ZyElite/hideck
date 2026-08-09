@@ -110,12 +110,33 @@ func TestBuildIMSConfigDerivesUnappliedIdentity(t *testing.T) {
 			Domain: "ims.mnc010.mcc234.3gppnetwork.org",
 		}},
 	}
-	config := buildIMSConfig(imsConfigInput{
+	config, err := buildIMSConfig(imsConfigInput{
 		session: SessionConfig{Prepared: prepared}, result: &SessionResult{},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if config.IMPI != "234102356143376@ims.mnc010.mcc234.3gppnetwork.org" ||
-		len(config.IMPU) != 1 || config.IMPU[0] != "sip:"+config.IMPI {
+		config.IMPU != "sip:"+config.IMPI {
 		t.Fatalf("derived IMS config identity = %q %+v", config.IMPI, config.IMPU)
+	}
+}
+
+func TestBuildIMSConfigPreservesDisabledSecAgreePolicy(t *testing.T) {
+	prepared := profile.PreparedSession{
+		Profile: profile.Profile{IMSI: "234102356143376", MCC: "234", MNC: "10"},
+		CarrierPlan: policy.CarrierPlan{IMS: policy.IMSPlan{
+			RegisterTemplate: policy.IMSRegisterTemplate{SecAgreeMode: "disabled"},
+		}},
+	}
+	config, err := buildIMSConfig(imsConfigInput{
+		session: SessionConfig{Prepared: prepared}, result: &SessionResult{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.IPSec3GPPEnabled() {
+		t.Fatal("buildIMSConfig enabled 3GPP IPsec despite disabled carrier policy")
 	}
 }
 
@@ -223,9 +244,12 @@ func TestBuildIMSConfigUsesNegotiatedPCSCFAndCarrierRuntimeFields(t *testing.T) 
 			PCSCFv6: []net.IP{net.ParseIP("2001:db8::10")},
 		},
 	}
-	config := buildIMSConfig(imsConfigInput{
+	config, err := buildIMSConfig(imsConfigInput{
 		session: SessionConfig{Prepared: prepared}, result: result,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if config.Registrar != "192.0.2.10:5060" {
 		t.Fatalf("registrar = %q", config.Registrar)
 	}

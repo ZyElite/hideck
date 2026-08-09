@@ -409,8 +409,7 @@ func registrationResponseError(response *sipResponse, challenged bool) error {
 }
 
 func primaryPublicIdentity(cfg *IMSConfig) string {
-	if len(cfg.IMPU) > 0 && strings.TrimSpace(cfg.IMPU[0]) != "" {
-		identity := strings.TrimSpace(cfg.IMPU[0])
+	if identity := firstNonBlank(cfg.publicIdentities()...); identity != "" {
 		if strings.HasPrefix(strings.ToLower(identity), "sip:") {
 			return identity
 		}

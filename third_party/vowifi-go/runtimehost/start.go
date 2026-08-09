@@ -356,9 +356,9 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 	if domain == "" || impi == "" {
 		return nil, errors.New("runtimehost: prepared IMS identity is incomplete")
 	}
-	impu := []string{ident.IMPU}
-	if strings.TrimSpace(impu[0]) == "" {
-		impu = []string{"sip:" + impi}
+	impu := strings.TrimSpace(ident.IMPU)
+	if impu == "" {
+		impu = "sip:" + impi
 	}
 	inner := tunnel.InnerNetwork()
 	innerIP, prefixLen := preferredInnerAddress(inner)
@@ -380,30 +380,30 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		return nil, err
 	}
 	cfg := &imscore.IMSConfig{
-		DeviceID:         req.DeviceID,
-		IMEI:             imscore.GenerateRandomIMEIForModel(defaultIMSDeviceModel),
-		IMSI:             firstNonEmptyString(req.Prepared.Profile.IMSI, imsiOf(impi)),
-		IMPI:             impi,
-		IMPU:             impu,
-		Domain:           domain,
-		SMSC:             strings.TrimSpace(req.Prepared.Profile.SMSC),
-		Realm:            domain,
-		EPDGAddr:         req.Prepared.EPDGAddr,
-		LocalIP:          innerIP,
-		Registrar:        registrar,
-		Transport:        registerTemplate.Transport,
-		Expires:          registerTemplate.Expires,
-		TraceID:          req.TraceID,
-		AKAProvider:      req.SIM.AKAProvider(),
-		IMSNetwork:       imsNetwork,
-		IPSec3GPPEnabled: true,
-		UserAgent:        userAgent,
+		DeviceID:    req.DeviceID,
+		IMEI:        imscore.GenerateRandomIMEIForModel(defaultIMSDeviceModel),
+		IMSI:        firstNonEmptyString(req.Prepared.Profile.IMSI, imsiOf(impi)),
+		IMPI:        impi,
+		IMPU:        impu,
+		Domain:      domain,
+		SMSC:        strings.TrimSpace(req.Prepared.Profile.SMSC),
+		Realm:       domain,
+		EPDGAddr:    req.Prepared.EPDGAddr,
+		LocalIP:     innerIP,
+		Registrar:   registrar,
+		Transport:   registerTemplate.Transport,
+		Expires:     registerTemplate.Expires,
+		TraceID:     req.TraceID,
+		AKAProvider: req.SIM.AKAProvider(),
+		IMSNetwork:  imsNetwork,
+		UserAgent:   userAgent,
 		CellularNetworkInfo: imscore.GenerateDefaultCellularNetworkInfo(
 			req.Prepared.Profile.MCC, req.Prepared.Profile.MNC,
 		),
 		PAccessNetworkCountry: imscore.CountryISO2FromMCC(req.Prepared.Profile.MCC),
 		RegisterTemplate:      registerTemplate,
 	}
+	cfg.SetEnableIPSec3GPP(true)
 	eventBus := imscore.NewEventBus()
 	cfg.EventBus = eventBus
 	if req.Dispatch != nil {

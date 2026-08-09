@@ -29,6 +29,7 @@ func (s *Service) SendSMSWithResult(ctx context.Context, to, text string) (*SMSS
 
 // SendSMSWithOptions sends an SMS with options.
 func (s *Service) SendSMSWithOptions(ctx context.Context, to, text string, opts SMSSendOptions) (*SMSSendOutcome, error) {
+	ctx = withSuppressTGSuccess(ctx, opts.SuppressSendTGSuccess)
 	return s.sendOutboundSMS(ctx, to, text, opts)
 }
 

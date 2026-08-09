@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 
@@ -95,21 +97,32 @@ func TestGenerateStablePAccessNetworkInfoByIdentity(t *testing.T) {
 }
 
 func TestBuildIMSConfigFromCarrier(t *testing.T) {
-	ident := testIdentity()
-	cfg := BuildIMSConfigFromCarrier("dev-1", ident, "epdg.example.com")
+	plan := policy.CarrierPlan{IMS: policy.IMSPlan{
+		Domain: "ims.mnc026.mcc310.3gppnetwork.org", Transport: "udp",
+	}}
+	cfg := BuildIMSConfigFromCarrier(
+		"dev-1", "310260123456789", "urn:gsma:imei:35693803-564380-9",
+		"310", "260", "", "vowifi-test", "10.0.0.2", plan,
+	)
 	if cfg.IMPI != "310260123456789@ims.mnc026.mcc310.3gppnetwork.org" {
 		t.Errorf("impi = %q", cfg.IMPI)
 	}
 	if cfg.Domain != "ims.mnc026.mcc310.3gppnetwork.org" {
 		t.Errorf("domain = %q", cfg.Domain)
 	}
-	if cfg.EPDGAddr != "epdg.example.com" {
-		t.Errorf("epdg = %q", cfg.EPDGAddr)
+	if cfg.LocalAddr != "10.0.0.2" || cfg.LocalPort != defaultIMSLocalPort {
+		t.Errorf("local address = %q:%d", cfg.LocalAddr, cfg.LocalPort)
 	}
 	// ApplyResolvedIMSIdentityToConfig overwrites.
 	cfg.IMPI = "old"
-	ApplyResolvedIMSIdentityToConfig(cfg, ident)
-	if cfg.IMPI != "310260123456789@ims.mnc026.mcc310.3gppnetwork.org" {
+	err := ApplyResolvedIMSIdentityToConfig(&cfg, profile.IMSIdentityResult{
+		Applied: true, ActualSource: "isim", IMPI: "user@ims.example",
+		IMPU: "sip:user@ims.example", Domain: "ims.example",
+	}, "310")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.IMPI != "user@ims.example" {
 		t.Errorf("impi after apply = %q", cfg.IMPI)
 	}
 }
@@ -130,12 +143,12 @@ func TestServiceStartAndSnapshot(t *testing.T) {
 	svc.mu.Lock()
 	svc.regState = regRegistered
 	svc.mu.Unlock()
-	if svc.IPSec3GPPEnabled() {
-		t.Error("IPsec should be disabled by default")
-	}
-	svc.SetEnableIPSec3GPP(true)
 	if !svc.IPSec3GPPEnabled() {
-		t.Error("IPsec should be enabled after toggle")
+		t.Error("IPsec should be enabled by default")
+	}
+	svc.SetEnableIPSec3GPP(false)
+	if svc.IPSec3GPPEnabled() {
+		t.Error("IPsec should be disabled after toggle")
 	}
 	st := svc.Status()
 	m := st.ToMap()
@@ -167,11 +180,12 @@ func registerResponseForRequest(request string, status int, headers map[string]s
 
 func TestServiceMethods(t *testing.T) {
 	cfg := &IMSConfig{
-		DeviceID:    "dev-1",
-		IMSI:        "310260123456789",
-		IMPI:        "310260123456789@ims.example.com",
-		Domain:      "ims.example.com",
-		AKAProvider: stubAKAProvider{},
+		DeviceID:        "dev-1",
+		IMSI:            "310260123456789",
+		IMPI:            "310260123456789@ims.example.com",
+		Domain:          "ims.example.com",
+		AKAProvider:     stubAKAProvider{},
+		EnableIPSec3GPP: disabledBoolPointer(),
 	}
 	svc, err := New(cfg)
 	if err != nil {
@@ -205,6 +219,7 @@ func TestSubscribeReturnsNetworkRejection(t *testing.T) {
 	svc, err := New(&IMSConfig{
 		IMSI: "310260123456789", IMPI: "310260123456789@ims.example.com",
 		Domain: "ims.example.com", AKAProvider: stubAKAProvider{},
+		EnableIPSec3GPP: disabledBoolPointer(),
 	})
 	if err != nil {
 		t.Fatal(err)
