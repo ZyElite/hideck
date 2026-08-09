@@ -417,14 +417,15 @@ func deliveryStatusFromInternal(st *imscore.DeliveryStatus) *messaging.DeliveryS
 		Acks:       st.Acks,
 		State:      st.State,
 		LastError:  st.LastError,
+		CreatedAt:  st.CreatedAt,
+		UpdatedAt:  st.UpdatedAt,
 	}
 	for _, p := range st.Parts {
 		out.Parts = append(out.Parts, messaging.DeliveryPartStatus{
-			PartNo:  p.PartNo,
-			CallID:  p.CallID,
-			State:   p.State,
-			SIPCode: p.SIPCode,
-			RPCause: p.RPCause,
+			PartNo: p.PartNo, CallID: p.CallID, InReplyTo: p.InReplyTo, RPMR: p.RPMR,
+			State: p.State, SIPCode: p.SIPCode, RPCause: p.RPCause,
+			RPCauseText: p.RPCauseText, ErrorText: p.ErrorText,
+			SentAt: p.SentAt, ReportAt: p.ReportAt, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		})
 	}
 	return out
@@ -445,14 +446,15 @@ func deliveryStatusToInternal(st *messaging.DeliveryStatus) *imscore.DeliverySta
 		Acks:       st.Acks,
 		State:      st.State,
 		LastError:  st.LastError,
+		CreatedAt:  st.CreatedAt,
+		UpdatedAt:  st.UpdatedAt,
 	}
 	for _, p := range st.Parts {
 		out.Parts = append(out.Parts, imscore.DeliveryPartStatus{
-			PartNo:  p.PartNo,
-			CallID:  p.CallID,
-			State:   p.State,
-			SIPCode: p.SIPCode,
-			RPCause: p.RPCause,
+			PartNo: p.PartNo, CallID: p.CallID, InReplyTo: p.InReplyTo, RPMR: p.RPMR,
+			State: p.State, SIPCode: p.SIPCode, RPCause: p.RPCause,
+			RPCauseText: p.RPCauseText, ErrorText: p.ErrorText,
+			SentAt: p.SentAt, ReportAt: p.ReportAt, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		})
 	}
 	return out

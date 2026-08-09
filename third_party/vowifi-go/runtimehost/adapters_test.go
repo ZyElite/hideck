@@ -370,6 +370,9 @@ func TestRuntimeCoreDeliveryStorePreservesOptionalSIPResults(t *testing.T) {
 }
 
 func TestDeliveryStatusConversion(t *testing.T) {
+	createdAt := time.Date(2026, time.August, 10, 1, 58, 25, 0, time.UTC)
+	updatedAt := createdAt.Add(300 * time.Millisecond)
+	reportAt := updatedAt
 	internal := &imscore.DeliveryStatus{
 		MessageID:  "m1",
 		IMSI:       "310260123456789",
@@ -379,17 +382,26 @@ func TestDeliveryStatusConversion(t *testing.T) {
 		PartsTotal: 1,
 		Acks:       1,
 		State:      "delivered",
-		Parts:      []imscore.DeliveryPartStatus{{PartNo: 1, CallID: "c1", State: "delivered", SIPCode: 200}},
+		CreatedAt:  createdAt,
+		UpdatedAt:  updatedAt,
+		Parts: []imscore.DeliveryPartStatus{{
+			PartNo: 1, CallID: "c1", InReplyTo: "reply-c1", RPMR: 23,
+			State: "delivered", SIPCode: 200, RPCause: 0, RPCauseText: "accepted",
+			ErrorText: "", SentAt: createdAt, ReportAt: &reportAt,
+			CreatedAt: createdAt, UpdatedAt: updatedAt,
+		}},
 	}
 	ext := deliveryStatusFromInternal(internal)
-	if ext.MessageID != "m1" || ext.State != "delivered" {
+	if ext.MessageID != "m1" || ext.State != "delivered" || ext.CreatedAt != createdAt || ext.UpdatedAt != updatedAt {
 		t.Errorf("converted = %+v", ext)
 	}
-	if len(ext.Parts) != 1 || ext.Parts[0].SIPCode != 200 {
+	if len(ext.Parts) != 1 || ext.Parts[0].SIPCode != 200 || ext.Parts[0].RPMR != 23 ||
+		ext.Parts[0].InReplyTo != "reply-c1" || ext.Parts[0].ReportAt == nil || *ext.Parts[0].ReportAt != reportAt {
 		t.Errorf("parts = %+v", ext.Parts)
 	}
 	back := deliveryStatusToInternal(ext)
-	if back.MessageID != "m1" || len(back.Parts) != 1 {
+	if back.MessageID != "m1" || back.CreatedAt != createdAt || len(back.Parts) != 1 ||
+		back.Parts[0].RPMR != 23 || back.Parts[0].UpdatedAt != updatedAt {
 		t.Errorf("round-trip = %+v", back)
 	}
 }
