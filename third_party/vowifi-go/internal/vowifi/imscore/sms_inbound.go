@@ -17,19 +17,20 @@ const (
 	imsSMSContentType       = "application/vnd.3gpp.sms"
 	rpCauseTemporaryFailure = byte(41)
 	inboundSMSAckTimeout    = 10 * time.Second
-	inboundSMSFragmentTTL   = 10 * time.Minute
+	inboundSMSFragmentTTL   = 3 * time.Minute
 )
 
 type inboundSMS struct {
-	sender    string
-	targetURI string
-	content   string
-	timestamp time.Time
-	rpMR      byte
-	concatRef int
-	refBits   int
-	total     int
-	partNo    int
+	sender        string
+	serviceCenter string
+	targetURI     string
+	content       string
+	timestamp     time.Time
+	rpMR          byte
+	concatRef     int
+	refBits       int
+	total         int
+	partNo        int
 }
 
 type decodedInboundSMSRequest struct {
@@ -185,8 +186,9 @@ func decodeInboundRPData(raw string, rpdu []byte) (inboundSMS, error) {
 		sender = strings.TrimSpace(originator)
 	}
 	return inboundSMS{
-		sender: sender, targetURI: firstSIPHeaderURI(rawSIPHeaderValue(raw, "To")),
-		content: content, timestamp: timestamp, rpMR: rpMR,
+		sender: sender, serviceCenter: strings.TrimSpace(originator),
+		targetURI: firstSIPHeaderURI(rawSIPHeaderValue(raw, "To")),
+		content:   content, timestamp: timestamp, rpMR: rpMR,
 		concatRef: concat.Ref, refBits: concat.RefBits,
 		total: concat.Total, partNo: concat.Seq,
 	}, nil
@@ -200,9 +202,10 @@ func (s *Service) assembleInboundSMS(raw string, message *inboundSMS) (bool, err
 		return s.shouldDispatchMTSMS(*message, raw), nil
 	}
 	content, complete, err := s.handleSMSFragment(message.sender, &smsFragment{
-		Ref: message.concatRef + message.refBits<<16, Total: message.total, Seq: message.partNo,
-		Content: message.content, Time: message.timestamp, RpMr: message.rpMR,
-		CallID: rawSIPHeaderValue(raw, "Call-ID"), ToURI: message.targetURI,
+		Ref: message.concatRef, RefBits: message.refBits,
+		Total: message.total, Seq: message.partNo, Content: message.content,
+		RpMr: message.rpMR, CallID: rawSIPHeaderValue(raw, "Call-ID"),
+		ToURI: message.targetURI, ServiceCenter: message.serviceCenter,
 	})
 	if err != nil || !complete {
 		return false, err

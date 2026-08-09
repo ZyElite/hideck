@@ -258,12 +258,78 @@ func TestFragmentTimeoutDegradesAndAudits(t *testing.T) {
 	if _, complete, err := service.handleSMSFragment("+447700900123", fragment); err != nil || complete {
 		t.Fatalf("fragment complete=%v err=%v", complete, err)
 	}
+	service.fragmentMu.Lock()
+	fragment.Time = time.Now().Add(-time.Second)
+	service.fragmentMu.Unlock()
 	service.cleanupExpiredFragments(time.Millisecond)
 	assertIMSEventTypes(t, subscriber, "LogNotify", "SMSReceived")
 	snapshot := service.fragmentAuditSnapshot()
 	failures, ok := snapshot["audit_failures"].([]fragmentAuditFailure)
-	if snapshot["timeout_degrade"] != int64(1) || !ok || len(failures) != 1 || failures[0].MissingSeq != "2" {
+	recent, recentOK := snapshot["recent_failures"].([]fragmentAuditFailure)
+	if snapshot["timeout_degrade"] != int64(1) || snapshot["timeout_degraded"] != int64(1) ||
+		!ok || !recentOK || len(failures) != 1 || len(recent) != 1 ||
+		failures[0].Reason != "timeout" || recent[0].Reason != "timeout_degraded" ||
+		failures[0].MissingSeq != "2" {
 		t.Fatalf("fragment audit = %#v", snapshot)
+	}
+	if got := formatIncompleteFragmentContent("first", 1, 2, "2"); got != "[incomplete 1/2 missing=2] first" {
+		t.Fatalf("incomplete content=%q", got)
+	}
+}
+
+func TestInboundFragmentTTLUsesLocalArrivalTime(t *testing.T) {
+	service, err := New(&IMSConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Stop)
+	carrierTimestamp := time.Now().Add(-time.Hour)
+	arrivedAfter := time.Now()
+	message := inboundSMS{
+		sender: "giffgaff", serviceCenter: "+447802000332",
+		targetURI: "sip:+447840844894@ims.example", content: "part two",
+		timestamp: carrierTimestamp, rpMR: 55, concatRef: 198, refBits: 8,
+		total: 2, partNo: 2,
+	}
+	complete, err := service.assembleInboundSMS("Call-ID: delayed-fragment\r\n", &message)
+	if err != nil || complete {
+		t.Fatalf("complete=%v err=%v", complete, err)
+	}
+	identity := fragmentSessionIdentity{
+		Sender: message.sender, ServiceCenter: message.serviceCenter, Local: message.targetURI,
+		Reference: message.concatRef, RefBits: message.refBits, Total: message.total,
+	}
+	key := buildFragmentSessionKey(identity)
+	if key != "sender=giffgaff|ref=198|bits=8|sc=+447802000332|local=+447840844894" {
+		t.Fatalf("fragment key=%q", key)
+	}
+	service.fragmentMu.Lock()
+	fragments := append([]*smsFragment(nil), service.fragmentCache[key]...)
+	service.fragmentMu.Unlock()
+	if len(fragments) != 1 || fragments[0].Time.Before(arrivedAfter) {
+		t.Fatalf("fragment arrival=%v count=%d, carrier timestamp=%v", fragments[0].Time, len(fragments), carrierTimestamp)
+	}
+	service.cleanupExpiredFragments(time.Minute)
+	if got := service.fragmentAuditSnapshot()["timeout_degrade"]; got != int64(0) {
+		t.Fatalf("timeout_degrade=%v, delayed carrier timestamp expired a fresh fragment", got)
+	}
+	if !message.timestamp.Equal(carrierTimestamp) {
+		t.Fatalf("message timestamp=%v want carrier timestamp=%v", message.timestamp, carrierTimestamp)
+	}
+}
+
+func TestDecodeInboundRPDataPreservesFragmentIdentities(t *testing.T) {
+	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 55, "+447700900123", "identity"))
+	body, err := rawSIPBody(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := decodeInboundRPData(raw, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.serviceCenter != "+447802002606" || message.targetURI != "sip:234102356143376@ims.example" {
+		t.Fatalf("service center=%q target=%q", message.serviceCenter, message.targetURI)
 	}
 }
 

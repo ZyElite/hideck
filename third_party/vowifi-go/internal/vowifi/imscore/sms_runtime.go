@@ -131,27 +131,31 @@ type observability struct {
 }
 
 type smsFragment struct {
-	Ref       int
-	Total     int
-	Seq       int
-	Content   string
-	Time      time.Time
-	RpMr      uint8
-	CallID    string
-	ToURI     string
-	AckSent   bool
-	AckSentAt time.Time
+	Ref           int
+	RefBits       int
+	Total         int
+	Seq           int
+	Content       string
+	Time          time.Time
+	RpMr          uint8
+	CallID        string
+	ToURI         string
+	ServiceCenter string
+	AckSent       bool
+	AckSentAt     time.Time
 }
 
 type fragmentAuditFailure struct {
-	At         time.Time `json:"at"`
-	Key        string    `json:"key"`
-	Sender     string    `json:"sender"`
-	Received   int       `json:"received"`
-	Total      int       `json:"total"`
-	MissingSeq string    `json:"missing_seq"`
-	SeqList    string    `json:"seq_list"`
-	Reason     string    `json:"reason"`
+	At            time.Time `json:"at"`
+	Key           string    `json:"key"`
+	Sender        string    `json:"sender"`
+	Received      int       `json:"received"`
+	Total         int       `json:"total"`
+	MissingSeq    string    `json:"missing_seq"`
+	SeqList       string    `json:"seq_list"`
+	Reason        string    `json:"reason"`
+	InterimKey    string    `json:"-"`
+	InterimReason string    `json:"-"`
 }
 
 type outboundSMSAudit struct {

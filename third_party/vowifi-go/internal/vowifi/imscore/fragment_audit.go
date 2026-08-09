@@ -60,13 +60,31 @@ func (s *Service) fragmentAuditSnapshot() map[string]interface{} {
 	}
 	s.fragmentMu.Lock()
 	defer s.fragmentMu.Unlock()
+	failures := append([]fragmentAuditFailure(nil), s.fragmentAuditFailures...)
+	interimFailures := append([]fragmentAuditFailure(nil), failures...)
+	for index := range interimFailures {
+		if interimFailures[index].InterimKey != "" {
+			interimFailures[index].Key = interimFailures[index].InterimKey
+		}
+		if interimFailures[index].InterimReason != "" {
+			interimFailures[index].Reason = interimFailures[index].InterimReason
+		}
+	}
+	outbound := append([]outboundSMSAudit(nil), s.outboundSMSAudits...)
 	return map[string]interface{}{
-		"arrived_total":       s.fragmentArrivedTotal,
-		"assembled_ok":        s.fragmentAssembledOK,
+		"arrived_total":        s.fragmentArrivedTotal,
+		"assembled_ok":         s.fragmentAssembledOK,
+		"timeout_degraded":     s.fragmentTimeoutDegrade,
+		"orphan_late_fragment": s.fragmentOrphanLate,
+		"dup_fragment":         s.fragmentDup,
+		"recent_failures":      failures,
+		"recent_outbound_sms":  outbound,
+
+		// Preserve the interim restoration names for additive compatibility.
 		"timeout_degrade":     s.fragmentTimeoutDegrade,
 		"orphan_late":         s.fragmentOrphanLate,
 		"fragment_dup":        s.fragmentDup,
-		"audit_failures":      append([]fragmentAuditFailure(nil), s.fragmentAuditFailures...),
-		"outbound_sms_audits": append([]outboundSMSAudit(nil), s.outboundSMSAudits...),
+		"audit_failures":      interimFailures,
+		"outbound_sms_audits": append([]outboundSMSAudit(nil), outbound...),
 	}
 }
