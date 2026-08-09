@@ -93,11 +93,16 @@ func (adapter deliveryStoreAdapter) GetSMSDeliveryStatus(id string) (*imscore.De
 		MessageID: status.MessageID, IMSI: status.IMSI, DeviceID: status.DeviceID,
 		Peer: status.Peer, Content: status.Content, PartsTotal: status.PartsTotal,
 		Acks: status.Acks, State: status.State, LastError: status.LastError,
+		CreatedAt: status.CreatedAt, UpdatedAt: status.UpdatedAt,
+		Parts: make([]imscore.DeliveryPartStatus, 0, len(status.Parts)),
 	}
 	for _, part := range status.Parts {
 		result.Parts = append(result.Parts, imscore.DeliveryPartStatus{
-			PartNo: part.PartNo, CallID: part.CallID, State: part.State,
-			SIPCode: part.SIPCode, RPCause: part.RPCause,
+			PartNo: part.PartNo, CallID: part.CallID, InReplyTo: part.InReplyTo,
+			RPMR: part.RPMR, State: part.State, SIPCode: part.SIPCode,
+			RPCause: part.RPCause, RPCauseText: part.RPCauseText, ErrorText: part.ErrorText,
+			SentAt: part.SentAt, ReportAt: part.ReportAt,
+			CreatedAt: part.CreatedAt, UpdatedAt: part.UpdatedAt,
 		})
 	}
 	return result, nil

@@ -107,7 +107,7 @@ func (adapter runtimeCoreDeliveryStoreAdapter) MarkSMSDeliveryPartReport(
 		inReplyTo, callID, deviceID, rpMR, state, sipCode, rpCause, errText, at,
 	)
 	return smsdelivery.DeliveryPartMatch{
-		MessageID: match.MessageID, PartNo: match.PartNo, State: match.State,
+		MessageID: match.MessageID, PartNo: match.PartNo, State: match.State, Matched: match.Matched,
 	}, err
 }
 

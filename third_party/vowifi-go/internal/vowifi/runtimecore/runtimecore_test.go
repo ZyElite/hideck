@@ -666,6 +666,7 @@ func TestMissingIPSec3GPPInstallerReturnsOriginalError(t *testing.T) {
 type testSIPResultStore struct {
 	smsdelivery.Store
 	sipCode int
+	status  *smsdelivery.DeliveryStatus
 }
 
 func (store *testSIPResultStore) MarkSMSDeliveryPartSIPResult(
@@ -676,6 +677,10 @@ func (store *testSIPResultStore) MarkSMSDeliveryPartSIPResult(
 ) error {
 	store.sipCode = sipCode
 	return nil
+}
+
+func (store *testSIPResultStore) GetSMSDeliveryStatus(string) (*smsdelivery.DeliveryStatus, error) {
+	return store.status, nil
 }
 
 func TestDeliveryStoreAdapterPreservesOptionalSIPResults(t *testing.T) {
@@ -692,6 +697,31 @@ func TestDeliveryStoreAdapterPreservesOptionalSIPResults(t *testing.T) {
 	}
 	if store.sipCode != 202 {
 		t.Fatalf("persisted SIP code = %d", store.sipCode)
+	}
+}
+
+func TestDeliveryStoreAdapterPreservesStatusMetadata(t *testing.T) {
+	createdAt := time.Date(2026, time.August, 10, 1, 58, 25, 0, time.UTC)
+	updatedAt := createdAt.Add(300 * time.Millisecond)
+	reportAt := updatedAt
+	store := &testSIPResultStore{status: &smsdelivery.DeliveryStatus{
+		MessageID: "msg-1", CreatedAt: createdAt, UpdatedAt: updatedAt,
+		Parts: []smsdelivery.DeliveryPartStatus{{
+			PartNo: 1, CallID: "call-1", InReplyTo: "reply-1", RPMR: 17,
+			RPCauseText: "accepted", SentAt: createdAt, ReportAt: &reportAt,
+			CreatedAt: createdAt, UpdatedAt: updatedAt,
+		}},
+	}}
+	status, err := adaptDeliveryStore(store).GetSMSDeliveryStatus("msg-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.CreatedAt != createdAt || status.UpdatedAt != updatedAt || len(status.Parts) != 1 {
+		t.Fatalf("status metadata = %+v", status)
+	}
+	part := status.Parts[0]
+	if part.InReplyTo != "reply-1" || part.RPMR != 17 || part.ReportAt == nil || *part.ReportAt != reportAt {
+		t.Fatalf("part metadata = %+v", part)
 	}
 }
 

@@ -369,6 +369,19 @@ func TestRuntimeCoreDeliveryStorePreservesOptionalSIPResults(t *testing.T) {
 	}
 }
 
+func TestRuntimeCoreDeliveryStorePreservesMatchedReport(t *testing.T) {
+	store := &memDeliveryStore{}
+	match, err := runtimeCoreDeliveryStore(store).MarkSMSDeliveryPartReport(
+		"msg-1", "call-1", "dev-1", 17, "acked", 200, 0, "", time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !match.Matched || match.MessageID != "msg-1" || match.PartNo != 17 || match.State != "acked" {
+		t.Fatalf("report match = %+v", match)
+	}
+}
+
 func TestDeliveryStatusConversion(t *testing.T) {
 	createdAt := time.Date(2026, time.August, 10, 1, 58, 25, 0, time.UTC)
 	updatedAt := createdAt.Add(300 * time.Millisecond)
