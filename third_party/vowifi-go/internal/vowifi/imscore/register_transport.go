@@ -59,13 +59,19 @@ func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 }
 
 func (s *Service) reserveProtectedTCPPorts() (net.Listener, net.Listener, error) {
-	if !s.cfg.IPSec3GPPEnabled() {
+	if effectiveSecAgreeMode(s.cfg, resolveActiveIMSRegisterTemplate(s.cfg)) == "disabled" {
 		return nil, nil, nil
 	}
 	server, err := s.cfg.IMSNetwork.ListenTCP(&net.TCPAddr{IP: s.cfg.LocalIP})
 	if err != nil {
 		return nil, nil, fmt.Errorf("imscore: reserve protected server port: %w", err)
 	}
+	configuredServer, err := applyIPSec3GPPPortSListenerTCPMSSWithError(server)
+	if err != nil {
+		_ = server.Close()
+		return nil, nil, err
+	}
+	server = configuredServer
 	client, err := s.cfg.IMSNetwork.ListenTCP(&net.TCPAddr{IP: s.cfg.LocalIP})
 	if err != nil {
 		_ = server.Close()
@@ -125,12 +131,23 @@ func (s *Service) dialProtectedRegistrationTCP(ctx context.Context, client, serv
 	}
 	local := &net.TCPAddr{IP: s.cfg.LocalIP, Port: int(client.PortC)}
 	remote := &net.TCPAddr{IP: registrationRemote.IP, Port: int(server.PortS)}
-	conn, err := s.cfg.IMSNetwork.DialTCPContext(ctx, local, remote)
+	conn, attempts, err := dialSecureChannelWithFallback(func(network string) (net.Conn, error) {
+		if !ipsec3gppTCPNetwork(network) {
+			return nil, fmt.Errorf("imscore: unsupported secure signaling network %q", network)
+		}
+		return s.cfg.IMSNetwork.DialTCPContext(ctx, local, remote)
+	})
+	logSecureChannelAttemptResult(attempts, err)
 	if err != nil {
-		return fmt.Errorf("imscore: connect protected REGISTER TCP: %w", err)
+		return err
+	}
+	if err := setIPSec3GPPTCPMSS(conn); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("imscore: set protected REGISTER TCP MSS: %w", err)
 	}
 	logging.Info("IMS protected REGISTER TCP connected",
 		"local_port", local.Port, "remote_port", remote.Port)
+	logSecureChannelEstablished(conn)
 	s.activateProtectedRegistrationTCP(conn)
 	return nil
 }

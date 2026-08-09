@@ -185,6 +185,24 @@ func TestInstallIPSec3GPPCleanupRemovesTransformer(t *testing.T) {
 	}
 }
 
+func TestIMSNetworkAdapterRemovesInstalledIPSecPolicy(t *testing.T) {
+	network := newOriginalTestNetwork(t, newTestInnerEndpoint())
+	adapter := AdaptIMSNetwork(network)
+	defer adapter.Close()
+	if err := adapter.InstallIPSec3GPP(testIPSecPolicy()); err != nil {
+		t.Fatalf("InstallIPSec3GPP: %v", err)
+	}
+	if !adapter.IPSec3GPPPolicyInstalled() {
+		t.Fatal("adapter did not expose the installed policy")
+	}
+	if err := adapter.RemoveIPSec3GPP(); err != nil {
+		t.Fatalf("RemoveIPSec3GPP: %v", err)
+	}
+	if adapter.IPSec3GPPPolicyInstalled() || network.bridge.currentTransformer() != nil {
+		t.Fatal("adapter retained the removed IPsec transformer")
+	}
+}
+
 func TestInstallIPSec3GPPRequiresPacketBridge(t *testing.T) {
 	network, err := NewNetwork(
 		context.Background(), net.IPv4(10, 0, 0, 2), nil, 32, 0, nil, nil, nil,

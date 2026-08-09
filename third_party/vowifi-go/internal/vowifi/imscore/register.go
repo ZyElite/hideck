@@ -76,6 +76,8 @@ func (s *Service) Register(ctx context.Context) error {
 		s.regState = regFailed
 		s.lastError = err.Error()
 		s.lastRegisterErr = err.Error()
+		s.signalingReady = false
+		s.signalingFailureReason = err.Error()
 		s.mu.Unlock()
 		if !isRegisterOperationCanceled(err) {
 			s.applyRegistrationFailureStatus(err)
@@ -92,6 +94,7 @@ func (s *Service) Register(ctx context.Context) error {
 	s.transitionRegStatus(registrationRegistered)
 	s.regFailCount.Store(0)
 	s.reRegisterPending.Store(false)
+	s.markSignalingReady()
 	if s.onRegistered != nil {
 		s.onRegistered()
 	}
@@ -192,10 +195,35 @@ func (s *Service) exchangeRegisterChallenges(
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, result, registrationResponseError(resp, session.challenge != nil)
 	}
-	if session.security != nil && session.security.server == nil {
-		return nil, result, errors.New("imscore: registration completed without 3GPP security agreement")
+	if err := s.finalizeInitialRegisterSecurity(session, resp); err != nil {
+		return nil, result, err
 	}
 	return resp, result, nil
+}
+
+func (s *Service) finalizeInitialRegisterSecurity(session *registerSession, response *sipResponse) error {
+	if session.security == nil {
+		s.mu.RLock()
+		modeRecorded := s.effectiveSecurityMode != ""
+		s.mu.RUnlock()
+		if !modeRecorded {
+			s.recordSecurityMode(securityModePlain, "", false)
+		}
+		return nil
+	}
+	if session.security.server != nil {
+		return nil
+	}
+	if err := decideInitialRegisterSuccessSecurity(
+		s.cfg, session.template, strings.TrimSpace(response.Header("Security-Server")) != "",
+	); err != nil {
+		s.recordSignalingFailure(securityModeIPSec, err.Error(), err)
+		return fmt.Errorf("imscore: %w", err)
+	}
+	s.releaseUnusedProtectedReservations()
+	session.security = nil
+	s.recordSecurityMode(securityModePlain, "", false)
+	return nil
 }
 
 func updateRegisterAttemptResponse(result *registerAttemptResult, response *sipResponse) {
@@ -371,6 +399,7 @@ func isDigestChallengeResponse(response *sipResponse) bool {
 }
 
 func (s *Service) answerDigestChallenge(ctx context.Context, session *registerSession, response *sipResponse) (string, bool, error) {
+	updateAuthResponseRouteSecurity(session, response)
 	challenge, err := s.extractChallenge(response, response.StatusCode)
 	if err != nil {
 		return "", false, err
@@ -411,13 +440,14 @@ func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {
 		return session, nil
 	}
 	s.mu.RUnlock()
-	security, err := s.prepareSecurityAgreement()
+	template := resolveActiveIMSRegisterTemplate(s.cfg)
+	security, err := s.prepareSecurityAgreement(template)
 	if err != nil {
 		return nil, err
 	}
 	return &registerSession{
 		callID: newCallID(), fromTag: newTag(), contactUser: newUUID(),
-		cseq: 2, security: security, template: s.cfg.IMSRegisterTemplate,
+		cseq: 2, security: security, template: template,
 	}, nil
 }
 
@@ -436,6 +466,9 @@ func (s *Service) retryDefaultInitialRegister(
 		return response, nil
 	}
 	session.template = policy.FallbackIMSRegisterTemplate(template)
+	if session.security != nil {
+		session.security.clientHeader = securityClientHeaderValue(session.security.client, session.template)
+	}
 	session.cseq++
 	return s.exchangeRegister(ctx, session, session.authHeader)
 }
@@ -491,7 +524,7 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	) + "\r\n")
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
-	b.WriteString("Supported: " + formatHeaderList(registerSupportedHeader(cfg)) + "\r\n")
+	b.WriteString("Supported: " + formatHeaderList(registerSupportedHeaderForSession(cfg, session)) + "\r\n")
 	if allow := registerConfiguredAllowHeader(cfg); allow != "" {
 		b.WriteString("Allow: " + allow + "\r\n")
 	}
@@ -594,6 +627,37 @@ func registerSupportedHeader(cfg *IMSConfig) string {
 		return supported
 	}
 	return "path, outbound"
+}
+
+func registerSupportedHeaderForSession(cfg *IMSConfig, session *registerSession) string {
+	supported := registerSupportedHeader(cfg)
+	if session != nil {
+		if session.template.ID == "" && session.template.SecAgreeMode == "" &&
+			len(session.template.SecurityClientMechanisms) == 0 {
+			return supported
+		}
+		template := policy.NormalizeIMSRegisterTemplate(session.template)
+		supported = template.SupportedHeader
+		if template.ID == compatibilityRegisterTemplateID {
+			return supported
+		}
+	}
+	if session == nil || session.security == nil {
+		supported = removeHeaderToken(supported, "sec-agree")
+	}
+	return supported
+}
+
+func removeHeaderToken(value, removed string) string {
+	parts := strings.Split(value, ",")
+	result := parts[:0]
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" && !strings.EqualFold(part, removed) {
+			result = append(result, part)
+		}
+	}
+	return strings.Join(result, ",")
 }
 
 func initialIMSAuthorization(cfg *IMSConfig) string {

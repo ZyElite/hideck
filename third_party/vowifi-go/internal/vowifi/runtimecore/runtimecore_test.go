@@ -581,11 +581,17 @@ func TestInstallerIMSNetworkReplacesAndCleansPolicies(t *testing.T) {
 	if installer.installs != 2 || installer.cleanups != 1 {
 		t.Fatalf("before close installs=%d cleanups=%d", installer.installs, installer.cleanups)
 	}
+	if err := network.RemoveIPSec3GPP(); err != nil {
+		t.Fatalf("RemoveIPSec3GPP: %v", err)
+	}
+	if installer.cleanups != 2 {
+		t.Fatalf("after remove cleanups=%d, want 2", installer.cleanups)
+	}
 	if err := network.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	if installer.cleanups != 2 {
-		t.Fatalf("after close cleanups=%d, want 2", installer.cleanups)
+		t.Fatalf("idempotent close cleanups=%d, want 2", installer.cleanups)
 	}
 }
 

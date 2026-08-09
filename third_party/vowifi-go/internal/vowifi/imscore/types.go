@@ -98,7 +98,7 @@ func (n *SystemIMSNetwork) HasLocalIP(ip net.IP) bool {
 
 // ResolveIP resolves a host to an IP.
 func (n *SystemIMSNetwork) ResolveIP(ctx context.Context, host string) (net.IP, error) {
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	ips, err := n.LookupIPs(ctx, host)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +106,12 @@ func (n *SystemIMSNetwork) ResolveIP(ctx context.Context, host string) (net.IP, 
 		return ips[0], nil
 	}
 	return nil, net.ErrClosed
+}
+
+// LookupIPs returns every resolved address so security policy can retain the
+// local address family when DNS returns mixed A and AAAA records.
+func (n *SystemIMSNetwork) LookupIPs(ctx context.Context, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
 }
 
 // LookupSRV resolves a SIP service endpoint.
@@ -212,13 +218,19 @@ type Service struct {
 	smsTransactionTimeout time.Duration
 	smsReportTimeout      time.Duration
 
-	lastPingAt     time.Time
-	securityVerify string
-	lastError      string
-	serviceRoute   string
-	path           string
-	assocMSISDN    string
-	learnedAOR     string
+	lastPingAt             time.Time
+	securityVerify         string
+	effectiveSecurityMode  string
+	securityFallbackReason string
+	securityFallbackCount  atomic.Int64
+	signalingGeneration    uint64
+	signalingReady         bool
+	signalingFailureReason string
+	lastError              string
+	serviceRoute           string
+	path                   string
+	assocMSISDN            string
+	learnedAOR             string
 
 	lastRegisterTraceID   string
 	lastRegisterAttemptAt time.Time

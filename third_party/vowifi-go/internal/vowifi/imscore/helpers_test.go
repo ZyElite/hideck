@@ -2,7 +2,6 @@ package imscore
 
 import (
 	"errors"
-	"net"
 	"strings"
 	"testing"
 	"time"
@@ -41,8 +40,9 @@ func TestCountryISO2FromMCC(t *testing.T) {
 
 func TestIsFatalNetworkError(t *testing.T) {
 	fatal := []error{
-		errors.New("connection refused"),
-		&net.OpError{Op: "dial", Err: errors.New("network is unreachable")},
+		errors.New("connection refused"), errors.New("network is unreachable"),
+		errors.New("use of closed network connection"), errors.New("no route to host"),
+		errors.New("connection reset by peer"), errors.New("broken pipe"),
 	}
 	for _, e := range fatal {
 		if !IsFatalNetworkError(e) {
@@ -51,6 +51,9 @@ func TestIsFatalNetworkError(t *testing.T) {
 	}
 	if IsFatalNetworkError(errors.New("i/o timeout")) {
 		t.Error("timeout should not be fatal")
+	}
+	if IsFatalNetworkError(errors.New("permission denied")) {
+		t.Error("unlisted network failure should not be fatal")
 	}
 	if IsFatalNetworkError(nil) {
 		t.Error("nil should not be fatal")

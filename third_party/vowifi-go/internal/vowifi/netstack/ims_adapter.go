@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 
 	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
@@ -13,7 +14,9 @@ import (
 // IMSNetworkAdapter exposes the additive IMS interface without weakening the
 // original Network method signatures.
 type IMSNetworkAdapter struct {
-	network *Network
+	network      *Network
+	ipsecMu      sync.Mutex
+	ipsecCleanup func() error
 }
 
 var _ imscore.IMSNetwork = (*IMSNetworkAdapter)(nil)
@@ -107,11 +110,31 @@ func (a *IMSNetworkAdapter) ListenPacket(network string, addr *net.UDPAddr) (net
 }
 
 func (a *IMSNetworkAdapter) InstallIPSec3GPP(policy ipsec3gpp.Policy) error {
-	_, err := a.network.InstallIPSec3GPP(context.Background(), policy)
+	a.ipsecMu.Lock()
+	defer a.ipsecMu.Unlock()
+	if a.ipsecCleanup != nil {
+		if err := a.ipsecCleanup(); err != nil {
+			return err
+		}
+		a.ipsecCleanup = nil
+	}
+	cleanup, err := a.network.InstallIPSec3GPP(context.Background(), policy)
 	if err != nil {
 		return err
 	}
+	a.ipsecCleanup = cleanup
 	return nil
+}
+
+func (a *IMSNetworkAdapter) RemoveIPSec3GPP() error {
+	a.ipsecMu.Lock()
+	cleanup := a.ipsecCleanup
+	a.ipsecCleanup = nil
+	a.ipsecMu.Unlock()
+	if cleanup == nil {
+		return nil
+	}
+	return cleanup()
 }
 
 func (a *IMSNetworkAdapter) IPSec3GPPPolicyInstalled() bool {
@@ -124,7 +147,7 @@ func (a *IMSNetworkAdapter) Close() error {
 	if a == nil || a.network == nil {
 		return nil
 	}
-	return a.network.Close()
+	return errors.Join(a.RemoveIPSec3GPP(), a.network.Close())
 }
 
 type packetIOEndpoint struct {

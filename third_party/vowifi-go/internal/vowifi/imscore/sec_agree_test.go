@@ -448,7 +448,7 @@ func TestRegisterRejectsMissingSecurityServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	err := svc.Register(ctx)
-	if err == nil || !strings.Contains(err.Error(), "missing Security-Server") {
-		t.Fatalf("Register error = %v, want missing Security-Server", err)
+	if err == nil || !errors.Is(err, errMissingUsableSecurityServer) {
+		t.Fatalf("Register error = %v, want missing usable Security-Server offer", err)
 	}
 }

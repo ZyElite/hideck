@@ -141,15 +141,19 @@ func (network *installerIMSNetwork) InstallIPSec3GPP(value ipsec3gpp.Policy) err
 	return nil
 }
 
-func (network *installerIMSNetwork) Close() error {
+func (network *installerIMSNetwork) RemoveIPSec3GPP() error {
 	network.mu.Lock()
 	cleanup := network.cleanup
 	network.cleanup = nil
 	network.mu.Unlock()
-	var cleanupErr error
-	if cleanup != nil {
-		cleanupErr = cleanup()
+	if cleanup == nil {
+		return nil
 	}
+	return cleanup()
+}
+
+func (network *installerIMSNetwork) Close() error {
+	cleanupErr := network.RemoveIPSec3GPP()
 	closer, _ := network.IMSNetwork.(interface{ Close() error })
 	if closer == nil {
 		return cleanupErr

@@ -3,9 +3,7 @@ package imscore
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"errors"
 	"fmt"
-	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -215,27 +213,20 @@ func IsFatalNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var ne net.Error
-	if errors.As(err, &ne) {
-		return ne.Timeout() == false // network errors that are not timeouts are fatal
+	message := strings.ToLower(err.Error())
+	for _, fatal := range []string{
+		"network is unreachable",
+		"use of closed network connection",
+		"no route to host",
+		"connection refused",
+		"connection reset by peer",
+		"broken pipe",
+	} {
+		if strings.Contains(message, fatal) {
+			return true
+		}
 	}
-	msg := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(msg, "connection refused"),
-		strings.Contains(msg, "no route to host"),
-		strings.Contains(msg, "network is unreachable"),
-		strings.Contains(msg, "permission denied"),
-		strings.Contains(msg, "econnrefused"),
-		strings.Contains(msg, "ehostunreach"),
-		strings.Contains(msg, "enetunreach"):
-		return true
-	case strings.Contains(msg, "timeout"),
-		strings.Contains(msg, "temporarily unavailable"),
-		strings.Contains(msg, "i/o timeout"):
-		return false
-	default:
-		return false
-	}
+	return false
 }
 
 // GenerateStablePAccessNetworkInfo builds the WLAN P-Access-Network-Info

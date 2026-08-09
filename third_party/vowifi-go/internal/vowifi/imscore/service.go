@@ -109,9 +109,15 @@ func (s *Service) Status() *ServiceStatus {
 		Transport: s.registrationTransport, SMSReceiverTransport: s.cfg.SMSReceiverTransport(),
 		LocalAddr: s.cfg.LocalAddr, LocalPort: s.cfg.LocalPort,
 		IPSecInstalled: len(s.spiPairs) > 0, RXRunning: rxRunning,
-		TCPSignalingRunning:   s.registrationTCP != nil,
-		TCPSignalingConnected: s.registrationTCP != nil,
-		RegFailCount:          int(s.regFailCount.Load()), ReRegisterPending: s.reRegisterPending.Load(),
+		TCPSignalingRunning:    s.registrationTCP != nil,
+		TCPSignalingConnected:  s.registrationTCP != nil,
+		EffectiveSecurityMode:  s.effectiveSecurityModeLocked(),
+		SecurityFallbackReason: s.securityFallbackReason,
+		SecurityFallbackCount:  s.securityFallbackCount.Load(),
+		SignalingGeneration:    s.signalingGeneration,
+		SignalingReady:         s.signalingReady,
+		SignalingFailureReason: s.signalingFailureReason,
+		RegFailCount:           int(s.regFailCount.Load()), ReRegisterPending: s.reRegisterPending.Load(),
 		LastPingAt: s.lastPingAt, ServiceRoute: currentServiceRoute(s.regSession),
 		Path: s.path, SecurityVerify: s.securityVerify, AssociatedMSISDN: s.assocMSISDN,
 		LastError: s.lastError, LastRegisterTraceID: s.lastRegisterTraceID,
@@ -119,7 +125,11 @@ func (s *Service) Status() *ServiceStatus {
 		LastRegisterErr: s.lastRegisterErr,
 		State:           s.state, RegState: s.regState, IMPUs: identities,
 	}
-	status.SignalingReady = status.Registered && (s.externalTransport || s.registrationIO != nil || s.registrationTCP != nil)
+	ready, reason := s.evaluateSignalingReadyLocked(status.Registered)
+	status.SignalingReady = status.SignalingReady && ready
+	if status.SignalingFailureReason == "" && !ready {
+		status.SignalingFailureReason = reason
+	}
 	return status
 }
 
@@ -343,6 +353,7 @@ func (s *Service) Stop() {
 	s.registrationPreviousTCP = nil
 	s.registrationTCPProtected = false
 	s.registrationTransport = ""
+	s.signalingReady = false
 	s.securityServerIO = nil
 	s.clientPortReserve = nil
 	s.mu.Unlock()
@@ -374,6 +385,8 @@ func (s *Service) Stop() {
 		_ = closer.Close()
 	}
 	s.mu.Lock()
+	s.spiPairs = nil
+	s.securityVerify = ""
 	s.regState = regUnregister
 	s.mu.Unlock()
 	s.transitionRegStatus(registrationStopped)

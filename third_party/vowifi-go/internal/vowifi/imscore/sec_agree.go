@@ -11,6 +11,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
 )
 
 type securityMechanism struct {
@@ -29,8 +30,8 @@ type securityAgreement struct {
 	verifyHeader string
 }
 
-func (s *Service) prepareSecurityAgreement() (*securityAgreement, error) {
-	if !s.cfg.IPSec3GPPEnabled() {
+func (s *Service) prepareSecurityAgreement(template policy.IMSRegisterTemplate) (*securityAgreement, error) {
+	if effectiveSecAgreeMode(s.cfg, template) == "disabled" {
 		return nil, nil
 	}
 	s.mu.RLock()
@@ -42,11 +43,11 @@ func (s *Service) prepareSecurityAgreement() (*securityAgreement, error) {
 	if clientPort <= 0 || clientPort > 65535 || serverPort <= 0 || serverPort > 65535 {
 		return nil, errors.New("imscore: protected IMS ports were not bound")
 	}
-	spiC, err := randomSPI(nil)
+	spiC, err := randomUint32(nil)
 	if err != nil {
 		return nil, err
 	}
-	spiS, err := randomSPI(map[uint32]struct{}{spiC: {}})
+	spiS, err := randomUint32(map[uint32]struct{}{spiC: {}})
 	if err != nil {
 		return nil, err
 	}
@@ -55,10 +56,17 @@ func (s *Service) prepareSecurityAgreement() (*securityAgreement, error) {
 		Encryption: ipsec3gpp.EncryptionAES, Protocol: ipsec3gpp.ProtocolESP, Mode: ipsec3gpp.ModeTransport,
 		SPIC: spiC, SPIS: spiS, PortC: uint16(clientPort), PortS: uint16(serverPort),
 	}
-	return &securityAgreement{client: client, clientHeader: securityClientHeader(client)}, nil
+	clientHeader := buildTemplateSecurityClient(client, template)
+	if err := validateSecAgreeRegisterParams(true, clientHeader); err != nil {
+		if isMissingSecurityClientForSecAgree(err) {
+			return nil, fmt.Errorf("imscore: invalid sec-agree REGISTER parameters: %w", err)
+		}
+		return nil, err
+	}
+	return &securityAgreement{client: client, clientHeader: clientHeader}, nil
 }
 
-func randomSPI(excluded map[uint32]struct{}) (uint32, error) {
+func randomUint32(excluded map[uint32]struct{}) (uint32, error) {
 	var encoded [4]byte
 	for attempt := 0; attempt < 8; attempt++ {
 		if _, err := rand.Read(encoded[:]); err != nil {
@@ -75,47 +83,8 @@ func randomSPI(excluded map[uint32]struct{}) (uint32, error) {
 	return 0, errors.New("imscore: failed to generate a unique IPsec SPI")
 }
 
-func securityClientHeader(client securityMechanism) string {
-	mechanisms := [][2]string{
-		{"hmac-md5-96", "des-ede3-cbc"},
-		{"hmac-md5-96", ipsec3gpp.EncryptionAES},
-		{"hmac-md5-96", ipsec3gpp.EncryptionNull},
-		{ipsec3gpp.AuthHMACSHA196, "des-ede3-cbc"},
-		{ipsec3gpp.AuthHMACSHA196, ipsec3gpp.EncryptionAES},
-		{ipsec3gpp.AuthHMACSHA196, ipsec3gpp.EncryptionNull},
-	}
-	offers := make([]string, 0, len(mechanisms))
-	for _, mechanism := range mechanisms {
-		offers = append(offers, formatSecurityClientOffer(client, mechanism[0], mechanism[1]))
-	}
-	return strings.Join(offers, ",")
-}
-
-func formatSecurityClientOffer(client securityMechanism, auth, encryption string) string {
-	format := "ipsec-3gpp; alg=%s; ealg=%s; spi-c=%d; spi-s=%d; port-c=%d; port-s=%d"
-	return fmt.Sprintf(format, auth, encryption, client.SPIC, client.SPIS, client.PortC, client.PortS)
-}
-
 func selectSecurityServer(header string) (*securityMechanism, string, error) {
-	header = strings.TrimSpace(header)
-	if header == "" {
-		return nil, "", errors.New("imscore: AKA challenge missing Security-Server")
-	}
-	var selected *securityMechanism
-	for _, value := range splitSecurityMechanisms(header) {
-		mechanism, err := parseSecurityMechanism(value)
-		if err != nil {
-			continue
-		}
-		if mechanismSupported(mechanism) && (selected == nil || mechanism.Priority > selected.Priority) {
-			candidate := mechanism
-			selected = &candidate
-		}
-	}
-	if selected != nil {
-		return selected, header, nil
-	}
-	return nil, "", errors.New("imscore: Security-Server has no supported ipsec-3gpp offer")
+	return selectSecurityServerOfferForTemplate(header, policy.DefaultIMSRegisterTemplate())
 }
 
 func splitSecurityMechanisms(header string) []string {
@@ -165,6 +134,7 @@ func assignSecurityParameters(mechanism *securityMechanism, parameters map[strin
 	if mechanism.Encryption == "" {
 		mechanism.Encryption = ipsec3gpp.EncryptionNull
 	}
+	mechanism.Priority = 1
 	if value := strings.TrimSpace(parameters["q"]); value != "" {
 		priority, err := strconv.ParseFloat(value, 64)
 		if err != nil || priority < 0 || priority > 1 {
@@ -213,27 +183,44 @@ func parsePort(value string) (uint16, error) {
 }
 
 func mechanismSupported(mechanism securityMechanism) bool {
-	if mechanism.Name != "ipsec-3gpp" || mechanism.Auth != ipsec3gpp.AuthHMACSHA196 {
+	if mechanism.Name != "ipsec-3gpp" ||
+		(mechanism.Auth != ipsec3gpp.AuthHMACSHA196 && mechanism.Auth != "hmac-md5-96") {
 		return false
 	}
 	if mechanism.Protocol != ipsec3gpp.ProtocolESP || mechanism.Mode != ipsec3gpp.ModeTransport {
 		return false
 	}
-	return mechanism.Encryption == ipsec3gpp.EncryptionAES || mechanism.Encryption == ipsec3gpp.EncryptionNull
+	return mechanism.Encryption == ipsec3gpp.EncryptionAES || mechanism.Encryption == ipsec3gpp.Encryption3DES ||
+		mechanism.Encryption == ipsec3gpp.EncryptionNull
 }
 
 func (s *Service) installNegotiatedIPSec(ctx context.Context, session *registerSession, response *sipResponse, aka AKAResult) error {
-	server, verify, err := selectSecurityServer(response.Header("Security-Server"))
-	if err != nil {
-		return err
+	challenge := s.evaluateRegisterSecurityChallenge(response, session.template)
+	server, verify, decision := challenge.server, challenge.verify, challenge.decision
+	if decision.err != nil {
+		reason := classifySecurityFallbackReason(decision)
+		s.recordSignalingFailure(decision.mode, reason, decision.err)
+		return fmt.Errorf("imscore: %s: %w", reason, decision.err)
 	}
-	remote := s.currentRegistrationRemote()
-	if remote == nil || remote.IP == nil {
-		return errors.New("imscore: registrar IP unavailable for IPsec policy")
+	if !decision.useIPSec {
+		if err := s.removeInstalledIPSec3GPP(); err != nil {
+			s.recordSignalingFailure(decision.mode, decision.reason, err)
+			return fmt.Errorf("imscore: remove negotiated 3GPP IPsec: %w", err)
+		}
+		s.releaseUnusedProtectedReservations()
+		session.security = nil
+		reason := classifySecurityFallbackReason(decision)
+		s.recordSecurityMode(decision.mode, reason, reason == securityAutoFallback)
+		return nil
+	}
+	remoteIP, err := s.selectNegotiatedIPSecRemote(ctx, session)
+	if err != nil {
+		s.recordSignalingFailure(decision.mode, decision.reason, err)
+		return err
 	}
 	client := session.security.client
 	policy := ipsec3gpp.Policy{
-		LocalIP: s.cfg.LocalIP, RemoteIP: remote.IP,
+		LocalIP: s.cfg.LocalIP, RemoteIP: remoteIP,
 		LocalPortC: int(client.PortC), LocalPortS: int(client.PortS),
 		RemotePortC: int(server.PortC), RemotePortS: int(server.PortS),
 		FlowC: ipsec3gpp.Flow{
@@ -248,28 +235,34 @@ func (s *Service) installNegotiatedIPSec(ctx context.Context, session *registerS
 		},
 	}
 	if err := s.InstallIPSec3GPP(policy); err != nil {
+		s.recordSignalingFailure(decision.mode, decision.reason, err)
 		return fmt.Errorf("imscore: install negotiated 3GPP IPsec: %w", err)
 	}
 	logging.Info("IMS 3GPP IPsec policy installed",
 		"auth", policy.FlowC.AuthAlg, "encryption", policy.FlowC.EncAlg,
 		"local_client_port", policy.LocalPortC, "local_server_port", policy.LocalPortS,
 		"remote_client_port", policy.RemotePortC, "remote_server_port", policy.RemotePortS)
-	if err := s.setProtectedRegistrarPort(server.PortS); err != nil {
-		return err
+	previousRemote := s.currentRegistrationRemote()
+	if err := s.setProtectedRegistrarEndpoint(remoteIP, server.PortS); err != nil {
+		return s.rollbackInstalledIPSec(err, previousRemote)
 	}
 	externalTransport, connected := s.protectedTransportState()
 	if !externalTransport && !connected {
 		if err := s.connectProtectedRegistrationTCP(ctx, client, *server); err != nil {
-			return err
+			return s.rollbackInstalledIPSec(err, previousRemote)
 		}
 	}
 	s.recordSecurityAgreement(session, server, verify)
+	s.recordSecurityMode(decision.mode, "", false)
 	return nil
 }
 
 func (s *Service) recordSecurityAgreement(session *registerSession, server *securityMechanism, verify string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if session.security.server != nil && ipsec3gppOfferEqualForSA(*session.security.server, *server) {
+		server = session.security.server
+	}
 	session.security.server = server
 	session.security.verifyHeader = verify
 	s.securityVerify = verify
