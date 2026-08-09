@@ -2,6 +2,7 @@ package imscore
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"errors"
 	"net"
 	"strings"
@@ -43,6 +44,7 @@ func New(cfg *IMSConfig) (*Service, error) {
 		dialogRegistry:        newDialogRegistry(),
 		bus:                   bus,
 		delivery:              cfg.DeliveryStore,
+		smsRandom:             cryptorand.Reader,
 		stop:                  make(chan struct{}),
 		registerErrors:        make(chan error, 1),
 		maintenanceWake:       make(chan struct{}, 1),

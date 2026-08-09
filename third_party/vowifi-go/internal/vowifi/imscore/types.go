@@ -8,6 +8,7 @@ package imscore
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -212,7 +213,8 @@ type Service struct {
 	voiceHandler VoiceRequestHandler
 
 	// Delivery store.
-	delivery DeliveryStore
+	delivery  DeliveryStore
+	smsRandom io.Reader
 
 	// Callbacks and SMS capability state.
 	onRegistered          func()
@@ -220,8 +222,6 @@ type Service struct {
 	onSMSReadiness        func(SMSReadiness)
 	smsReceiverReady      bool
 	smsReadyNotified      bool
-	nextSMSRPMR           byte
-	nextSMSConcatRef      byte
 	nextSIPCSeq           int
 	smsTransactionTimeout time.Duration
 	smsReportTimeout      time.Duration

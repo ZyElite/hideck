@@ -1,6 +1,7 @@
 package imscore
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 func TestOutboundMultipartSMSUsesCorrelatedReferences(t *testing.T) {
 	service, subscriber, store, outbound := newDeliveryReportTestService(t)
+	service.smsRandom = bytes.NewReader([]byte{0xa0, 0xa1, 0xa2, 0xa3, 0xb0, 0xb1, 0xb2, 0xb3})
 	text := strings.Repeat("multipart ", 40)
 	startedAt := time.Now()
 	outcome, err := service.SendSMSWithResult(context.Background(), "+447700900123", text)
@@ -28,14 +30,13 @@ func TestOutboundMultipartSMSUsesCorrelatedReferences(t *testing.T) {
 	}
 
 	concatReference := -1
-	seenRPMR := make(map[byte]bool)
 	for partNo := 1; partNo <= outcome.PartsTotal; partNo++ {
 		request := waitForOutboundSMSControl(t, outbound)
 		body, bodyErr := rawSIPBody(request)
 		if bodyErr != nil {
 			t.Fatal(bodyErr)
 		}
-		_, _, _, rawTPDU, parseErr := smscodec.ParseRPDataWithAddresses(body)
+		rpMR, _, _, rawTPDU, parseErr := smscodec.ParseRPDataWithAddresses(body)
 		if parseErr != nil {
 			t.Fatal(parseErr)
 		}
@@ -53,10 +54,19 @@ func TestOutboundMultipartSMSUsesCorrelatedReferences(t *testing.T) {
 			t.Fatalf("part %d reference = %d, want %d", partNo, reference, concatReference)
 		}
 		stored := store.part(outcome.MessageID, partNo)
-		if int(decoded.MR) != stored.rpMR || seenRPMR[decoded.MR] {
-			t.Fatalf("part %d TP-MR=%d stored RP-MR=%d duplicate=%v", partNo, decoded.MR, stored.rpMR, seenRPMR[decoded.MR])
+		wantRPMR := 0xa0 + partNo - 1
+		if stored.rpMR != wantRPMR || int(rpMR) != wantRPMR {
+			t.Fatalf("part %d RP-MR body=%d stored=%d want=%d", partNo, rpMR, stored.rpMR, wantRPMR)
 		}
-		seenRPMR[decoded.MR] = true
+		if int(decoded.MR) == stored.rpMR {
+			t.Fatalf("part %d reused RP-MR %d as TP-MR", partNo, stored.rpMR)
+		}
+		if int(decoded.MR) != partNo {
+			t.Fatalf("part %d TP-MR=%d want=%d", partNo, decoded.MR, partNo)
+		}
+	}
+	if concatReference != 1 {
+		t.Fatalf("concat reference=%d want=1", concatReference)
 	}
 	accepted := <-subscriber.events
 	if accepted.Type() != "SMSSendAccepted" {
@@ -88,8 +98,8 @@ func TestOutboundMultipartSMSUsesCorrelatedReferences(t *testing.T) {
 		}
 		_, _, secondReference, _ = decoded.ConcatInfo()
 	}
-	if secondReference == concatReference {
-		t.Fatalf("concurrent multipart references were reused: %d", concatReference)
+	if secondReference != concatReference {
+		t.Fatalf("default concat reference changed: first=%d second=%d", concatReference, secondReference)
 	}
 }
 

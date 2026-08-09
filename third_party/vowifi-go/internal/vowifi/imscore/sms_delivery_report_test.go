@@ -22,6 +22,10 @@ func TestInboundRPAckCompletesSMSDelivery(t *testing.T) {
 		t.Fatalf("SIP response = %q", response)
 	}
 	assertDeliveryStatus(t, store, outcome.MessageID, smsDeliveryStateAcked, smsDeliveryStateAcked)
+	reported := store.part(outcome.MessageID, 1)
+	if reported.errorText != smsSubmitReportAck {
+		t.Fatalf("RP-ACK error text = %q", reported.errorText)
+	}
 	assertDeliveryEvents(t, subscriber, outcome.MessageID, "SMSDeliveryUpdated", "SMSDeliveryCompleted")
 }
 

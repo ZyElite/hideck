@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -185,7 +186,7 @@ func (s *Service) smsSendStatus() (string, time.Time, string) {
 
 func (s *Service) buildOutboundSMSParts(recipient, text string, opts SendOptions) ([]outboundSMSPart, error) {
 	tpdus, _, err := smscodec.BuildSubmitTPDUsWithOptions(recipient, text, smscodec.SubmitOptions{
-		Encoding: smscodec.SMSEncoding(opts.Encoding), ConcatReference: int(s.allocateSMSConcatReference()),
+		Encoding: smscodec.SMSEncoding(opts.Encoding),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("imscore: encode SMS-SUBMIT: %w", err)
@@ -196,12 +197,11 @@ func (s *Service) buildOutboundSMSParts(recipient, text string, opts SendOptions
 	}
 	parts := make([]outboundSMSPart, 0, len(tpdus))
 	for index := range tpdus {
-		rpMR := s.allocateSMSRPMR()
-		tpduBytes, err := smscodec.SetSubmitMessageReference(tpdus[index], rpMR)
+		rpMR, err := s.allocateSMSRPMR()
 		if err != nil {
-			return nil, fmt.Errorf("imscore: encode SMS-SUBMIT part %d: %w", index+1, err)
+			return nil, fmt.Errorf("imscore: allocate RP-MR for SMS part %d: %w", index+1, err)
 		}
-		request, err := s.buildOutboundMESSAGE(remoteURI, smscodec.BuildRPData(rpMR, tpduBytes, s.cfg.SMSC))
+		request, err := s.buildOutboundMESSAGE(remoteURI, smscodec.BuildRPData(rpMR, tpdus[index], s.cfg.SMSC))
 		if err != nil {
 			return nil, fmt.Errorf("imscore: build SMS MESSAGE part %d: %w", index+1, err)
 		}
@@ -474,23 +474,15 @@ func (s *Service) dispatchSMSSendAccepted(messageID, recipient, text string, tot
 	s.publishSMSSendAccepted(messageID, recipient, text, total)
 }
 
-func (s *Service) allocateSMSRPMR() byte {
-	s.mu.Lock()
-	reference := s.nextSMSRPMR
-	s.nextSMSRPMR++
-	s.mu.Unlock()
-	return reference
-}
-
-func (s *Service) allocateSMSConcatReference() byte {
-	s.mu.Lock()
-	s.nextSMSConcatRef++
-	if s.nextSMSConcatRef == 0 {
-		s.nextSMSConcatRef++
+func (s *Service) allocateSMSRPMR() (byte, error) {
+	if s == nil || s.smsRandom == nil {
+		return 0, errors.New("SMS RP-MR randomness is unavailable")
 	}
-	reference := s.nextSMSConcatRef
-	s.mu.Unlock()
-	return reference
+	var reference [1]byte
+	if _, err := io.ReadFull(s.smsRandom, reference[:]); err != nil {
+		return 0, err
+	}
+	return reference[0], nil
 }
 
 func normalizeSMSRecipient(value string) (string, error) {

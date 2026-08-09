@@ -12,7 +12,10 @@ import (
 	"github.com/warthog618/sms/encoding/tpdu"
 )
 
-const smsDeliveryStateAcked = "acked"
+const (
+	smsDeliveryStateAcked = "acked"
+	smsSubmitReportAck    = "submit report ack"
+)
 
 type smsDeliveryReport struct {
 	reference  int
@@ -28,8 +31,11 @@ func (s *Service) handleInboundRPReport(raw string, info smscodec.RPDUInfo, stat
 	if err != nil {
 		return inboundSIPResult{}, err
 	}
+	if state == smsDeliveryStateAcked && strings.TrimSpace(errorText) == "" {
+		errorText = smsSubmitReportAck
+	}
 	report := smsDeliveryReport{
-		reference: int(info.MR), state: state, sipCode: 200,
+		reference: int(info.MR), state: state, sipCode: 0,
 		rpCause: info.Cause, errorText: errorText,
 	}
 	return inboundSIPResult{response: response}, s.recordSMSDeliveryReport(raw, report)
@@ -72,7 +78,7 @@ func parseTPStatusReport(payload []byte) (smsDeliveryReport, error) {
 		errorText = fmt.Sprintf("SMS-STATUS-REPORT status 0x%02x", report.ST)
 	}
 	return smsDeliveryReport{
-		reference: int(report.MR), state: state, sipCode: 200,
+		reference: int(report.MR), state: state, sipCode: 0,
 		rpCause: int(report.ST), errorText: errorText, reportedAt: report.DT.Time,
 	}, nil
 }

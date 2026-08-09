@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
@@ -380,6 +381,17 @@ func TestSendOutboundSMSSurfacesCallerCancellation(t *testing.T) {
 
 	_, err := service.SendSMSWithResult(ctx, "+447700900123", "hello")
 	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "canceled by caller") {
+		t.Fatalf("send error = %v", err)
+	}
+}
+
+func TestSendOutboundSMSFailsWhenRPMRRandomnessFails(t *testing.T) {
+	service, _, _ := newOutboundSMSTestService(t)
+	service.smsRandom = iotest.ErrReader(errors.New("entropy unavailable"))
+
+	_, err := service.SendSMSWithResult(context.Background(), "+447700900123", "hello")
+	if err == nil || !strings.Contains(err.Error(), "allocate RP-MR") ||
+		!strings.Contains(err.Error(), "entropy unavailable") {
 		t.Fatalf("send error = %v", err)
 	}
 }
