@@ -1,8 +1,13 @@
 package imscore
 
 import (
+	"context"
 	"errors"
 	"sync"
+
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 )
 
 // DialogHandle is the exported dialog handle used by the voice layer.
@@ -44,7 +49,17 @@ func (h *imscoreDialogHandle) FromTag() string {
 
 // imscoreInviteHandle identifies an INVITE transaction.
 type imscoreInviteHandle struct {
-	callID string
+	id             string
+	dialog         *sipgo.DialogClientSession
+	initialRequest *sip.Request
+	mode           outboundModeContext
+	mu             sync.Mutex
+	done           bool
+	confirmed      bool
+	canceling      bool
+	cancelSent     bool
+
+	transaction *clientSIPTransaction
 }
 
 // InviteID returns the invite ID.
@@ -52,7 +67,18 @@ func (h *imscoreInviteHandle) InviteID() string {
 	if h == nil {
 		return ""
 	}
-	return h.callID
+	return h.id
+}
+
+func (h *imscoreInviteHandle) markDone(confirmed bool) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.done = true
+	h.confirmed = confirmed
+	h.canceling = false
+	h.mu.Unlock()
 }
 
 // imscoreServerInviteHandle identifies a server INVITE transaction.
@@ -176,12 +202,54 @@ func (s *Service) AnswerServerInvite(handle *imscoreServerInviteHandle) error {
 	return errors.New("imscore: server INVITE request context is unavailable")
 }
 
-// CancelClientInvite cancels a client-side INVITE.
-func (s *Service) CancelClientInvite(handle *imscoreInviteHandle) error {
+// CancelClientInviteRaw retains the additive handle-only cancellation API.
+func (s *Service) CancelClientInviteRaw(handle *imscoreInviteHandle) error {
 	if s == nil || handle == nil {
 		return errors.New("imscore: client INVITE handle is required")
 	}
-	return errors.New("imscore: client INVITE transaction context is unavailable")
+	if s.transport == nil {
+		return errors.New("imscore: client INVITE SIP client is empty")
+	}
+	handle.mu.Lock()
+	transaction := handle.transaction
+	switch {
+	case handle.confirmed:
+		handle.mu.Unlock()
+		return errors.New("client INVITE 已接通，不能 CANCEL")
+	case handle.done:
+		handle.mu.Unlock()
+		return errors.New("client INVITE 已结束，不能 CANCEL")
+	case handle.canceling || handle.cancelSent:
+		handle.mu.Unlock()
+		return errors.New("client INVITE 已在取消中")
+	case transaction == nil:
+		handle.mu.Unlock()
+		return errors.New("client INVITE initial request 为空")
+	}
+	handle.canceling = true
+	handle.mu.Unlock()
+	err := s.transport.cancelInviteTransaction(transaction, s.transport.transactionTimers().bf)
+	handle.mu.Lock()
+	handle.canceling = false
+	handle.cancelSent = err == nil
+	handle.mu.Unlock()
+	return err
+}
+
+// CancelClientInvite cancels a v1.5.5 client INVITE transaction.
+func (s *Service) CancelClientInvite(
+	ctx context.Context,
+	invite imsendpoint.InviteHandle,
+	options imsendpoint.ClientInviteCancelOptions,
+) error {
+	handle, ok := invite.(*imscoreInviteHandle)
+	if !ok || handle == nil {
+		return errors.New("client INVITE handle 类型无效")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return s.cancelClientInviteWithContext(ctx, handle, options)
 }
 
 // CloseDialog closes a dialog.

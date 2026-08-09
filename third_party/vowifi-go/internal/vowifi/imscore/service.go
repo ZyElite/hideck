@@ -36,6 +36,7 @@ func New(cfg *IMSConfig) (*Service, error) {
 	if bus == nil {
 		bus = newIMSEventBus()
 	}
+	transport := newSIPTransport()
 	s := &Service{
 		cfg:                   cfg,
 		state:                 regIdle,
@@ -47,7 +48,7 @@ func New(cfg *IMSConfig) (*Service, error) {
 		registerErrors:        make(chan error, 1),
 		maintenanceWake:       make(chan struct{}, 1),
 		protectedConns:        make(map[net.Conn]struct{}),
-		transport:             newSIPTransport(),
+		transport:             transport,
 		ussd:                  ussi.NewService(),
 		smsReassembler:        smscodec.NewReassembler(),
 		smsTransactionTimeout: outboundSMSTransactionTimeout,
@@ -56,6 +57,7 @@ func New(cfg *IMSConfig) (*Service, error) {
 		keepaliveTimeout:      keepaliveTimeout,
 		keepaliveFailureLimit: imsKeepaliveFailureLimit,
 	}
+	transport.SetFatalHandler(s.handleFatalTransactionError)
 	return s, nil
 }
 

@@ -156,8 +156,18 @@ func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, err
 	}
 	call.setOutboundInvite(invite)
 	logging.RunDebug("IMS INVITE outbound", "sip", logging.RedactSIPRaw(invite))
-	response, err := a.ims.RoundTripSIPWithProvisional(ctx, invite, func(response imscore.SIPResponse) error {
-		return a.handleOutboundProvisional(ctx, call, response)
+	response, err := a.ims.RoundTripSIPWithCallbacks(ctx, invite, imscore.SIPTransactionCallbacks{
+		OnProvisional: func(response imscore.SIPResponse) error {
+			return a.handleOutboundProvisional(ctx, call, response)
+		},
+		OnFinalRetransmission: func(response imscore.SIPResponse) error {
+			call.learnVoiceDialog(response)
+			if err := a.sendIMSDialogRequest(buildIMSACKForStatus(a, call, response.StatusCode)); err != nil {
+				return fmt.Errorf("voice: resend INVITE ACK: %w", err)
+			}
+			call.MarkACKSent()
+			return nil
+		},
 	})
 	if err != nil {
 		return nil, a.failOutboundCall(call, fmt.Errorf("voice: INVITE transaction failed: %w", err))
@@ -201,11 +211,16 @@ func (a *Agent) startOutboundCall(number string) (*Call, error) {
 func (a *Agent) completeOutboundInvite(call *Call, response imscore.SIPResponse) error {
 	call.MarkInviteFinalSeen()
 	call.learnVoiceDialog(response)
-	if err := a.sendIMSDialogRequest(buildIMSACKForStatus(a, call, response.StatusCode)); err != nil {
-		return fmt.Errorf("voice: send INVITE ACK: %w", err)
+	accepted := response.StatusCode >= 200 && response.StatusCode < 300
+	if accepted {
+		// A 2xx ACK is a dialog request. Non-2xx ACKs belong to the INVITE
+		// client transaction and are emitted by imscore before RoundTrip returns.
+		if err := a.sendIMSDialogRequest(buildIMSACKForStatus(a, call, response.StatusCode)); err != nil {
+			return fmt.Errorf("voice: send INVITE ACK: %w", err)
+		}
 	}
 	call.MarkACKSent()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
+	if !accepted {
 		return fmt.Errorf("voice: INVITE rejected: %d %s", response.StatusCode, response.Reason)
 	}
 	call.applyVoiceSessionExpires(voiceResponseHeader(response.Headers, "Session-Expires"))

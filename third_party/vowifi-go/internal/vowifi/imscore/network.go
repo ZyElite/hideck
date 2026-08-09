@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,9 +18,11 @@ type sipTransport struct {
 	mu        sync.Mutex
 	closeOnce sync.Once
 	sendFn    func(string) error
+	onFatal   func(error)
 	responses chan *sipResponse
 	requests  chan string
-	waiters   map[sipTransactionKey]chan *sipResponse
+	waiters   map[sipTransactionKey]*clientSIPTransaction
+	timers    sipTransactionTimers
 	closed    chan struct{}
 }
 
@@ -28,7 +31,8 @@ func newSIPTransport() *sipTransport {
 	return &sipTransport{
 		responses: make(chan *sipResponse, 64),
 		requests:  make(chan string, 64),
-		waiters:   make(map[sipTransactionKey]chan *sipResponse),
+		waiters:   make(map[sipTransactionKey]*clientSIPTransaction),
+		timers:    defaultSIPTransactionTimers(),
 		closed:    make(chan struct{}),
 	}
 }
@@ -40,6 +44,24 @@ func (t *sipTransport) SetSendFn(fn func(string) error) {
 	t.mu.Unlock()
 }
 
+func (t *sipTransport) SetFatalHandler(handler func(error)) {
+	t.mu.Lock()
+	t.onFatal = handler
+	t.mu.Unlock()
+}
+
+func (t *sipTransport) reportFatal(err error) {
+	if !IsFatalNetworkError(err) {
+		return
+	}
+	t.mu.Lock()
+	handler := t.onFatal
+	t.mu.Unlock()
+	if handler != nil {
+		handler(err)
+	}
+}
+
 func (t *sipTransport) hasSendFn() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -48,6 +70,13 @@ func (t *sipTransport) hasSendFn() bool {
 
 // Send delivers a SIP request.
 func (t *sipTransport) Send(req string) error {
+	if strings.EqualFold(sipRequestMethod(req), "CANCEL") {
+		return t.startDetachedTransaction(req)
+	}
+	return t.sendDirect(req)
+}
+
+func (t *sipTransport) sendDirect(req string) error {
 	t.mu.Lock()
 	fn := t.sendFn
 	t.mu.Unlock()
@@ -76,13 +105,9 @@ func (t *sipTransport) Requests() <-chan string {
 func (t *sipTransport) DeliverResponse(r *sipResponse) {
 	if key, err := transactionKeyFromResponse(r); err == nil {
 		t.mu.Lock()
-		waiter := t.waiters[key]
+		transaction := t.waiters[key]
 		t.mu.Unlock()
-		if waiter != nil {
-			select {
-			case waiter <- r:
-			case <-t.closed:
-			}
+		if transaction != nil && transaction.deliver(r) {
 			return
 		}
 	}

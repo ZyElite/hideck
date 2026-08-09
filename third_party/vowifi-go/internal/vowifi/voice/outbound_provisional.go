@@ -65,15 +65,6 @@ func (a *Agent) applyProvisionalState(call *Call, status int) {
 
 func (a *Agent) sendReliableProvisionalPRACK(ctx context.Context, call *Call, rseq uint32) error {
 	request := buildIMSPrack(a, call, rseq)
-	if err := call.configurePrackRetransmission(func() error {
-		return a.ims.SendRawSIP(request)
-	}); err != nil {
-		return err
-	}
-	if err := call.StartPrackRuntimeRetransmission(); err != nil {
-		return err
-	}
-	defer call.StopPrackTimer()
 	response, err := a.ims.RoundTripSIP(ctx, request)
 	if err != nil {
 		return fmt.Errorf("voice: PRACK transaction failed: %w", err)

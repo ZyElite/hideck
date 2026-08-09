@@ -285,11 +285,12 @@ func (s *Service) clearClosedRegistrationTCP(conn net.Conn, readErr error) {
 	if !current || stopped {
 		return
 	}
-	s.transitionRegStatus(registrationRejectedTemporary)
-	s.notifySMSReadiness()
 	if readErr == nil {
 		readErr = io.EOF
 	}
+	s.transport.terminateClientTransactions(transactionTransportError(readErr))
+	s.transitionRegStatus(registrationRejectedTemporary)
+	s.notifySMSReadiness()
 	err := fmt.Errorf("imscore: registration SIP stream closed: %w", readErr)
 	logging.WarnRate("ims-registration-stream", "IMS registration SIP stream closed", "err", err)
 	s.reportRegistrationRuntimeError(err)

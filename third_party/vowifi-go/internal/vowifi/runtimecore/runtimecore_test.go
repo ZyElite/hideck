@@ -450,6 +450,19 @@ type testEndpoint struct{ id string }
 
 func (endpoint *testEndpoint) DeviceID() string { return endpoint.id }
 func (*testEndpoint) IsRegistered() bool        { return true }
+func (*testEndpoint) StartClientInvite(
+	context.Context,
+	imsendpoint.ClientInviteOptions,
+) (*imsendpoint.ClientInviteResult, error) {
+	return nil, errors.New("test endpoint has no client INVITE transport")
+}
+func (*testEndpoint) CancelClientInvite(
+	context.Context,
+	imsendpoint.InviteHandle,
+	imsendpoint.ClientInviteCancelOptions,
+) error {
+	return errors.New("test endpoint has no client INVITE transport")
+}
 
 type recordingVoice struct {
 	mu       sync.Mutex

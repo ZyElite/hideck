@@ -1,7 +1,6 @@
 package imscore
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,14 +21,6 @@ type SIPDialogProfile struct {
 	PANI           string
 	UserAgent      string
 	InitialCSeq    int
-}
-
-// SIPResponse is the public form of a final SIP transaction response.
-type SIPResponse struct {
-	StatusCode int
-	Reason     string
-	Headers    map[string]string
-	Body       []byte
 }
 
 // InboundVoiceRequest is a SIP request routed to the active voice agent.
@@ -158,50 +149,6 @@ func registeredVoiceContact(cfg *IMSConfig, user, address string) (string, strin
 		ICSIRef: template.ICSIRef, ParamOrder: template.ContactOrder,
 	})
 	return uri, header
-}
-
-// RoundTripSIP sends a request and waits for its real final response.
-func (s *Service) RoundTripSIP(ctx context.Context, request string) (SIPResponse, error) {
-	if s == nil || s.transport == nil {
-		return SIPResponse{}, errors.New("imscore: SIP transport is unavailable")
-	}
-	response, err := s.transport.RoundTrip(ctx, request)
-	if err != nil {
-		return SIPResponse{}, err
-	}
-	return publicSIPResponse(response), nil
-}
-
-// RoundTripSIPWithProvisional delivers each 1xx response while retaining the
-// INVITE transaction until its final response arrives.
-func (s *Service) RoundTripSIPWithProvisional(
-	ctx context.Context,
-	request string,
-	onProvisional func(SIPResponse) error,
-) (SIPResponse, error) {
-	if s == nil || s.transport == nil {
-		return SIPResponse{}, errors.New("imscore: SIP transport is unavailable")
-	}
-	response, err := s.transport.roundTripWithProvisional(ctx, request, func(value *sipResponse) error {
-		if onProvisional == nil {
-			return nil
-		}
-		return onProvisional(publicSIPResponse(value))
-	})
-	if err != nil {
-		return SIPResponse{}, err
-	}
-	return publicSIPResponse(response), nil
-}
-
-func publicSIPResponse(response *sipResponse) SIPResponse {
-	if response == nil {
-		return SIPResponse{}
-	}
-	return SIPResponse{
-		StatusCode: response.StatusCode, Reason: response.Reason,
-		Headers: cloneSIPHeaders(response.Headers), Body: append([]byte(nil), response.Body...),
-	}
 }
 
 // EventBus returns the service event bus used by lifecycle consumers.

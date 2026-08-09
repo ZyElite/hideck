@@ -149,18 +149,52 @@ func (s *Service) SendReliableProvisionalPRACK(handle *imscoreDialogHandle) erro
 	return errors.New("imscore: reliable provisional context is unavailable")
 }
 
-// StartClientInvite starts a client-side INVITE transaction.
-func (s *Service) StartClientInvite(handle *imscoreInviteHandle, invite string) error {
+// StartClientInviteRaw retains the additive raw-wire client INVITE API.
+func (s *Service) StartClientInviteRaw(handle *imscoreInviteHandle, invite string) error {
 	if s == nil || handle == nil {
 		return errors.New("imscore: client INVITE handle is required")
 	}
 	if strings.TrimSpace(invite) == "" || !strings.EqualFold(sipRequestMethod(invite), "INVITE") {
 		return errors.New("imscore: valid INVITE request is required")
 	}
-	if callID := rawSIPHeaderValue(invite, "Call-ID"); callID == "" || callID != handle.callID {
+	if callID := rawSIPHeaderValue(invite, "Call-ID"); callID == "" || callID != handle.id {
 		return errors.New("imscore: INVITE Call-ID does not match handle")
 	}
-	return s.sendSIP(invite)
+	if s.transport == nil {
+		return errors.New("imscore: client INVITE SIP client is empty")
+	}
+	handle.mu.Lock()
+	if handle.transaction != nil && !handle.done {
+		handle.mu.Unlock()
+		return errors.New("imscore: client INVITE transaction is already active")
+	}
+	handle.initialRequest = nil
+	handle.done = false
+	handle.confirmed = false
+	handle.canceling = false
+	handle.cancelSent = false
+	handle.transaction = nil
+	handle.mu.Unlock()
+	transaction, err := s.transport.startClientTransaction(invite, sipTransactionCallbacks{})
+	if err != nil {
+		handle.markDone(false)
+		return err
+	}
+	handle.mu.Lock()
+	handle.initialRequest = transaction.parsed
+	handle.transaction = transaction
+	handle.mu.Unlock()
+	go s.waitClientInviteHandle(handle, transaction)
+	return nil
+}
+
+func (s *Service) waitClientInviteHandle(
+	handle *imscoreInviteHandle,
+	transaction *clientSIPTransaction,
+) {
+	response, err := s.transport.waitClientTransaction(context.Background(), transaction)
+	confirmed := err == nil && response != nil && response.StatusCode >= 200 && response.StatusCode < 300
+	handle.markDone(confirmed)
 }
 
 // Subscribe sends a registration event SUBSCRIBE and waits for its final response.
