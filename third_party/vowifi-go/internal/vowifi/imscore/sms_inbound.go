@@ -1,15 +1,16 @@
 package imscore
 
 import (
-	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/sipkit"
 )
 
 const (
@@ -31,35 +32,92 @@ type inboundSMS struct {
 	partNo    int
 }
 
-func (s *Service) handleInboundSMS(raw string) (inboundSIPResult, error) {
+type decodedInboundSMSRequest struct {
+	rpdu []byte
+	info smscodec.RPDUInfo
+}
+
+func inboundAckHeaders(request *sip.Request) (string, string, string, string) {
+	if request == nil {
+		return "", "", "", ""
+	}
+	callID := sipkit.FirstHeaderValue(request, "Call-ID", false)
+	inReplyTo := sipkit.FirstHeaderValue(request, "In-Reply-To", false)
+	from := sipkit.FirstHeaderValue(request, "From", false)
+	to := sipkit.FirstHeaderValue(request, "To", false)
+	if strings.TrimSpace(inReplyTo) == "" {
+		inReplyTo = callID
+	}
+	if strings.TrimSpace(to) == "" {
+		to = from
+	}
+	return callID, inReplyTo, from, to
+}
+
+func (s *Service) decodeInboundSMSRequest(raw string) (*decodedInboundSMSRequest, error) {
 	if normalizedContentType(rawSIPHeaderValue(raw, "Content-Type")) != imsSMSContentType {
-		response, err := buildSIPRequestResponse(raw, 415)
-		return inboundSIPResult{response: response}, err
+		return nil, errors.New("unsupported IMS SMS content type")
 	}
 	body, err := rawSIPBody(raw)
 	if err != nil {
-		return s.inboundSMSProtocolError(raw, 400, 0, false, err)
+		return nil, err
 	}
 	rpdu, err := smscodec.DecodeBodyMaybeHex(body)
 	if err != nil {
-		return s.inboundSMSProtocolError(raw, 400, 0, false, fmt.Errorf("decode RPDU body: %w", err))
+		return nil, fmt.Errorf("decode RPDU body: %w", err)
 	}
-	info := smscodec.ClassifyRPDU(rpdu)
+	decoded := &decodedInboundSMSRequest{rpdu: rpdu, info: smscodec.ClassifyRPDU(rpdu)}
 	if err := parseInboundRPDU(rpdu); err != nil {
+		return decoded, err
+	}
+	return decoded, nil
+}
+
+func (s *Service) handleInboundSMS(raw string) (inboundSIPResult, error) {
+	decoded, err := s.decodeInboundSMSRequest(raw)
+	if err != nil && decoded == nil && normalizedContentType(rawSIPHeaderValue(raw, "Content-Type")) != imsSMSContentType {
+		response, err := buildSIPRequestResponse(raw, 415)
+		return inboundSIPResult{response: response}, err
+	}
+	if err != nil {
+		info := smscodec.RPDUInfo{}
+		if decoded != nil {
+			info = decoded.info
+		}
 		return s.inboundSMSProtocolError(
 			raw, 400, info.MR, info.Kind == smscodec.RPDUKindData, err,
 		)
 	}
+	return s.routeDecodedInboundSMS(raw, decoded)
+}
+
+func (s *Service) routeDecodedInboundSMS(raw string, decoded *decodedInboundSMSRequest) (inboundSIPResult, error) {
+	if decoded == nil {
+		return s.inboundSMSProtocolError(raw, 400, 0, false, errors.New("empty decoded IMS SMS"))
+	}
+	info, rpdu := decoded.info, decoded.rpdu
 	switch {
 	case info.Kind == smscodec.RPDUKindData && info.RawType == 0x01:
-		return s.handleInboundRPData(raw, rpdu, info.MR)
+		return s.handleInboundSMSData(raw, rpdu, info.MR)
 	case info.Kind == smscodec.RPDUKindAck && info.RawType == 0x03:
-		return s.handleInboundRPReport(raw, info, "acked", "")
+		return s.handleInboundSMSReport(raw, info, "acked", "")
 	case info.Kind == smscodec.RPDUKindError && info.RawType == 0x05:
-		return s.handleInboundRPReport(raw, info, "failed", fmt.Sprintf("RP-ERROR cause %d", info.Cause))
+		return s.handleInboundSMSReport(raw, info, "failed", fmt.Sprintf("RP-ERROR cause %d", info.Cause))
 	default:
 		return s.inboundSMSProtocolError(raw, 400, info.MR, false, fmt.Errorf("unsupported inbound RPDU type 0x%02x", info.RawType))
 	}
+}
+
+func (s *Service) handleInboundSMSReport(
+	raw string,
+	info smscodec.RPDUInfo,
+	state, errorText string,
+) (inboundSIPResult, error) {
+	return s.handleInboundRPReport(raw, info, state, errorText)
+}
+
+func (s *Service) handleInboundSMSData(raw string, rpdu []byte, rpMR byte) (inboundSIPResult, error) {
+	return s.handleInboundRPData(raw, rpdu, rpMR)
 }
 
 func (s *Service) handleInboundRPData(raw string, rpdu []byte, rpMR byte) (inboundSIPResult, error) {
@@ -78,15 +136,36 @@ func (s *Service) handleInboundRPData(raw string, rpdu []byte, rpMR byte) (inbou
 	if err != nil {
 		return inboundSIPResult{}, err
 	}
-	if s.assembleInboundSMS(&message) {
+	return s.finalizeInboundSMSData(raw, message, response)
+}
+
+func (s *Service) finalizeInboundSMSData(
+	raw string,
+	message inboundSMS,
+	response string,
+) (inboundSIPResult, error) {
+	shouldDispatch, assembleErr := s.assembleInboundSMS(raw, &message)
+	if assembleErr != nil {
+		return s.inboundSMSProtocolError(raw, 400, message.rpMR, true, assembleErr)
+	}
+	if shouldDispatch {
 		s.publishInboundSMS(message)
 	}
+	fingerprint := buildMTSMSFingerprint(message, raw)
 	return inboundSIPResult{
 		response: response,
 		afterReply: func() {
-			s.sendInboundSMSControl(raw, smscodec.BuildRPAck(message.rpMR))
+			s.sendRpAckWithRetry(raw, smscodec.BuildRPAck(message.rpMR), message.rpMR, fingerprint)
 		},
 	}, nil
+}
+
+func fragmentLifecycleLogFields(message inboundSMS) []interface{} {
+	return []interface{}{
+		"sender", normalizeFragmentIdentity(message.sender), "ref", message.concatRef,
+		"ref_bits", message.refBits, "total", message.total, "seq", message.partNo,
+		"rp_mr", message.rpMR,
+	}
 }
 
 func decodeInboundRPData(raw string, rpdu []byte) (inboundSMS, error) {
@@ -113,20 +192,23 @@ func decodeInboundRPData(raw string, rpdu []byte) (inboundSMS, error) {
 	}, nil
 }
 
-func (s *Service) assembleInboundSMS(message *inboundSMS) bool {
-	if message == nil || message.total <= 1 {
-		return true
+func (s *Service) assembleInboundSMS(raw string, message *inboundSMS) (bool, error) {
+	if message == nil {
+		return false, errors.New("imscore: nil inbound SMS")
 	}
-	s.smsReassembler.Cleanup(inboundSMSFragmentTTL)
-	content, complete := s.smsReassembler.Add(
-		message.sender+"\x00"+message.targetURI,
-		uint64(message.concatRef), uint64(message.refBits), message.total, message.partNo,
-		[]byte(message.content), time.Now(),
-	)
-	if complete {
-		message.content = string(content)
+	if message.total <= 1 {
+		return s.shouldDispatchMTSMS(*message, raw), nil
 	}
-	return complete
+	content, complete, err := s.handleSMSFragment(message.sender, &smsFragment{
+		Ref: message.concatRef + message.refBits<<16, Total: message.total, Seq: message.partNo,
+		Content: message.content, Time: message.timestamp, RpMr: message.rpMR,
+		CallID: rawSIPHeaderValue(raw, "Call-ID"), ToURI: message.targetURI,
+	})
+	if err != nil || !complete {
+		return false, err
+	}
+	message.content = content
+	return s.shouldDispatchMTSMS(*message, raw), nil
 }
 
 func (s *Service) inboundSMSProtocolError(raw string, status int, rpMR byte, sendRPError bool, protocolErr error) (inboundSIPResult, error) {
@@ -137,7 +219,7 @@ func (s *Service) inboundSMSProtocolError(raw string, status int, rpMR byte, sen
 	result := inboundSIPResult{response: response}
 	if sendRPError {
 		result.afterReply = func() {
-			s.sendInboundSMSControl(raw, smscodec.BuildRPError(rpMR, rpCauseTemporaryFailure))
+			s.sendRpAckWithRetry(raw, smscodec.BuildRPError(rpMR, rpCauseTemporaryFailure), rpMR, "")
 		}
 	}
 	return result, protocolErr
@@ -154,27 +236,15 @@ func (s *Service) publishInboundSMS(message inboundSMS) {
 }
 
 func (s *Service) sendInboundSMSControl(inbound string, body []byte) {
-	request, err := s.buildInboundSMSControlRequest(inbound, body)
-	if err != nil {
-		logging.WarnRate("ims-sms-rp-control-build", "IMS SMS RP control build failed", "err", err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), inboundSMSAckTimeout)
-	defer cancel()
-	response, err := s.transport.RoundTrip(ctx, request)
-	if err != nil {
-		logging.WarnRate("ims-sms-rp-control-send", "IMS SMS RP control transaction failed", "err", err)
-		return
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		logging.WarnRate("ims-sms-rp-control-reject", "IMS SMS RP control rejected", "status", response.StatusCode)
-	}
+	s.sendRpAckWithRetry(inbound, body, 0, "")
 }
 
 func (s *Service) buildInboundSMSControlRequest(inbound string, body []byte) (string, error) {
-	remoteURI := firstSIPHeaderURI(rawSIPHeaderValue(inbound, "From"))
-	if remoteURI == "" {
-		return "", errors.New("inbound SMS has no remote identity")
+	remoteURI, err := resolveRpAckTarget(
+		rawSIPHeaderValue(inbound, "Contact"), rawSIPHeaderValue(inbound, "From"),
+	)
+	if err != nil {
+		return "", err
 	}
 	return s.buildSMSMESSAGE(remoteURI, body)
 }
@@ -182,4 +252,70 @@ func (s *Service) buildInboundSMSControlRequest(inbound string, body []byte) (st
 func normalizedContentType(value string) string {
 	value, _, _ = strings.Cut(strings.ToLower(strings.TrimSpace(value)), ";")
 	return strings.TrimSpace(value)
+}
+
+type regInfoDocument struct {
+	Registrations []struct {
+		AOR      string `xml:"aor,attr"`
+		Contacts []struct {
+			ID    string `xml:"id,attr"`
+			State string `xml:"state,attr"`
+			Event string `xml:"event,attr"`
+			URI   string `xml:"uri"`
+		} `xml:"contact"`
+	} `xml:"registration"`
+}
+
+func (s *Service) isMyContactTerminated(raw string) bool {
+	if !strings.EqualFold(strings.TrimSpace(rawSIPHeaderValue(raw, "Event")), "reg") {
+		return false
+	}
+	body, err := rawSIPBody(raw)
+	if err != nil || len(body) == 0 {
+		return false
+	}
+	var document regInfoDocument
+	if err := xml.Unmarshal(body, &document); err != nil {
+		return false
+	}
+	s.mu.RLock()
+	contactID := ""
+	publicID := ""
+	if s.regSession != nil {
+		contactID = strings.TrimSpace(s.regSession.contactUser)
+		publicID = normalizeFragmentIdentity(s.regSession.publicID)
+	}
+	s.mu.RUnlock()
+	for _, registration := range document.Registrations {
+		if publicID != "" && normalizeFragmentIdentity(registration.AOR) != publicID {
+			continue
+		}
+		for _, contact := range registration.Contacts {
+			matches := contactID == "" || contact.ID == contactID || strings.Contains(contact.URI, contactID)
+			if matches && strings.EqualFold(strings.TrimSpace(contact.State), "terminated") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Service) reRegisterAfterDelay(delay time.Duration) {
+	if s == nil {
+		return
+	}
+	if delay < 0 {
+		delay = 0
+	}
+	s.networkDone.Add(1)
+	go func() {
+		defer s.networkDone.Done()
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			_ = s.TriggerFastReconnect()
+		case <-s.stop:
+		}
+	}()
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
+
+	"github.com/emiago/sipgo/sip"
 )
 
 const smsSupportedHeader = "path, 100rel, replaces, gruu"
@@ -55,6 +57,38 @@ func (s *Service) buildSMSMESSAGE(remoteURI string, body []byte) (string, error)
 	fmt.Fprintf(&request, "Content-Length: %d\r\n\r\n", len(body))
 	request.Write(body)
 	return request.String(), nil
+}
+
+func (s *Service) buildOutboundMESSAGE(remoteURI string, body []byte) (*sip.Request, error) {
+	raw, err := s.buildSMSMESSAGE(remoteURI, body)
+	if err != nil {
+		return nil, err
+	}
+	message, err := parseSIPMessage(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse outbound MESSAGE: %w", err)
+	}
+	request, ok := message.(*sip.Request)
+	if !ok {
+		return nil, errors.New("outbound MESSAGE builder returned a non-request")
+	}
+	return request, nil
+}
+
+func (s *Service) buildRPAckMESSAGE(inbound string, body []byte) (*sip.Request, error) {
+	raw, err := s.buildInboundSMSControlRequest(inbound, body)
+	if err != nil {
+		return nil, err
+	}
+	message, err := parseSIPMessage(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse RP-ACK MESSAGE: %w", err)
+	}
+	request, ok := message.(*sip.Request)
+	if !ok {
+		return nil, errors.New("RP-ACK builder returned a non-request")
+	}
+	return request, nil
 }
 
 type registeredSIPRoute struct {

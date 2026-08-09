@@ -118,7 +118,7 @@ func (s *memoryDeliveryStore) RecomputeSMSDelivery(messageID string, _ time.Time
 		if part.state == smsDeliveryStateAcked {
 			acked++
 		}
-		if part.state == smsDeliveryStateFailed || part.state == smsDeliveryPartStateTimeout {
+		if part.state == smsDeliveryStateFailed {
 			failed = true
 			delivery.LastError = part.errorText
 		}

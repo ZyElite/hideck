@@ -179,10 +179,10 @@ func (a *serviceAdapter) SendSMSWithOptions(ctx context.Context, to, text string
 	if a == nil || a.svc == nil {
 		return messaging.SendOutcome{}, errNoService
 	}
-	out, err := a.svc.SendSMSWithOptions(ctx, to, text, imscore.SMSSendOptions{
-		SuppressSendTGSuccess: opts.SuppressSendTGSuccess,
-		Encoding:              opts.Encoding,
-	})
+	if opts.SuppressSendTGSuccess {
+		ctx = messaging.WithSuppressSendTGSuccess(ctx)
+	}
+	out, err := a.svc.SendSMSWithOptions(ctx, to, text, imscore.SendOptions{Encoding: opts.Encoding})
 	return adaptSMSSendOutcome(out), err
 }
 
@@ -195,16 +195,12 @@ func (a *serviceAdapter) SendSMSWithResult(ctx context.Context, to, text string)
 	return adaptSMSSendOutcome(out), err
 }
 
-func adaptSMSSendOutcome(out *imscore.SMSSendOutcome) messaging.SendOutcome {
-	if out == nil {
-		return messaging.SendOutcome{}
-	}
+func adaptSMSSendOutcome(out imscore.SendOutcome) messaging.SendOutcome {
 	return messaging.SendOutcome{
-		Ref:           out.Ref,
-		Err:           out.Err,
+		Ref:           out.MessageID,
 		MessageID:     out.MessageID,
 		PartsTotal:    out.PartsTotal,
-		DeliveryState: out.State,
+		DeliveryState: out.DeliveryState,
 	}
 }
 
@@ -213,7 +209,7 @@ func (a *serviceAdapter) GetSMSDeliveryStatus(ctx context.Context, ref string) (
 	if a == nil || a.svc == nil {
 		return nil, errNoService
 	}
-	st, err := a.svc.GetSMSDeliveryStatus(ctx, ref)
+	st, err := a.svc.GetSMSDeliveryStatusContext(ctx, ref)
 	if err != nil {
 		return nil, err
 	}

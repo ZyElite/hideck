@@ -21,12 +21,20 @@ type captureDeliveryStore struct {
 	finalState  string
 	finalError  string
 	createError error
+	parts       map[string]capturedDeliveryPart
 }
 
 type capturedSIPResult struct {
 	code  int
 	state string
 	err   string
+}
+
+type capturedDeliveryPart struct {
+	messageID string
+	partNo    int
+	callID    string
+	rpMR      int
 }
 
 func (s *captureDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, _ time.Time) error {
@@ -42,8 +50,12 @@ func (s *captureDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer
 	return nil
 }
 
-func (s *captureDeliveryStore) UpsertSMSDeliveryPart(_ string, _ int, _ string, _ int, state string, _ time.Time) error {
+func (s *captureDeliveryStore) UpsertSMSDeliveryPart(messageID string, partNo int, callID string, rpMR int, state string, _ time.Time) error {
 	s.mu.Lock()
+	if s.parts == nil {
+		s.parts = make(map[string]capturedDeliveryPart)
+	}
+	s.parts[callID] = capturedDeliveryPart{messageID: messageID, partNo: partNo, callID: callID, rpMR: rpMR}
 	s.partStates = append(s.partStates, state)
 	s.mu.Unlock()
 	return nil
@@ -61,11 +73,30 @@ func (s *captureDeliveryStore) MarkSMSDeliveryPartSIPResult(
 	return nil
 }
 
-func (s *captureDeliveryStore) MarkSMSDeliveryPartReport(string, string, string, int, string, int, int, string, time.Time) (DeliveryPartMatch, error) {
-	return DeliveryPartMatch{}, nil
+func (s *captureDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, _ string, rpMR int, state string, _ int, _ int, _ string, _ time.Time) (DeliveryPartMatch, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, key := range []string{inReplyTo, callID} {
+		if part, ok := s.parts[key]; ok {
+			return DeliveryPartMatch{MessageID: part.messageID, PartNo: part.partNo, State: state, Matched: true}, nil
+		}
+	}
+	for _, part := range s.parts {
+		if part.rpMR == rpMR {
+			return DeliveryPartMatch{MessageID: part.messageID, PartNo: part.partNo, State: state, Matched: true}, nil
+		}
+	}
+	return DeliveryPartMatch{}, errors.New("delivery part not found")
 }
 
-func (s *captureDeliveryStore) RecomputeSMSDelivery(string, time.Time) error { return nil }
+func (s *captureDeliveryStore) RecomputeSMSDelivery(messageID string, _ time.Time) error {
+	s.mu.Lock()
+	if s.created != nil && s.created.MessageID == messageID {
+		s.created.State = smsDeliveryStateAcked
+	}
+	s.mu.Unlock()
+	return nil
+}
 
 func (s *captureDeliveryStore) UpdateSMSDeliveryState(_ string, state, lastError string, _ int, _ time.Time) error {
 	s.mu.Lock()
@@ -75,7 +106,13 @@ func (s *captureDeliveryStore) UpdateSMSDeliveryState(_ string, state, lastError
 }
 
 func (s *captureDeliveryStore) GetSMSDeliveryStatus(string) (*DeliveryStatus, error) {
-	return nil, errors.New("not implemented")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.created == nil {
+		return nil, errors.New("delivery not found")
+	}
+	status := *s.created
+	return &status, nil
 }
 
 func TestSendOutboundSMSWaitsForSIPSuccess(t *testing.T) {
@@ -86,7 +123,7 @@ func TestSendOutboundSMSWaitsForSIPSuccess(t *testing.T) {
 		return nil
 	})
 
-	results := make(chan *SMSSendOutcome, 1)
+	results := make(chan SendOutcome, 1)
 	errors := make(chan error, 1)
 	go func() {
 		outcome, err := service.SendSMSWithResult(context.Background(), "+44 7700 900123", "hello")
@@ -125,9 +162,10 @@ func TestSendOutboundSMSWaitsForSIPSuccess(t *testing.T) {
 		t.Fatal("SMS send did not finish after SIP 200")
 	}
 	outcome := <-results
-	if outcome.State != smsDeliveryStatePending || outcome.PartsTotal != 1 || outcome.MessageID == "" {
+	if outcome.DeliveryState != smsDeliveryStateAcked || outcome.PartsTotal != 1 || outcome.MessageID == "" {
 		t.Fatalf("outcome = %+v", outcome)
 	}
+	assertIMSEventTypes(t, subscriber, "SMSDeliveryUpdated", "SMSDeliveryCompleted", "LogNotify")
 	event := <-subscriber.events
 	sent, ok := event.(*events.EventSMSSent)
 	if !ok || sent.TargetURI != "+447700900123" || sent.Content != "hello" || sent.TotalParts != 1 {
@@ -136,8 +174,22 @@ func TestSendOutboundSMSWaitsForSIPSuccess(t *testing.T) {
 	if store.created == nil || store.created.Peer != "+447700900123" || len(store.partStates) != 1 || store.partStates[0] != smsDeliveryStatePending {
 		t.Fatalf("delivery store = %+v, parts = %v", store.created, store.partStates)
 	}
-	if len(store.sipResults) != 1 || store.sipResults[0].code != 200 || store.sipResults[0].state != smsDeliveryStatePending {
+	if len(store.sipResults) != 1 || store.sipResults[0].code != 200 || store.sipResults[0].state != smsDeliveryStateAcked {
 		t.Fatalf("SIP results = %+v", store.sipResults)
+	}
+}
+
+func assertIMSEventTypes(t *testing.T, subscriber *captureIMSEventSubscriber, types ...string) {
+	t.Helper()
+	for _, want := range types {
+		select {
+		case event := <-subscriber.events:
+			if event.Type() != want {
+				t.Fatalf("event = %#v, want %s", event, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("missing %s event", want)
+		}
 	}
 }
 
@@ -153,7 +205,7 @@ func TestSendOutboundSMSRejectsNon2xxWithoutSuccessEvent(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "503") {
 		t.Fatalf("send error = %v", err)
 	}
-	if outcome == nil || outcome.MessageID == "" || outcome.State != smsDeliveryStateFailed {
+	if outcome.MessageID == "" || outcome.DeliveryState != smsDeliveryStateFailed {
 		t.Fatalf("failed send outcome = %+v", outcome)
 	}
 	assertAcceptedEvent(t, subscriber, outcome.MessageID)
@@ -222,6 +274,47 @@ func TestSendOutboundSMSSurfacesInternalFinalResponseTimeout(t *testing.T) {
 	if len(store.sipResults) != 1 || store.sipResults[0].code != 0 || store.sipResults[0].state != smsDeliveryStateFailed {
 		t.Fatalf("SIP results = %+v", store.sipResults)
 	}
+}
+
+func TestUDPSubmitProbeTimeoutWaitsForRPReport(t *testing.T) {
+	service, subscriber, store := newOutboundSMSTestService(t)
+	service.cfg.Transport = "udp"
+	service.smsTransactionTimeout = 20 * time.Millisecond
+	service.smsReportTimeout = 250 * time.Millisecond
+	requests := make(chan string, 1)
+	service.transport.SetSendFn(func(request string) error {
+		requests <- request
+		return nil
+	})
+
+	resultCh := make(chan SendOutcome, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		outcome, err := service.SendSMSWithResult(context.Background(), "+447700900123", "soft timeout")
+		resultCh <- outcome
+		errCh <- err
+	}()
+	request := waitForOutboundSMSControl(t, requests)
+	assertAcceptedEvent(t, subscriber, "")
+	time.Sleep(2 * service.smsTransactionTimeout)
+	callID := rawSIPHeaderValue(request, "Call-ID")
+	part := store.parts[callID]
+	if part.callID == "" {
+		t.Fatalf("pending part for %q was not persisted", callID)
+	}
+	report := deliveryReportRequest([]byte{0x03, byte(part.rpMR)}, callID)
+	if err := service.dispatchInboundSIP(report, func(string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	if outcome := <-resultCh; outcome.DeliveryState != smsDeliveryStateAcked {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	assertIMSEventTypes(t, subscriber,
+		"SMSDeliveryUpdated", "SMSDeliveryCompleted", "LogNotify", "SMSSent",
+	)
 }
 
 func TestSendOutboundSMSSurfacesCallerCancellation(t *testing.T) {

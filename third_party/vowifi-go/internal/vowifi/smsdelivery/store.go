@@ -2,10 +2,20 @@ package smsdelivery
 
 import "time"
 
+// SendOutcome is returned after IMS accepts all SMS parts for delivery.
+type SendOutcome struct {
+	MessageID     string `json:"message_id"`
+	PartsTotal    int    `json:"parts_total"`
+	DeliveryState string `json:"delivery_state"`
+}
+
 type DeliveryPartMatch struct {
 	MessageID string
 	PartNo    int
 	State     string
+	// Matched is additive compatibility for stores that distinguish an empty
+	// match from an unavailable record.
+	Matched bool
 }
 
 type DeliveryPartStatus struct {
@@ -16,7 +26,7 @@ type DeliveryPartStatus struct {
 	State       string     `json:"state"`
 	SIPCode     int        `json:"sip_code"`
 	RPCause     int        `json:"rp_cause"`
-	RPCauseText string     `json:"rp_cause_text"`
+	RPCauseText string     `json:"rp_cause_text,omitempty"`
 	ErrorText   string     `json:"error_text"`
 	SentAt      time.Time  `json:"sent_at"`
 	ReportAt    *time.Time `json:"report_at,omitempty"`
@@ -25,18 +35,18 @@ type DeliveryPartStatus struct {
 }
 
 type DeliveryStatus struct {
-	MessageID  string
-	IMSI       string
-	DeviceID   string
-	Peer       string
-	Content    string
-	PartsTotal int
-	Acks       int
-	State      string
-	LastError  string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	Parts      []DeliveryPartStatus
+	MessageID  string               `json:"message_id"`
+	IMSI       string               `json:"imsi"`
+	DeviceID   string               `json:"device_id"`
+	Peer       string               `json:"peer"`
+	Content    string               `json:"content"`
+	PartsTotal int                  `json:"parts_total"`
+	Acks       int                  `json:"acks"`
+	State      string               `json:"state"`
+	LastError  string               `json:"last_error"`
+	CreatedAt  time.Time            `json:"created_at"`
+	UpdatedAt  time.Time            `json:"updated_at"`
+	Parts      []DeliveryPartStatus `json:"parts"`
 }
 
 type Store interface {

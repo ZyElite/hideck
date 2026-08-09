@@ -14,12 +14,17 @@ import (
 func TestOutboundMultipartSMSUsesCorrelatedReferences(t *testing.T) {
 	service, subscriber, store, outbound := newDeliveryReportTestService(t)
 	text := strings.Repeat("multipart ", 40)
+	startedAt := time.Now()
 	outcome, err := service.SendSMSWithResult(context.Background(), "+447700900123", text)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if outcome.PartsTotal < 2 {
 		t.Fatalf("parts total = %d", outcome.PartsTotal)
+	}
+	wantDelay := time.Duration(outcome.PartsTotal-1) * outboundSMSInterPartDelay
+	if elapsed := time.Since(startedAt); elapsed < wantDelay {
+		t.Fatalf("multipart elapsed = %s, want at least %s", elapsed, wantDelay)
 	}
 
 	concatReference := -1
@@ -57,6 +62,12 @@ func TestOutboundMultipartSMSUsesCorrelatedReferences(t *testing.T) {
 	if accepted.Type() != "SMSSendAccepted" {
 		t.Fatalf("first event = %#v", accepted)
 	}
+	for range outcome.PartsTotal {
+		if event := <-subscriber.events; event.Type() != "SMSDeliveryUpdated" {
+			t.Fatalf("delivery event = %#v", event)
+		}
+	}
+	assertIMSEventTypes(t, subscriber, "SMSDeliveryCompleted", "LogNotify")
 	event := <-subscriber.events
 	sent, ok := event.(*events.EventSMSSent)
 	if !ok || sent.Content != text || sent.TotalParts != outcome.PartsTotal {

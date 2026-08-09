@@ -45,6 +45,17 @@ func (s *Service) SetOnSMSReadinessChanged(fn func(SMSReadiness)) {
 	}
 }
 
+// SetOnSMSReady restores the original one-shot SMS readiness callback.
+func (s *Service) SetOnSMSReady(fn func()) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.onSMSReady = fn
+	s.mu.Unlock()
+	s.maybeNotifySMSReady(smsReadyReasonReady)
+}
+
 func (s *Service) setSMSReceiverReady(ready bool) {
 	if s == nil {
 		return
@@ -54,6 +65,9 @@ func (s *Service) setSMSReceiverReady(ready bool) {
 	s.smsReceiverReady = ready
 	callback := s.onSMSReadiness
 	s.mu.Unlock()
+	if ready {
+		s.maybeNotifySMSReady(smsReadyReasonReady)
+	}
 	if changed && callback != nil {
 		callback(s.SMSReadiness())
 	}
@@ -66,6 +80,7 @@ func (s *Service) notifySMSReadiness() {
 	s.mu.RLock()
 	callback := s.onSMSReadiness
 	s.mu.RUnlock()
+	s.maybeNotifySMSReady(smsReadyReasonReady)
 	if callback != nil {
 		callback(s.SMSReadiness())
 	}

@@ -74,22 +74,19 @@ func TestTPStatusReportStateMapping(t *testing.T) {
 	}
 }
 
-func TestSMSDeliveryReportTimeoutFailsPendingPart(t *testing.T) {
+func TestSuccessfulSIPResponseRetainsRPReportCorrelation(t *testing.T) {
 	service, subscriber, store, outbound := newDeliveryReportTestService(t)
 	service.smsReportTimeout = 20 * time.Millisecond
 	outcome := sendDeliveryTestSMS(t, service, subscriber, outbound, "hello")
-
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		status, _ := store.GetSMSDeliveryStatus(outcome.MessageID)
-		if status.State == smsDeliveryStateFailed {
-			assertDeliveryStatus(t, store, outcome.MessageID, smsDeliveryStateFailed, smsDeliveryPartStateTimeout)
-			assertDeliveryEvents(t, subscriber, outcome.MessageID, "SMSDeliveryUpdated", "SMSDeliveryFailed")
-			return
-		}
-		time.Sleep(time.Millisecond)
+	time.Sleep(2 * service.smsReportTimeout)
+	assertDeliveryStatus(t, store, outcome.MessageID, smsDeliveryStateAcked, smsDeliveryStateAcked)
+	part := store.part(outcome.MessageID, 1)
+	service.outboundMu.Lock()
+	pending := service.matchPendingByCallIDLocked(part.callID)
+	service.outboundMu.Unlock()
+	if pending == nil {
+		t.Fatal("SIP-success pending correlation expired before the 120 second window")
 	}
-	t.Fatal("pending SMS did not expire")
 }
 
 func TestUnmatchedDeliveryReportReturnsErrorAfterSIPResponse(t *testing.T) {
@@ -140,7 +137,7 @@ func newDeliveryReportTestService(t *testing.T) (*Service, *captureIMSEventSubsc
 	return service, subscriber, store, outbound
 }
 
-func sendDeliveryTestSMS(t *testing.T, service *Service, subscriber *captureIMSEventSubscriber, outbound <-chan string, text string) *SMSSendOutcome {
+func sendDeliveryTestSMS(t *testing.T, service *Service, subscriber *captureIMSEventSubscriber, outbound <-chan string, text string) SendOutcome {
 	t.Helper()
 	outcome, err := service.SendSMSWithResult(context.Background(), "+447700900123", text)
 	if err != nil {
@@ -152,9 +149,9 @@ func sendDeliveryTestSMS(t *testing.T, service *Service, subscriber *captureIMSE
 	if event := <-subscriber.events; event.Type() != "SMSSendAccepted" {
 		t.Fatalf("first event = %s", event.Type())
 	}
-	if event := <-subscriber.events; event.Type() != "SMSSent" {
-		t.Fatalf("second event = %s", event.Type())
-	}
+	assertIMSEventTypes(t, subscriber,
+		"SMSDeliveryUpdated", "SMSDeliveryCompleted", "LogNotify", "SMSSent",
+	)
 	return outcome
 }
 

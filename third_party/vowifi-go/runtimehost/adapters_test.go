@@ -152,15 +152,14 @@ func TestServiceAdapterNoService(t *testing.T) {
 	}
 }
 
-func TestAdaptSMSSendOutcomePreservesFailureIdentity(t *testing.T) {
-	wantErr := errors.New("transaction failed")
-	out := adaptSMSSendOutcome(&imscore.SMSSendOutcome{
-		Ref: "sms-1", Err: wantErr, MessageID: "sms-1", PartsTotal: 1, State: "failed",
+func TestAdaptSMSSendOutcomePreservesIdentity(t *testing.T) {
+	out := adaptSMSSendOutcome(imscore.SendOutcome{
+		MessageID: "sms-1", PartsTotal: 1, DeliveryState: "failed",
 	})
 	if out.MessageID != "sms-1" || out.Ref != "sms-1" || out.PartsTotal != 1 {
 		t.Fatalf("delivery identity = %+v", out)
 	}
-	if out.DeliveryState != "failed" || !errors.Is(out.Err, wantErr) {
+	if out.DeliveryState != "failed" || out.Err != nil {
 		t.Fatalf("delivery failure = %+v", out)
 	}
 }

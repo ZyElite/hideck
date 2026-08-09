@@ -1,6 +1,7 @@
 package imscore
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -8,7 +9,6 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/warthog618/sms/encoding/tpdu"
 )
 
@@ -48,7 +48,7 @@ func (s *Service) handleInboundTPStatusReport(raw string, rpMR byte, payload []b
 	return inboundSIPResult{
 		response: response,
 		afterReply: func() {
-			s.sendInboundSMSControl(raw, smscodec.BuildRPAck(rpMR))
+			s.sendRpAckWithRetry(raw, smscodec.BuildRPAck(rpMR), rpMR, "")
 		},
 	}, recordErr
 }
@@ -78,6 +78,13 @@ func parseTPStatusReport(payload []byte) (smsDeliveryReport, error) {
 }
 
 func (s *Service) recordSMSDeliveryReport(raw string, report smsDeliveryReport) error {
+	s.recordMORPErrorCause(report.rpCause)
+	inReplyTo := rawSIPHeaderValue(raw, "In-Reply-To")
+	callID := rawSIPHeaderValue(raw, "Call-ID")
+	s.completePendingSMSByReport(inReplyTo, callID, report.reference, smsSendResult{
+		Code: report.sipCode, Status: report.state, Reason: report.errorText,
+		Body: append([]byte(nil), []byte(raw)...), At: time.Now(),
+	})
 	if s.delivery == nil {
 		return errors.New("imscore: SMS delivery report store is unavailable")
 	}
@@ -86,7 +93,7 @@ func (s *Service) recordSMSDeliveryReport(raw string, report smsDeliveryReport) 
 		reportedAt = time.Now()
 	}
 	match, err := s.delivery.MarkSMSDeliveryPartReport(
-		rawSIPHeaderValue(raw, "In-Reply-To"), rawSIPHeaderValue(raw, "Call-ID"),
+		inReplyTo, callID,
 		s.cfg.DeviceID, report.reference, report.state, report.sipCode,
 		report.rpCause, report.errorText, reportedAt,
 	)
@@ -102,6 +109,17 @@ func (s *Service) recordSMSDeliveryReport(raw string, report smsDeliveryReport) 
 	return s.publishSMSDeliveryStatus(match.MessageID)
 }
 
+func (s *Service) recordMORPErrorCause(cause int) {
+	switch cause {
+	case 28:
+		s.moRPErrorCause28.Add(1)
+	case 30:
+		s.moRPErrorCause30.Add(1)
+	case 38:
+		s.moRPErrorCause38.Add(1)
+	}
+}
+
 func (s *Service) publishSMSDeliveryStatus(messageID string) error {
 	status, err := s.delivery.GetSMSDeliveryStatus(messageID)
 	if err != nil {
@@ -110,28 +128,52 @@ func (s *Service) publishSMSDeliveryStatus(messageID string) error {
 	now := time.Now()
 	partNo, sipCode, rpCause := latestDeliveryPart(status)
 	completed := status.State == smsDeliveryStateAcked || status.State == smsDeliveryStateFailed
-	s.bus.Publish(events.EventSMSDeliveryUpdated{
-		DevID: s.cfg.DeviceID, MessageID: messageID, PartNo: partNo,
-		PartsTotal: status.PartsTotal, State: status.State, SIPCode: sipCode,
-		RPCause: rpCause, UpdatedAt: now, Completed: completed,
-		FailureText: status.LastError, Time: now,
-	})
+	s.dispatchSMSDeliveryUpdated(status, partNo, sipCode, rpCause, completed, now)
 	switch status.State {
 	case smsDeliveryStateAcked:
-		completedAt := time.Now()
-		s.bus.Publish(events.EventSMSDeliveryCompleted{
-			DevID: s.cfg.DeviceID, MessageID: messageID, PartsTotal: status.PartsTotal,
-			CompletedAt: completedAt, Time: completedAt,
-		})
+		s.dispatchSMSDeliveryCompleted(status, now)
 	case smsDeliveryStateFailed:
-		failedAt := time.Now()
-		s.bus.Publish(events.EventSMSDeliveryFailed{
-			DevID: s.cfg.DeviceID, TargetURI: status.Peer, Reason: status.LastError,
-			SIPCode: sipCode, RecommendCSFallback: recommendCSFallback(sipCode),
-			MessageID: messageID, Error: status.LastError, Time: failedAt,
-		})
+		s.handleReportFailure(status, sipCode, now)
 	}
 	return nil
+}
+
+func (s *Service) dispatchSMSDeliveryUpdated(
+	status *DeliveryStatus,
+	partNo, sipCode, rpCause int,
+	completed bool,
+	at time.Time,
+) {
+	if status == nil {
+		return
+	}
+	s.bus.Publish(events.EventSMSDeliveryUpdated{
+		DevID: s.cfg.DeviceID, MessageID: status.MessageID, PartNo: partNo,
+		PartsTotal: status.PartsTotal, State: status.State, SIPCode: sipCode,
+		RPCause: rpCause, UpdatedAt: at, Completed: completed,
+		FailureText: status.LastError, Time: at,
+	})
+}
+
+func (s *Service) dispatchSMSDeliveryCompleted(status *DeliveryStatus, at time.Time) {
+	if status == nil {
+		return
+	}
+	s.bus.Publish(events.EventSMSDeliveryCompleted{
+		DevID: s.cfg.DeviceID, MessageID: status.MessageID, PartsTotal: status.PartsTotal,
+		CompletedAt: at, Time: at,
+	})
+}
+
+func (s *Service) handleReportFailure(status *DeliveryStatus, sipCode int, at time.Time) {
+	if status == nil {
+		return
+	}
+	s.bus.Publish(events.EventSMSDeliveryFailed{
+		DevID: s.cfg.DeviceID, TargetURI: status.Peer, Reason: status.LastError,
+		SIPCode: sipCode, RecommendCSFallback: recommendCSFallback(sipCode),
+		MessageID: status.MessageID, Error: status.LastError, Time: at,
+	})
 }
 
 func latestDeliveryPart(status *DeliveryStatus) (partNo, sipCode, rpCause int) {
@@ -146,67 +188,19 @@ func recommendCSFallback(sipCode int) bool {
 	return sipCode == 408 || sipCode == 480 || sipCode == 503
 }
 
-func (s *Service) scheduleSMSDeliveryTimeout(messageID string, parts []outboundSMSPart) {
-	if s.delivery == nil || s.smsReportTimeout <= 0 {
-		return
+func (s *Service) waitDeliveryReport(pending *smsPendingInfo, timeout time.Duration) (smsSendResult, error) {
+	if pending == nil || pending.RespCh == nil {
+		return smsSendResult{}, errors.New("imscore: missing pending SMS report channel")
 	}
-	deadline := s.smsReportTimeout
-	s.networkDone.Add(1)
-	go func() {
-		defer s.networkDone.Done()
-		timer := time.NewTimer(deadline)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-			s.expireSMSDelivery(messageID, parts)
-		case <-s.stop:
-		}
-	}()
-}
-
-func (s *Service) expireSMSDelivery(messageID string, parts []outboundSMSPart) {
-	status, err := s.delivery.GetSMSDeliveryStatus(messageID)
-	if err != nil {
-		logging.WarnRate("ims-sms-delivery-timeout-read", "IMS SMS delivery timeout state read failed", "err", err)
-		return
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case result := <-pending.RespCh:
+		return result, nil
+	case <-timer.C:
+		s.takePendingSMSByCallID(pending.CallID)
+		return smsSendResult{}, fmt.Errorf("SMS delivery report timeout after %s", timeout)
+	case <-s.stop:
+		return smsSendResult{}, context.Canceled
 	}
-	pending := pendingDeliveryParts(status)
-	matched := false
-	for _, part := range parts {
-		if !pending[part.number] {
-			continue
-		}
-		_, markErr := s.delivery.MarkSMSDeliveryPartReport(
-			part.callID, part.callID, s.cfg.DeviceID, int(part.rpMR),
-			smsDeliveryPartStateTimeout, 0, 0, "delivery report timeout", time.Now(),
-		)
-		if markErr != nil {
-			logging.WarnRate("ims-sms-delivery-timeout-write", "IMS SMS delivery timeout persist failed", "err", markErr)
-			continue
-		}
-		matched = true
-	}
-	if !matched {
-		return
-	}
-	if err := s.delivery.RecomputeSMSDelivery(messageID, time.Now()); err != nil {
-		logging.WarnRate("ims-sms-delivery-timeout-recompute", "IMS SMS delivery timeout recompute failed", "err", err)
-		return
-	}
-	if err := s.publishSMSDeliveryStatus(messageID); err != nil {
-		logging.WarnRate("ims-sms-delivery-timeout-publish", "IMS SMS delivery timeout publish failed", "err", err)
-	}
-}
-
-func pendingDeliveryParts(status *DeliveryStatus) map[int]bool {
-	pending := make(map[int]bool)
-	if status == nil {
-		return pending
-	}
-	for _, part := range status.Parts {
-		if part.State == smsDeliveryStatePending {
-			pending[part.PartNo] = true
-		}
-	}
-	return pending
 }

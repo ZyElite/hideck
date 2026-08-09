@@ -15,8 +15,8 @@ import (
 	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
-	"github.com/iniwex5/vowifi-go/internal/smscodec"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ussi"
 )
 
@@ -152,6 +152,9 @@ func (n *SystemIMSNetwork) ListenPacket(network string, addr *net.UDPAddr) (net.
 type Service struct {
 	cfg *IMSConfig
 	registrationRuntime
+	messagingRuntime
+	observability
+	pingState
 
 	mu          sync.RWMutex
 	registerMu  sync.Mutex
@@ -199,10 +202,6 @@ type Service struct {
 	serverTx       map[string]trackedServerTransaction
 	serverTimers   serverTransactionTimers
 
-	inboundSeenMu  sync.Mutex
-	inboundSeen    map[string]time.Time
-	inboundSeenRsp map[string]inboundRequestResponseMemo
-
 	// Event bus.
 	bus *imsEventBus
 
@@ -217,16 +216,17 @@ type Service struct {
 
 	// Callbacks and SMS capability state.
 	onRegistered          func()
+	onSMSReady            func()
 	onSMSReadiness        func(SMSReadiness)
 	smsReceiverReady      bool
+	smsReadyNotified      bool
 	nextSMSRPMR           byte
 	nextSMSConcatRef      byte
 	nextSIPCSeq           int
-	smsReassembler        *smscodec.Reassembler
 	smsTransactionTimeout time.Duration
 	smsReportTimeout      time.Duration
+	fragmentState
 
-	lastPingAt             time.Time
 	securityVerify         string
 	effectiveSecurityMode  string
 	securityFallbackReason string
@@ -239,11 +239,6 @@ type Service struct {
 	path                   string
 	assocMSISDN            string
 	learnedAOR             string
-
-	lastRegisterTraceID   string
-	lastRegisterAttemptAt time.Time
-	lastRegisterOKAt      time.Time
-	lastRegisterErr       string
 
 	stop chan struct{}
 }
@@ -267,6 +262,14 @@ type registrationRuntime struct {
 	regFailCount        atomic.Int32
 	OnReconnectNeeded   func()
 	reconnectTriggering atomic.Bool
+}
+
+type pingState struct {
+	pingFailCount atomic.Int32
+	lastPingAt    time.Time
+	lastPingOK    atomic.Bool
+	pingSending   atomic.Bool
+	pingCSeq      uint32
 }
 
 // SMSReadiness describes the independently verifiable IMS SMS prerequisites.
@@ -343,48 +346,17 @@ func (s ServiceStatus) IsRegistered() bool {
 }
 
 // DeliveryStore persists SMS delivery state.
-type DeliveryStore interface {
-	CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, at time.Time) error
-	UpsertSMSDeliveryPart(messageID string, partNo int, callID string, rpMR int, state string, sentAt time.Time) error
-	MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID string, rpMR int, state string, sipCode int, rpCause int, errText string, at time.Time) (DeliveryPartMatch, error)
-	RecomputeSMSDelivery(messageID string, at time.Time) error
-	UpdateSMSDeliveryState(messageID, state, lastError string, acks int, at time.Time) error
-	GetSMSDeliveryStatus(messageID string) (*DeliveryStatus, error)
-}
+type DeliveryStore = smsdelivery.Store
 
 // SMSDeliverySIPResultStore persists the final response to the outbound
 // MESSAGE transaction separately from the later RP delivery report.
-type SMSDeliverySIPResultStore interface {
-	MarkSMSDeliveryPartSIPResult(messageID string, partNo, sipCode int, state, errText string, at time.Time) error
-}
+type SMSDeliverySIPResultStore = smsdelivery.SIPResultStore
 
 // DeliveryPartMatch identifies a delivery part.
-type DeliveryPartMatch struct {
-	MessageID string
-	PartNo    int
-	State     string
-	Matched   bool
-}
+type DeliveryPartMatch = smsdelivery.DeliveryPartMatch
 
 // DeliveryStatus is the SMS delivery status.
-type DeliveryStatus struct {
-	MessageID  string
-	IMSI       string
-	DeviceID   string
-	Peer       string
-	Content    string
-	PartsTotal int
-	Acks       int
-	State      string
-	LastError  string
-	Parts      []DeliveryPartStatus
-}
+type DeliveryStatus = smsdelivery.DeliveryStatus
 
 // DeliveryPartStatus is one delivery part.
-type DeliveryPartStatus struct {
-	PartNo  int
-	CallID  string
-	State   string
-	SIPCode int
-	RPCause int
-}
+type DeliveryPartStatus = smsdelivery.DeliveryPartStatus

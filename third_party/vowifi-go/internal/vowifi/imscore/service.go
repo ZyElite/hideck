@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iniwex5/vowifi-go/internal/smscodec"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ussi"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
@@ -50,9 +49,19 @@ func New(cfg *IMSConfig) (*Service, error) {
 		protectedConns:        make(map[net.Conn]struct{}),
 		transport:             transport,
 		ussd:                  ussi.NewService(),
-		smsReassembler:        smscodec.NewReassembler(),
 		smsTransactionTimeout: outboundSMSTransactionTimeout,
 		smsReportTimeout:      defaultSMSDeliveryReportTimeout,
+		messagingRuntime: messagingRuntime{
+			smsPending:     make(map[string]*smsPendingInfo),
+			smsPendingNorm: make(map[string]*smsPendingInfo),
+			inboundSeen:    make(map[string]time.Time),
+			inboundSeenRsp: make(map[string]inboundRequestResponseMemo),
+			mtSMSSeen:      make(map[string]time.Time),
+		},
+		fragmentState: fragmentState{
+			fragmentCache:         make(map[string][]*smsFragment),
+			fragmentRecentExpired: make(map[string]time.Time),
+		},
 		keepaliveInterval:     keepaliveInterval,
 		keepaliveTimeout:      keepaliveTimeout,
 		keepaliveFailureLimit: imsKeepaliveFailureLimit,
@@ -94,6 +103,7 @@ func (s *Service) Status() *ServiceStatus {
 	if s == nil || s.cfg == nil {
 		return &ServiceStatus{}
 	}
+	lastSMSTrace, lastSMSAt, lastSMSErr := s.smsSendStatus()
 	s.receiverMu.Lock()
 	rxRunning := s.activeReceivers > 0
 	s.receiverMu.Unlock()
@@ -124,8 +134,10 @@ func (s *Service) Status() *ServiceStatus {
 		Path: s.path, SecurityVerify: s.securityVerify, AssociatedMSISDN: s.assocMSISDN,
 		LastError: s.lastError, LastRegisterTraceID: s.lastRegisterTraceID,
 		LastRegisterAttemptAt: s.lastRegisterAttemptAt, LastRegisterOKAt: s.lastRegisterOKAt,
-		LastRegisterErr: s.lastRegisterErr,
-		State:           s.state, RegState: s.regState, IMPUs: identities,
+		LastRegisterErr:    s.lastRegisterErr,
+		LastSMSSendTraceID: lastSMSTrace, LastSMSSendAt: lastSMSAt,
+		LastSMSSendErr: lastSMSErr, FragmentAudit: s.fragmentAuditSnapshot(),
+		State: s.state, RegState: s.regState, IMPUs: identities,
 	}
 	ready, reason := s.evaluateSignalingReadyLocked(status.Registered)
 	status.SignalingReady = status.SignalingReady && ready
@@ -344,6 +356,7 @@ func (s *Service) Stop() {
 		s.transitionRegStatus(registrationStopping)
 		close(s.stop)
 	}
+	s.clearPendingSMS()
 	s.mu.Lock()
 	registrationIO := s.registrationIO
 	registrationTCP := s.registrationTCP
