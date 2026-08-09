@@ -136,7 +136,11 @@ func (a *Agent) releaseInboundCall(call *Call, cause error, canceled bool) {
 	_ = call.EnsureTimerStopped()
 	_ = call.CloseDone()
 	if canceled {
-		a.emitCallCanceled(call)
+		reason := "remote_cancel"
+		if cause != nil {
+			reason = cause.Error()
+		}
+		a.emitCallCanceled(call, reason)
 	} else if cause != nil {
 		a.emitCallFailed(call, cause.Error())
 	}

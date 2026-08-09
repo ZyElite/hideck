@@ -72,14 +72,14 @@ func TestServiceNetworkLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if result.Done || result.Message != "1. Balance\n2. Top-up" {
+	if result.Done || result.Command != "*100#" || result.Message != "1. Balance\n2. Top-up" {
 		t.Fatalf("initial result = %#v", result)
 	}
 	continued, err := svc.Continue(result.SessionID, "1")
 	if err != nil {
 		t.Fatalf("Continue: %v", err)
 	}
-	if !continued.Done || continued.Message != "Your balance is 10" {
+	if !continued.Done || continued.Command != "1" || continued.Message != "Your balance is 10" {
 		t.Fatalf("continued result = %#v", continued)
 	}
 	if svc.ActiveSessionID() != "" {
@@ -138,7 +138,7 @@ func TestServiceWaitsForInboundINFO(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendContext: %v", err)
 	}
-	if !result.Done || result.Message != "Network result" {
+	if !result.Done || result.Command != "*100#" || result.Message != "Network result" {
 		t.Fatalf("result = %#v", result)
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ussi"
@@ -93,8 +95,11 @@ func (s *Service) publishUSSIResult(result ussi.Result) {
 	if s == nil || s.bus == nil {
 		return
 	}
-	s.bus.Publish(&events.EventUSSDResult{
+	status, _ := strconv.Atoi(strings.TrimSpace(result.Code))
+	now := time.Now()
+	s.bus.Publish(events.EventUSSDResult{
 		DevID: s.cfg.DeviceID, SessionID: result.SessionID,
+		Command: result.Command, Text: result.Message, Status: status, Time: now,
 		Code: result.Code, Message: result.Message,
 	})
 }

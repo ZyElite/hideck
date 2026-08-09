@@ -81,6 +81,7 @@ func (s *Service) ContinueContext(ctx context.Context, sessionID, input string) 
 	}
 	session.mu.Lock()
 	session.cseq++
+	session.lastCommand = input
 	request := buildDialogRequest(cfg, session, "INFO", body)
 	session.mu.Unlock()
 	response, err := cfg.Transport.RoundTrip(ctx, request)
@@ -253,7 +254,8 @@ func (s *Service) newSession(cfg Config, command string) (*Session, error) {
 		id: id, callID: "ussi-" + token(id) + "@vowifi-go",
 		localTag: randomHex(8), remoteURI: dialstringURI(command, cfg.Domain),
 		inviteBranch: "z9hG4bK" + randomHex(12), cseq: 1, active: true,
-		routeSet: splitHeaderValues(cfg.ServiceRoute), results: make(chan resultEvent, 4),
+		lastCommand: command, routeSet: splitHeaderValues(cfg.ServiceRoute),
+		results: make(chan resultEvent, 4),
 	}
 	session.remoteTarget = session.remoteURI
 	s.sessions[id] = session
@@ -329,6 +331,7 @@ func (s *Service) finishNetworkResult(session *Session, result Result, err error
 		s.clearSession(session.id)
 		return nil, err
 	}
+	result = resultWithSessionCommand(session, result)
 	s.notifyResult(result)
 	if result.Done {
 		s.clearSession(session.id)
@@ -337,11 +340,22 @@ func (s *Service) finishNetworkResult(session *Session, result Result, err error
 }
 
 func (s *Service) deliverResult(session *Session, result Result) {
+	result = resultWithSessionCommand(session, result)
 	s.notifyResult(result)
 	select {
 	case session.results <- resultEvent{result: result}:
 	default:
 	}
+}
+
+func resultWithSessionCommand(session *Session, result Result) Result {
+	if session == nil || result.Command != "" {
+		return result
+	}
+	session.mu.RLock()
+	result.Command = session.lastCommand
+	session.mu.RUnlock()
+	return result
 }
 
 func (s *Service) notifyResult(result Result) {

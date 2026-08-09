@@ -149,8 +149,11 @@ func sendDeliveryTestSMS(t *testing.T, service *Service, subscriber *captureIMSE
 	for range outcome.PartsTotal {
 		_ = waitForOutboundSMSControl(t, outbound)
 	}
-	if event := <-subscriber.events; event.Type() != "SMSSent" {
+	if event := <-subscriber.events; event.Type() != "SMSSendAccepted" {
 		t.Fatalf("first event = %s", event.Type())
+	}
+	if event := <-subscriber.events; event.Type() != "SMSSent" {
+		t.Fatalf("second event = %s", event.Type())
 	}
 	return outcome
 }
@@ -219,17 +222,43 @@ func assertDeliveryEvents(t *testing.T, subscriber *captureIMSEventSubscriber, m
 			if event.Type() != want || event.DeviceID() != "wwan0" || deliveryEventMessageID(event) != messageID {
 				t.Fatalf("event = %#v, want %s for %s", event, want, messageID)
 			}
+			assertRecoveredDeliveryEventFields(t, event)
 		case <-time.After(time.Second):
 			t.Fatalf("missing %s event for %s", want, messageID)
 		}
 	}
 }
 
+func assertRecoveredDeliveryEventFields(t *testing.T, event events.Event) {
+	t.Helper()
+	switch value := event.(type) {
+	case events.EventSMSDeliveryUpdated:
+		if value.PartNo < 1 || value.PartsTotal < 1 || value.UpdatedAt.IsZero() ||
+			!value.Completed || value.Time != value.UpdatedAt {
+			t.Fatalf("delivery update fields = %+v", value)
+		}
+	case events.EventSMSDeliveryCompleted:
+		if value.PartsTotal < 1 || value.CompletedAt.IsZero() || value.Time != value.CompletedAt {
+			t.Fatalf("delivery completed fields = %+v", value)
+		}
+	case events.EventSMSDeliveryFailed:
+		if value.TargetURI == "" || value.Reason == "" || value.Error != value.Reason || value.Time.IsZero() {
+			t.Fatalf("delivery failed fields = %+v", value)
+		}
+	}
+}
+
 func deliveryEventMessageID(event events.Event) string {
 	switch value := event.(type) {
+	case events.EventSMSDeliveryUpdated:
+		return value.MessageID
 	case *events.EventSMSDeliveryUpdated:
 		return value.MessageID
+	case events.EventSMSDeliveryCompleted:
+		return value.MessageID
 	case *events.EventSMSDeliveryCompleted:
+		return value.MessageID
+	case events.EventSMSDeliveryFailed:
 		return value.MessageID
 	case *events.EventSMSDeliveryFailed:
 		return value.MessageID

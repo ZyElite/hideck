@@ -98,6 +98,17 @@ func TestSendOutboundSMSWaitsForSIPSuccess(t *testing.T) {
 
 	select {
 	case event := <-subscriber.events:
+		accepted, ok := event.(events.EventSMSSendAccepted)
+		if !ok || accepted.MessageID == "" || accepted.TargetURI != "+447700900123" ||
+			accepted.PartsTotal != 1 || accepted.AcceptedAt.IsZero() || accepted.Time != accepted.AcceptedAt ||
+			accepted.ExpiresHint != smsSendAcceptedExpiresHint {
+			t.Fatalf("accepted event = %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SMS acceptance event was not published")
+	}
+	select {
+	case event := <-subscriber.events:
 		t.Fatalf("SMS success published before final response: %#v", event)
 	case <-results:
 		t.Fatal("SMS send returned before final response")
@@ -145,6 +156,7 @@ func TestSendOutboundSMSRejectsNon2xxWithoutSuccessEvent(t *testing.T) {
 	if outcome == nil || outcome.MessageID == "" || outcome.State != smsDeliveryStateFailed {
 		t.Fatalf("failed send outcome = %+v", outcome)
 	}
+	assertAcceptedEvent(t, subscriber, outcome.MessageID)
 	select {
 	case event := <-subscriber.events:
 		t.Fatalf("failed SMS published success event: %#v", event)
@@ -174,6 +186,7 @@ func TestSendOutboundSMSSurfacesCallerDeadline(t *testing.T) {
 	if !strings.Contains(err.Error(), "caller deadline exceeded") {
 		t.Fatalf("send error = %v", err)
 	}
+	assertAcceptedEvent(t, subscriber, "")
 	select {
 	case event := <-subscriber.events:
 		t.Fatalf("timed-out SMS published success event: %#v", event)
@@ -181,6 +194,19 @@ func TestSendOutboundSMSSurfacesCallerDeadline(t *testing.T) {
 	}
 	if store.finalState != smsDeliveryStateFailed {
 		t.Fatalf("failure state = %q", store.finalState)
+	}
+}
+
+func assertAcceptedEvent(t *testing.T, subscriber *captureIMSEventSubscriber, messageID string) {
+	t.Helper()
+	select {
+	case event := <-subscriber.events:
+		accepted, ok := event.(events.EventSMSSendAccepted)
+		if !ok || (messageID != "" && accepted.MessageID != messageID) {
+			t.Fatalf("accepted event = %#v, message ID %q", event, messageID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing SMS acceptance event")
 	}
 }
 

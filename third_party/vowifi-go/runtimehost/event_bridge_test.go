@@ -48,3 +48,16 @@ func TestIMSEventBridgePreservesUnknownEventType(t *testing.T) {
 		t.Fatalf("generic event = %#v", dispatcher.events[0])
 	}
 }
+
+func TestIMSEventBridgeDispatchesRecoveredValueEvent(t *testing.T) {
+	dispatcher := &captureRuntimeDispatcher{}
+	bridge := &imsEventBridge{dispatcher: dispatcher}
+	bridge.OnIMSEvent(events.EventSMSReceived{
+		DevID: "wwan0", Sender: "+447700900123", Content: "value event",
+	})
+
+	received, ok := dispatcher.events[0].(eventhost.SMSReceived)
+	if !ok || received.DevID != "wwan0" || received.Content != "value event" {
+		t.Fatalf("received event = %#v", dispatcher.events[0])
+	}
+}

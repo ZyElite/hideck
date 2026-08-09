@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 )
 
 func TestProtectedRegistrationReconnectsAndReusesAuthorization(t *testing.T) {
@@ -31,11 +33,14 @@ func TestProtectedRegistrationReconnectsAndReusesAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer svc.Stop()
+	subscriber := &captureIMSEventSubscriber{events: make(chan events.Event, 1)}
+	svc.EventBus().Subscribe(subscriber)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err != nil {
 		t.Fatalf("initial Register: %v", err)
 	}
+	assertLocalNumberLearned(t, subscriber.events)
 	select {
 	case <-initialComplete:
 	case <-ctx.Done():
@@ -52,6 +57,20 @@ func TestProtectedRegistrationReconnectsAndReusesAuthorization(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("reconnected registration exchange did not complete")
+	}
+}
+
+func assertLocalNumberLearned(t *testing.T, received <-chan events.Event) {
+	t.Helper()
+	select {
+	case event := <-received:
+		learned, ok := event.(events.EventLocalNumberLearned)
+		if !ok || learned.DevID != "dev-reconnect" || learned.Number != "+447840844894" ||
+			learned.Source != "p-associated-uri" || learned.Time.IsZero() {
+			t.Fatalf("local number event = %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("REGISTER did not publish LocalNumberLearned")
 	}
 }
 

@@ -114,8 +114,12 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	s.finalizeRegistrationTransportSwitch()
 	expires := registrationExpires(resp, s.cfg.Expires)
 	session.expires = expires
-	if publicID := associatedPublicIdentity(resp.Header("P-Associated-URI")); publicID != "" {
+	associatedURI := resp.Header("P-Associated-URI")
+	if publicID := associatedPublicIdentity(associatedURI); publicID != "" {
 		session.publicID = publicID
+	}
+	if number := imsheaders.ExtractPhoneFromAssociatedMSISDN(associatedURI); number != "" {
+		s.publishLocalNumberLearned(number, "p-associated-uri")
 	}
 	if serviceRoute := imsheaders.FirstRoute(resp.Header("Service-Route"), ""); serviceRoute != "" {
 		session.serviceRoute = serviceRoute

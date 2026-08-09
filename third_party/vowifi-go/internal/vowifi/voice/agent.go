@@ -324,7 +324,7 @@ func (a *Agent) finishLocalHangup(call *Call) error {
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	_ = call.CloseDone()
-	a.emitCallEnded(call)
+	a.emitCallEnded(call, "local_hangup")
 	a.finalizeActiveCall(call)
 	return nil
 }
@@ -451,15 +451,22 @@ func (a *Agent) emitCallAnswered(c *Call) {
 	if a == nil || c == nil {
 		return
 	}
-	a.emit(&events.EventCallAnswered{DevID: a.deviceID, CallID: c.CallID(), Time: time.Now()})
+	answeredAt := time.Now()
+	a.emit(events.EventCallAnswered{
+		DevID: a.deviceID, CallID: c.CallID(), AnsweredAt: answeredAt, Time: answeredAt,
+	})
 }
 
 // emitCallEnded publishes the CallEnded event.
-func (a *Agent) emitCallEnded(c *Call) {
+func (a *Agent) emitCallEnded(c *Call, reason string) {
 	if a == nil || c == nil {
 		return
 	}
-	a.emit(&events.EventCallEnded{DevID: a.deviceID, CallID: c.CallID(), Time: time.Now()})
+	endedAt := time.Now()
+	a.emit(events.EventCallEnded{
+		DevID: a.deviceID, CallID: c.CallID(), Reason: strings.TrimSpace(reason),
+		EndedAt: endedAt, Time: endedAt,
+	})
 }
 
 // emitCallFailed publishes the CallFailed event.
@@ -471,11 +478,13 @@ func (a *Agent) emitCallFailed(c *Call, reason string) {
 }
 
 // emitCallCanceled publishes the CallCanceled event.
-func (a *Agent) emitCallCanceled(c *Call) {
+func (a *Agent) emitCallCanceled(c *Call, reason string) {
 	if a == nil || c == nil {
 		return
 	}
-	a.emit(&events.EventCallCanceled{DevID: a.deviceID, CallID: c.CallID(), Time: time.Now()})
+	a.emit(events.EventCallCanceled{
+		DevID: a.deviceID, CallID: c.CallID(), Reason: strings.TrimSpace(reason), Time: time.Now(),
+	})
 }
 
 // emitCallMediaUpdated publishes the CallMediaUpdated event.
@@ -483,7 +492,10 @@ func (a *Agent) emitCallMediaUpdated(c *Call) {
 	if a == nil || c == nil {
 		return
 	}
-	a.emit(&events.EventCallMediaUpdated{DevID: a.deviceID, CallID: c.CallID(), Time: time.Now()})
+	a.emit(events.EventCallMediaUpdated{
+		DevID: a.deviceID, CallID: c.CallID(), Direction: c.Direction().String(),
+		State: c.GetState().String(), Time: time.Now(),
+	})
 }
 
 // emitIncomingCall publishes the IncomingCall event.
@@ -491,7 +503,11 @@ func (a *Agent) emitIncomingCall(c *Call) {
 	if a == nil || c == nil {
 		return
 	}
-	a.emit(&events.EventIncomingCall{DevID: a.deviceID, CallID: c.CallID(), Caller: c.Peer(), Callee: a.deviceID, Time: time.Now()})
+	receivedAt := time.Now()
+	a.emit(events.EventIncomingCall{
+		DevID: a.deviceID, CallID: c.CallID(), Caller: c.Peer(), Callee: a.deviceID,
+		ReceivedAt: receivedAt, Time: receivedAt,
+	})
 }
 
 // emit publishes a locally-created event and notifies the local callback.

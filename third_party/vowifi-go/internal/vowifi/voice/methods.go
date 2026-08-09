@@ -167,7 +167,7 @@ func (a *Agent) HandleClientCancel(callID string) error {
 	}
 	_ = call.EnsureTimerStopped()
 	_ = call.CloseDone()
-	a.emitCallCanceled(call)
+	a.emitCallCanceled(call, call.OutboundCancelReason())
 	a.finalizeActiveCall(call)
 	return nil
 }
@@ -237,7 +237,7 @@ func (a *Agent) finishRemoteBye(call *Call) error {
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	_ = call.CloseDone()
-	a.emitCallEnded(call)
+	a.emitCallEnded(call, "remote_bye")
 	a.finalizeActiveCall(call)
 	return nil
 }
@@ -257,7 +257,7 @@ func (a *Agent) OnIMSCancel(callID string) error {
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	_ = call.CloseDone()
-	a.emitCallCanceled(call)
+	a.emitCallCanceled(call, "remote_cancel")
 	a.finalizeActiveCall(call)
 	return nil
 }

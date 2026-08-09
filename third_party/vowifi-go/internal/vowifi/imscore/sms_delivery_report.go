@@ -107,18 +107,43 @@ func (s *Service) publishSMSDeliveryStatus(messageID string) error {
 	if err != nil {
 		return fmt.Errorf("imscore: read SMS delivery status: %w", err)
 	}
-	s.bus.Publish(&events.EventSMSDeliveryUpdated{
-		DevID: s.cfg.DeviceID, MessageID: messageID, State: status.State, Time: time.Now(),
+	now := time.Now()
+	partNo, sipCode, rpCause := latestDeliveryPart(status)
+	completed := status.State == smsDeliveryStateAcked || status.State == smsDeliveryStateFailed
+	s.bus.Publish(events.EventSMSDeliveryUpdated{
+		DevID: s.cfg.DeviceID, MessageID: messageID, PartNo: partNo,
+		PartsTotal: status.PartsTotal, State: status.State, SIPCode: sipCode,
+		RPCause: rpCause, UpdatedAt: now, Completed: completed,
+		FailureText: status.LastError, Time: now,
 	})
 	switch status.State {
 	case smsDeliveryStateAcked:
-		s.bus.Publish(&events.EventSMSDeliveryCompleted{DevID: s.cfg.DeviceID, MessageID: messageID, Time: time.Now()})
+		completedAt := time.Now()
+		s.bus.Publish(events.EventSMSDeliveryCompleted{
+			DevID: s.cfg.DeviceID, MessageID: messageID, PartsTotal: status.PartsTotal,
+			CompletedAt: completedAt, Time: completedAt,
+		})
 	case smsDeliveryStateFailed:
-		s.bus.Publish(&events.EventSMSDeliveryFailed{
-			DevID: s.cfg.DeviceID, MessageID: messageID, Error: status.LastError, Time: time.Now(),
+		failedAt := time.Now()
+		s.bus.Publish(events.EventSMSDeliveryFailed{
+			DevID: s.cfg.DeviceID, TargetURI: status.Peer, Reason: status.LastError,
+			SIPCode: sipCode, RecommendCSFallback: recommendCSFallback(sipCode),
+			MessageID: messageID, Error: status.LastError, Time: failedAt,
 		})
 	}
 	return nil
+}
+
+func latestDeliveryPart(status *DeliveryStatus) (partNo, sipCode, rpCause int) {
+	if status == nil || len(status.Parts) == 0 {
+		return 0, 0, 0
+	}
+	part := status.Parts[len(status.Parts)-1]
+	return part.PartNo, part.SIPCode, part.RPCause
+}
+
+func recommendCSFallback(sipCode int) bool {
+	return sipCode == 408 || sipCode == 480 || sipCode == 503
 }
 
 func (s *Service) scheduleSMSDeliveryTimeout(messageID string, parts []outboundSMSPart) {

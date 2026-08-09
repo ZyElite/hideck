@@ -45,6 +45,7 @@ type Config struct {
 // Result is a network-provided USSD result.
 type Result struct {
 	SessionID string
+	Command   string
 	Code      string
 	Message   string
 	RawXML    string
@@ -68,6 +69,7 @@ type Session struct {
 	routeSet     []string
 	inviteBranch string
 	cseq         int
+	lastCommand  string
 	active       bool
 	results      chan resultEvent
 }

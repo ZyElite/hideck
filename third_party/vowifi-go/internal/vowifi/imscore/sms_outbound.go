@@ -15,9 +15,11 @@ import (
 const (
 	outboundSMSTransactionTimeout   = 30 * time.Second
 	defaultSMSDeliveryReportTimeout = 120 * time.Second
-	smsDeliveryStatePending         = "pending"
-	smsDeliveryStateFailed          = "failed"
-	smsDeliveryPartStateTimeout     = "timeout"
+	// Recovered from the v1.5.5 data value used by dispatchSMSSendAccepted.
+	smsSendAcceptedExpiresHint  int64 = 1_200_000_000
+	smsDeliveryStatePending           = "pending"
+	smsDeliveryStateFailed            = "failed"
+	smsDeliveryPartStateTimeout       = "timeout"
 )
 
 type outboundSMSPart struct {
@@ -45,6 +47,7 @@ func (s *Service) sendOutboundSMS(ctx context.Context, to, text string, opts SMS
 		return nil, err
 	}
 	messageID := newMessageID()
+	s.publishSMSSendAccepted(messageID, recipient, text, len(parts))
 	if err := s.createOutboundDelivery(messageID, recipient, text, len(parts)); err != nil {
 		return nil, err
 	}
@@ -190,6 +193,15 @@ func (s *Service) publishOutboundSMS(recipient, text string, total int) {
 	s.bus.Publish(&events.EventSMSSent{
 		DevID: s.cfg.DeviceID, TargetURI: recipient, Content: text,
 		Time: time.Now(), TotalParts: total,
+	})
+}
+
+func (s *Service) publishSMSSendAccepted(messageID, recipient, text string, total int) {
+	acceptedAt := time.Now()
+	s.bus.Publish(events.EventSMSSendAccepted{
+		DevID: s.cfg.DeviceID, MessageID: messageID, TargetURI: recipient,
+		Content: text, PartsTotal: total, AcceptedAt: acceptedAt,
+		ExpiresHint: smsSendAcceptedExpiresHint, Time: acceptedAt,
 	})
 }
 

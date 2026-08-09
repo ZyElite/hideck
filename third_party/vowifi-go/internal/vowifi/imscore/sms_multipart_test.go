@@ -53,6 +53,10 @@ func TestOutboundMultipartSMSUsesCorrelatedReferences(t *testing.T) {
 		}
 		seenRPMR[decoded.MR] = true
 	}
+	accepted := <-subscriber.events
+	if accepted.Type() != "SMSSendAccepted" {
+		t.Fatalf("first event = %#v", accepted)
+	}
 	event := <-subscriber.events
 	sent, ok := event.(*events.EventSMSSent)
 	if !ok || sent.Content != text || sent.TotalParts != outcome.PartsTotal {
