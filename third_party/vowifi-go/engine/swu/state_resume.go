@@ -52,13 +52,14 @@ func (s *Session) prepareSessionResumeMaterial() error {
 	crypto.Wipe(oldSKd)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.SPIi == ([8]byte{}) {
-		if _, err := rand.Read(s.SPIi[:]); err != nil {
+	if s.spiI == ([8]byte{}) {
+		if _, err := rand.Read(s.spiI[:]); err != nil {
 			return fmt.Errorf("swu: generate session resume SPIi: %w", err)
 		}
-		if s.SPIi == ([8]byte{}) {
+		if s.spiI == ([8]byte{}) {
 			return errors.New("swu: generated zero session resume SPIi")
 		}
+		s.SPIi = ikeSPIUint64(s.spiI)
 	}
 	if len(s.Ni) == 0 {
 		s.Ni = make([]byte, s.nonceLen)
@@ -75,7 +76,7 @@ func (s *Session) buildSessionResumeRequest() (*ikev2.IKEPacket, []byte, error) 
 		return nil, nil, errors.New("swu: session resumption credentials disappeared")
 	}
 	s.mu.RLock()
-	spiI := s.SPIi
+	spiI := s.spiI
 	nonce := append([]byte(nil), s.Ni...)
 	s.mu.RUnlock()
 	request := &ikev2.IKEPacket{
@@ -122,6 +123,10 @@ func (s *Session) handleIkeSessionResumeResp(data []byte) error {
 	if err != nil {
 		return err
 	}
+	if err := s.ensureWiresharkDebugger(); err != nil {
+		wipeIKEKeys(keys)
+		return err
+	}
 	s.installSessionResumeKeys(responderSPI, responderNonce, keys)
 	return nil
 }
@@ -136,7 +141,7 @@ func (s *Session) validateSessionResumeHeader(header *ikev2.IKEHeader, packetLen
 		return errors.New("swu: invalid IKE_SESSION_RESUME response header")
 	}
 	s.mu.RLock()
-	expectedSPI := ikeSPIUint64(s.SPIi)
+	expectedSPI := ikeSPIUint64(s.spiI)
 	s.mu.RUnlock()
 	if header.SPIi != expectedSPI || header.SPIr == 0 {
 		return errors.New("swu: IKE_SESSION_RESUME response SPI mismatch")
@@ -191,7 +196,7 @@ func validateIKENonce(role string, nonce []byte) error {
 func (s *Session) deriveSessionResumeKeys(responderSPI [8]byte, responderNonce []byte) (*IKEKeys, error) {
 	s.mu.RLock()
 	initiatorNonce := append([]byte(nil), s.Ni...)
-	initiatorSPI := s.SPIi
+	initiatorSPI := s.spiI
 	oldSKd := append([]byte(nil), s.resumeOldSKd...)
 	prf := s.prf
 	s.mu.RUnlock()
@@ -214,11 +219,13 @@ func (s *Session) deriveSessionResumeKeys(responderSPI [8]byte, responderNonce [
 func (s *Session) installSessionResumeKeys(responderSPI [8]byte, responderNonce []byte, keys *IKEKeys) {
 	s.mu.Lock()
 	previous := s.ikeKeys
-	s.SPIr = responderSPI
+	s.spiR = responderSPI
 	s.nr = append([]byte(nil), responderNonce...)
 	s.ikeKeys = keys
 	s.nextOutboundID = 1
+	s.syncLegacyIKEStateLocked()
 	s.mu.Unlock()
+	s.logIKEKeys(keys)
 	if previous != nil && previous != keys {
 		wipeIKEKeys(previous)
 	}

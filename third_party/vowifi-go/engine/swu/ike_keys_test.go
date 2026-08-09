@@ -14,8 +14,8 @@ import (
 func newKeyDerivationSession(t *testing.T) *Session {
 	t.Helper()
 	s := &Session{
-		SPIi:           [8]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
-		SPIr:           [8]byte{0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18},
+		spiI:           [8]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
+		spiR:           [8]byte{0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18},
 		Ni:             bytes.Repeat([]byte{0xa1}, 16),
 		prf:            crypto.NewPRF(2), // PRF_HMAC_SHA1
 		prfKey:         bytes.Repeat([]byte{0xaa}, 20),
@@ -100,8 +100,8 @@ func TestGenerateIKESAKeysAEAD(t *testing.T) {
 	// AEAD mode: no separate integrity (integKeyLen=0), encKeyLen includes
 	// the 4-byte GCM salt.
 	s := &Session{
-		SPIi:           [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
-		SPIr:           [8]byte{8, 7, 6, 5, 4, 3, 2, 1},
+		spiI:           [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
+		spiR:           [8]byte{8, 7, 6, 5, 4, 3, 2, 1},
 		Ni:             bytes.Repeat([]byte{0xa1}, 16),
 		prf:            crypto.NewPRF(2),
 		integKeyLen:    0,
@@ -124,8 +124,8 @@ func TestGenerateIKESAKeysTruncationFor16BytePRF(t *testing.T) {
 	// AES-XCBC-PRF-128 has a 16-byte output: the SKEYSEED key uses only the
 	// first 8 bytes of each nonce.
 	s := &Session{
-		SPIi:           [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
-		SPIr:           [8]byte{8, 7, 6, 5, 4, 3, 2, 1},
+		spiI:           [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
+		spiR:           [8]byte{8, 7, 6, 5, 4, 3, 2, 1},
 		Ni:             bytes.Repeat([]byte{0xa1}, 32),
 		prf:            crypto.NewPRF(4), // PRF_AES128_XCBC
 		integKeyLen:    12,

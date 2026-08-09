@@ -1,6 +1,15 @@
 package swu
 
-import "sync/atomic"
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"time"
+
+	"go.uber.org/zap"
+)
+
+const dataPlaneStatsInterval = 30 * time.Second
 
 // InnerPacketSnapshot is the original public userspace data-plane snapshot.
 type InnerPacketSnapshot struct {
@@ -69,4 +78,53 @@ func projectInnerPacketSnapshot(s dataPlaneStatsSnapshot) InnerPacketSnapshot {
 		LastOutboundLen:     s.lastTunReadLen,
 		LastInboundLen:      s.lastPlainLen,
 	}
+}
+
+func (s *dataPlaneRuntimeStats) recordEncapsulationError(err error) {
+	if errors.Is(err, errInnerPacketSAMissing) {
+		s.espOutSAMiss.Add(1)
+		return
+	}
+	s.espEncapError.Add(1)
+}
+
+func (s *dataPlaneRuntimeStats) recordDecapsulationError(err error) {
+	if errors.Is(err, errInnerPacketSAMissing) {
+		s.espInSAMiss.Add(1)
+		return
+	}
+	s.espDecapError.Add(1)
+}
+
+func (s *Session) logDataPlaneStats(
+	ctx context.Context,
+	mode string,
+	stats *dataPlaneRuntimeStats,
+	interval time.Duration,
+) {
+	if s == nil || ctx == nil || stats == nil || interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.logDataPlaneStatsSnapshot(mode, stats.snapshot())
+		}
+	}
+}
+
+func (s *Session) logDataPlaneStatsSnapshot(mode string, snapshot dataPlaneStatsSnapshot) {
+	s.Logger.Debug("SWu dataplane stats",
+		zap.String("mode", mode), zap.Uint64("tunRead", snapshot.tunRead),
+		zap.Uint64("espSend", snapshot.espSend), zap.Uint64("espSendError", snapshot.espSendError),
+		zap.Uint64("espOutSAMiss", snapshot.espOutSAMiss), zap.Uint64("espEncapError", snapshot.espEncapError),
+		zap.Uint64("espIn", snapshot.espIn), zap.Uint64("espInSAMiss", snapshot.espInSAMiss),
+		zap.Uint64("espDecapError", snapshot.espDecapError), zap.Uint64("tunWrite", snapshot.tunWrite),
+		zap.Uint64("tunWriteError", snapshot.tunWriteError), zap.Uint32("lastInSPI", snapshot.lastInSPI),
+		zap.Uint64("lastPlainLen", snapshot.lastPlainLen), zap.Uint64("lastTunReadLen", snapshot.lastTunReadLen),
+	)
 }

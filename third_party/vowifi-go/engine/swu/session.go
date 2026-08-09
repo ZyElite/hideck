@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/engine/crypto"
@@ -14,8 +16,10 @@ import (
 	engineeap "github.com/iniwex5/vowifi-go/engine/eap"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
+	"github.com/iniwex5/vowifi-go/engine/logger"
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/engine/swu/eapaka"
+	"go.uber.org/zap"
 )
 
 // ErrFreshRuntimeRequired tells the host to replace the current IKE runtime.
@@ -65,6 +69,10 @@ type Config struct {
 	// ProxyAddr and Proxy route IKE/ESP through a SOCKS5 UDP associate.
 	ProxyAddr string
 	Proxy     *ipsec.Socks5Config
+	// Socks5Addr/Socks5Username/Socks5Password are the original proxy fields.
+	Socks5Addr     string
+	Socks5Username string
+	Socks5Password string
 	// TransportFactory restores the original injectable transport constructor.
 	TransportFactory func(local, remote string) (Transport, error)
 	// TUNFactory and NetTools restore the original injectable driver boundaries.
@@ -142,6 +150,11 @@ type Config struct {
 	ReauthSeconds     time.Duration
 	NATKeepaliveEvery time.Duration
 	DPDProbeEvery     time.Duration
+	// Original timer fields are expressed in seconds. The duration aliases take
+	// precedence when both forms are configured.
+	ReauthInterval      int
+	NATKeepaliveSeconds int
+	DPDIntervalSeconds  int
 	// Retransmit controls IKE request retries. Nil selects the recovered
 	// RFC 7296 policy used by TaskManager.
 	Retransmit *RetransmitConfig
@@ -149,6 +162,11 @@ type Config struct {
 	IKERetryConfig *RetryConfig
 	// Wireshark enables the pcap-like traffic logger.
 	Wireshark bool
+	// Original Wireshark key-log configuration.
+	EnableWiresharkKeyLog bool
+	WiresharkKeyLogPath   string
+	// OnProgress reports the original user-visible connection milestones.
+	OnProgress func(string)
 	// OnRedirect is invoked when the ePDG redirects the session (RFC 5685).
 	OnRedirect func(target string)
 	// OnStateChange is invoked on session state transitions.
@@ -193,8 +211,18 @@ const (
 // recovered from the decompiled engine/swu.
 type Session struct {
 	// --- IKE identifiers / negotiation (types.go) ---
-	SPIi              [8]byte
-	SPIr              [8]byte
+	spiI [8]byte
+	spiR [8]byte
+	// Original public session fields. Internal packet code retains byte-array
+	// SPIs and synchronizes these numeric projections at every SA transition.
+	SPIi              uint64
+	SPIr              uint64
+	EncAlg            crypto.Encrypter
+	IntegAlg          crypto.IntegrityAlgorithm
+	PRFAlg            crypto.PRF
+	DH                *crypto.DiffieHellman
+	Keys              *ikev2.IKESAKeys
+	SequenceNumber    atomic.Uint32
 	localIKEInitiator bool
 	Ni                []byte
 	nr                []byte // responder nonce (stored during IKE_SA_INIT)
@@ -227,6 +255,7 @@ type Session struct {
 
 	natSourceHash []byte
 	natDestHash   []byte
+	natDetected   bool
 
 	// --- configuration ---
 	cfg *Config
@@ -259,45 +288,51 @@ type Session struct {
 	ikeSAInitResponse      []byte
 
 	// --- data plane ---
-	innerEndpointMu sync.RWMutex
-	innerEndpoint   *userspaceInnerPacketEndpoint
-	tun             TUN
-	net             NetTools
-	networkTxn      *driver.NetTxn
-	legacyNetwork   *legacyNetTxn
-	kernelDataPlane kernelDataPlane
-	xfrmManagerNew  func() xfrmManager
-	espOutboundSA   *ipsec.SecurityAssociation
-	espInboundSA    *ipsec.SecurityAssociation
-	espInboundSAs   map[uint32]*ipsec.SecurityAssociation
-	retiredChildSAs map[uint32]uint32
-	espLocalSPI     uint32
-	espRemoteSPI    uint32
-	childNi         []byte
-	childNr         []byte
-	childDH         *crypto.DiffieHellman
-	childDHSecret   []byte
-	childTSi        *ikev2.EncryptedPayloadTS
-	childTSr        *ikev2.EncryptedPayloadTS
-	espCipher       uint16
-	espInteg        uint16
-	espESN          bool
-	espKey          []byte
-	espIntegKey     []byte
-	innerIP         net.IP // inner IP assigned by the ePDG (CP payload)
-	innerIPv6       net.IP
-	innerPrefix     int
-	innerIPv6Prefix int
-	dnsServers      []net.IP
-	pcscfServers    []net.IP
-	remoteIP        net.IP // ePDG outer address
-	remotePort      int
+	innerEndpointMu   sync.RWMutex
+	innerEndpoint     *userspaceInnerPacketEndpoint
+	dataPlaneHandleMu sync.RWMutex
+	tun               TUN
+	net               NetTools
+	networkTxn        *driver.NetTxn
+	legacyNetwork     *legacyNetTxn
+	kernelDataPlane   kernelDataPlane
+	xfrmManagerNew    func() xfrmManager
+	espOutboundSA     *ipsec.SecurityAssociation
+	espInboundSA      *ipsec.SecurityAssociation
+	espInboundSAs     map[uint32]*ipsec.SecurityAssociation
+	ChildSAIn         *ipsec.SecurityAssociation
+	ChildSAOut        *ipsec.SecurityAssociation
+	ChildSAsIn        map[uint32]*ipsec.SecurityAssociation
+	retiredChildSAs   map[uint32]uint32
+	espLocalSPI       uint32
+	espRemoteSPI      uint32
+	childNi           []byte
+	childNr           []byte
+	childDH           *crypto.DiffieHellman
+	childDHSecret     []byte
+	childTSi          *ikev2.EncryptedPayloadTS
+	childTSr          *ikev2.EncryptedPayloadTS
+	espCipher         uint16
+	espInteg          uint16
+	espESN            bool
+	espKey            []byte
+	espIntegKey       []byte
+	innerIP           net.IP // inner IP assigned by the ePDG (CP payload)
+	innerIPv6         net.IP
+	innerPrefix       int
+	innerIPv6Prefix   int
+	dnsServers        []net.IP
+	pcscfServers      []net.IP
+	remoteIP          net.IP // ePDG outer address
+	remotePort        int
 
 	// --- lifecycle ---
-	ctx      context.Context
-	cancel   context.CancelFunc
-	done     chan struct{}
-	doneOnce sync.Once
+	ctx             context.Context
+	cancel          context.CancelFunc
+	done            chan struct{}
+	doneOnce        sync.Once
+	sessionDownOnce sync.Once
+	cleanupOnce     sync.Once
 
 	mu                sync.RWMutex
 	childSAMu         sync.RWMutex
@@ -317,7 +352,10 @@ type Session struct {
 	initErr           error
 	state             string
 	dataPlaneStarted  bool
+	tunStats          dataPlaneRuntimeStats
 	dataPlaneWG       sync.WaitGroup
+	sessionStatsOnce  sync.Once
+	sessionStatsWG    sync.WaitGroup
 	rekeyTimerWG      sync.WaitGroup
 	netEventWG        sync.WaitGroup
 	netEventMu        sync.Mutex
@@ -326,6 +364,9 @@ type Session struct {
 	startedAt         time.Time
 	lastPingAt        time.Time
 	lastDPDAt         time.Time
+	activityMu        sync.RWMutex
+	lastInboundTime   time.Time
+	lastOutboundTime  time.Time
 	rekeyResetCh      chan struct{}
 	childRekeyResetCh chan struct{}
 	lastRekeyTime     time.Time
@@ -337,15 +378,18 @@ type Session struct {
 	nextOutboundID    uint32
 
 	// --- timers ---
-	timersMu        sync.Mutex
-	ikeReauthTimer  *time.Timer
-	ikeRekeyTimer   *time.Timer
-	childRekeyTimer *time.Timer
-	natKeepalive    *time.Timer
-	dpdTimer        *time.Timer
+	timersMu            sync.Mutex
+	ikeReauthTimer      *time.Timer
+	ikeRekeyTimer       *time.Timer
+	childRekeyTimer     *time.Timer
+	natKeepalive        *time.Timer
+	dpdTimer            *time.Timer
+	natKeepaliveStarted bool
 
 	// --- wireshark ---
-	debug *WiresharkDebugger
+	debugMu sync.Mutex
+	debug   *WiresharkDebugger
+	Logger  *zap.Logger
 
 	// --- IKE_SA_INIT proposal negotiation ---
 	ikeProfileOffset         int
@@ -364,18 +408,24 @@ type Session struct {
 
 	// Original session lifecycle callbacks. OnSessionDown is used by XFRM
 	// hard-expire handling; OnReauthNeeded is consumed by the lifecycle stage.
-	OnSessionDown     func()
-	OnReauthNeeded    func()
-	xfrmRekey         func() error
-	xfrmActionMu      sync.Mutex
-	xfrmActionWG      sync.WaitGroup
-	xfrmActionClosing bool
+	OnSessionDown      func()
+	OnReauthNeeded     func()
+	OnRedirect         func(string)
+	reauthOverlapGrace time.Duration
+	xfrmRekey          func() error
+	xfrmActionMu       sync.Mutex
+	xfrmActionWG       sync.WaitGroup
+	xfrmActionClosing  bool
 }
 
 // NewSession builds a SWu session from the configuration.
-func NewSession(cfg *Config) *Session {
+func NewSession(cfg *Config, loggers ...*zap.Logger) *Session {
 	if cfg == nil {
 		cfg = &Config{}
+	}
+	sessionLogger := logger.L()
+	if len(loggers) > 0 && loggers[0] != nil {
+		sessionLogger = loggers[0]
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
@@ -396,20 +446,23 @@ func NewSession(cfg *Config) *Session {
 		fragmentBuf:       newFragmentBuffer(),
 		ikeFragmentMTU:    defaultFragmentMTU,
 		espInboundSAs:     make(map[uint32]*ipsec.SecurityAssociation),
+		ChildSAsIn:        make(map[uint32]*ipsec.SecurityAssociation),
 		retiredChildSAs:   make(map[uint32]uint32),
 		netEventMonitors:  make(map[<-chan ipsec.NetEvent]struct{}),
 		resumeTicket:      append([]byte(nil), cfg.ResumeTicket...),
 		resumeOldSKd:      append([]byte(nil), cfg.ResumeOldSKd...),
 		net:               configuredNetTools(cfg),
 		xfrmManagerNew:    func() xfrmManager { return driver.NewXFRMManager() },
+		Logger:            sessionLogger,
+		OnRedirect:        cfg.OnRedirect,
 	}
 	if s.nonceLen <= 0 {
 		s.nonceLen = 32
 	}
 	s.initErr = initializeSessionAlgorithms(s, cfg)
-	if cfg.Wireshark {
-		s.debug = NewWiresharkDebugger()
-	}
+	s.syncLegacyIKEStateLocked()
+	s.SequenceNumber.Store(0)
+	s.syncLegacyChildStateLocked()
 	return s
 }
 
@@ -469,16 +522,19 @@ func (s *Session) Connect(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	s.setState(stateConnecting)
+	if err := s.bindConnectContext(ctx); err != nil {
+		return err
+	}
 	if s.initErr != nil {
 		err := fmt.Errorf("swu: initialize session: %w", s.initErr)
-		s.setTerminalError(err)
+		s.finishConnectFailure(err)
 		return err
 	}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		err := s.connectOnce(ctx)
 		if err == nil {
+			go s.watchConnectContext()
 			return nil
 		}
 		var redir *RedirectError
@@ -487,30 +543,94 @@ func (s *Session) Connect(ctx context.Context) error {
 			if target == "" {
 				target = redir.Target
 			}
-			if s.cfg != nil && s.cfg.OnRedirect != nil {
-				s.cfg.OnRedirect(target)
+			if s.OnRedirect != nil {
+				s.OnRedirect(target)
 			}
 			s.cfg.EPDGAddr, s.cfg.EpDGAddr = target, target
 			s.resetForRedirect()
 			lastErr = err
 			continue
 		}
-		s.setTerminalError(err)
+		s.finishConnectFailure(err)
 		return err
 	}
 	if lastErr != nil {
-		s.setTerminalError(lastErr)
+		s.finishConnectFailure(lastErr)
 		return lastErr
 	}
-	return errors.New("swu: connect failed")
+	err := errors.New("swu: connect failed")
+	s.finishConnectFailure(err)
+	return err
+}
+
+func (s *Session) bindConnectContext(parent context.Context) error {
+	nextContext, nextCancel := context.WithCancel(parent)
+	s.mu.Lock()
+	if s.state != stateIdle {
+		state := s.state
+		s.mu.Unlock()
+		nextCancel()
+		if err := parent.Err(); err != nil {
+			return err
+		}
+		return fmt.Errorf("swu: cannot connect session in %s state", state)
+	}
+	previousCancel := s.cancel
+	s.ctx, s.cancel, s.state = nextContext, nextCancel, stateConnecting
+	s.mu.Unlock()
+	previousCancel()
+	if s.cfg != nil && s.cfg.OnStateChange != nil {
+		s.cfg.OnStateChange(stateConnecting)
+	}
+	return nil
+}
+
+func (s *Session) finishConnectFailure(err error) {
+	s.setTerminalError(err)
+	s.cancel()
+	preserveResume := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	s.cleanupResources(preserveResume)
+}
+
+func (s *Session) failSession(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.RLock()
+	wasEstablished := s.state == stateEstablished
+	s.mu.RUnlock()
+	s.setTerminalError(err)
+	if wasEstablished {
+		s.notifySessionDown()
+	}
+	s.cancel()
+	go s.cleanupResources(false)
+}
+
+func (s *Session) notifySessionDown() {
+	if s == nil || s.OnSessionDown == nil {
+		return
+	}
+	s.sessionDownOnce.Do(func() { go s.OnSessionDown() })
+}
+
+func (s *Session) watchConnectContext() {
+	<-s.ctx.Done()
+	if s.TerminalError() != nil {
+		s.cleanupResources(false)
+		return
+	}
+	s.Shutdown()
 }
 
 func (s *Session) resetForRedirect() {
 	s.clearIKEKeyMaterial()
-	s.SPIi, s.SPIr = [8]byte{}, [8]byte{}
+	s.spiI, s.spiR = [8]byte{}, [8]byte{}
 	s.Ni, s.nr, s.cookie = nil, nil, nil
+	s.natDetected = false
 	s.sendCookie = false
 	s.ikeProfileOffset = 0
+	s.syncLegacyIKEStateLocked()
 }
 
 // connectOnce runs a single IKE_SA_INIT → IKE_AUTH → CREATE_CHILD_SA attempt.
@@ -532,6 +652,7 @@ func (s *Session) connectOnce(ctx context.Context) (err error) {
 	if err := s.buildTransport(); err != nil {
 		return fmt.Errorf("build transport: %w", err)
 	}
+	s.startSessionStats()
 	s.startNetEventMonitor()
 	resumed, resumeErr := s.trySessionResumption(ctx)
 	if resumeErr != nil && (ctx.Err() != nil || s.ctx.Err() != nil) {
@@ -655,7 +776,7 @@ func (s *Session) buildTransport() error {
 		s.remoteIP, s.remotePort = transport.RemoteIP(), transport.RemotePort()
 		return nil
 	}
-	if strings.TrimSpace(s.cfg.ProxyAddr) != "" {
+	if strings.TrimSpace(configuredProxyAddress(s.cfg)) != "" {
 		return s.buildProxyTransport(host, port)
 	}
 	localIP := configuredLocalIP(s.cfg)
@@ -688,7 +809,8 @@ func (s *Session) buildProxyTransport(host, port string) error {
 		proxyCfg = *s.cfg.Proxy
 	}
 	targetAddr := net.JoinHostPort(host, port)
-	proxyCfg.ProxyAddr = s.cfg.ProxyAddr
+	proxyCfg.ProxyAddr = configuredProxyAddress(s.cfg)
+	proxyCfg.Username, proxyCfg.Password = configuredProxyCredentials(s.cfg)
 	proxyCfg.RemoteAddr = targetAddr
 	proxyCfg.DNSServer = s.cfg.DNSServer
 	proxyCfg.DeviceID = s.cfg.DeviceID
@@ -762,34 +884,44 @@ func (s *Session) Shutdown() {
 	s.state = stateShutdown
 	s.mu.Unlock()
 
-	s.cancel()
-	s.closeNetEventLifecycle()
-	s.controlMu.RLock()
-	taskManager := s.taskMgr
-	s.controlMu.RUnlock()
-	if taskManager != nil {
-		taskManager.Stop()
-	}
-	s.stopTimers()
-	if s.fragmentBuf != nil {
-		s.fragmentBuf.clear()
-	}
-	cleanupErr := s.stopDataPlane()
-	s.controlWG.Wait()
-	s.dataPlaneWG.Wait()
-	s.rekeyTimerWG.Wait()
-	s.netEventWG.Wait()
-	s.stopTransport()
-	s.clearIKEKeyMaterial()
+	s.cleanupResources(false)
 	s.clearSessionResumptionMemory()
-	if cleanupErr != nil {
-		s.mu.Lock()
-		if s.terminalErr == nil {
-			s.terminalErr = fmt.Errorf("swu: clean up data plane: %w", cleanupErr)
+}
+
+func (s *Session) cleanupResources(preserveResume bool) {
+	s.cleanupOnce.Do(func() {
+		s.cancel()
+		s.closeNetEventLifecycle()
+		s.stopTimers()
+		if s.fragmentBuf != nil {
+			s.fragmentBuf.clear()
 		}
-		s.mu.Unlock()
+		cleanupErr := errors.Join(s.stopDataPlane(), s.stopIKEControl())
+		s.sessionStatsWG.Wait()
+		s.rekeyTimerWG.Wait()
+		s.netEventWG.Wait()
+		s.stopTransport()
+		s.clearIKEKeyMaterial()
+		if !preserveResume {
+			s.clearSessionResumptionMemory()
+		}
+		cleanupErr = errors.Join(cleanupErr, s.closeWiresharkDebugger())
+		if cleanupErr != nil {
+			s.recordCleanupError(cleanupErr)
+		}
+		s.signalDone()
+	})
+}
+
+func (s *Session) recordCleanupError(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cleanupErr := fmt.Errorf("swu: clean up session: %w", err)
+	if s.terminalErr == nil {
+		s.terminalErr = cleanupErr
+		return
 	}
-	s.signalDone()
+	s.terminalErr = errors.Join(s.terminalErr, cleanupErr)
 }
 
 // WaitDone blocks until the session is shut down.
@@ -816,20 +948,6 @@ func (s *Session) Reauthenticate() error {
 		return errors.New("swu: session not established")
 	}
 	return ErrFreshRuntimeRequired
-}
-
-// Snapshot returns a summary of the session state.
-func (s *Session) Snapshot() map[string]interface{} {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return map[string]interface{}{
-		"state":      s.state,
-		"epdg":       s.cfg.EPDGAddr,
-		"remote_ip":  s.remoteIP.String(),
-		"remote_pt":  s.remotePort,
-		"inner_ip":   s.primaryInnerIP().String(),
-		"started_at": s.startedAt,
-	}
 }
 
 // InnerNetworkConfig is the address configuration assigned by the ePDG.
@@ -913,6 +1031,7 @@ func (s *Session) stopTimers() {
 	s.childRekeyTimer = nil
 	s.natKeepalive = nil
 	s.dpdTimer = nil
+	s.natKeepaliveStarted = false
 }
 
 func (s *Session) armTimer(target **time.Timer, delay time.Duration, callback func()) {
@@ -921,37 +1040,47 @@ func (s *Session) armTimer(target **time.Timer, delay time.Duration, callback fu
 	if s.ctx.Err() != nil {
 		return
 	}
+	if *target != nil {
+		(*target).Stop()
+	}
 	*target = time.AfterFunc(delay, callback)
 }
 
 // startIKEReauthTimer arms the periodic re-authentication timer.
-func (s *Session) startIKEReauthTimer() {
-	every := s.cfg.ReauthSeconds
-	if every <= 0 {
-		every = 24 * time.Hour
-	}
-	s.armTimer(&s.ikeReauthTimer, every, func() {
-		if err := s.Reauthenticate(); err != nil {
-			s.failEstablishedControl(fmt.Errorf("swu: IKE reauthentication failed: %w", err))
-			return
+func (s *Session) startIKEReauthTimer(intervals ...time.Duration) {
+	every := configuredTimerInterval(intervals, s.cfg.ReauthSeconds, s.cfg.ReauthInterval)
+	if s.authLifetime > 60 {
+		dynamic := time.Duration(s.authLifetime-30) * time.Second
+		if every <= 0 || dynamic < every {
+			every = dynamic
 		}
-		s.startIKEReauthTimer()
+	}
+	if every <= 0 {
+		return
+	}
+	delay := every
+	if jitterLimit := every / 10; jitterLimit > 0 {
+		delay += time.Duration(rand.Int63n(int64(jitterLimit)))
+	}
+	s.armTimer(&s.ikeReauthTimer, delay, func() {
+		s.triggerReauthentication()
 	})
 }
 
 // startNATKeepalive arms the NAT keepalive timer (RFC 3948 §2.4).
-func (s *Session) startNATKeepalive() {
-	every := s.cfg.NATKeepaliveEvery
-	if every <= 0 {
+func (s *Session) startNATKeepalive(intervals ...time.Duration) {
+	if !s.natDetected {
+		return
+	}
+	every := configuredTimerInterval(intervals, s.cfg.NATKeepaliveEvery, s.cfg.NATKeepaliveSeconds)
+	if len(intervals) == 0 && every <= 0 {
 		every = 20 * time.Second
 	}
-	s.armTimer(&s.natKeepalive, every, func() {
-		if err := s.sendNATKeepalive(); err != nil {
-			s.failEstablishedControl(fmt.Errorf("swu: NAT keepalive failed: %w", err))
-			return
-		}
-		s.startNATKeepalive()
-	})
+	if every <= 0 || !s.beginNATKeepalive() {
+		return
+	}
+	s.initializeOutboundActivity()
+	s.scheduleNATKeepalive(every, every)
 }
 
 // sendNATKeepalive sends a NAT keepalive packet on the ESP transport.
@@ -960,24 +1089,45 @@ func (s *Session) sendNATKeepalive() error {
 	if transport == nil {
 		return errors.New("swu: no IKE transport")
 	}
+	if err := transport.SendNATKeepalive(); err != nil {
+		return err
+	}
+	now := time.Now()
 	s.mu.Lock()
-	s.lastPingAt = time.Now()
+	s.lastPingAt = now
 	s.mu.Unlock()
-	return transport.SendNATKeepalive()
+	s.markOutboundActivityAt(now)
+	return nil
 }
 
 // startDPD arms the dead-peer-detection timer (RFC 7296 §1.4.2).
 func (s *Session) startDPD() {
-	every := s.cfg.DPDProbeEvery
+	every := configuredDuration(s.cfg.DPDProbeEvery, s.cfg.DPDIntervalSeconds)
 	if every <= 0 {
-		every = 30 * time.Second
+		return
 	}
-	s.armTimer(&s.dpdTimer, every, func() {
+	s.startDPDWithInterval(every)
+}
+
+func (s *Session) startDPDWithInterval(every time.Duration) {
+	if every <= 0 {
+		return
+	}
+	s.initializeInboundActivity()
+	s.scheduleDPD(every, every)
+}
+
+func (s *Session) scheduleDPD(every, delay time.Duration) {
+	s.armTimer(&s.dpdTimer, delay, func() {
+		if idle := s.inboundIdleDuration(); idle < every {
+			s.scheduleDPD(every, every-idle)
+			return
+		}
 		if err := s.DPDProbe(); err != nil {
 			s.failEstablishedControl(fmt.Errorf("swu: DPD failed: %w", err))
 			return
 		}
-		s.startDPD()
+		s.scheduleDPD(every, every)
 	})
 }
 
@@ -1016,29 +1166,17 @@ func (s *Session) nextMessageID() uint32 {
 	defer s.mu.Unlock()
 	id := s.nextOutboundID
 	s.nextOutboundID++
+	s.SequenceNumber.Store(s.nextOutboundID)
 	return id
 }
 
-// logSessionStats logs data-plane counters (no-op without a debugger).
-func (s *Session) logSessionStats() {
-	if s.debug == nil {
-		return
-	}
-	s.debug.LogRaw("session stats")
-}
-
-// logDataPlaneStats logs inner-packet counters.
-func (s *Session) logDataPlaneStats() {
-	endpoint := s.currentInnerPacketEndpoint()
-	if s.debug == nil || endpoint == nil {
-		return
-	}
-	s.debug.LogRaw(fmt.Sprintf("userspace inner packet %+v", endpoint.Snapshot()))
-}
-
 // StartDPD starts the dead-peer-detection timer (RFC 7296 §1.4.2).
-func (s *Session) StartDPD() {
+func (s *Session) StartDPD(intervals ...time.Duration) {
 	if s == nil {
+		return
+	}
+	if len(intervals) > 0 && intervals[0] > 0 {
+		s.startDPDWithInterval(intervals[0])
 		return
 	}
 	s.startDPD()

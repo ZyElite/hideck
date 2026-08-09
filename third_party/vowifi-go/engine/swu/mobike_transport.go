@@ -120,7 +120,7 @@ func (s *Session) createMOBIKETransport(local, remote string) (ipsec.Transport, 
 		}
 		return transport, nil
 	}
-	if strings.TrimSpace(s.cfg.ProxyAddr) == "" {
+	if strings.TrimSpace(configuredProxyAddress(s.cfg)) == "" {
 		transport, err := ipsec.NewSocketManager(s.cfg.DeviceID, local, remote, s.cfg.DNSServer)
 		if err != nil {
 			return nil, fmt.Errorf("swu: create MOBIKE socket: %w", err)
@@ -131,7 +131,8 @@ func (s *Session) createMOBIKETransport(local, remote string) (ipsec.Transport, 
 	if s.cfg.Proxy != nil {
 		proxy = *s.cfg.Proxy
 	}
-	proxy.ProxyAddr, proxy.RemoteAddr = s.cfg.ProxyAddr, remote
+	proxy.ProxyAddr, proxy.RemoteAddr = configuredProxyAddress(s.cfg), remote
+	proxy.Username, proxy.Password = configuredProxyCredentials(s.cfg)
 	proxy.DNSServer, proxy.DeviceID = s.cfg.DNSServer, s.cfg.DeviceID
 	transport, err := ipsec.NewSocks5Transport(proxy)
 	if err != nil {

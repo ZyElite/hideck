@@ -105,7 +105,7 @@ func (s *Session) buildSKFPrefix(
 		return nil, errors.New("SKF payload exceeds uint16 length")
 	}
 	s.mu.RLock()
-	initiatorSPI, responderSPI := s.SPIi, s.SPIr
+	initiatorSPI, responderSPI := s.spiI, s.spiR
 	s.mu.RUnlock()
 	header := newIKEHeader(
 		initiatorSPI, responderSPI, spec.exchangeType, spec.flags, spec.messageID,

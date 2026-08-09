@@ -48,7 +48,8 @@ func (s *Session) handleIKESAInitPacket(response *ikev2.IKEPacket) error {
 	if err != nil {
 		return fmt.Errorf("DH 计算失败: %v", err)
 	}
-	s.SPIr = ikeSPIBytes(header.SPIr)
+	s.spiR = ikeSPIBytes(header.SPIr)
+	s.SPIr = header.SPIr
 	s.setNr(parsed.nonce)
 	s.dhSharedSecret = shared
 	if err := s.GenerateIKESAKeys(parsed.nonce); err != nil {
@@ -231,11 +232,13 @@ func (s *Session) applyNATTraversal(sourceHash, destinationHash []byte) {
 	if s.socket == nil || len(sourceHash) == 0 || len(destinationHash) == 0 {
 		return
 	}
-	expectedSource := natDetectionHash(s.SPIi, s.SPIr, s.socket.LocalIP(), s.socket.LocalPort())
+	expectedSource := natDetectionHash(s.spiI, s.spiR, s.socket.LocalIP(), s.socket.LocalPort())
 	expectedDestination := natDetectionHash(
-		s.SPIi, s.SPIr, s.socket.RemoteIP(), uint16(s.socket.RemotePort()),
+		s.spiI, s.spiR, s.socket.RemoteIP(), uint16(s.socket.RemotePort()),
 	)
-	if !bytes.Equal(sourceHash, expectedSource) || !bytes.Equal(destinationHash, expectedDestination) {
+	s.natDetected = !bytes.Equal(sourceHash, expectedSource) ||
+		!bytes.Equal(destinationHash, expectedDestination)
+	if s.natDetected {
 		s.socket.SetRemotePort(4500)
 		s.remotePort = 4500
 	}

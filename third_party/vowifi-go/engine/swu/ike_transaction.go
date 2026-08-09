@@ -104,7 +104,7 @@ func (s *Session) sendEncryptedWithRetryContext(
 	}
 	packet := &ikev2.IKEPacket{
 		Header: newIKEHeader(
-			s.SPIi, s.SPIr, exchangeType, s.localIKEFlags(false), s.nextMessageID(),
+			s.spiI, s.spiR, exchangeType, s.localIKEFlags(false), s.nextMessageID(),
 		),
 		Payloads: payloads,
 	}
@@ -186,11 +186,11 @@ func (s *Session) sendEncryptedResponseWithMsgID(
 		if len(packets) == 0 {
 			return errors.New("swu: response fragmentation produced no SKF packets")
 		}
-		return sendIKEPacketSet(transport, packets)
+		return s.sendIKEPacketSet(transport, packets)
 	}
 	packet := &ikev2.IKEPacket{
 		Header: newIKEHeader(
-			s.SPIi, s.SPIr, exchangeType, s.localIKEFlags(true), msgID,
+			s.spiI, s.spiR, exchangeType, s.localIKEFlags(true), msgID,
 		),
 		Payloads: payloads,
 	}
@@ -201,5 +201,6 @@ func (s *Session) sendEncryptedResponseWithMsgID(
 	if err := transport.SendIKE(raw); err != nil {
 		return fmt.Errorf("swu: send IKE response: %w", err)
 	}
+	s.markOutboundActivity()
 	return nil
 }

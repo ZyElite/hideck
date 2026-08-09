@@ -223,6 +223,7 @@ func (s *Session) runIKEAuthLoop(ctx context.Context) error {
 			case "eap":
 				// Continue the EAP exchange.
 			case "final":
+				s.reportProgress(progressEstablishingIPSec)
 				s.stage = stageFinal
 			case "done":
 				return nil
@@ -286,7 +287,7 @@ func (s *Session) sendIKEAuthRequest(payloads []ikev2.Payload) error {
 		return s.sendIKERequestPackets(packets)
 	}
 	pkt := &ikev2.IKEPacket{
-		Header:   newIKEHeader(s.SPIi, s.SPIr, ikev2.IKE_AUTH, ikev2.FlagInitiator, s.nextMessageID()),
+		Header:   newIKEHeader(s.spiI, s.spiR, ikev2.IKE_AUTH, ikev2.FlagInitiator, s.nextMessageID()),
 		Payloads: payloads,
 	}
 	raw, err := s.encryptAndWrap(pkt)

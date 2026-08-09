@@ -75,8 +75,8 @@ func (s *Session) activateChildSARuntime(runtime *childSARuntime) error {
 	if runtime == nil {
 		return errors.New("swu: nil CHILD_SA runtime")
 	}
-	if s.kernelDataPlane != nil {
-		if err := s.kernelDataPlane.Rekey(s, runtime); err != nil {
+	if plane := s.currentKernelDataPlane(); plane != nil {
+		if err := plane.Rekey(s, runtime); err != nil {
 			wipeChildSARuntime(runtime)
 			return fmt.Errorf("swu: rekey kernel CHILD_SA: %w", err)
 		}
@@ -87,7 +87,6 @@ func (s *Session) activateChildSARuntime(runtime *childSARuntime) error {
 
 func (s *Session) installChildSARuntime(runtime *childSARuntime) {
 	s.childSAMu.Lock()
-	defer s.childSAMu.Unlock()
 	oldOutbound, oldDH := s.espOutboundSA, s.childDH
 	oldDHSecret := s.childDHSecret
 	if s.espInboundSAs == nil {
@@ -103,11 +102,14 @@ func (s *Session) installChildSARuntime(runtime *childSARuntime) {
 	enginecrypto.Wipe(s.espIntegKey)
 	s.espKey = append([]byte(nil), runtime.outboundKeys.enc...)
 	s.espIntegKey = append([]byte(nil), runtime.outboundKeys.integ...)
+	s.syncLegacyChildStateLocked()
 	wipeESPAssociation(oldOutbound)
 	enginecrypto.Wipe(oldDHSecret)
 	if oldDH != nil && oldDH != runtime.dh {
 		enginecrypto.Wipe(oldDH.SharedKey)
 	}
+	s.childSAMu.Unlock()
+	s.logChildKeys(childKeysFromRuntime(runtime))
 }
 
 func (s *Session) deleteOldChildSA(remoteSPI, localSPI uint32) error {
@@ -172,7 +174,7 @@ func (s *Session) retireInboundChildSA(localSPI uint32) {
 }
 
 func (s *Session) retireKernelInboundChildSA(localSPI uint32) {
-	retirer, ok := s.kernelDataPlane.(kernelInboundSARetirer)
+	retirer, ok := s.currentKernelDataPlane().(kernelInboundSARetirer)
 	if !ok {
 		return
 	}

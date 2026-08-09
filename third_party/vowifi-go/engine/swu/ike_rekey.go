@@ -52,7 +52,7 @@ func (s *Session) performIKESARekey(ctx context.Context) error {
 		&ikev2.EncryptedPayloadKE{DHGroup: ikev2.AlgorithmType(s.dhGroup), KEData: dh.PublicKeyBytes()},
 	}
 	s.mu.RLock()
-	oldSPIi, oldSPIr := s.SPIi, s.SPIr
+	oldSPIi, oldSPIr := s.spiI, s.spiR
 	oldSKd := append([]byte(nil), s.ikeKeys.SK_d...)
 	s.mu.RUnlock()
 	defer enginecrypto.Wipe(oldSKd)
@@ -94,7 +94,7 @@ func (s *Session) completeInitiatedIKESARekey(rekey initiatedIKERekey) error {
 		logger.Warn("IKE SA rekey switched but old SA delete failed", zap.Error(deleteErr))
 	}
 	s.mu.Lock()
-	if s.SPIi != rekey.oldSPIi || s.SPIr != rekey.oldSPIr {
+	if s.spiI != rekey.oldSPIi || s.spiR != rekey.oldSPIr {
 		s.mu.Unlock()
 		wipeIKEKeys(newKeys)
 		return errors.New("swu: active IKE SA changed during rekey")
@@ -111,7 +111,7 @@ func (s *Session) completeInitiatedIKESARekey(rekey initiatedIKERekey) error {
 			keys: oldKeys, localInitiator: rekey.oldInitiator,
 		}
 	}
-	s.SPIi, s.SPIr = rekey.initiatorSPI, selection.responderSPI
+	s.spiI, s.spiR = rekey.initiatorSPI, selection.responderSPI
 	s.localIKEInitiator = true
 	s.ikeKeys = newKeys
 	s.dh = rekey.dh
@@ -119,7 +119,9 @@ func (s *Session) completeInitiatedIKESARekey(rekey initiatedIKERekey) error {
 	s.Ni = append([]byte(nil), rekey.nonce...)
 	s.nr = append([]byte(nil), selection.nonce...)
 	s.nextOutboundID = 0
+	s.syncLegacyIKEStateLocked()
 	s.mu.Unlock()
+	s.logIKEKeys(newKeys)
 	s.fragmentBuf.clear()
 	if deleteErr == nil {
 		wipeIKEKeys(oldKeys)
@@ -190,8 +192,8 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 		return err
 	}
 	s.mu.Lock()
-	if binary.BigEndian.Uint64(s.SPIi[:]) != requestHeader.SPIi ||
-		binary.BigEndian.Uint64(s.SPIr[:]) != requestHeader.SPIr {
+	if binary.BigEndian.Uint64(s.spiI[:]) != requestHeader.SPIi ||
+		binary.BigEndian.Uint64(s.spiR[:]) != requestHeader.SPIr {
 		s.mu.Unlock()
 		wipeIKEKeys(newKeys)
 		enginecrypto.Wipe(dh.SharedKey)
@@ -200,13 +202,13 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 	oldDH := s.dh
 	oldDHSecret := s.dhSharedSecret
 	oldContext := &ikeSAContext{
-		spiI: s.SPIi, spiR: s.SPIr, keys: oldKeys,
+		spiI: s.spiI, spiR: s.spiR, keys: oldKeys,
 		localInitiator: s.localIKEInitiator,
 	}
 	displaced := s.retiredIKESA
 	s.retiredIKEDelete = nil
 	s.retiredIKESA = oldContext
-	s.SPIi, s.SPIr = selection.responderSPI, responderSPI
+	s.spiI, s.spiR = selection.responderSPI, responderSPI
 	s.localIKEInitiator = false
 	s.ikeKeys = newKeys
 	s.dh = dh
@@ -214,7 +216,9 @@ func (s *Session) handlePeerIKESARekey(packet *ikev2.IKEPacket, payloads []ikev2
 	s.Ni = append([]byte(nil), selection.nonce...)
 	s.nr = append([]byte(nil), responderNonce...)
 	s.nextOutboundID = 0
+	s.syncLegacyIKEStateLocked()
 	s.mu.Unlock()
+	s.logIKEKeys(newKeys)
 	s.fragmentBuf.clear()
 	if displaced != nil && displaced.keys != oldKeys {
 		wipeIKEKeys(displaced.keys)
@@ -255,7 +259,7 @@ func (s *Session) newIKESARekeyMaterial() (*enginecrypto.DiffieHellman, [8]byte,
 func (s *Session) deleteOldIKESA(ctx context.Context) error {
 	request := &ikev2.IKEPacket{
 		Header: newIKEHeader(
-			s.SPIi, s.SPIr, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
+			s.spiI, s.spiR, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
 		),
 		Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadDelete{
 			ProtocolID: ikev2.ProtoIKE,

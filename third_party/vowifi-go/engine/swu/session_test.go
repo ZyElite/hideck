@@ -329,13 +329,13 @@ func TestShutdownWaitsForDataPlaneBeforeClearingTransport(t *testing.T) {
 func TestSessionManager(t *testing.T) {
 	m := NewSessionManager()
 	s := NewSession(&Config{IMSI: "310260123456789"})
-	m.Start("dev-1", s)
-	if m.Get("dev-1") != s {
-		t.Error("Get did not return the session")
+	m.Register("dev-1", s)
+	if m.Lookup("dev-1") != s {
+		t.Error("Lookup did not return the session")
 	}
-	m.Stop("dev-1")
-	if m.Get("dev-1") != nil {
-		t.Error("Get after Stop should be nil")
+	m.Unregister("dev-1")
+	if m.Lookup("dev-1") != nil {
+		t.Error("Lookup after Unregister should be nil")
 	}
 }
 

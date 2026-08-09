@@ -190,7 +190,7 @@ func childDHGroup(dh *enginecrypto.DiffieHellman) uint16 {
 func (s *Session) buildChildSARekeyRequest(localSPI uint32, nonce []byte, tsi, tsr *ikev2.EncryptedPayloadTS) *ikev2.IKEPacket {
 	return &ikev2.IKEPacket{
 		Header: newIKEHeader(
-			s.SPIi, s.SPIr, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false), s.nextMessageID(),
+			s.spiI, s.spiR, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false), s.nextMessageID(),
 		),
 		Payloads: s.buildChildSARekeyPayloads(childSARekeyRequest{
 			localSPI: localSPI, nonce: nonce, tsi: tsi, tsr: tsr,

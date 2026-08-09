@@ -45,6 +45,7 @@ func (s *Session) clearIKEKeyMaterial() {
 	prfKey := s.prfKey
 	s.ikeKeys, s.retiredIKESA, s.retiredIKEDelete = nil, nil, nil
 	s.dh, s.dhSharedSecret, s.prfKey = nil, nil, nil
+	s.syncLegacyIKEStateLocked()
 	s.mu.Unlock()
 	wipeIKEKeys(active)
 	if retired != nil && retired.keys != active {
@@ -91,15 +92,21 @@ func (s *Session) GenerateIKESAKeys(responderNonce []byte) error {
 
 	// prf+ seed = full Ni | Nr | SPIi | SPIr.
 	seed := append(append([]byte{}, s.Ni...), responderNonce...)
-	seed = append(seed, s.SPIi[:]...)
-	seed = append(seed, s.SPIr[:]...)
+	seed = append(seed, s.spiI[:]...)
+	seed = append(seed, s.spiR[:]...)
 	defer crypto.Wipe(seed)
 
 	keys, err := s.deriveIKEKeys(skeyseed, seed, prfOut)
 	if err != nil {
 		return err
 	}
+	if err := s.ensureWiresharkDebugger(); err != nil {
+		wipeIKEKeys(keys)
+		return err
+	}
 	s.ikeKeys = keys
+	s.syncLegacyIKEStateLocked()
+	s.logIKEKeys(keys)
 	return nil
 }
 
@@ -131,12 +138,18 @@ func (s *Session) RegenerateIKESARekeyKeys(initiatorNonce, responderNonce []byte
 
 	keys, err := s.deriveIKESARekeyKeys(
 		s.ikeKeys.SK_d, s.dhSharedSecret,
-		initiatorNonce, responderNonce, s.SPIi, s.SPIr,
+		initiatorNonce, responderNonce, s.spiI, s.spiR,
 	)
 	if err != nil {
 		return err
 	}
+	if err := s.ensureWiresharkDebugger(); err != nil {
+		wipeIKEKeys(keys)
+		return err
+	}
 	s.ikeKeys = keys
+	s.syncLegacyIKEStateLocked()
+	s.logIKEKeys(keys)
 	return nil
 }
 

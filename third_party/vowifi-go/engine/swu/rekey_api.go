@@ -34,7 +34,7 @@ func (s *Session) RekeyChildSA() error {
 
 func (s *Session) HandleRekeyIKESARequest(msgID uint32, payloads []ikev2.Payload) error {
 	packet := &ikev2.IKEPacket{Header: newIKEHeader(
-		s.SPIi, s.SPIr, ikev2.CREATE_CHILD_SA,
+		s.spiI, s.spiR, ikev2.CREATE_CHILD_SA,
 		s.localIKEFlags(false)^ikeInitiatorFlag, msgID,
 	)}
 	return s.handlePeerIKESARekey(packet, payloads)
@@ -162,7 +162,7 @@ func (s *Session) handleIncomingCreateChildSAParsed(msgID uint32, payloads []ike
 		return err
 	}
 	packet := &ikev2.IKEPacket{Header: newIKEHeader(
-		s.SPIi, s.SPIr, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false)^ikeInitiatorFlag, msgID,
+		s.spiI, s.spiR, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false)^ikeInitiatorFlag, msgID,
 	)}
 	if protocolID == ikev2.ProtoIKE {
 		if s.hasRetiredIKESA() {

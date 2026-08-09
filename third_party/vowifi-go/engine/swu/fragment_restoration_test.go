@@ -162,8 +162,8 @@ func TestFragmentBufferRejectsInvalidAndConflictingFragments(t *testing.T) {
 
 func newFragmentTestSession(aead bool) *Session {
 	session := NewSession(&Config{})
-	session.SPIi = [8]byte{7}
-	session.SPIr = [8]byte{9}
+	session.spiI = [8]byte{7}
+	session.spiR = [8]byte{9}
 	session.ikeKeys = testIKEKeys()
 	session.mu.Lock()
 	session.fragmentationSupported = true

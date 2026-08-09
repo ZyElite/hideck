@@ -116,7 +116,7 @@ func (s *Session) buildIKESAInitPacketObject() (*ikev2.IKEPacket, error) {
 	payloads = append(payloads, s.ikeInitNetworkNotifies()...)
 	payloads = append(payloads, &ikev2.EncryptedPayloadNotify{NotifyType: notifyFragmentation})
 	return &ikev2.IKEPacket{
-		Header:   newIKEHeader(s.SPIi, [8]byte{}, ikev2.IKE_SA_INIT, ikev2.FlagInitiator, 0),
+		Header:   newIKEHeader(s.spiI, [8]byte{}, ikev2.IKE_SA_INIT, ikev2.FlagInitiator, 0),
 		Payloads: payloads,
 	}, nil
 }
@@ -132,7 +132,7 @@ func (s *Session) prepareIKEInitMaterial(proposals []*ikev2.Proposal) error {
 	}
 	ensureProposalDHGroup(proposals, ikev2.AlgorithmType(s.dhGroup))
 	prioritizeDHGroup(proposals, ikev2.AlgorithmType(s.dhGroup))
-	if s.SPIi != ([8]byte{}) && len(s.Ni) > 0 && len(s.dh.PublicKeyBytes()) > 0 {
+	if s.spiI != ([8]byte{}) && len(s.Ni) > 0 && len(s.dh.PublicKeyBytes()) > 0 {
 		return nil
 	}
 	if s.sendCookie {
@@ -162,9 +162,10 @@ func (s *Session) generateIKEInitMaterial() error {
 	if err := s.dh.GenerateKey(); err != nil {
 		return fmt.Errorf("generate DH key: %w", err)
 	}
-	if _, err := rand.Read(s.SPIi[:]); err != nil {
+	if _, err := rand.Read(s.spiI[:]); err != nil {
 		return fmt.Errorf("generate SPIi: %w", err)
 	}
+	s.SPIi = ikeSPIUint64(s.spiI)
 	nonceLength := s.nonceLen
 	if nonceLength <= 0 {
 		nonceLength = 32
@@ -181,8 +182,8 @@ func (s *Session) ikeInitNetworkNotifies() []ikev2.Payload {
 		return nil
 	}
 	return []ikev2.Payload{
-		natDetectionNotify(notifyNATSource, s.SPIi, [8]byte{}, s.socket.LocalIP(), s.socket.LocalPort()),
-		natDetectionNotify(notifyNATDestination, s.SPIi, [8]byte{}, s.socket.RemoteIP(), uint16(s.socket.RemotePort())),
+		natDetectionNotify(notifyNATSource, s.spiI, [8]byte{}, s.socket.LocalIP(), s.socket.LocalPort()),
+		natDetectionNotify(notifyNATDestination, s.spiI, [8]byte{}, s.socket.RemoteIP(), uint16(s.socket.RemotePort())),
 	}
 }
 
@@ -232,10 +233,12 @@ func (s *Session) advanceIKEProfileOffset() bool {
 }
 
 func (s *Session) resetIKEInitMaterial() {
-	s.SPIr = [8]byte{}
+	s.spiR = [8]byte{}
+	s.SPIr = 0
 	s.nr = nil
 	s.ikeKeys = nil
 	s.dhSharedSecret = nil
+	s.syncLegacyIKEStateLocked()
 }
 
 func (s *Session) selectRequestedDHGroup(groupError *ErrInvalidKEGroup) error {
@@ -248,9 +251,11 @@ func (s *Session) selectRequestedDHGroup(groupError *ErrInvalidKEGroup) error {
 		return fmt.Errorf("服务器期望的 DH Group %d 不支持: %v", group, err)
 	}
 	s.dh, s.dhGroup = dh, group
-	s.SPIi, s.SPIr = [8]byte{}, [8]byte{}
+	s.spiI, s.spiR = [8]byte{}, [8]byte{}
+	s.SPIi, s.SPIr = 0, 0
 	s.Ni, s.nr, s.ikeKeys, s.dhSharedSecret = nil, nil, nil, nil
 	s.cookie, s.sendCookie = nil, false
+	s.syncLegacyIKEStateLocked()
 	return nil
 }
 

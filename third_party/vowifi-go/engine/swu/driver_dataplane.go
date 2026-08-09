@@ -22,6 +22,34 @@ type kernelDataPlane interface {
 	Rekey(*Session, *childSARuntime) error
 }
 
+func (s *Session) currentTUN() TUN {
+	s.dataPlaneHandleMu.RLock()
+	defer s.dataPlaneHandleMu.RUnlock()
+	return s.tun
+}
+
+func (s *Session) swapTUN(tun TUN) TUN {
+	s.dataPlaneHandleMu.Lock()
+	defer s.dataPlaneHandleMu.Unlock()
+	previous := s.tun
+	s.tun = tun
+	return previous
+}
+
+func (s *Session) currentKernelDataPlane() kernelDataPlane {
+	s.dataPlaneHandleMu.RLock()
+	defer s.dataPlaneHandleMu.RUnlock()
+	return s.kernelDataPlane
+}
+
+func (s *Session) swapKernelDataPlane(plane kernelDataPlane) kernelDataPlane {
+	s.dataPlaneHandleMu.Lock()
+	defer s.dataPlaneHandleMu.Unlock()
+	previous := s.kernelDataPlane
+	s.kernelDataPlane = plane
+	return previous
+}
+
 func normalizeDataplaneMode(mode string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(mode))
 	if normalized == "" {
@@ -40,16 +68,15 @@ func (s *Session) setupTUNDataPlane() error {
 	if err != nil {
 		return err
 	}
-	s.tun = tun
 	if network, ok := s.net.(*driver.NetTools); ok {
 		s.networkTxn = network.Begin()
 	} else {
 		s.legacyNetwork = newLegacyNetTxn(s.net)
 	}
 	if err := s.applyNetworkConfigOnTUN(tun.DeviceName()); err != nil {
-		s.tun = nil
 		return errors.Join(err, s.rollbackNetworkConfig(), tun.Close())
 	}
+	s.swapTUN(tun)
 	return nil
 }
 
@@ -73,11 +100,11 @@ func (s *Session) openTUNDevice(name string) (TUN, error) {
 }
 
 func (s *Session) activeDriverInterface() string {
-	if s.tun != nil {
-		return s.tun.DeviceName()
+	if tun := s.currentTUN(); tun != nil {
+		return tun.DeviceName()
 	}
-	if s.kernelDataPlane != nil {
-		return s.kernelDataPlane.DeviceName()
+	if plane := s.currentKernelDataPlane(); plane != nil {
+		return plane.DeviceName()
 	}
 	return ""
 }
@@ -225,11 +252,15 @@ func (s *Session) innerSourceCIDRs() []string {
 	return sources
 }
 
-func (s *Session) startTUNDataPlaneLoop() {
+func (s *Session) startTUNDataPlaneLoop(tun TUN) {
 	transport := s.transport()
-	s.dataPlaneWG.Add(2)
-	go s.loopESPToTUN(transport, s.tun)
-	go s.loopTUNToESP(transport, s.tun)
+	s.dataPlaneWG.Add(3)
+	go s.loopESPToTUN(transport, tun)
+	go s.loopTUNToESP(transport, tun)
+	go func() {
+		defer s.dataPlaneWG.Done()
+		s.logDataPlaneStats(s.ctx, DataplaneModeTUN, &s.tunStats, dataPlaneStatsInterval)
+	}()
 }
 
 func (s *Session) loopESPToTUN(transport ipsec.Transport, tun TUN) {
@@ -247,19 +278,27 @@ func (s *Session) loopESPToTUN(transport ipsec.Transport, tun TUN) {
 				transport = replacement
 				continue
 			}
-			inner, _, err := s.decapsulateOuterESP(raw)
+			s.markInboundActivity()
+			s.tunStats.espIn.Add(1)
+			inner, spi, err := s.decapsulateOuterESP(raw)
+			s.tunStats.lastInSPI.Store(spi)
 			if err != nil {
+				s.tunStats.recordDecapsulationError(err)
 				continue
 			}
+			s.tunStats.lastPlainLen.Store(uint64(len(inner)))
 			written, err := tun.Write(inner)
 			if err != nil {
+				s.tunStats.tunWriteError.Add(1)
 				s.failDataPlane(fmt.Errorf("swu: write TUN packet: %w", err))
 				return
 			}
 			if written != len(inner) {
+				s.tunStats.tunWriteError.Add(1)
 				s.failDataPlane(fmt.Errorf("swu: short TUN write: wrote %d of %d bytes", written, len(inner)))
 				return
 			}
+			s.tunStats.tunWrite.Add(1)
 		}
 	}
 }
@@ -278,26 +317,32 @@ func (s *Session) loopTUNToESP(transport ipsec.Transport, tun TUN) {
 		if length <= 0 {
 			continue
 		}
+		s.tunStats.tunRead.Add(1)
+		s.tunStats.lastTunReadLen.Store(uint64(length))
 		lease, err := s.encapsulateInnerPacketLease(buffer[:length])
 		if err != nil {
+			s.tunStats.recordEncapsulationError(err)
 			continue
 		}
 		active := s.transport()
 		if active == nil {
 			lease.Release()
+			s.tunStats.espSendError.Add(1)
 			s.failDataPlane(errors.New("swu: active ESP transport disappeared"))
 			return
 		}
 		err = active.SendESP(lease.data)
 		lease.Release()
 		if err != nil {
+			s.tunStats.espSendError.Add(1)
 			s.failDataPlane(fmt.Errorf("swu: send ESP packet: %w", err))
 			return
 		}
+		s.markOutboundActivity()
+		s.tunStats.espSend.Add(1)
 	}
 }
 
 func (s *Session) failDataPlane(err error) {
-	s.setTerminalError(err)
-	s.cancel()
+	s.failSession(err)
 }

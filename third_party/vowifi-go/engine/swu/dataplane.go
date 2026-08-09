@@ -31,30 +31,67 @@ func (s *Session) setupDataPlane() error {
 	if err != nil {
 		return err
 	}
+	outbound, inbound, err := s.buildInitialESPAssociations(childKeys)
+	if err != nil {
+		wipeChildSAKeys(childKeys)
+		return err
+	}
+	installed := false
+	defer func() {
+		if installed {
+			return
+		}
+		wipeESPAssociation(outbound)
+		wipeESPAssociation(inbound)
+		wipeChildSAKeys(childKeys)
+	}()
 	if mode == DataplaneModeXFRMI {
-		return s.setupKernelXFRMDataPlane(childKeys)
+		if err := s.setupKernelXFRMDataPlane(childKeys); err != nil {
+			return err
+		}
+		s.installInitialESPAssociations(outbound, inbound, childKeys)
+		installed = true
+		s.logChildKeys(childKeys)
+		return nil
 	}
+	s.installInitialESPAssociations(outbound, inbound, childKeys)
+	installed = true
+	if mode == DataplaneModeTUN {
+		if err := s.setupTUNDataPlane(); err != nil {
+			return err
+		}
+	}
+	s.logChildKeys(childKeys)
+	return nil
+}
 
-	outbound, err := s.newESPAssociation(s.espRemoteSPI, childKeys.initiator)
+func (s *Session) buildInitialESPAssociations(
+	keys *childSAKeys,
+) (outbound, inbound *ipsec.SecurityAssociation, err error) {
+	outbound, err = s.newESPAssociation(s.espRemoteSPI, keys.initiator)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	inbound, err := s.newESPAssociation(s.espLocalSPI, childKeys.responder)
+	inbound, err = s.newESPAssociation(s.espLocalSPI, keys.responder)
 	if err != nil {
-		return err
+		wipeESPAssociation(outbound)
+		return nil, nil, err
 	}
+	return outbound, inbound, nil
+}
+
+func (s *Session) installInitialESPAssociations(
+	outbound, inbound *ipsec.SecurityAssociation,
+	keys *childSAKeys,
+) {
 	s.childSAMu.Lock()
 	s.espOutboundSA = outbound
 	s.espInboundSA = inbound
 	s.espInboundSAs[s.espLocalSPI] = inbound
-	s.espKey = append([]byte{}, childKeys.initiator.enc...)
-	s.espIntegKey = append([]byte{}, childKeys.initiator.integ...)
+	s.espKey = append([]byte{}, keys.initiator.enc...)
+	s.espIntegKey = append([]byte{}, keys.initiator.integ...)
+	s.syncLegacyChildStateLocked()
 	s.childSAMu.Unlock()
-
-	if mode == DataplaneModeTUN {
-		return s.setupTUNDataPlane()
-	}
-	return nil
 }
 
 func (s *Session) newESPAssociation(spi uint32, keys childDirectionKeys) (*ipsec.SecurityAssociation, error) {
@@ -145,15 +182,15 @@ func (s *Session) startEstablishedDataPlane() error {
 	if s.transport() == nil {
 		return errors.New("swu: data plane not ready")
 	}
-	if s.kernelDataPlane != nil {
+	if s.currentKernelDataPlane() != nil {
 		s.markDataPlaneStarted()
 		return nil
 	}
-	if s.tun != nil {
+	if tun := s.currentTUN(); tun != nil {
 		if !s.markDataPlaneStarted() {
 			return nil
 		}
-		s.startTUNDataPlaneLoop()
+		s.startTUNDataPlaneLoop(tun)
 		return nil
 	}
 	return s.startUserspaceDataPlane()
@@ -242,13 +279,11 @@ func (s *Session) stopDataPlane() error {
 		cleanupErr = errors.Join(cleanupErr, endpoint.Close())
 	}
 	cleanupErr = errors.Join(cleanupErr, s.rollbackNetworkConfig())
-	if s.tun != nil {
-		cleanupErr = errors.Join(cleanupErr, s.tun.Close())
-		s.tun = nil
+	if tun := s.swapTUN(nil); tun != nil {
+		cleanupErr = errors.Join(cleanupErr, tun.Close())
 	}
-	if s.kernelDataPlane != nil {
-		cleanupErr = errors.Join(cleanupErr, s.kernelDataPlane.Close())
-		s.kernelDataPlane = nil
+	if plane := s.swapKernelDataPlane(nil); plane != nil {
+		cleanupErr = errors.Join(cleanupErr, plane.Close())
 	}
 	s.dataPlaneWG.Wait()
 	s.childSAMu.Lock()
@@ -264,6 +299,7 @@ func (s *Session) stopDataPlane() error {
 	}
 	s.espOutboundSA = nil
 	s.espInboundSA = nil
+	s.syncLegacyChildStateLocked()
 	s.espKey, s.espIntegKey = nil, nil
 	s.childDH, s.childDHSecret = nil, nil
 	clear(s.espInboundSAs)

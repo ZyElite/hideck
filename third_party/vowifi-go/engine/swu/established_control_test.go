@@ -86,7 +86,7 @@ func TestPeerChildSARekeyIsValidatedAndAnswered(t *testing.T) {
 	currentTSi, currentTSr := session.currentChildSelectors()
 	const peerSPI = uint32(0xb1c2d3e4)
 	request := &ikev2.IKEPacket{
-		InitiatorSPI: session.SPIi, ResponderSPI: session.SPIr,
+		InitiatorSPI: session.spiI, ResponderSPI: session.spiR,
 		Version: 0x20, ExchangeType: ikev2.ExchangeCreateChildSA,
 		MessageID: 11,
 		Payloads: []ikev2.Payload{
@@ -125,7 +125,7 @@ func TestPeerChildSARekeyIsValidatedAndAnswered(t *testing.T) {
 	}
 	assertRetiredChildSA(t, session, oldRemoteSPI, oldLocalSPI, true)
 	request = &ikev2.IKEPacket{
-		InitiatorSPI: session.SPIi, ResponderSPI: session.SPIr,
+		InitiatorSPI: session.spiI, ResponderSPI: session.spiR,
 		Version: 0x20, ExchangeType: ikev2.ExchangeInformational, MessageID: 12,
 		Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadDelete{
 			ProtocolID: ikev2.ProtoESP, SPISize: 4, NumSPIs: 1, SPIs: spiBytes(oldLocalSPI),
@@ -194,8 +194,8 @@ func newEstablishedControlSessionWithConfig(t *testing.T, config *Config) (*Sess
 	session := NewSession(config)
 	transport := newTestIKETransport()
 	session.socket = transport
-	copy(session.SPIi[:], []byte("init-spi"))
-	copy(session.SPIr[:], []byte("resp-spi"))
+	copy(session.spiI[:], []byte("init-spi"))
+	copy(session.spiR[:], []byte("resp-spi"))
 	session.ikeKeys = testIKEKeys()
 	session.ikeKeys.SK_d = bytes.Repeat([]byte{0x31}, enginecrypto.PRFOutputSize(session.prf))
 	session.innerIP = []byte{10, 0, 0, 2}
@@ -380,14 +380,14 @@ func TestDPDWaitsForMatchingEmptyResponse(t *testing.T) {
 func TestEstablishedIKESARekeySwitchesKeysAndResetsMessageID(t *testing.T) {
 	session, transport := newEstablishedControlSession(t)
 	defer stopControlTestSession(session)
-	oldSPI := session.SPIi
+	oldSPI := session.spiI
 	oldKeys := session.ikeKeys
 	oldSKd := append([]byte(nil), session.ikeKeys.SK_d...)
 	go respondToIKESARekey(t, session, transport)
 	if err := session.RekeyIKESA(); err != nil {
 		t.Fatalf("RekeyIKESA: %v", err)
 	}
-	if session.SPIi == oldSPI || bytes.Equal(session.ikeKeys.SK_d, oldSKd) {
+	if session.spiI == oldSPI || bytes.Equal(session.ikeKeys.SK_d, oldSKd) {
 		t.Fatal("IKE SA rekey did not replace SPI and keys")
 	}
 	if session.nextOutboundID != 0 || !session.localIKEInitiator {
@@ -409,7 +409,7 @@ func TestInitiatedIKESARekeyRetainsOldKeysWhenDeleteTimesOut(t *testing.T) {
 		MaxRetries: 0, InitialDelay: 50 * time.Millisecond, Backoff: 1, PollInterval: time.Millisecond,
 	}})
 	defer stopControlTestSession(session)
-	oldSPIi, oldSPIr := session.SPIi, session.SPIr
+	oldSPIi, oldSPIr := session.spiI, session.spiR
 	oldKeys := session.ikeKeys
 	peerDone := make(chan struct{})
 	go func() {
@@ -447,7 +447,7 @@ func TestPeerIKESARekeyChangesOriginalInitiatorRole(t *testing.T) {
 	session.controlMu.Lock()
 	session.controlRunning = false
 	session.controlMu.Unlock()
-	oldSPIi, oldSPIr := session.SPIi, session.SPIr
+	oldSPIi, oldSPIr := session.spiI, session.spiR
 	oldKeys := session.ikeKeys
 	peerDH, err := enginecrypto.NewDiffieHellman(session.dhGroup)
 	if err != nil || peerDH.GenerateKey() != nil {
@@ -458,7 +458,7 @@ func TestPeerIKESARekeyChangesOriginalInitiatorRole(t *testing.T) {
 	proposals := buildIKEProposalsForSession(session)
 	proposals[0].SPI, proposals[0].SPISize = append([]byte(nil), peerSPI[:]...), 8
 	request := &ikev2.IKEPacket{
-		InitiatorSPI: session.SPIi, ResponderSPI: session.SPIr,
+		InitiatorSPI: session.spiI, ResponderSPI: session.spiR,
 		Version: 0x20, ExchangeType: ikev2.ExchangeCreateChildSA, MessageID: 15,
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadSA{Proposals: proposals},
@@ -474,8 +474,8 @@ func TestPeerIKESARekeyChangesOriginalInitiatorRole(t *testing.T) {
 	if err := session.handleIncomingCreateChildSAPacket(decoded); err != nil {
 		t.Fatalf("handle peer IKE rekey: %v", err)
 	}
-	if session.localIKEInitiator || session.SPIi != peerSPI || session.nextOutboundID != 0 {
-		t.Fatalf("peer-rekeyed role=%t SPIi=%x messageID=%d", session.localIKEInitiator, session.SPIi, session.nextOutboundID)
+	if session.localIKEInitiator || session.spiI != peerSPI || session.nextOutboundID != 0 {
+		t.Fatalf("peer-rekeyed role=%t SPIi=%x messageID=%d", session.localIKEInitiator, session.spiI, session.nextOutboundID)
 	}
 	select {
 	case response := <-transport.sentIKE:

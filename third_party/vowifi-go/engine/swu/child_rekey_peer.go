@@ -159,6 +159,7 @@ func (s *Session) handlePeerInformational(packet *ikev2.IKEPacket) error {
 	if err != nil {
 		return err
 	}
+	redirectAddress := s.runtimeRedirectAddress(payloads)
 	responsePayloads, err := s.peerMOBIKEResponse(payloads, retiredIKE)
 	if err != nil {
 		return err
@@ -190,6 +191,7 @@ func (s *Session) handlePeerInformational(packet *ikev2.IKEPacket) error {
 	if err != nil {
 		return err
 	}
+	s.handleRuntimeRedirect(redirectAddress)
 	if ikeDelete {
 		if retiredIKE {
 			return s.completeRetiredIKESADelete(context, packet, retiredResponse)

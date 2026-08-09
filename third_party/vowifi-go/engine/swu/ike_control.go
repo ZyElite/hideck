@@ -60,9 +60,17 @@ func (s *Session) newSessionTaskManager(transport ipsec.Transport) *TaskManager 
 	}
 	return newTaskManager(
 		s.ctx, s.cfg.DeviceID, config, defaultIKEWindowSize,
-		func(packets [][]byte) error { return sendIKEPacketSet(transport, packets) },
+		func(packets [][]byte) error { return s.sendIKEPacketSet(transport, packets) },
 		nil, interval,
 	)
+}
+
+func (s *Session) sendIKEPacketSet(transport ipsec.Transport, packets [][]byte) error {
+	if err := sendIKEPacketSet(transport, packets); err != nil {
+		return err
+	}
+	s.markOutboundActivity()
+	return nil
 }
 
 func sendIKEPacketSet(transport ipsec.Transport, packets [][]byte) error {
@@ -134,6 +142,7 @@ func (s *Session) runIKEDispatchLoop(
 				s.failEstablishedControl(errors.New("swu: IKE transport closed"))
 				return
 			}
+			s.markInboundActivity()
 			if err := s.dispatchIKEPacket(raw, taskManager, requests); err != nil {
 				s.failEstablishedControl(err)
 				return
@@ -213,7 +222,7 @@ func (s *Session) validBootstrapIKEResponse(header *ikev2.IKEHeader) bool {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.SPIr == ([8]byte{}) && s.ikeKeys == nil && header.SPIi == ikeSPIUint64(s.SPIi)
+	return s.spiR == ([8]byte{}) && s.ikeKeys == nil && header.SPIi == ikeSPIUint64(s.spiI)
 }
 
 func (s *Session) dispatchIKEResponse(
@@ -299,8 +308,6 @@ func (s *Session) failEstablishedControl(err error) {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return
 	}
-	s.cancel()
 	s.stopTimers()
-	s.setTerminalError(err)
-	s.signalDone()
+	s.failSession(err)
 }

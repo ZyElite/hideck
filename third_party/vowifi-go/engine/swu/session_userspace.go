@@ -58,10 +58,16 @@ func newUserspaceInnerPacketEndpoint(
 }
 
 func (e *userspaceInnerPacketEndpoint) start() {
-	e.session.dataPlaneWG.Add(2)
+	e.session.dataPlaneWG.Add(3)
 	go func() {
 		defer e.session.dataPlaneWG.Done()
 		e.readOuterESP()
+	}()
+	go func() {
+		defer e.session.dataPlaneWG.Done()
+		e.session.logDataPlaneStats(
+			e.session.ctx, DataplaneModeUserspace, &e.stats, dataPlaneStatsInterval,
+		)
 	}()
 	go func() {
 		defer e.session.dataPlaneWG.Done()
@@ -104,6 +110,7 @@ func (e *userspaceInnerPacketEndpoint) WritePacket(ctx context.Context, packet [
 		e.stats.espSendError.Add(1)
 		return err
 	}
+	e.session.markOutboundActivity()
 	e.stats.espSend.Add(1)
 	return nil
 }
@@ -177,6 +184,7 @@ func (e *userspaceInnerPacketEndpoint) readOuterESP() {
 }
 
 func (e *userspaceInnerPacketEndpoint) handleOuterESP(packet []byte) {
+	e.session.markInboundActivity()
 	e.stats.espIn.Add(1)
 	inner, spi, err := e.session.decapsulateOuterESP(packet)
 	e.stats.lastInSPI.Store(spi)
@@ -220,19 +228,11 @@ func (e *userspaceInnerPacketEndpoint) rebindTransport(transport ipsec.Transport
 }
 
 func (e *userspaceInnerPacketEndpoint) recordEncapsulationError(err error) {
-	if errors.Is(err, errInnerPacketSAMissing) {
-		e.stats.espOutSAMiss.Add(1)
-		return
-	}
-	e.stats.espEncapError.Add(1)
+	e.stats.recordEncapsulationError(err)
 }
 
 func (e *userspaceInnerPacketEndpoint) recordDecapsulationError(err error) {
-	if errors.Is(err, errInnerPacketSAMissing) {
-		e.stats.espInSAMiss.Add(1)
-		return
-	}
-	e.stats.espDecapError.Add(1)
+	e.stats.recordDecapsulationError(err)
 }
 
 func packetContext(ctx context.Context) context.Context {

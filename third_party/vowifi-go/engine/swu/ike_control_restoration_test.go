@@ -22,7 +22,7 @@ func TestControlLoopAnswersPeerDPDWhileLocalRequestIsPending(t *testing.T) {
 	}
 	peerRequest := &ikev2.IKEPacket{
 		Header: newIKEHeader(
-			session.SPIi, session.SPIr, ikev2.INFORMATIONAL, 0, 41,
+			session.spiI, session.spiR, ikev2.INFORMATIONAL, 0, 41,
 		),
 	}
 	peerRaw, err := session.encryptAndWrap(peerRequest)
@@ -40,7 +40,7 @@ func TestControlLoopAnswersPeerDPDWhileLocalRequestIsPending(t *testing.T) {
 
 	localResponse := &ikev2.IKEPacket{
 		Header: newIKEHeader(
-			session.SPIi, session.SPIr, ikev2.INFORMATIONAL,
+			session.spiI, session.spiR, ikev2.INFORMATIONAL,
 			ikeResponseFlag, localRequest.MessageID,
 		),
 	}
@@ -86,7 +86,7 @@ func TestControlLoopRetainsResponseUntilLegacyWaiterRegisters(t *testing.T) {
 	session, transport := newEstablishedControlSession(t)
 	defer stopControlTestSession(session)
 	response, err := (&ikev2.IKEPacket{Header: newIKEHeader(
-		session.SPIi, session.SPIr, ikev2.IKE_AUTH, ikeResponseFlag, 77,
+		session.spiI, session.spiR, ikev2.IKE_AUTH, ikeResponseFlag, 77,
 	)}).Encode()
 	if err != nil {
 		t.Fatalf("encode early response: %v", err)

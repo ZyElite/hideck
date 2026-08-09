@@ -95,7 +95,7 @@ func encryptedPeerDeleteRequest(
 		spiSize = 4
 	}
 	request := &ikev2.IKEPacket{
-		InitiatorSPI: session.SPIi, ResponderSPI: session.SPIr,
+		InitiatorSPI: session.spiI, ResponderSPI: session.spiR,
 		Version: 0x20, ExchangeType: ikev2.ExchangeInformational, MessageID: 91,
 		Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadDelete{
 			ProtocolID: protocol, SPISize: spiSize, NumSPIs: uint16(len(spis) / 4), SPIs: spis,

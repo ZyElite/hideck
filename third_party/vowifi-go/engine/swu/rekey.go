@@ -14,8 +14,8 @@ import (
 
 // ensureIPv6RuntimeEnabled enables IPv6 for an active kernel data plane.
 func (s *Session) ensureIPv6RuntimeEnabled(iface string) error {
-	if s.kernelDataPlane != nil {
-		return s.kernelDataPlane.EnsureIPv6Enabled()
+	if plane := s.currentKernelDataPlane(); plane != nil {
+		return plane.EnsureIPv6Enabled()
 	}
 	if iface == "" {
 		iface = s.activeDriverInterface()

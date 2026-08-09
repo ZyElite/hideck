@@ -8,7 +8,9 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/iniwex5/netlink"
 	"github.com/iniwex5/vowifi-go/engine/driver"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
 )
@@ -57,6 +59,27 @@ func (x *xfrmDataPlane) CurrentSPIs() (uint32, uint32) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	return x.outbound.SPI, x.inbound.SPI
+}
+
+func (x *xfrmDataPlane) LastOutboundUse() (time.Time, error) {
+	if x == nil {
+		return time.Time{}, nil
+	}
+	x.mu.Lock()
+	manager, spi := x.manager, x.outbound.SPI
+	localIP, remoteIP := append(net.IP(nil), x.localIP...), append(net.IP(nil), x.remoteIP...)
+	x.mu.Unlock()
+	reader, ok := manager.(interface {
+		GetSALastUsed(uint32, net.IP, net.IP, netlink.Proto) (uint64, error)
+	})
+	if !ok || spi == 0 {
+		return time.Time{}, nil
+	}
+	used, err := reader.GetSALastUsed(spi, localIP, remoteIP, netlink.XFRM_PROTO_ESP)
+	if err != nil || used == 0 {
+		return time.Time{}, err
+	}
+	return time.Unix(int64(used), 0), nil
 }
 
 func (x *xfrmDataPlane) EnsureIPv6Enabled() error {
@@ -148,7 +171,7 @@ func (s *Session) setupKernelXFRMDataPlane(keys *childSAKeys) error {
 	}); err != nil {
 		return errors.Join(err, plane.Close())
 	}
-	s.kernelDataPlane = plane
+	s.swapKernelDataPlane(plane)
 	return nil
 }
 

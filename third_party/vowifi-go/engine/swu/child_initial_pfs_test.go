@@ -13,8 +13,8 @@ func TestCreateInitialChildSAPreservesConfiguredPFS(t *testing.T) {
 	session := NewSession(&Config{})
 	transport := newTestIKETransport()
 	session.socket = transport
-	copy(session.SPIi[:], []byte("init-spi"))
-	copy(session.SPIr[:], []byte("resp-spi"))
+	copy(session.spiI[:], []byte("init-spi"))
+	copy(session.spiR[:], []byte("resp-spi"))
 	session.ikeKeys = testIKEKeys()
 	session.ikeKeys.SK_d = bytes.Repeat([]byte{0x31}, enginecrypto.PRFOutputSize(session.prf))
 	session.innerIP = []byte{10, 0, 0, 2}

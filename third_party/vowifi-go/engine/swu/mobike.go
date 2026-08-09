@@ -87,8 +87,8 @@ func (s *Session) buildMOBIKEPayloads(transport Transport, cookie []byte) ([]ike
 	if remotePort < 0 || remotePort > int(^uint16(0)) {
 		return nil, fmt.Errorf("swu: invalid MOBIKE remote port %d", remotePort)
 	}
-	source := natDetectionHash(s.SPIi, s.SPIr, localIP, transport.LocalPort())
-	destination := natDetectionHash(s.SPIi, s.SPIr, remoteIP, uint16(remotePort))
+	source := natDetectionHash(s.spiI, s.spiR, localIP, transport.LocalPort())
+	destination := natDetectionHash(s.spiI, s.spiR, remoteIP, uint16(remotePort))
 	return append(payloads,
 		ikev2.CreateNATDetectionNotify(ikev2.NAT_DETECTION_SOURCE_IP, source),
 		ikev2.CreateNATDetectionNotify(ikev2.NAT_DETECTION_DESTINATION_IP, destination),

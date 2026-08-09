@@ -141,7 +141,7 @@ func assertProtectedFragmentResult(
 		t.Fatal("established SKF response changed the inner payload")
 	}
 	header := packetIKEHeader(packet)
-	if binary.BigEndian.Uint64(session.SPIr[:]) != header.SPIr {
+	if binary.BigEndian.Uint64(session.spiR[:]) != header.SPIr {
 		t.Fatal("normalized SKF response changed the responder SPI")
 	}
 }

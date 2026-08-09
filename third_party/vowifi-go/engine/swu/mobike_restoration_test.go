@@ -165,7 +165,7 @@ func TestPeerMOBIKEUpdateEchoesCookieThroughDispatcher(t *testing.T) {
 	session.mobikeSupported = true
 	cookie := bytes.Repeat([]byte{0x5a}, cookie2Size)
 	request := &ikev2.IKEPacket{Header: newIKEHeader(
-		session.SPIi, session.SPIr, ikev2.INFORMATIONAL, 0, 19,
+		session.spiI, session.spiR, ikev2.INFORMATIONAL, 0, 19,
 	), Payloads: []ikev2.Payload{
 		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.UPDATE_SA_ADDRESSES},
 		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.COOKIE2, NotifyData: cookie},
@@ -198,7 +198,7 @@ func TestVerifyCookie2ResponseRejectsTampering(t *testing.T) {
 		t.Fatalf("empty response: %v", err)
 	}
 	missing, err := session.encryptAndWrap(&ikev2.IKEPacket{Header: newIKEHeader(
-		session.SPIi, session.SPIr, ikev2.INFORMATIONAL, ikeResponseFlag, 6,
+		session.spiI, session.spiR, ikev2.INFORMATIONAL, ikeResponseFlag, 6,
 	)})
 	if err != nil || session.verifyCookie2Response(missing, expected) != nil {
 		t.Fatalf("missing COOKIE2 response err=%v", err)
@@ -217,7 +217,7 @@ func TestVerifyCookie2ResponseRejectsTampering(t *testing.T) {
 func protectedMOBIKEResponse(t *testing.T, session *Session, cookie []byte) []byte {
 	t.Helper()
 	packet := &ikev2.IKEPacket{Header: newIKEHeader(
-		session.SPIi, session.SPIr, ikev2.INFORMATIONAL, ikeResponseFlag, 7,
+		session.spiI, session.spiR, ikev2.INFORMATIONAL, ikeResponseFlag, 7,
 	), Payloads: []ikev2.Payload{
 		&ikev2.EncryptedPayloadNotify{NotifyType: ikev2.COOKIE2, NotifyData: append([]byte(nil), cookie...)},
 	}}
@@ -250,9 +250,9 @@ func answerMOBIKEUpdate(session *Session, transport *testIKETransport) error {
 	}
 	source, sourceOK := payloads[2].(*ikev2.EncryptedPayloadNotify)
 	destination, destinationOK := payloads[3].(*ikev2.EncryptedPayloadNotify)
-	wantSource := natDetectionHash(session.SPIi, session.SPIr, transport.LocalIP(), transport.LocalPort())
+	wantSource := natDetectionHash(session.spiI, session.spiR, transport.LocalIP(), transport.LocalPort())
 	wantDestination := natDetectionHash(
-		session.SPIi, session.SPIr, transport.RemoteIP(), uint16(transport.RemotePort()),
+		session.spiI, session.spiR, transport.RemoteIP(), uint16(transport.RemotePort()),
 	)
 	if !sourceOK || source.NotifyType != ikev2.NAT_DETECTION_SOURCE_IP ||
 		!bytes.Equal(source.NotifyData, wantSource) || !destinationOK ||

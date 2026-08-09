@@ -29,7 +29,7 @@ func (s *Session) sendIKERequestPackets(packets [][]byte) error {
 	s.lastIKERequest = append(s.lastIKERequest[:0], packets[0]...)
 	s.lastIKERequestSet = clonePacketSet(packets)
 	s.mu.Unlock()
-	if err := sendIKEPacketSet(s.socket, packets); err != nil {
+	if err := s.sendIKEPacketSet(s.socket, packets); err != nil {
 		return err
 	}
 	return nil
@@ -82,7 +82,7 @@ func (s *Session) receiveIKE(ctx context.Context) (*ikev2.IKEPacket, error) {
 			s.fragmentBuf.drop(packetIKEHeader(expected).MessageID)
 			return nil, ErrTaskTimeout
 		}
-		if err := sendIKEPacketSet(s.socket, requests); err != nil {
+		if err := s.sendIKEPacketSet(s.socket, requests); err != nil {
 			return nil, fmt.Errorf("swu: retransmit IKE request set: %w", err)
 		}
 		delay = time.Duration(float64(delay) * policy.Backoff)
@@ -123,6 +123,7 @@ func (s *Session) waitForIKEResponse(ctx context.Context, expected *ikev2.IKEPac
 			if !ok {
 				return nil, false, errors.New("swu: IKE transport closed")
 			}
+			s.markInboundActivity()
 			header, err := ikev2.DecodeHeader(raw)
 			if err != nil {
 				return nil, false, err

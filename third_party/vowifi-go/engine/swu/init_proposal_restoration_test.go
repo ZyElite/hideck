@@ -85,7 +85,7 @@ func TestIKEInitCookieRetainsOriginalExchangeMaterial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstSPI, firstNonce := session.SPIi, append([]byte(nil), session.Ni...)
+	firstSPI, firstNonce := session.spiI, append([]byte(nil), session.Ni...)
 	firstPublic := append([]byte(nil), session.dh.PublicKeyBytes()...)
 	if err := session.handleCookie([]byte{1, 2, 3}); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestIKEInitCookieRetainsOriginalExchangeMaterial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.SPIi != firstSPI || !bytes.Equal(session.Ni, firstNonce) ||
+	if session.spiI != firstSPI || !bytes.Equal(session.Ni, firstNonce) ||
 		!bytes.Equal(session.dh.PublicKeyBytes(), firstPublic) {
 		t.Fatal("COOKIE retry regenerated exchange material")
 	}
@@ -121,7 +121,7 @@ func TestIKEInitNoProposalIsRetryableAndAdvancesProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	errorPacket := &ikev2.IKEPacket{
-		Header:   newIKEHeader(session.SPIi, [8]byte{1}, ikev2.IKE_SA_INIT, ikeResponseFlag, 0),
+		Header:   newIKEHeader(session.spiI, [8]byte{1}, ikev2.IKE_SA_INIT, ikeResponseFlag, 0),
 		Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadNotify{NotifyType: uint16(ikev2.NO_PROPOSAL_CHOSEN)}},
 	}
 	err := session.handleIKESAInitResp(encodeInitPacket(t, errorPacket))

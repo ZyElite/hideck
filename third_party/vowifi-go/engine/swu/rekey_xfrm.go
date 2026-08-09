@@ -19,13 +19,14 @@ func (s *Session) rekeyXFRMSA(
 	encryptionID uint16,
 	encryptionKeyBits int,
 ) error {
-	if s.kernelDataPlane == nil {
+	plane := s.currentKernelDataPlane()
+	if plane == nil {
 		return nil
 	}
 	if oldOutSPI == 0 || oldInSPI == 0 || newSAOut == nil || newSAIn == nil {
 		return errors.New("swu: XFRM rekey requires old SPIs and new SAs")
 	}
-	if state, ok := s.kernelDataPlane.(kernelSPIState); ok {
+	if state, ok := plane.(kernelSPIState); ok {
 		currentOut, currentIn := state.CurrentSPIs()
 		if currentOut != oldOutSPI || currentIn != oldInSPI {
 			return fmt.Errorf(
@@ -39,7 +40,7 @@ func (s *Session) rekeyXFRMSA(
 			encryptionID, encryptionKeyBits, s.espCipher, s.espEncKeyBits)
 	}
 	runtime := s.legacyXFRMChildRuntime(newSAOut, newSAIn)
-	return s.kernelDataPlane.Rekey(s, runtime)
+	return plane.Rekey(s, runtime)
 }
 
 func (s *Session) legacyXFRMChildRuntime(

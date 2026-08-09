@@ -30,7 +30,7 @@ func (s *Session) ikeContextForHeader(header *ikev2.IKEHeader) (ikeSAContext, bo
 	}
 	s.mu.RLock()
 	active := ikeSAContext{
-		spiI: s.SPIi, spiR: s.SPIr, keys: s.ikeKeys,
+		spiI: s.spiI, spiR: s.spiR, keys: s.ikeKeys,
 		localInitiator: s.localIKEInitiator,
 	}
 	retired := s.retiredIKESA
@@ -73,7 +73,7 @@ func (s *Session) sendIKEContextResponse(
 	if err != nil {
 		return nil, err
 	}
-	if err := sendIKEPacketSet(s.transport(), [][]byte{raw}); err != nil {
+	if err := s.sendIKEPacketSet(s.transport(), [][]byte{raw}); err != nil {
 		return nil, err
 	}
 	return raw, nil
@@ -120,7 +120,7 @@ func (s *Session) resendRetiredIKEDelete(raw []byte) (bool, error) {
 	}
 	response := append([]byte(nil), receipt.response...)
 	s.mu.RUnlock()
-	return true, sendIKEPacketSet(s.transport(), [][]byte{response})
+	return true, s.sendIKEPacketSet(s.transport(), [][]byte{response})
 }
 
 func ikeSPIUint64(spi [8]byte) uint64 {

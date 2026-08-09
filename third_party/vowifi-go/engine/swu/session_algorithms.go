@@ -66,6 +66,11 @@ func initializeSessionAlgorithms(s *Session, cfg *Config) error {
 	s.espEncKeyBits = plan.ESPEncryptionKeyBits
 	s.espESN = configuredXFRMESN(cfg)
 	s.prf, s.dh = prf, dh
+	s.EncAlg, err = crypto.GetEncrypterWithKeyLen(plan.IKEEncryption, int(plan.IKEEncryptionKeyBits))
+	if err != nil {
+		return fmt.Errorf("IKE encryption adapter: %w", err)
+	}
+	s.IntegAlg, s.PRFAlg, s.DH = ikeIntegrity, prf, dh
 	s.encKeyLen, s.integKeyLen, s.aead = ikeEncryption.keyLen, ikeIntegrity.KeySize(), ikeEncryption.aead
 	s.espEncKeyLen, s.espIntegKeyLen, s.espAEAD = espEncryption.keyLen, espIntegrity.KeySize(), espEncryption.aead
 	return nil

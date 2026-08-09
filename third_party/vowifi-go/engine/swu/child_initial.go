@@ -48,7 +48,7 @@ func (s *Session) createInitialChildSA(ctx context.Context) error {
 	payloads = append(payloads, tsi, tsr)
 	request := &ikev2.IKEPacket{
 		Header: newIKEHeader(
-			s.SPIi, s.SPIr, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false), s.nextMessageID(),
+			s.spiI, s.spiR, ikev2.CREATE_CHILD_SA, s.localIKEFlags(false), s.nextMessageID(),
 		),
 		Payloads: payloads,
 	}

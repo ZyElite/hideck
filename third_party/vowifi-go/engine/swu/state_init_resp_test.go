@@ -25,7 +25,7 @@ func buildInitResp(t *testing.T, initiator *Session, responderDH *crypto.DiffieH
 	rand.Read(spir[:])
 
 	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: initiator.SPIi,
+		InitiatorSPI: initiator.spiI,
 		ResponderSPI: spir,
 		Version:      0x20,
 		ExchangeType: ikev2.ExchangeIKEInit,
@@ -91,7 +91,7 @@ func TestHandleIKESAInitRespDerivesKeys(t *testing.T) {
 	if err := init.handleIKESAInitResp(encodeInitPacket(t, resp)); err != nil {
 		t.Fatalf("handleIKESAInitResp: %v", err)
 	}
-	if init.SPIr == ([8]byte{}) {
+	if init.spiR == ([8]byte{}) {
 		t.Error("SPIr not recorded")
 	}
 	if init.ikeKeys == nil {
@@ -185,7 +185,7 @@ func TestHandleIKESAInitRespMissingKE(t *testing.T) {
 	init.buildIKESAInitPacket()
 	// Build a response without a KE payload.
 	pkt := &ikev2.IKEPacket{
-		InitiatorSPI: init.SPIi, Version: 0x20, ExchangeType: ikev2.ExchangeIKEInit, Flags: 0x20,
+		InitiatorSPI: init.spiI, Version: 0x20, ExchangeType: ikev2.ExchangeIKEInit, Flags: 0x20,
 		Payloads: []ikev2.Payload{
 			&ikev2.EncryptedPayloadNonce{Data: bytes.Repeat([]byte{1}, 32)},
 		},

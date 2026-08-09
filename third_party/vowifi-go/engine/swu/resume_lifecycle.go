@@ -67,7 +67,8 @@ func (s *Session) resetAfterSessionResumeFailure() {
 	for _, packet := range s.lastIKERequestSet {
 		crypto.Wipe(packet)
 	}
-	s.SPIi, s.SPIr = [8]byte{}, [8]byte{}
+	s.spiI, s.spiR = [8]byte{}, [8]byte{}
+	s.SPIi, s.SPIr = 0, 0
 	s.Ni, s.nr = nil, nil
 	s.lastIKERequest, s.lastIKEResponse = nil, nil
 	s.lastIKERequestSet = nil
@@ -76,6 +77,7 @@ func (s *Session) resetAfterSessionResumeFailure() {
 	s.eapOnlyAuthentication = false
 	s.eapOnlyRequested = false
 	s.sessionResumed = false
+	s.syncLegacyIKEStateLocked()
 	s.mu.Unlock()
 	s.fragmentBuf.clear()
 }

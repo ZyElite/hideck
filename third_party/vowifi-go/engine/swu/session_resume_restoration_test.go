@@ -23,7 +23,7 @@ var (
 func TestSessionResumeRequestAndRecoveredKeySchedule(t *testing.T) {
 	oldSKd := bytes.Repeat([]byte{0x31}, 32)
 	session := NewSession(&Config{ResumeTicket: []byte("opaque-ticket"), ResumeOldSKd: oldSKd})
-	copy(session.SPIi[:], []byte("init-spi"))
+	copy(session.spiI[:], []byte("init-spi"))
 	session.Ni = bytes.Repeat([]byte{0x41}, 32)
 
 	request, _, err := session.buildSessionResumeRequest()
@@ -42,7 +42,7 @@ func TestSessionResumeRequestAndRecoveredKeySchedule(t *testing.T) {
 
 	responderNonce := bytes.Repeat([]byte{0x52}, 32)
 	responderSPI := ikeSPIBytes(0x1122334455667788)
-	response := sessionResumeResponse(t, session.SPIi, responderSPI, responderNonce, nil)
+	response := sessionResumeResponse(t, session.spiI, responderSPI, responderNonce, nil)
 	if err := session.handleIkeSessionResumeResp(response); err != nil {
 		t.Fatalf("handleIkeSessionResumeResp: %v", err)
 	}
@@ -50,8 +50,8 @@ func TestSessionResumeRequestAndRecoveredKeySchedule(t *testing.T) {
 	if !bytes.Equal(session.ikeKeys.SK_d, expected) {
 		t.Fatalf("resumed SK_d = %x, want %x", session.ikeKeys.SK_d, expected)
 	}
-	if session.SPIr != responderSPI || !bytes.Equal(session.nr, responderNonce) {
-		t.Fatalf("resumed SPIr/Nr = %x/%x", session.SPIr, session.nr)
+	if session.spiR != responderSPI || !bytes.Equal(session.nr, responderNonce) {
+		t.Fatalf("resumed SPIr/Nr = %x/%x", session.spiR, session.nr)
 	}
 }
 
@@ -80,10 +80,10 @@ func TestSessionResumeNACKClearsCredentialAndHandshakeState(t *testing.T) {
 	if len(ticket) != 0 || len(oldSKd) != 0 || complete {
 		t.Fatalf("credentials survived NACK: %x/%x/%t", ticket, oldSKd, complete)
 	}
-	if session.SPIi != ([8]byte{}) || session.SPIr != ([8]byte{}) ||
+	if session.spiI != ([8]byte{}) || session.spiR != ([8]byte{}) ||
 		session.ikeKeys != nil || session.nextOutboundID != 1 {
 		t.Fatalf("resume failure state was not reset: SPI=%x/%x keys=%p id=%d",
-			session.SPIi, session.SPIr, session.ikeKeys, session.nextOutboundID)
+			session.spiI, session.spiR, session.ikeKeys, session.nextOutboundID)
 	}
 	select {
 	case cleared := <-callback:
@@ -121,7 +121,8 @@ func TestConnectUsesProductionSessionResumptionPath(t *testing.T) {
 	peerErr := make(chan error, 1)
 	go func() { peerErr <- runSessionResumePeer(transport, config, oldSKd, updatedTicket) }()
 
-	if err := session.Connect(context.Background()); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := session.Connect(ctx); err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
 	defer session.Shutdown()
@@ -150,6 +151,15 @@ func TestConnectUsesProductionSessionResumptionPath(t *testing.T) {
 	ticket, storedSKd, complete := session.sessionResumptionCredentials()
 	if !complete || !bytes.Equal(ticket, updatedTicket) || !bytes.Equal(storedSKd, session.ikeKeys.SK_d) {
 		t.Fatal("callback mutation changed session-owned resume credentials")
+	}
+	cancel()
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
+	defer waitCancel()
+	if err := session.WaitDoneContext(waitCtx); err != nil {
+		t.Fatalf("parent context cancellation did not clean up session: %v", err)
+	}
+	if !transport.stopped.Load() || session.transport() != nil {
+		t.Fatal("parent context cancellation retained the transport")
 	}
 }
 
@@ -300,7 +310,7 @@ func runSessionResumePeer(
 		ESPEncryption: config.ESPEncryption, ESPEncryptionKeyBits: config.ESPEncryptionKeyBits,
 		ESPIntegrity: config.ESPIntegrity, ResumeOldSKd: oldSKd,
 	})
-	peer.SPIi, peer.SPIr = resume.InitiatorSPI, responderSPI
+	peer.spiI, peer.spiR = resume.InitiatorSPI, responderSPI
 	peer.Ni = initiatorNonce
 	keys, err := peer.deriveSessionResumeKeys(responderSPI, responderNonce)
 	if err != nil {
@@ -331,7 +341,7 @@ func answerResumedIKEAuth(transport *testIKETransport, peer *Session, ticket []b
 	}
 	responsePayloads := resumedChildResponsePayloads(peer, ticket)
 	response := &ikev2.IKEPacket{
-		Header:   newIKEHeader(peer.SPIi, peer.SPIr, ikev2.IKE_AUTH, ikev2.FlagResponse, 1),
+		Header:   newIKEHeader(peer.spiI, peer.spiR, ikev2.IKE_AUTH, ikev2.FlagResponse, 1),
 		Payloads: responsePayloads,
 	}
 	encoded, err := peer.encryptAndWrap(response)
@@ -407,7 +417,7 @@ func expectedRecoveredResumeSKd(
 	seedInput := append(append([]byte(nil), session.Ni...), responderNonce...)
 	skeyseed := session.prf.Compute(oldSKd, seedInput)
 	keySeed := append(append([]byte(nil), responderNonce...), session.Ni...)
-	keySeed = append(keySeed, session.SPIi[:]...)
+	keySeed = append(keySeed, session.spiI[:]...)
 	keySeed = append(keySeed, responderSPI[:]...)
 	material, err := enginecrypto.PrfPlus(session.prf, skeyseed, keySeed,
 		3*enginecrypto.PRFOutputSize(session.prf)+2*session.integKeyLen+2*session.encKeyLen)
@@ -447,9 +457,9 @@ func receiveResumeSentIKE(transport *testIKETransport) ([]byte, error) {
 
 func TestSessionResumeResponseRejectsInvalidNonceAndHeader(t *testing.T) {
 	session := NewSession(&Config{ResumeTicket: []byte("ticket"), ResumeOldSKd: bytes.Repeat([]byte{1}, 32)})
-	copy(session.SPIi[:], []byte("init-spi"))
+	copy(session.spiI[:], []byte("init-spi"))
 	session.Ni = bytes.Repeat([]byte{2}, 32)
-	response := sessionResumeResponse(t, session.SPIi, ikeSPIBytes(7), []byte{1, 2, 3}, nil)
+	response := sessionResumeResponse(t, session.spiI, ikeSPIBytes(7), []byte{1, 2, 3}, nil)
 	if err := session.handleIkeSessionResumeResp(response); err == nil {
 		t.Fatal("short responder nonce was accepted")
 	}

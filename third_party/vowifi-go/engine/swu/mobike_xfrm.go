@@ -20,10 +20,11 @@ type kernelMOBIKEUpdater interface {
 }
 
 func (s *Session) updateKernelMOBIKETransport(transport ipsec.Transport) error {
-	if s.kernelDataPlane == nil {
+	plane := s.currentKernelDataPlane()
+	if plane == nil {
 		return nil
 	}
-	updater, ok := s.kernelDataPlane.(kernelMOBIKEUpdater)
+	updater, ok := plane.(kernelMOBIKEUpdater)
 	if !ok {
 		return errors.New("swu: active kernel data plane does not support MOBIKE")
 	}
@@ -36,7 +37,8 @@ func (s *Session) updateKernelMOBIKETransport(transport ipsec.Transport) error {
 
 // updateXFRMState restores the original address-taking XFRM update boundary.
 func (s *Session) updateXFRMState(localAddr, remoteAddr string) error {
-	if s.kernelDataPlane == nil {
+	plane := s.currentKernelDataPlane()
+	if plane == nil {
 		return nil
 	}
 	transport := s.transport()
@@ -56,7 +58,7 @@ func (s *Session) updateXFRMState(localAddr, remoteAddr string) error {
 	if tuple.localIP == nil || tuple.remoteIP == nil {
 		return fmt.Errorf("swu: invalid XFRM MOBIKE addresses local=%q remote=%q", localAddr, remoteAddr)
 	}
-	updater, ok := s.kernelDataPlane.(kernelMOBIKEUpdater)
+	updater, ok := plane.(kernelMOBIKEUpdater)
 	if !ok {
 		return errors.New("swu: active kernel data plane does not support MOBIKE")
 	}

@@ -109,9 +109,7 @@ func (s *Session) handleNetworkDown(reason string, state *networkEventState) boo
 	}
 	err := fmt.Errorf("swu: network unreachable before IKE keys (%d events in %s): %s",
 		state.preKeyCount, preKeyUnreachableWindow, reason)
-	s.setTerminalError(err)
-	s.cancel()
-	s.signalDone()
+	s.failSession(err)
 	return false
 }
 

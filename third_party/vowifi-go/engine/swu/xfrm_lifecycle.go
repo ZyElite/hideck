@@ -19,7 +19,7 @@ type kernelXFRMExpireMonitor interface {
 
 // startXFRMExpireMonitor restores the original post-establishment monitor.
 func (s *Session) startXFRMExpireMonitor() {
-	monitor, ok := s.kernelDataPlane.(kernelXFRMExpireMonitor)
+	monitor, ok := s.currentKernelDataPlane().(kernelXFRMExpireMonitor)
 	if !ok {
 		return
 	}
@@ -31,7 +31,7 @@ func (s *Session) startXFRMExpireMonitor() {
 }
 
 func (s *Session) handleXFRMExpire(event xfrmExpireEvent) {
-	state, ok := s.kernelDataPlane.(kernelSPIState)
+	state, ok := s.currentKernelDataPlane().(kernelSPIState)
 	if !ok {
 		return
 	}
@@ -50,7 +50,7 @@ func (s *Session) handleXFRMExpire(event xfrmExpireEvent) {
 func (s *Session) handleXFRMHardExpire(spi uint32) {
 	logger.Warn("XFRM SA hard expired", zap.Uint32("spi", spi))
 	if s.OnSessionDown != nil {
-		go s.OnSessionDown()
+		s.notifySessionDown()
 		return
 	}
 	s.failEstablishedControl(fmt.Errorf("swu: XFRM SA hard expired: spi=%08x", spi))

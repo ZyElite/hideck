@@ -125,7 +125,7 @@ func TestBuildIKESAInitPacket(t *testing.T) {
 	if pkt.Header.MessageID != 0 {
 		t.Errorf("message id = %d, want 0", pkt.Header.MessageID)
 	}
-	if s.SPIi == ([8]byte{}) {
+	if s.spiI == ([8]byte{}) {
 		t.Error("initiator SPI not generated")
 	}
 	if len(s.Ni) != 32 {

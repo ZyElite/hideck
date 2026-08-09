@@ -25,7 +25,7 @@ func (s *Session) sendDeleteChildSA(spis []uint32) error {
 	}
 	request := &ikev2.IKEPacket{
 		Header: newIKEHeader(
-			s.SPIi, s.SPIr, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
+			s.spiI, s.spiR, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
 		),
 		Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadDelete{
 			ProtocolID: ikev2.ProtoESP, SPISize: 4,
@@ -45,7 +45,7 @@ func (s *Session) sendDeleteIKE() error {
 	}
 	request := &ikev2.IKEPacket{
 		Header: newIKEHeader(
-			s.SPIi, s.SPIr, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
+			s.spiI, s.spiR, ikev2.INFORMATIONAL, s.localIKEFlags(false), s.nextMessageID(),
 		),
 		Payloads: []ikev2.Payload{&ikev2.EncryptedPayloadDelete{ProtocolID: ikev2.ProtoIKE}},
 	}
