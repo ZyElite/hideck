@@ -12,6 +12,7 @@ import (
 	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
 )
 
 func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
@@ -171,7 +172,13 @@ func TestRegisterContactUsesRecoveredCarrierTemplate(t *testing.T) {
 			},
 		},
 	}
-	got := registerContact(config, "192.0.2.10:5060", "udp", "234102356143376", 3600)
+	got := registerContact(imsheaders.ContactOptions{
+		ContactID: "234102356143376", LocalAddr: "192.0.2.10",
+		LocalPortC: 5060, LocalPortS: 5060,
+		AccessType:        config.RegisterTemplate.AccessType,
+		ContactParamOrder: config.RegisterTemplate.ContactOrder,
+		SIPInstance:       config.IMEI, IcsiRef: config.RegisterTemplate.ICSIRef,
+	}, "udp", 3600)
 	want := `<sip:234102356143376@192.0.2.10:5060;transport=udp>` +
 		`;+g.3gpp.accesstype="wlan1"` +
 		`;+sip.instance="<urn:gsma:imei:35693803-564380-9>"` +

@@ -114,10 +114,10 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	s.finalizeRegistrationTransportSwitch()
 	expires := registrationExpires(resp, s.cfg.Expires)
 	session.expires = expires
-	if publicID := firstSIPHeaderURI(resp.Header("P-Associated-URI")); publicID != "" {
+	if publicID := associatedPublicIdentity(resp.Header("P-Associated-URI")); publicID != "" {
 		session.publicID = publicID
 	}
-	if serviceRoute := strings.TrimSpace(resp.Header("Service-Route")); serviceRoute != "" {
+	if serviceRoute := imsheaders.FirstRoute(resp.Header("Service-Route"), ""); serviceRoute != "" {
 		session.serviceRoute = serviceRoute
 	}
 	return expires, nil
@@ -214,8 +214,9 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	b.WriteString(fmt.Sprintf("To: <%s>\r\n", publicIdentity))
 	b.WriteString(fmt.Sprintf("Call-ID: %s\r\n", session.callID))
 	b.WriteString(fmt.Sprintf("CSeq: %d REGISTER\r\n", session.cseq))
-	contactAddress := s.registerContactAddress(session)
-	b.WriteString("Contact: " + registerContact(cfg, contactAddress, transport, session.contactUser, int(expires.Seconds())) + "\r\n")
+	b.WriteString("Contact: " + registerContact(
+		s.registerContactOptions(session), transport, int(expires.Seconds()),
+	) + "\r\n")
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
 	b.WriteString("Supported: " + formatHeaderList(registerSupportedHeader(cfg)) + "\r\n")
@@ -223,7 +224,8 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 		b.WriteString("Allow: " + allow + "\r\n")
 	}
 	if registerIncludesPANI(cfg.RegisterTemplate, authenticated || protected) {
-		b.WriteString("P-Access-Network-Info: " + s.GetPAccessNetworkInfo() + "\r\n")
+		b.WriteString("P-Access-Network-Info: " +
+			imsheaders.PAccessNetworkInfo(s.GetPAccessNetworkInfo()) + "\r\n")
 	}
 	if cellular := strings.TrimSpace(cfg.CellularNetworkInfo); cellular != "" {
 		b.WriteString("Cellular-Network-Info: " + cellular + "\r\n")
@@ -240,24 +242,47 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	return b.String()
 }
 
-func registerContact(cfg *IMSConfig, localAddress, transport, user string, expires int) string {
-	instance := strings.TrimSpace(cfg.IMEI)
-	if instance == "" {
-		instance = strings.TrimSpace(cfg.DeviceID)
+func (s *Service) registerContactOptions(session *registerSession) imsheaders.ContactOptions {
+	options := imsheaders.ContactOptions{
+		ContactID: session.contactUser, LocalAddr: s.cfg.LocalIP.String(),
+		LocalPortC: s.cfg.LocalPort, LocalPortS: s.cfg.LocalPort,
+		AccessType:        s.cfg.RegisterTemplate.AccessType,
+		ContactParamOrder: s.cfg.RegisterTemplate.ContactOrder,
+		SIPInstance:       s.cfg.IMEI, IcsiRef: s.cfg.RegisterTemplate.ICSIRef,
+		IMEI: s.cfg.DeviceID,
 	}
-	if strings.TrimSpace(user) == "" {
-		user = contactUser(cfg)
+	if strings.TrimSpace(options.ContactID) == "" {
+		options.ContactID = contactUser(s.cfg)
 	}
-	uri := fmt.Sprintf("sip:%s@%s", strings.TrimSpace(user), localAddress)
-	template := cfg.RegisterTemplate
-	if len(template.ContactOrder) > 0 {
-		return imsheaders.IMSContactURI(uri, imsheaders.IMSContactOptions{
-			Transport: transport, AccessType: template.AccessType,
-			Instance: instance, ICSIRef: template.ICSIRef,
-			ParamOrder: template.ContactOrder,
-		})
+	if session.security != nil {
+		options.LocalPortC = int(session.security.client.PortC)
+		options.LocalPortS = int(session.security.client.PortS)
 	}
-	return imsheaders.ContactURIWithOptions(uri, instance, expires, 0)
+	return options
+}
+
+func registerContact(options imsheaders.ContactOptions, transport string, expires int) string {
+	legacyParams := len(options.ContactParamOrder) == 0 && len(options.ParamOrder) == 0
+	if legacyParams {
+		options.ContactParamOrder = []string{"sip_instance"}
+	}
+	uri := imsheaders.ContactURI(options, transport)
+	var builder strings.Builder
+	builder.WriteByte('<')
+	builder.WriteString(uri)
+	builder.WriteByte('>')
+	for _, param := range imsheaders.ContactParams(options) {
+		builder.WriteByte(';')
+		builder.WriteString(param.Name)
+		if param.Value != "" {
+			builder.WriteByte('=')
+			builder.WriteString(param.Value)
+		}
+	}
+	if legacyParams && expires >= 0 {
+		builder.WriteString(fmt.Sprintf(";expires=%d", expires))
+	}
+	return builder.String()
 }
 
 func registerExpires(cfg *IMSConfig) time.Duration {
@@ -296,23 +321,29 @@ func registerSecurityHeaders(session *registerSession) string {
 	}
 	var builder strings.Builder
 	builder.WriteString("Security-Client: " + session.security.clientHeader + "\r\n")
-	builder.WriteString("Require: sec-agree\r\n")
-	builder.WriteString("Proxy-Require: sec-agree\r\n")
-	if session.security.verifyHeader != "" {
-		builder.WriteString("Security-Verify: " + session.security.verifyHeader + "\r\n")
+	headers := imsheaders.SecAgreeProtectedHeaders(session.security.verifyHeader)
+	if len(headers) == 0 {
+		headers = []imsheaders.Header{
+			{Name: "Require", Value: "sec-agree"},
+			{Name: "Proxy-Require", Value: "sec-agree"},
+		}
+	}
+	for _, header := range headers {
+		builder.WriteString(header.Name + ": " + header.Value + "\r\n")
 	}
 	return builder.String()
 }
 
-func (s *Service) registerLocalAddress(_ *registerSession) string {
-	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(s.cfg.LocalPort))
+func associatedPublicIdentity(header string) string {
+	identity := imsheaders.PreferredIdentityHeaderValue(imsheaders.PickAssociatedMSISDN(header))
+	if len(identity) >= 2 && identity[0] == '<' && identity[len(identity)-1] == '>' {
+		return identity[1 : len(identity)-1]
+	}
+	return identity
 }
 
-func (s *Service) registerContactAddress(session *registerSession) string {
-	if session == nil || session.security == nil {
-		return sipLocalAddress(s.cfg)
-	}
-	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(int(session.security.client.PortS)))
+func (s *Service) registerLocalAddress(_ *registerSession) string {
+	return net.JoinHostPort(s.cfg.LocalIP.String(), strconv.Itoa(s.cfg.LocalPort))
 }
 
 func (s *Service) registerRequestTransport(protected bool) string {
