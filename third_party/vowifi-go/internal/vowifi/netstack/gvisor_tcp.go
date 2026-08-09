@@ -26,6 +26,7 @@ type tcpDialConfig struct {
 	local    tcpip.FullAddress
 	remote   tcpip.FullAddress
 	protocol tcpip.NetworkProtocolNumber
+	mss      int
 }
 
 func imsLinkMTU(protocol tcpip.NetworkProtocolNumber) uint32 {
@@ -36,12 +37,16 @@ func imsLinkMTU(protocol tcpip.NetworkProtocolNumber) uint32 {
 }
 
 func dialTCPWithMSS(ctx context.Context, networkStack *stack.Stack, cfg tcpDialConfig) (*gonet.TCPConn, error) {
+	mss := cfg.mss
+	if mss <= 0 {
+		mss = imsTCPMSS
+	}
 	var queue waiter.Queue
 	endpoint, err := networkStack.NewEndpoint(tcp.ProtocolNumber, cfg.protocol, &queue)
 	if err != nil {
 		return nil, errors.New(err.String())
 	}
-	if err := endpoint.SetSockOptInt(tcpip.MaxSegOption, imsTCPMSS); err != nil {
+	if err := endpoint.SetSockOptInt(tcpip.MaxSegOption, mss); err != nil {
 		endpoint.Close()
 		return nil, fmt.Errorf("set IMS TCP MSS: %s", err)
 	}

@@ -215,7 +215,25 @@ func CleanupDataplaneInterface() error {
 
 // NewUserspaceIMSNetwork creates the user-space IMS network.
 func NewUserspaceIMSNetwork(innerIP net.IP, prefixLen int, dns []string) *netstack.Network {
-	return netstack.NewNetwork(innerIP, prefixLen, dns)
+	var ipv4Address, ipv6Address net.IP
+	if innerIP.To4() != nil {
+		ipv4Address = innerIP
+	} else {
+		ipv6Address = innerIP
+	}
+	dnsServers := make([]net.IP, 0, len(dns))
+	for _, server := range dns {
+		if ip := net.ParseIP(server); ip != nil {
+			dnsServers = append(dnsServers, ip)
+		}
+	}
+	network, err := netstack.NewNetwork(
+		context.Background(), ipv4Address, ipv6Address, prefixLen, 0, nil, nil, dnsServers,
+	)
+	if err != nil {
+		return nil
+	}
+	return network
 }
 
 // defaultSessionStarter returns the default session start function.

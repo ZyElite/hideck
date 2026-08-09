@@ -8,163 +8,208 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
+	"gvisor.dev/gvisor/pkg/tcpip/link/loopback"
+	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
+	"gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
+
+	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
 )
 
-// Network owns a gVisor stack connected to the SWu inner-packet path.
+const (
+	imsNICID        tcpip.NICID = 1
+	loopbackNICID   tcpip.NICID = 2
+	packetQueueSize             = 1024
+	defaultMTU                  = 1400
+)
+
+// Network owns a dual-stack gVisor stack connected to an SWu endpoint.
 type Network struct {
-	mu        sync.RWMutex
-	innerIP   net.IP
-	innerIPv6 net.IP
-	prefixLen int
-	dns       []string
-	backend   *gvisorNetwork
-	initErr   error
-	stats     networkStats
-	ipsec3GPP atomic.Bool
+	mu     sync.RWMutex
+	ctx    context.Context
+	cancel context.CancelFunc
+	stack  *stack.Stack
+	link   *channel.Endpoint
+	nicID  int32
+	ipv4   net.IP
+	ipv6   net.IP
+	dns    []net.IP
+	bridge *PacketBridge
+
+	outboundPackets      atomic.Uint64
+	inboundPackets       atomic.Uint64
+	ipsecPolicyInstalled atomic.Bool
+	outboundBytes        atomic.Uint64
+	inboundBytes         atomic.Uint64
 }
 
-// PacketIO carries raw inner IP packets between gVisor and SWu.
+// PacketIO is the additive packet boundary retained for current host callers.
 type PacketIO interface {
 	ReadPacketContext(context.Context) ([]byte, error)
 	WritePacketContext(context.Context, []byte) error
 }
 
-type NetworkStats struct {
-	PacketsIn  uint64
-	PacketsOut uint64
-	BytesIn    uint64
-	BytesOut   uint64
-}
-
-type networkStats struct {
-	PacketsIn  atomic.Uint64
-	PacketsOut atomic.Uint64
-	BytesIn    atomic.Uint64
-	BytesOut   atomic.Uint64
-}
-
-// NewNetwork preserves the constructor API while exposing the missing packet
-// path as an explicit error on first network use.
-func NewNetwork(innerIP net.IP, prefixLen int, dns []string) *Network {
-	return &Network{
-		innerIP: append(net.IP(nil), innerIP...), prefixLen: prefixLen, dns: append([]string(nil), dns...),
-		initErr: errors.New("netstack: SWu packet IO is required"),
+// NewNetwork constructs the original gVisor network and starts its packet
+// bridge when endpoint is non-nil.
+func NewNetwork(
+	ctx context.Context,
+	ipv4Address net.IP,
+	ipv6Address net.IP,
+	prefixLen int,
+	mtu int,
+	endpoint swu.InnerPacketEndpoint,
+	transformer *ipsec3gpp.Transport,
+	dnsServers []net.IP,
+) (*Network, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-}
-
-// NewTunnelNetwork creates a real user-space stack connected to SWu.
-func NewTunnelNetwork(innerIP net.IP, prefixLen int, dns []string, packetIO PacketIO) (*Network, error) {
-	network := &Network{
-		innerIP: append(net.IP(nil), innerIP...), prefixLen: prefixLen, dns: append([]string(nil), dns...),
+	if mtu == 0 {
+		mtu = defaultMTU
 	}
-	backend, err := newGVisorNetwork(network.innerIP, prefixLen, network.dns, packetIO, &network.stats)
-	if err != nil {
+	if ipv4Address == nil && ipv6Address == nil {
+		return nil, errors.New("netstack: at least one local IP is required")
+	}
+	ipv4Address = normalizeIPv4(ipv4Address)
+	ipv6Address = normalizeIPv6(ipv6Address)
+
+	networkCtx, cancel := context.WithCancel(ctx)
+	networkStack := newStack()
+	link := channel.New(packetQueueSize, uint32(mtu), "")
+	if err := createNICs(networkStack, link); err != nil {
+		cancel()
+		networkStack.Close()
 		return nil, err
 	}
-	network.backend = backend
-	return network, nil
+	n := &Network{
+		ctx: networkCtx, cancel: cancel, stack: networkStack, link: link,
+		nicID: int32(imsNICID), ipv4: ipv4Address, ipv6: ipv6Address,
+		dns: cloneIPs(dnsServers),
+	}
+	if err := n.configureAddresses(prefixLen); err != nil {
+		_ = n.Close()
+		return nil, err
+	}
+	n.configureRoutes()
+	if endpoint != nil {
+		var packetTransformer PacketTransformer
+		if transformer != nil {
+			packetTransformer = transformer
+		}
+		n.bridge = NewPacketBridge(networkCtx, link, endpoint, packetTransformer, n)
+	}
+	return n, nil
 }
 
+func newStack() *stack.Stack {
+	return stack.New(stack.Options{
+		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
+		TransportProtocols: transportProtocols(),
+	})
+}
+
+func createNICs(networkStack *stack.Stack, link *channel.Endpoint) error {
+	if err := networkStack.CreateNIC(imsNICID, link); err != nil {
+		return tcpipError(err)
+	}
+	if err := networkStack.CreateNIC(loopbackNICID, loopback.New()); err != nil {
+		return tcpipError(err)
+	}
+	return nil
+}
+
+func normalizeIPv4(ip net.IP) net.IP {
+	if ip == nil {
+		return nil
+	}
+	if normalized := ip.To4(); normalized != nil {
+		return append(net.IP(nil), normalized...)
+	}
+	return nil
+}
+
+func normalizeIPv6(ip net.IP) net.IP {
+	if ip == nil || ip.To4() != nil {
+		return nil
+	}
+	if normalized := ip.To16(); normalized != nil {
+		return append(net.IP(nil), normalized...)
+	}
+	return nil
+}
+
+func cloneIPs(ips []net.IP) []net.IP {
+	cloned := make([]net.IP, 0, len(ips))
+	for _, ip := range ips {
+		if ip != nil {
+			cloned = append(cloned, append(net.IP(nil), ip...))
+		}
+	}
+	return cloned
+}
+
+// LocalIP returns IPv4 first, matching the original preference.
 func (n *Network) LocalIP() net.IP {
+	if n == nil {
+		return nil
+	}
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	return append(net.IP(nil), n.innerIP...)
+	if n.ipv4 != nil {
+		return append(net.IP(nil), n.ipv4...)
+	}
+	return append(net.IP(nil), n.ipv6...)
 }
 
 func (n *Network) HasLocalIP(ip net.IP) bool {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	if ip == nil {
+	if n == nil || ip == nil {
 		return false
 	}
-	return n.innerIP != nil && n.innerIP.Equal(ip) || n.innerIPv6 != nil && n.innerIPv6.Equal(ip)
-}
-
-func (n *Network) ResolveIP(ctx context.Context, host string) (net.IP, error) {
-	if err := n.ready(); err != nil {
-		return nil, err
-	}
-	return n.backend.ResolveIP(ctx, host)
-}
-
-// LookupSRV resolves a service through DNS assigned by the ePDG.
-func (n *Network) LookupSRV(ctx context.Context, service, proto, name string) (string, uint16, error) {
-	if err := n.ready(); err != nil {
-		return "", 0, err
-	}
-	return n.backend.LookupSRV(ctx, service, proto, name)
-}
-
-func (n *Network) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if err := n.ready(); err != nil {
-		return nil, err
-	}
-	return n.backend.DialContext(ctx, network, address)
-}
-
-func (n *Network) DialTCPContext(ctx context.Context, local, remote *net.TCPAddr) (net.Conn, error) {
-	if err := n.ready(); err != nil {
-		return nil, err
-	}
-	return n.backend.DialTCPContext(ctx, local, remote)
-}
-
-func (n *Network) ListenTCP(address *net.TCPAddr) (net.Listener, error) {
-	if err := n.ready(); err != nil {
-		return nil, err
-	}
-	return n.backend.ListenTCP(address)
-}
-
-func (n *Network) ListenPacket(network string, address *net.UDPAddr) (net.PacketConn, error) {
-	if err := n.ready(); err != nil {
-		return nil, err
-	}
-	return n.backend.ListenPacket(network, address)
-}
-
-func (n *Network) InstallIPSec3GPP(policy ipsec3gpp.Policy) error {
-	if err := n.ready(); err != nil {
-		return err
-	}
-	transformer, err := ipsec3gpp.NewTransport(policy)
-	if err != nil {
-		return err
-	}
-	n.backend.setTransformer(transformer)
-	n.ipsec3GPP.Store(true)
-	return nil
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.ipv4 != nil && n.ipv4.Equal(ip) || n.ipv6 != nil && n.ipv6.Equal(ip)
 }
 
 func (n *Network) IPSec3GPPPolicyInstalled() bool {
-	return n != nil && n.ipsec3GPP.Load()
+	return n != nil && n.ipsecPolicyInstalled.Load()
 }
 
-func (n *Network) Stats() NetworkStats {
-	return NetworkStats{
-		PacketsIn: n.stats.PacketsIn.Load(), PacketsOut: n.stats.PacketsOut.Load(),
-		BytesIn: n.stats.BytesIn.Load(), BytesOut: n.stats.BytesOut.Load(),
+func (n *Network) Stats() Stats {
+	if n == nil {
+		return Stats{}
 	}
+	outboundPackets := n.outboundPackets.Load()
+	inboundPackets := n.inboundPackets.Load()
+	stats := Stats{
+		OutboundPackets: outboundPackets,
+		InboundPackets:  inboundPackets,
+		PacketsOut:      outboundPackets,
+		PacketsIn:       inboundPackets,
+		BytesOut:        n.outboundBytes.Load(),
+		BytesIn:         n.inboundBytes.Load(),
+	}
+	if n.bridge != nil {
+		stats.Bridge = n.bridge.Stats()
+	}
+	return stats
 }
 
 func (n *Network) Close() error {
-	if n == nil || n.backend == nil {
+	if n == nil {
 		return nil
 	}
-	n.backend.Close()
+	n.cancel()
+	if n.bridge != nil {
+		n.bridge.Close()
+	}
+	if n.link != nil {
+		n.link.Close()
+	}
+	if n.stack != nil {
+		n.stack.Close()
+	}
 	return nil
-}
-
-func (n *Network) ready() error {
-	if n == nil {
-		return errors.New("netstack: nil network")
-	}
-	if n.initErr != nil {
-		return n.initErr
-	}
-	if n.backend == nil {
-		return errors.New("netstack: network not initialized")
-	}
-	return n.backend.ready()
 }

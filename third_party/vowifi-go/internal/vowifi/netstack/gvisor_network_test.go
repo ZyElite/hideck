@@ -166,10 +166,9 @@ func assertIPv6UDPPacket(t *testing.T, packet []byte, destination net.IP, payloa
 	}
 }
 
-func TestNewNetworkWithoutPacketIOFailsExplicitly(t *testing.T) {
-	network := NewNetwork(net.IPv4(10, 0, 0, 2), 32, nil)
-	if _, err := network.DialContext(context.Background(), "udp", "10.0.0.1:5060"); err == nil {
-		t.Fatal("DialContext error=nil, want missing SWu packet IO")
+func TestNewTunnelNetworkWithoutPacketIOFailsExplicitly(t *testing.T) {
+	if _, err := NewTunnelNetwork(net.IPv4(10, 0, 0, 2), 32, nil, nil); err == nil {
+		t.Fatal("NewTunnelNetwork error=nil, want missing SWu packet IO")
 	}
 }
 
@@ -218,13 +217,11 @@ func TestTunnelNetworkInstallsIPSec3GPPTransformer(t *testing.T) {
 }
 
 func TestAddressForTunnelMatchesNegotiatedFamily(t *testing.T) {
-	addresses := []net.IP{net.ParseIP("2001:db8::1"), net.ParseIP("192.0.2.10")}
-	ipv4Network := &gvisorNetwork{protocol: ipv4.ProtocolNumber}
-	if got, err := ipv4Network.addressForTunnel(addresses, "pcscf"); err != nil || !got.Equal(net.ParseIP("192.0.2.10")) {
-		t.Fatalf("IPv4 addressForTunnel() = %v, %v", got, err)
+	addresses := []net.IPAddr{{IP: net.ParseIP("2001:db8::1")}, {IP: net.ParseIP("192.0.2.10")}}
+	if got, err := selectAddress(addresses, "pcscf", false); err != nil || !got.Equal(net.ParseIP("192.0.2.10")) {
+		t.Fatalf("IPv4 selectAddress() = %v, %v", got, err)
 	}
-	ipv6Network := &gvisorNetwork{protocol: ipv6.ProtocolNumber}
-	if got, err := ipv6Network.addressForTunnel(addresses, "pcscf"); err != nil || !got.Equal(net.ParseIP("2001:db8::1")) {
-		t.Fatalf("IPv6 addressForTunnel() = %v, %v", got, err)
+	if got, err := selectAddress(addresses, "pcscf", true); err != nil || !got.Equal(net.ParseIP("2001:db8::1")) {
+		t.Fatalf("IPv6 selectAddress() = %v, %v", got, err)
 	}
 }

@@ -106,6 +106,17 @@ type AKAProvider = enginesim.AKAProvider
 // AKAResult is the outcome of an AKA computation.
 type AKAResult = enginesim.AKAResult
 
+// DialOptions controls a connection created on an IMS network.
+//
+// The fields mirror the original network boundary. Timeout and KeepAlive are
+// durations represented as nanoseconds; TCPMSS overrides the endpoint MSS when
+// it is positive.
+type DialOptions struct {
+	Timeout   int64
+	KeepAlive int64
+	TCPMSS    int
+}
+
 // IMSNetwork is the network surface used by the IMS stack.
 type IMSNetwork interface {
 	LocalIP() net.IP
