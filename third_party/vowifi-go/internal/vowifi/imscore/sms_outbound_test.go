@@ -45,7 +45,7 @@ func (s *captureDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer
 	}
 	s.created = &DeliveryStatus{
 		MessageID: messageID, IMSI: imsi, DeviceID: deviceID,
-		Peer: peer, Content: content, PartsTotal: partsTotal,
+		Peer: peer, Content: content, PartsTotal: partsTotal, State: smsDeliveryStatePending,
 	}
 	return nil
 }
@@ -265,10 +265,13 @@ func assertAcceptedEvent(t *testing.T, subscriber *captureIMSEventSubscriber, me
 func TestSendOutboundSMSSurfacesInternalFinalResponseTimeout(t *testing.T) {
 	service, _, store := newOutboundSMSTestService(t)
 	service.smsTransactionTimeout = 20 * time.Millisecond
+	service.smsReportTimeout = 30 * time.Millisecond
 	service.transport.SetSendFn(func(string) error { return nil })
 
 	_, err := service.SendSMSWithResult(context.Background(), "+447700900123", "hello")
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "final response timeout after 20ms") {
+	if !errors.Is(err, context.DeadlineExceeded) ||
+		!strings.Contains(err.Error(), "final response timeout after 20ms") ||
+		!strings.Contains(err.Error(), "SMS delivery report timeout after 30ms") {
 		t.Fatalf("send error = %v", err)
 	}
 	if len(store.sipResults) != 1 || store.sipResults[0].code != 0 || store.sipResults[0].state != smsDeliveryStateFailed {
@@ -276,9 +279,9 @@ func TestSendOutboundSMSSurfacesInternalFinalResponseTimeout(t *testing.T) {
 	}
 }
 
-func TestUDPSubmitProbeTimeoutWaitsForRPReport(t *testing.T) {
+func TestTCPSubmitProbeTimeoutWaitsForLateRPReport(t *testing.T) {
 	service, subscriber, store := newOutboundSMSTestService(t)
-	service.cfg.Transport = "udp"
+	service.cfg.Transport = "tcp"
 	service.smsTransactionTimeout = 20 * time.Millisecond
 	service.smsReportTimeout = 250 * time.Millisecond
 	requests := make(chan string, 1)
@@ -290,7 +293,7 @@ func TestUDPSubmitProbeTimeoutWaitsForRPReport(t *testing.T) {
 	resultCh := make(chan SendOutcome, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		outcome, err := service.SendSMSWithResult(context.Background(), "+447700900123", "soft timeout")
+		outcome, err := service.SendSMSWithResult(context.Background(), "+447700900123", "late report")
 		resultCh <- outcome
 		errCh <- err
 	}()
@@ -299,9 +302,6 @@ func TestUDPSubmitProbeTimeoutWaitsForRPReport(t *testing.T) {
 	time.Sleep(2 * service.smsTransactionTimeout)
 	callID := rawSIPHeaderValue(request, "Call-ID")
 	part := store.parts[callID]
-	if part.callID == "" {
-		t.Fatalf("pending part for %q was not persisted", callID)
-	}
 	report := deliveryReportRequest([]byte{0x03, byte(part.rpMR)}, callID)
 	if err := service.dispatchInboundSIP(report, func(string) error { return nil }); err != nil {
 		t.Fatal(err)
@@ -312,9 +312,64 @@ func TestUDPSubmitProbeTimeoutWaitsForRPReport(t *testing.T) {
 	if outcome := <-resultCh; outcome.DeliveryState != smsDeliveryStateAcked {
 		t.Fatalf("outcome = %+v", outcome)
 	}
-	assertIMSEventTypes(t, subscriber,
-		"SMSDeliveryUpdated", "SMSDeliveryCompleted", "LogNotify", "SMSSent",
-	)
+}
+
+func TestTCPSubmitReportWaitHonorsCallerDeadline(t *testing.T) {
+	service, _, store := newOutboundSMSTestService(t)
+	service.cfg.Transport = "tcp"
+	service.smsTransactionTimeout = 20 * time.Millisecond
+	service.smsReportTimeout = time.Second
+	service.transport.SetSendFn(func(string) error { return nil })
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+
+	startedAt := time.Now()
+	_, err := service.SendSMSWithResult(ctx, "+447700900123", "caller deadline")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("send error = %v", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed >= service.smsReportTimeout {
+		t.Fatalf("send ignored caller deadline: elapsed=%s", elapsed)
+	}
+	if store.finalState != smsDeliveryStateFailed {
+		t.Fatalf("failure state = %q", store.finalState)
+	}
+}
+
+func TestUDPSubmitProbeTimeoutReturnsPendingAndRetainsRPReport(t *testing.T) {
+	service, subscriber, store := newOutboundSMSTestService(t)
+	service.cfg.Transport = "udp"
+	service.smsTransactionTimeout = 20 * time.Millisecond
+	service.smsReportTimeout = 250 * time.Millisecond
+	requests := make(chan string, 1)
+	service.transport.SetSendFn(func(request string) error {
+		requests <- request
+		return nil
+	})
+
+	outcome, err := service.SendSMSWithResult(context.Background(), "+447700900123", "soft timeout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.DeliveryState != smsDeliveryStateAcked {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	request := <-requests
+	assertAcceptedEvent(t, subscriber, "")
+	assertIMSEventTypes(t, subscriber, "SMSDeliveryUpdated", "LogNotify", "SMSSent")
+	if len(store.sipResults) != 1 || store.sipResults[0].state != smsDeliveryStatePending {
+		t.Fatalf("SIP results = %+v", store.sipResults)
+	}
+	callID := rawSIPHeaderValue(request, "Call-ID")
+	part := store.parts[callID]
+	if part.callID == "" {
+		t.Fatalf("pending part for %q was not persisted", callID)
+	}
+	report := deliveryReportRequest([]byte{0x03, byte(part.rpMR)}, callID)
+	if err := service.dispatchInboundSIP(report, func(string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	assertIMSEventTypes(t, subscriber, "SMSDeliveryUpdated", "SMSDeliveryCompleted")
 }
 
 func TestSendOutboundSMSSurfacesCallerCancellation(t *testing.T) {

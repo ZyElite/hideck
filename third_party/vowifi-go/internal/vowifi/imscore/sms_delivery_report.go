@@ -188,9 +188,16 @@ func recommendCSFallback(sipCode int) bool {
 	return sipCode == 408 || sipCode == 480 || sipCode == 503
 }
 
-func (s *Service) waitDeliveryReport(pending *smsPendingInfo, timeout time.Duration) (smsSendResult, error) {
+func (s *Service) waitDeliveryReport(
+	ctx context.Context,
+	pending *smsPendingInfo,
+	timeout time.Duration,
+) (smsSendResult, error) {
 	if pending == nil || pending.RespCh == nil {
 		return smsSendResult{}, errors.New("imscore: missing pending SMS report channel")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -200,6 +207,9 @@ func (s *Service) waitDeliveryReport(pending *smsPendingInfo, timeout time.Durat
 	case <-timer.C:
 		s.takePendingSMSByCallID(pending.CallID)
 		return smsSendResult{}, fmt.Errorf("SMS delivery report timeout after %s", timeout)
+	case <-ctx.Done():
+		s.takePendingSMSByCallID(pending.CallID)
+		return smsSendResult{}, ctx.Err()
 	case <-s.stop:
 		return smsSendResult{}, context.Canceled
 	}

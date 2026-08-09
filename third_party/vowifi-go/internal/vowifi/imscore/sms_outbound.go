@@ -40,6 +40,13 @@ type smsSendEnvironment struct {
 	messageID string
 }
 
+type smsSubmitReportWait struct {
+	messageID   string
+	part        outboundSMSPart
+	pending     *smsPendingInfo
+	dispatchErr error
+}
+
 func (s *Service) sendOutboundSMS(
 	ctx context.Context,
 	to, text string,
@@ -227,11 +234,17 @@ func (s *Service) sendOutboundSMSPart(
 	defer cancel()
 	pending, response, err := s.dispatchSubmitPartWithRetry(transactionCtx, messageID, part, sentAt)
 	if err != nil {
-		if s.shouldWaitForSoftSubmitReport(ctx, transactionCtx, err) {
-			return s.waitForSoftSubmitReport(messageID, part, pending, err)
+		transactionErr := classifySMSTransactionError(ctx, transactionCtx, s.smsTransactionTimeout, err)
+		wait := smsSubmitReportWait{
+			messageID: messageID, part: part, pending: pending, dispatchErr: transactionErr,
+		}
+		if isSoftMOSubmitProbeTimeout(transactionErr, sipResponseCode(response), s.cfg.Transport) {
+			return s.preservePendingSubmit(wait)
+		}
+		if shouldWaitForSubmitReport(ctx, response, transactionErr) {
+			return s.waitForSubmitReport(ctx, wait)
 		}
 		s.takePendingSMSByCallID(part.callID)
-		transactionErr := classifySMSTransactionError(ctx, transactionCtx, s.smsTransactionTimeout, err)
 		persistErr := s.persistOutboundSIPResult(messageID, part.number, 0, smsDeliveryStateFailed, transactionErr.Error())
 		return nil, s.recordOutboundSMSFailure(messageID, part, errors.Join(transactionErr, persistErr))
 	}
@@ -250,34 +263,59 @@ func (s *Service) sendOutboundSMSPart(
 	return pending, nil
 }
 
-func (s *Service) shouldWaitForSoftSubmitReport(
-	callerCtx, transactionCtx context.Context,
-	dispatchErr error,
-) bool {
+func shouldWaitForSubmitReport(callerCtx context.Context, response *sip.Response, dispatchErr error) bool {
+	if dispatchErr == nil {
+		return false
+	}
 	if callerCtx != nil && callerCtx.Err() != nil {
 		return false
 	}
-	if !errors.Is(transactionCtx.Err(), context.DeadlineExceeded) {
-		return false
-	}
-	return isSoftMOSubmitProbeTimeout(dispatchErr, 0, s.cfg.Transport)
+	return response == nil || response.StatusCode <= 0
 }
 
-func (s *Service) waitForSoftSubmitReport(
-	messageID string,
-	part outboundSMSPart,
-	pending *smsPendingInfo,
-	dispatchErr error,
+func sipResponseCode(response *sip.Response) int {
+	if response == nil {
+		return 0
+	}
+	return response.StatusCode
+}
+
+func (s *Service) preservePendingSubmit(wait smsSubmitReportWait) (*smsPendingInfo, error) {
+	persistErr := s.persistOutboundSIPResult(
+		wait.messageID, wait.part.number, 0, smsDeliveryStatePending, wait.dispatchErr.Error(),
+	)
+	if persistErr == nil && s.delivery != nil {
+		persistErr = s.publishSMSDeliveryStatus(wait.messageID)
+	}
+	if persistErr != nil {
+		s.takePendingSMSByCallID(wait.part.callID)
+		return nil, s.recordOutboundSMSFailure(
+			wait.messageID, wait.part, errors.Join(wait.dispatchErr, persistErr),
+		)
+	}
+	s.expirePendingSMSAfter(wait.part.callID, pendingSMSReportRetention)
+	return wait.pending, nil
+}
+
+func (s *Service) waitForSubmitReport(
+	ctx context.Context,
+	wait smsSubmitReportWait,
 ) (*smsPendingInfo, error) {
-	result, err := s.waitDeliveryReport(pending, s.smsReportTimeout)
+	result, err := s.waitDeliveryReport(ctx, wait.pending, s.smsReportTimeout)
 	if err != nil {
-		return nil, s.recordOutboundSMSFailure(messageID, part, errors.Join(dispatchErr, err))
+		waitErr := errors.Join(wait.dispatchErr, err)
+		persistErr := s.persistOutboundSIPResult(
+			wait.messageID, wait.part.number, 0, smsDeliveryStateFailed, waitErr.Error(),
+		)
+		return nil, s.recordOutboundSMSFailure(
+			wait.messageID, wait.part, errors.Join(waitErr, persistErr),
+		)
 	}
 	if result.Status == smsDeliveryStateFailed {
 		reportErr := errors.New(firstNonBlank(result.Reason, "SMS delivery report failed"))
-		return nil, s.recordOutboundSMSFailure(messageID, part, reportErr)
+		return nil, s.recordOutboundSMSFailure(wait.messageID, wait.part, reportErr)
 	}
-	return pending, nil
+	return wait.pending, nil
 }
 
 func (s *Service) persistAcceptedSIPPart(messageID string, part outboundSMSPart, sipCode int) error {
@@ -332,11 +370,17 @@ func (s *Service) dispatchSubmitPartWithRetry(
 	}
 	s.registerPendingSMS(part.callID, pending)
 	s.recordOutboundSMSAudit(common.TraceID(ctx), part.callID, pending.To, len(request.Body()))
-	result, err := s.dispatchOutboundMESSAGE(ctx, "mo-submit", request, s.smsTransactionTimeout)
-	if err != nil {
-		return pending, nil, err
+	result, dispatchErr := s.dispatchOutboundMESSAGE(ctx, "mo-submit", request, s.smsTransactionTimeout)
+	var response *sip.Response
+	if result.SIPCode > 0 {
+		response = sip.NewResponse(result.SIPCode, SIPStatusText(result.SIPCode))
 	}
-	response := sip.NewResponse(result.SIPCode, SIPStatusText(result.SIPCode))
+	if dispatchErr != nil {
+		return pending, response, dispatchErr
+	}
+	if response == nil {
+		return pending, nil, errors.New("MESSAGE transaction completed without a final response")
+	}
 	if result.SIPCode < 200 || result.SIPCode >= 300 {
 		s.takePendingSMSByCallID(part.callID)
 	}
