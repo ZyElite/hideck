@@ -152,9 +152,11 @@ func parseRegisterExpiresFromResponse(response *sipResponse, fallback uint32) ui
 	if seconds := parseExpiresHeader(response.Header("Expires"), 0); seconds > 0 {
 		return seconds
 	}
-	for _, contact := range splitSIPHeaderValues(response.Header("Contact")) {
-		if seconds := parseContactExpiresParam(contact); seconds > 0 {
-			return seconds
+	for _, header := range response.HeaderValues("Contact") {
+		for _, contact := range splitSIPHeaderValues(header) {
+			if seconds := parseContactExpiresParam(contact); seconds > 0 {
+				return seconds
+			}
 		}
 	}
 	return fallback

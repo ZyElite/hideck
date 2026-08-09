@@ -6,35 +6,11 @@ import (
 	"errors"
 	"io"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
-
-// sipResponse is a minimal parsed SIP response.
-type sipResponse struct {
-	StatusCode int
-	Reason     string
-	CallID     string
-	CSeq       string
-	Headers    map[string]string
-	Body       []byte
-}
-
-// Header returns a header value.
-func (r *sipResponse) Header(name string) string {
-	if r == nil {
-		return ""
-	}
-	for k, v := range r.Headers {
-		if strings.EqualFold(k, name) {
-			return v
-		}
-	}
-	return ""
-}
 
 // sipTransport sends SIP requests and receives responses.
 type sipTransport struct {
@@ -132,50 +108,6 @@ func (t *sipTransport) DeliverRequest(raw string) {
 func (t *sipTransport) Close() error {
 	t.closeOnce.Do(func() { close(t.closed) })
 	return nil
-}
-
-// parseSIPResponse parses a raw SIP response.
-func parseSIPResponse(raw string) *sipResponse {
-	headerBlock, body, _ := strings.Cut(raw, "\r\n\r\n")
-	lines := strings.Split(headerBlock, "\r\n")
-	if len(lines) == 0 {
-		return nil
-	}
-	resp := &sipResponse{Headers: make(map[string]string)}
-	parts := strings.SplitN(lines[0], " ", 3)
-	if len(parts) >= 2 {
-		_, _ = fmtSscanf(parts[1], &resp.StatusCode)
-	}
-	if len(parts) >= 3 {
-		resp.Reason = parts[2]
-	}
-	for _, line := range lines[1:] {
-		key, value, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		value = strings.TrimSpace(value)
-		switch strings.ToLower(strings.TrimSpace(key)) {
-		case "call-id":
-			resp.CallID = value
-		case "cseq":
-			resp.CSeq = value
-		}
-		key = strings.TrimSpace(key)
-		if previous := resp.Header(key); previous != "" {
-			resp.Headers[key] = previous + ", " + value
-		} else {
-			resp.Headers[key] = value
-		}
-	}
-	resp.Body = []byte(body)
-	return resp
-}
-
-// fmtSscanf parses an integer from a string.
-func fmtSscanf(s string, out *int) (int, error) {
-	_, err := fmtSscanfImpl(s, out)
-	return 0, err
 }
 
 // --- conn types ---
@@ -426,30 +358,6 @@ func (c *connRegisterTransport) ReadResponse(ctx context.Context) (*sipResponse,
 func randRead(b []byte) (int, error) {
 	return rand.Read(b)
 }
-
-// fmtSscanfImpl parses an int from a string.
-func fmtSscanfImpl(s string, out *int) (int, error) {
-	var n int
-	var sign int = 1
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "-") {
-		sign = -1
-		s = s[1:]
-	}
-	if s == "" {
-		return 0, errors.New("imscore: empty int")
-	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, errors.New("imscore: bad int")
-		}
-		n = n*10 + int(c-'0')
-	}
-	*out = n * sign
-	return 0, nil
-}
-
-var _ = context.Background
 
 // Send sends a SIP request through the register transport.
 func (c *connRegisterTransport) Send(req string) error {

@@ -45,6 +45,11 @@ func (s *Service) handleInboundSMS(raw string) (inboundSIPResult, error) {
 		return s.inboundSMSProtocolError(raw, 400, 0, false, fmt.Errorf("decode RPDU body: %w", err))
 	}
 	info := smscodec.ClassifyRPDU(rpdu)
+	if err := parseInboundRPDU(rpdu); err != nil {
+		return s.inboundSMSProtocolError(
+			raw, 400, info.MR, info.Kind == smscodec.RPDUKindData, err,
+		)
+	}
 	switch {
 	case info.Kind == smscodec.RPDUKindData && info.RawType == 0x01:
 		return s.handleInboundRPData(raw, rpdu, info.MR)
@@ -177,27 +182,4 @@ func (s *Service) buildInboundSMSControlRequest(inbound string, body []byte) (st
 func normalizedContentType(value string) string {
 	value, _, _ = strings.Cut(strings.ToLower(strings.TrimSpace(value)), ";")
 	return strings.TrimSpace(value)
-}
-
-func rawSIPBody(raw string) ([]byte, error) {
-	_, body, ok := strings.Cut(raw, "\r\n\r\n")
-	if !ok {
-		return nil, errors.New("SIP MESSAGE has no header terminator")
-	}
-	length, err := parseContentLength(rawSIPHeaderValue(raw, "Content-Length"))
-	if err != nil {
-		return nil, err
-	}
-	if len(body) != length {
-		return nil, fmt.Errorf("SIP MESSAGE body length %d does not match Content-Length %d", len(body), length)
-	}
-	return []byte(body), nil
-}
-
-func parseContentLength(value string) (int, error) {
-	var length int
-	if _, err := fmt.Sscanf(strings.TrimSpace(value), "%d", &length); err != nil || length < 0 {
-		return 0, errors.New("invalid SIP Content-Length")
-	}
-	return length, nil
 }

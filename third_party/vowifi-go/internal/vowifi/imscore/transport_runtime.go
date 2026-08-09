@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
@@ -107,12 +108,27 @@ func (s *Service) handleInboundSIPWithReply(ctx context.Context, raw string, rep
 }
 
 func (s *Service) dispatchInboundSIP(raw string, reply func(string) error) error {
-	s.UpdateLastPingAt(time.Now())
-	response := parseSIPResponse(raw)
-	if response != nil && response.StatusCode != 0 {
-		s.transport.DeliverResponse(response)
-		return nil
+	message, err := parseSIPMessage(raw)
+	if err != nil {
+		return fmt.Errorf("imscore: parse inbound SIP: %w", err)
 	}
+	return s.dispatchInboundSIPMessage(message, string(unfoldSIPHeaders([]byte(raw))), reply)
+}
+
+func (s *Service) dispatchInboundSIPMessage(message sip.Message, raw string, reply func(string) error) error {
+	s.UpdateLastPingAt(time.Now())
+	switch parsed := message.(type) {
+	case *sip.Response:
+		s.transport.DeliverResponse(newSIPResponse(parsed))
+		return nil
+	case *sip.Request:
+		return s.dispatchInboundSIPRequest(raw, reply)
+	default:
+		return errors.New("imscore: unsupported inbound SIP message")
+	}
+}
+
+func (s *Service) dispatchInboundSIPRequest(raw string, reply func(string) error) error {
 	s.transport.DeliverRequest(raw)
 	result, err := s.handleInboundSIPWithReply(context.Background(), raw, reply)
 	if result.response == "" {

@@ -1,14 +1,11 @@
 package imscore
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
@@ -299,13 +296,14 @@ func (s *Service) clearClosedRegistrationTCP(conn net.Conn, readErr error) {
 }
 
 func (s *Service) readRegistrationStreamSync(conn net.Conn) error {
-	reader := bufio.NewReader(conn)
+	decoder := newSIPStreamDecoder(conn)
+	defer decoder.Close()
 	for {
-		raw, err := readSIPStreamMessage(reader)
+		message, err := decoder.ReadMessage()
 		if err != nil {
 			return err
 		}
-		if err := s.dispatchInboundSIP(raw, func(response string) error {
+		if err := s.dispatchInboundSIPMessage(message, message.String(), func(response string) error {
 			return s.writeSIPStream(conn, response)
 		}); err != nil {
 			logging.WarnRate("ims-tcp-inbound", "IMS TCP inbound handling failed", "err", err)
@@ -325,34 +323,4 @@ func configureTCPKeepalive(conn net.Conn) {
 	}
 	_ = keepalive.SetKeepAlive(true)
 	_ = keepalive.SetKeepAlivePeriod(30 * time.Second)
-}
-
-func readSIPStreamMessage(reader *bufio.Reader) (string, error) {
-	var message strings.Builder
-	contentLength := 0
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return "", err
-		}
-		message.WriteString(line)
-		if name, value, ok := strings.Cut(line, ":"); ok && strings.EqualFold(strings.TrimSpace(name), "Content-Length") {
-			contentLength, err = strconv.Atoi(strings.TrimSpace(value))
-			if err != nil || contentLength < 0 {
-				return "", errors.New("imscore: invalid SIP Content-Length")
-			}
-		}
-		if line == "\r\n" || line == "\n" {
-			break
-		}
-	}
-	if contentLength == 0 {
-		return message.String(), nil
-	}
-	body := make([]byte, contentLength)
-	if _, err := io.ReadFull(reader, body); err != nil {
-		return "", err
-	}
-	message.Write(body)
-	return message.String(), nil
 }
