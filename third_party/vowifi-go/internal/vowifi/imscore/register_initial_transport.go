@@ -7,6 +7,8 @@ import (
 	"net"
 	"strconv"
 	"strings"
+
+	vowifidns "github.com/iniwex5/vowifi-go/internal/vowifi/dns"
 )
 
 type initialRegistrationTransport struct {
@@ -152,7 +154,11 @@ func closeRegistrationReservations(serverListener, clientReservation net.Listene
 func (s *Service) resolveRegistrar(ctx context.Context, transport string) (*net.UDPAddr, error) {
 	target := strings.TrimSpace(s.cfg.Registrar)
 	if target == "" {
-		target = s.discoverRegistrar(ctx, transport)
+		var err error
+		target, err = s.discoverRegistrar(ctx, transport)
+		if err != nil {
+			return nil, err
+		}
 	}
 	host, portText, err := net.SplitHostPort(target)
 	if err != nil {
@@ -169,16 +175,10 @@ func (s *Service) resolveRegistrar(ctx context.Context, transport string) (*net.
 	return &net.UDPAddr{IP: ip, Port: port}, nil
 }
 
-func (s *Service) discoverRegistrar(ctx context.Context, transport string) string {
-	domain := strings.TrimSpace(s.cfg.Domain)
-	type srvResolver interface {
-		LookupSRV(context.Context, string, string, string) (string, uint16, error)
+func (s *Service) discoverRegistrar(ctx context.Context, transport string) (string, error) {
+	resolver, ok := s.cfg.IMSNetwork.(vowifidns.RegistrarNetwork)
+	if !ok {
+		return "", errors.New("imscore: IMS network does not support SRV lookup")
 	}
-	if resolver, ok := s.cfg.IMSNetwork.(srvResolver); ok {
-		host, port, err := resolver.LookupSRV(ctx, "sip", transport, domain)
-		if err == nil && strings.TrimSpace(host) != "" && port != 0 {
-			return net.JoinHostPort(strings.TrimSpace(host), strconv.Itoa(int(port)))
-		}
-	}
-	return net.JoinHostPort(domain, strconv.Itoa(defaultSIPPort))
+	return vowifidns.DiscoverRegistrarViaNetwork(ctx, s.cfg.Domain, transport, resolver)
 }
