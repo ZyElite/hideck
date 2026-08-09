@@ -22,9 +22,10 @@ type Profile struct {
 type IMSIdentitySource string
 
 const (
-	IMSIdentitySourceISIM IMSIdentitySource = "isim"
-	IMSIdentitySourceUSIM IMSIdentitySource = "usim"
-	IMSIdentitySourceIMEI IMSIdentitySource = "imei"
+	IMSIdentitySourceISIM    IMSIdentitySource = "isim"
+	IMSIdentitySourceUSIM    IMSIdentitySource = "usim"
+	IMSIdentitySourceIMEI    IMSIdentitySource = "imei"
+	IMSIdentitySourceDerived IMSIdentitySource = "derived"
 )
 
 // AKAAppPreference selects the SIM application used for AKA.
@@ -47,6 +48,15 @@ type IMSIdentity struct {
 	Domain           string
 }
 
+// IMSIdentityResult is the original name of the startup identity projection.
+type IMSIdentityResult = IMSIdentity
+
+// AuthPlan selects the SIM applications used by SWu and IMS authentication.
+type AuthPlan struct {
+	EPDGApp string
+	IMSApp  string
+}
+
 // EffectiveCarrier is the resolved carrier (PLMN) for the session.
 type EffectiveCarrier struct {
 	MCC      string
@@ -65,6 +75,7 @@ type PreparedSession struct {
 	IMSIdentity        IMSIdentity
 	EffectiveCarrier   EffectiveCarrier
 	CarrierConfig      carrier.EffectiveCarrierConfig
+	AuthPlan           AuthPlan
 	EPDGSource         string
 	EPDGAddr           string
 	IdentityIMEISource string
@@ -77,6 +88,8 @@ type PrepareStartInput struct {
 	DeviceID            string
 	Profile             Profile
 	RuntimeEPDGOverride string
+	IMSIdentityResult   IMSIdentityResult
+	IdentityProvider    IMSIdentityProvider
 	Access              Access
 }
 
@@ -87,9 +100,19 @@ type Access interface {
 
 // Capabilities describes the modem's identity capabilities.
 type Capabilities struct {
+	SIM          bool
+	ISIMIdentity bool
+	ISIMAKA      bool
+	Modem        bool
+	Reader       bool
+
+	// These names preserve the current host projection.
 	HasISIM bool
 	HasUSIM bool
 }
+
+// AccessAdapter is the original name of the modem identity access surface.
+type AccessAdapter = Access
 
 // IMSIdentityProvider reads the ISIM identity from the SIM.
 type IMSIdentityProvider interface {

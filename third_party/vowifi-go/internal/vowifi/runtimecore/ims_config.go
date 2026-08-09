@@ -40,10 +40,14 @@ func buildIMSConfig(input imsConfigInput) *imscore.IMSConfig {
 	imsPlan := prepared.CarrierPlan.IMS
 	identity := prepared.IMSIdentity
 	domain := firstNonEmpty(identity.Domain, imsPlan.Domain, prepared.Profile.IMSDomain)
+	impi := strings.TrimSpace(identity.IMPI)
+	if impi == "" && prepared.Profile.IMSI != "" && domain != "" {
+		impi = prepared.Profile.IMSI + "@" + domain
+	}
 	localIP := net.ParseIP(input.result.LocalAddr)
 	return &imscore.IMSConfig{
 		DeviceID: input.session.DeviceID, IMEI: prepared.Profile.IMEI, IMSI: prepared.Profile.IMSI,
-		IMPI: identity.IMPI, IMPU: nonEmptyIdentities(identity.IMPU, identity.IMPI),
+		IMPI: impi, IMPU: nonEmptyIdentities(identity.IMPU, impi),
 		Domain: domain, SMSC: prepared.Profile.SMSC, Realm: firstNonEmpty(imsPlan.Realm, domain),
 		EPDGAddr: prepared.EPDGAddr, LocalIP: localIP, Transport: firstNonEmpty(imsPlan.Transport, "auto"),
 		Registrar: firstNonEmpty(

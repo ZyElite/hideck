@@ -2,14 +2,11 @@ package identity
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 
-	"github.com/iniwex5/vowifi-go/internal/runtimehostcarrier"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
 	internalprofile "github.com/iniwex5/vowifi-go/internal/vowifi/profile"
-	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/startup"
 )
 
 // ErrISIMUnavailable means the card authoritatively has no ISIM application.
@@ -37,137 +34,33 @@ func ReadISIMIdentity(access Access) (Identity, error) {
 	return provider.GetISIMIdentity()
 }
 
-func trimIdentityValues(values []string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			result = append(result, value)
-		}
-	}
-	return result
-}
-
-// PrepareStart prepares the IMS identity and session profile for a VoWiFi
-// start. It reads the ISIM identity from the modem, applies the carrier
-// profile and resolves the ePDG endpoint.
+// PrepareStart converts the public host input to the restored startup boundary.
 func PrepareStart(input PrepareStartInput) (PreparedSession, error) {
-	profile := NormalizeProfile(input.Profile)
-	if profile.IMSI == "" {
-		return PreparedSession{}, errors.New("identity: empty IMSI in profile")
-	}
-
-	imsIdentity, err := resolveIMSIdentity(input.Access, profile)
+	prepared, err := startup.PrepareStart(
+		input.DeviceID,
+		profileToInternal(input.Profile),
+		input.RuntimeEPDGOverride,
+		imsIdentityResultToInternal(input.IMSIdentityResult),
+		adaptIdentityProvider(input.IdentityProvider),
+		adaptAccessAdapter(input.Access),
+	)
 	if err != nil {
 		return PreparedSession{}, err
 	}
-
-	internalCarrier := policy.ResolveEffectiveCarrierConfig(profile.MCC, profile.MNC)
-	carrierPlan := policy.CarrierPlanFromEffectiveConfig(internalCarrier)
-	built, err := internalprofile.Build(internalprofile.Profile{
-		IMSI: profile.IMSI, MCC: profile.MCC, MNC: profile.MNC, IMEI: profile.IMEI,
-		UserAgent: profile.UserAgent, SMSC: profile.SMSC, IMSDomain: profile.IMSDomain,
-	}, carrierPlan.IMS.UserAgent)
-	if err != nil {
-		return PreparedSession{}, fmt.Errorf("identity: build profile: %w", err)
-	}
-	resolvedIMEI, imeiSource := internalprofile.ResolveIdentityIMEI(
-		built.IMSI, built.IMEI, built.UserAgent, carrierPlan,
-	)
-	profile = Profile{
-		IMSI: built.IMSI, MCC: built.MCC, MNC: built.MNC, IMEI: resolvedIMEI,
-		UserAgent: built.UserAgent, SMSC: built.SMSC, IMSDomain: built.IMSDomain,
-	}
-	carrierConfig := runtimehostcarrier.FromInternal(internalCarrier)
-	effectiveCarrier := EffectiveCarrier{
-		MCC: carrierConfig.MCC, MNC: carrierConfig.MNC, PresetID: carrierConfig.PresetID,
-	}
-
-	// Resolve the ePDG endpoint.
-	epdgAddr, epdgSource := resolveConfiguredEPDG(input.RuntimeEPDGOverride, carrierConfig)
-
-	return PreparedSession{
-		Profile:            profile,
-		IMSIdentity:        imsIdentity,
-		EffectiveCarrier:   effectiveCarrier,
-		CarrierConfig:      carrierConfig,
-		EPDGSource:         epdgSource,
-		EPDGAddr:           epdgAddr,
-		IdentityIMEISource: imeiSource,
-		NetworkMode:        "",
-		StartupState:       StartupState{},
-	}, nil
+	return preparedSessionFromInternal(prepared), nil
 }
 
-func resolveIMSIdentity(access Access, profile Profile) (IMSIdentity, error) {
-	ident, err := ReadISIMIdentity(access)
-	if errors.Is(err, ErrISIMUnavailable) {
-		return derivedUSIMIdentity(profile), nil
-	}
-	if err != nil {
-		return IMSIdentity{}, fmt.Errorf("identity: read ISIM identity: %w", err)
-	}
-	if strings.TrimSpace(ident.IMPI) == "" || len(trimIdentityValues(ident.IMPU)) == 0 || strings.TrimSpace(ident.Domain) == "" {
-		return IMSIdentity{}, fmt.Errorf("ISIM 身份不完整: impi=%t impu=%d domain=%t",
-			strings.TrimSpace(ident.IMPI) != "", len(trimIdentityValues(ident.IMPU)), strings.TrimSpace(ident.Domain) != "")
-	}
-	return IMSIdentity{
-		RequestedSource:  IMSIdentitySourceISIM,
-		ActualSource:     IMSIdentitySourceISIM,
-		AKAAppPreference: AKAAppPreferenceISIMStrict,
-		Applied:          true,
-		IMPI:             strings.TrimSpace(ident.IMPI),
-		IMPU:             trimIdentityValues(ident.IMPU)[0],
-		Domain:           strings.TrimSpace(ident.Domain),
-	}, nil
-}
-
-func derivedUSIMIdentity(profile Profile) IMSIdentity {
-	domain := defaultDomain(profile)
-	return IMSIdentity{
-		RequestedSource:  IMSIdentitySourceISIM,
-		ActualSource:     IMSIdentitySourceUSIM,
-		AKAAppPreference: AKAAppPreferenceUSIMStrict,
-		Applied:          true,
-		IMPI:             profile.IMSI + "@" + domain,
-		IMPU:             "sip:" + profile.IMSI + "@" + domain,
-		Domain:           domain,
+func profileToInternal(value Profile) internalprofile.Profile {
+	return internalprofile.Profile{
+		IMSI: value.IMSI, MCC: value.MCC, MNC: value.MNC, IMEI: value.IMEI,
+		UserAgent: value.UserAgent, SMSC: value.SMSC, IMSDomain: value.IMSDomain,
 	}
 }
 
-// defaultDomain derives the IMS domain from the carrier (3GPP TS 23.003).
-func defaultDomain(p Profile) string {
-	if p.MCC == "" || p.MNC == "" {
-		return "ims.mnc000.mcc000.3gppnetwork.org"
+func imsIdentityResultToInternal(value IMSIdentityResult) internalprofile.IMSIdentityResult {
+	return internalprofile.IMSIdentityResult{
+		RequestedSource: string(value.RequestedSource), ActualSource: string(value.ActualSource),
+		AKAAppPreference: string(value.AKAAppPreference), Applied: value.Applied,
+		IMPI: value.IMPI, IMPU: value.IMPU, Domain: value.Domain,
 	}
-	return fmt.Sprintf("ims.mnc%s.mcc%s.3gppnetwork.org", paddedMNC(p.MNC), p.MCC)
-}
-
-// resolveEPDG returns the ePDG FQDN for the carrier, honouring a runtime
-// override.
-func resolveEPDG(override string, carrier EffectiveCarrier) (addr, source string) {
-	if override = strings.TrimSpace(override); override != "" {
-		return override, "redirect"
-	}
-	if carrier.MCC != "" && carrier.MNC != "" {
-		return fmt.Sprintf("epdg.epc.mnc%s.mcc%s.pub.3gppnetwork.org", paddedMNC(carrier.MNC), carrier.MCC), "carrier"
-	}
-	return "", "none"
-}
-
-func resolveConfiguredEPDG(override string, config carrier.EffectiveCarrierConfig) (addr, source string) {
-	if override = strings.TrimSpace(override); override != "" {
-		return override, "redirect"
-	}
-	if addr = strings.TrimSpace(config.EPDGAddr); addr != "" {
-		source = strings.TrimSpace(config.EPDGAddrSource)
-		if source == "" {
-			source = "carrier"
-		}
-		return addr, source
-	}
-	return resolveEPDG("", EffectiveCarrier{MCC: config.MCC, MNC: config.MNC, PresetID: config.PresetID})
-}
-
-func paddedMNC(mnc string) string {
-	return common.Plmn3(mnc)
 }

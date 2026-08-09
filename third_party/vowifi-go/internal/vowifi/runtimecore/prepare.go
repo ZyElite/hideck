@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/startup"
 )
 
 func preparedSessionWithRuntimeOverride(
@@ -35,106 +35,14 @@ func PrepareSessionStart(
 		prepared := clonePreparedSession(*req.Prepared)
 		return validatePrepared(preparedSessionWithRuntimeOverride(prepared, req.RuntimeEPDGOverride))
 	}
-	value, err := profile.Build(req.Profile, "")
-	if err != nil {
-		return profile.PreparedSession{}, err
-	}
-	carrierPlan := policy.CarrierPlanFromEffectiveConfig(
-		policy.ResolveEffectiveCarrierConfig(value.MCC, value.MNC),
-	)
-	value.IMEI, _ = profile.ResolveIdentityIMEI(
-		value.IMSI, value.IMEI, value.UserAgent, carrierPlan,
-	)
-	identity, err := resolveIMSIdentity(req, carrierPlan)
-	if err != nil {
-		return profile.PreparedSession{}, err
-	}
-	prepared := profile.PreparedSession{
-		Profile:            value,
-		CarrierPlan:        carrierPlan,
-		IMSIdentity:        identity,
-		AuthPlan:           resolveAuthPlan(req, identity),
-		EPDGAddr:           carrierPlan.EPDG.Addr,
-		EPDGSource:         carrierPlan.EPDG.AddrSource,
-		IdentityIMEISource: resolveIMEISource(value, carrierPlan),
-	}
-	return validatePrepared(preparedSessionWithRuntimeOverride(prepared, req.RuntimeEPDGOverride))
-}
-
-func resolveIMSIdentity(
-	req RuntimeStartRequest,
-	carrierPlan policy.CarrierPlan,
-) (profile.IMSIdentityResult, error) {
-	identity := req.IMSIdentity
-	if identity.IMPI != "" || identity.IMPU != "" || identity.Domain != "" {
-		return identity, nil
-	}
-	provider := identityProvider(req)
-	if provider == nil {
-		return derivedIdentity(req.Profile, carrierPlan), nil
-	}
-	resolved, err := provider.GetISIMIdentity()
-	if err != nil {
-		return profile.IMSIdentityResult{}, err
-	}
-	result := profile.IMSIdentityResult{
-		RequestedSource: carrierPlan.IMS.IdentitySource,
-		ActualSource:    "isim",
-		Applied:         true,
-		IMPI:            strings.TrimSpace(resolved.IMPI),
-		Domain:          strings.TrimSpace(resolved.Domain),
-	}
-	if len(resolved.IMPU) > 0 {
-		result.IMPU = strings.TrimSpace(resolved.IMPU[0])
-	}
-	return result, nil
-}
-
-func identityProvider(req RuntimeStartRequest) profile.Provider {
+	var provider profile.Provider
 	if req.SIM != nil {
-		if provider := req.SIM.IMSIdentityProvider(); provider != nil {
-			return provider
-		}
+		provider = req.SIM.IMSIdentityProvider()
 	}
-	if req.Access != nil {
-		return req.Access.IMSIdentityProvider()
-	}
-	return nil
-}
-
-func derivedIdentity(value profile.Profile, carrierPlan policy.CarrierPlan) profile.IMSIdentityResult {
-	domain := strings.TrimSpace(carrierPlan.IMS.Domain)
-	if domain == "" {
-		domain = value.IMSDomain
-	}
-	impi := value.IMSI + "@" + domain
-	return profile.IMSIdentityResult{
-		RequestedSource: carrierPlan.IMS.IdentitySource,
-		ActualSource:    "derived",
-		Applied:         true,
-		IMPI:            impi,
-		IMPU:            "sip:" + impi,
-		Domain:          domain,
-	}
-}
-
-func resolveAuthPlan(req RuntimeStartRequest, identity profile.IMSIdentityResult) profile.AuthPlan {
-	imsApp := profile.NormalizeAKAApp(identity.AKAAppPreference)
-	if imsApp == "" {
-		imsApp = profile.AKAAppUSIM
-	}
-	plan := profile.NewAuthPlan(profile.AKAAppUSIM, imsApp)
-	if req.Access != nil {
-		caps := req.Access.Capabilities()
-		plan.ISIMAvailable = caps.ISIMAKA
-		plan.USIMAvailable = caps.SIM
-	}
-	return plan.Normalize()
-}
-
-func resolveIMEISource(value profile.Profile, plan policy.CarrierPlan) string {
-	_, source := profile.ResolveIdentityIMEI(value.IMSI, value.IMEI, value.UserAgent, plan)
-	return source
+	return startup.PrepareStart(
+		req.DeviceID, req.Profile, req.RuntimeEPDGOverride,
+		req.IMSIdentity, provider, req.Access,
+	)
 }
 
 func validatePrepared(prepared profile.PreparedSession) (profile.PreparedSession, error) {

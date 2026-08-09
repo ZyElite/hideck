@@ -93,13 +93,29 @@ func TestPrepareSessionStartResolvesCarrierAndOverride(t *testing.T) {
 func TestPrepareSessionStartPropagatesIdentityFailure(t *testing.T) {
 	want := errors.New("reader transport failed")
 	_, err := PrepareSessionStart(context.Background(), RuntimeStartRequest{
-		Profile: profile.Profile{IMSI: "234102356143376", MCC: "234", MNC: "10"},
+		Profile: profile.Profile{IMSI: "310280233621715", MCC: "310", MNC: "280"},
 		SIM: testSIMAdapter{
 			aka: &recordingAKAProvider{}, identity: failingIdentityProvider{err: want},
 		},
 	})
 	if !errors.Is(err, want) {
 		t.Fatalf("PrepareSessionStart() error = %v, want %v", err, want)
+	}
+}
+
+func TestBuildIMSConfigDerivesUnappliedIdentity(t *testing.T) {
+	prepared := profile.PreparedSession{
+		Profile: profile.Profile{IMSI: "234102356143376", IMSDomain: "ims.mnc010.mcc234.3gppnetwork.org"},
+		CarrierPlan: policy.CarrierPlan{IMS: policy.IMSPlan{
+			Domain: "ims.mnc010.mcc234.3gppnetwork.org",
+		}},
+	}
+	config := buildIMSConfig(imsConfigInput{
+		session: SessionConfig{Prepared: prepared}, result: &SessionResult{},
+	})
+	if config.IMPI != "234102356143376@ims.mnc010.mcc234.3gppnetwork.org" ||
+		len(config.IMPU) != 1 || config.IMPU[0] != "sip:"+config.IMPI {
+		t.Fatalf("derived IMS config identity = %q %+v", config.IMPI, config.IMPU)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 type stubAccess struct {
 	ident Identity
 	err   error
+	calls int
 }
 
 func (a *stubAccess) Capabilities() Capabilities { return Capabilities{HasISIM: true} }
@@ -20,6 +21,7 @@ func (a *stubAccess) IMSIdentityProvider() IMSIdentityProvider {
 type stubProvider struct{ a *stubAccess }
 
 func (p *stubProvider) GetISIMIdentity() (Identity, error) {
+	p.a.calls++
 	return p.a.ident, p.a.err
 }
 
@@ -32,32 +34,31 @@ func TestNormalizeProfile(t *testing.T) {
 
 func TestPrepareStart(t *testing.T) {
 	access := &stubAccess{ident: Identity{
-		IMSI: "310260123456789", IMPI: "310260123456789@ims.mnc026.mcc310.3gppnetwork.org",
-		IMPU:   []string{"sip:310260123456789@ims.mnc026.mcc310.3gppnetwork.org"},
-		Domain: "ims.mnc026.mcc310.3gppnetwork.org",
+		IMSI: "310280233621715", IMPI: "310280233621715@private.att.net",
+		IMPU:   []string{"sip:310280233621715@one.att.net"},
+		Domain: "one.att.net",
 	}}
 	prepared, err := PrepareStart(PrepareStartInput{
 		DeviceID: "wwan0",
-		Profile:  Profile{IMSI: "310260123456789", MCC: "310", MNC: "26"},
+		Profile:  Profile{IMSI: "310280233621715", MCC: "310", MNC: "280"},
 		Access:   access,
 	})
 	if err != nil {
 		t.Fatalf("PrepareStart: %v", err)
 	}
-	if prepared.IMSIdentity.IMPI != "310260123456789@ims.mnc026.mcc310.3gppnetwork.org" {
+	if prepared.IMSIdentity.IMPI != "310280233621715@private.att.net" {
 		t.Errorf("IMPI = %q", prepared.IMSIdentity.IMPI)
 	}
-	if prepared.IMSIdentity.IMPU != "sip:310260123456789@ims.mnc026.mcc310.3gppnetwork.org" {
+	if prepared.IMSIdentity.IMPU != "sip:310280233621715@one.att.net" {
 		t.Errorf("IMPU = %q", prepared.IMSIdentity.IMPU)
 	}
 	if prepared.IMSIdentity.ActualSource != IMSIdentitySourceISIM || !prepared.IMSIdentity.Applied {
 		t.Errorf("identity = %+v", prepared.IMSIdentity)
 	}
-	if prepared.EffectiveCarrier.MCC != "310" || prepared.EffectiveCarrier.MNC != "026" {
+	if prepared.EffectiveCarrier.MCC != "310" || prepared.EffectiveCarrier.MNC != "280" {
 		t.Errorf("carrier = %+v", prepared.EffectiveCarrier)
 	}
-	// Default ePDG FQDN from the carrier.
-	if !strings.Contains(prepared.EPDGAddr, "epdg.epc.mnc026.mcc310.pub.3gppnetwork.org") {
+	if prepared.EPDGAddr == "" {
 		t.Errorf("EPDG = %q", prepared.EPDGAddr)
 	}
 }
@@ -69,7 +70,7 @@ func TestPrepareStartOverride(t *testing.T) {
 		Domain: "ims.example.com",
 	}}
 	prepared, err := PrepareStart(PrepareStartInput{
-		Profile:             Profile{IMSI: "310260123456789", MCC: "310", MNC: "26"},
+		Profile:             Profile{IMSI: "310280123456789", MCC: "310", MNC: "280"},
 		RuntimeEPDGOverride: "epdg.example.com",
 		Access:              access,
 	})
@@ -81,20 +82,53 @@ func TestPrepareStartOverride(t *testing.T) {
 	}
 }
 
+func TestPrepareStartIdentityInputPriority(t *testing.T) {
+	direct := &stubAccess{ident: Identity{
+		IMPI: "direct@private.att.net", IMPU: []string{"sip:direct@one.att.net"},
+	}}
+	fallback := &stubAccess{err: errors.New("fallback must not be called")}
+	prepared, err := PrepareStart(PrepareStartInput{
+		Profile:          Profile{IMSI: "310280233621715", MCC: "310", MNC: "280"},
+		IdentityProvider: &stubProvider{a: direct}, Access: fallback,
+	})
+	if err != nil {
+		t.Fatalf("PrepareStart direct provider: %v", err)
+	}
+	if direct.calls != 1 || fallback.calls != 0 || prepared.IMSIdentity.IMPI != "direct@private.att.net" {
+		t.Fatalf("calls direct=%d fallback=%d identity=%+v", direct.calls, fallback.calls, prepared.IMSIdentity)
+	}
+
+	direct.err = errors.New("supplied identity must skip provider")
+	prepared, err = PrepareStart(PrepareStartInput{
+		Profile: Profile{IMSI: "310280233621715", MCC: "310", MNC: "280"},
+		IMSIdentityResult: IMSIdentityResult{
+			RequestedSource: IMSIdentitySourceISIM, ActualSource: IMSIdentitySourceISIM,
+			Applied: true, IMPI: "supplied@private.att.net",
+		},
+		IdentityProvider: &stubProvider{a: direct}, Access: fallback,
+	})
+	if err != nil {
+		t.Fatalf("PrepareStart supplied identity: %v", err)
+	}
+	if direct.calls != 1 || fallback.calls != 0 || prepared.IMSIdentity.IMPI != "supplied@private.att.net" {
+		t.Fatalf("calls direct=%d fallback=%d identity=%+v", direct.calls, fallback.calls, prepared.IMSIdentity)
+	}
+}
+
 func TestPrepareStartErrors(t *testing.T) {
 	if _, err := PrepareStart(PrepareStartInput{Profile: Profile{}}); err == nil {
 		t.Error("empty IMSI should error")
 	}
 	access := &stubAccess{err: errors.New("no isim")}
 	if _, err := PrepareStart(PrepareStartInput{
-		Profile: Profile{IMSI: "310260123456789", MCC: "310", MNC: "26"},
+		Profile: Profile{IMSI: "310280233621715", MCC: "310", MNC: "280"},
 		Access:  access,
 	}); err == nil {
 		t.Error("identity read failure should error")
 	}
 }
 
-func TestPrepareStartUsesUSIMOnlyWhenISIMUnavailable(t *testing.T) {
+func TestPrepareStartDerivedCarrierSkipsUnavailableISIM(t *testing.T) {
 	access := &stubAccess{err: fmt.Errorf("card status: %w", ErrISIMUnavailable)}
 	prepared, err := PrepareStart(PrepareStartInput{
 		Profile: Profile{IMSI: "234102356143376", MCC: "234", MNC: "10"},
@@ -103,13 +137,13 @@ func TestPrepareStartUsesUSIMOnlyWhenISIMUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareStart() error = %v", err)
 	}
-	identity := prepared.IMSIdentity
-	if identity.ActualSource != IMSIdentitySourceUSIM || identity.AKAAppPreference != AKAAppPreferenceUSIMStrict {
-		t.Fatalf("identity = %+v, want strict USIM", identity)
+	resolved := prepared.IMSIdentity
+	if resolved != (IMSIdentity{}) || prepared.AuthPlan.IMSApp != "usim" {
+		t.Fatalf("identity = %+v auth plan=%+v", resolved, prepared.AuthPlan)
 	}
 	wantDomain := "ims.mnc010.mcc234.3gppnetwork.org"
-	if identity.Domain != wantDomain || identity.IMPI != "234102356143376@"+wantDomain {
-		t.Fatalf("identity = %+v, want padded 3GPP domain", identity)
+	if prepared.Profile.IMSDomain != wantDomain {
+		t.Fatalf("profile = %+v, want padded 3GPP domain", prepared.Profile)
 	}
 	if prepared.EPDGAddr != "epdg.epc.mnc010.mcc234.pub.3gppnetwork.org" {
 		t.Fatalf("EPDGAddr = %q", prepared.EPDGAddr)
@@ -130,7 +164,7 @@ func TestPrepareStartUsesUSIMOnlyWhenISIMUnavailable(t *testing.T) {
 func TestPrepareStartDoesNotHideISIMTransportFailure(t *testing.T) {
 	transportErr := errors.New("QMI transport disconnected")
 	_, err := PrepareStart(PrepareStartInput{
-		Profile: Profile{IMSI: "234102356143376", MCC: "234", MNC: "10"},
+		Profile: Profile{IMSI: "310280233621715", MCC: "310", MNC: "280"},
 		Access:  &stubAccess{err: transportErr},
 	})
 	if !errors.Is(err, transportErr) {

@@ -273,6 +273,10 @@ func newTunnel(req StartRequest, inst *Instance) (Tunnel, error) {
 }
 
 func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.PreparedSessionStart {
+	authPlan := profile.NewAuthPlan(prepared.AuthPlan.EPDGApp, prepared.AuthPlan.IMSApp)
+	if prepared.AuthPlan == (identity.AuthPlan{}) {
+		authPlan = authPlanForPreference(string(prepared.IMSIdentity.AKAAppPreference))
+	}
 	return &runtimecore.PreparedSessionStart{
 		Profile: profile.Profile{
 			IMSI: prepared.Profile.IMSI, MCC: prepared.Profile.MCC, MNC: prepared.Profile.MNC,
@@ -292,7 +296,7 @@ func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.Pre
 			IMPU:             prepared.IMSIdentity.IMPU,
 			Domain:           prepared.IMSIdentity.Domain,
 		},
-		AuthPlan: authPlanForPreference(string(prepared.IMSIdentity.AKAAppPreference)),
+		AuthPlan: authPlan,
 		EPDGAddr: prepared.EPDGAddr, EPDGSource: prepared.EPDGSource,
 		APN:                imsAPNFromDomain(prepared.IMSIdentity.Domain),
 		Carrier:            prepared.CarrierConfig,
@@ -342,11 +346,16 @@ func newIMS(req StartRequest, tunnel Tunnel) (IMSLifecycle, error) {
 // imscoreFromPrepared builds an imscore.Service from the prepared session.
 func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, error) {
 	ident := req.Prepared.IMSIdentity
-	domain := strings.TrimSpace(ident.Domain)
-	if domain == "" || strings.TrimSpace(ident.IMPI) == "" {
+	domain := firstNonEmptyString(
+		ident.Domain, req.Prepared.CarrierConfig.IMSDomain, req.Prepared.Profile.IMSDomain,
+	)
+	impi := strings.TrimSpace(ident.IMPI)
+	if impi == "" && req.Prepared.Profile.IMSI != "" && domain != "" {
+		impi = strings.TrimSpace(req.Prepared.Profile.IMSI) + "@" + domain
+	}
+	if domain == "" || impi == "" {
 		return nil, errors.New("runtimehost: prepared IMS identity is incomplete")
 	}
-	impi := ident.IMPI
 	impu := []string{ident.IMPU}
 	if strings.TrimSpace(impu[0]) == "" {
 		impu = []string{"sip:" + impi}
@@ -373,7 +382,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 	cfg := &imscore.IMSConfig{
 		DeviceID:         req.DeviceID,
 		IMEI:             imscore.GenerateRandomIMEIForModel(defaultIMSDeviceModel),
-		IMSI:             imsiOf(impi),
+		IMSI:             firstNonEmptyString(req.Prepared.Profile.IMSI, imsiOf(impi)),
 		IMPI:             impi,
 		IMPU:             impu,
 		Domain:           domain,
@@ -409,6 +418,15 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		return nil, err
 	}
 	return svc, nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func preferredPCSCF(servers []net.IP, innerIP net.IP) net.IP {
