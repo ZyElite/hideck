@@ -14,64 +14,9 @@ import (
 	"sync"
 )
 
-// IMSRegisterTemplate is the IMS registration template for a carrier.
-type IMSRegisterTemplate struct {
-	// Domain is the IMS domain (e.g. "ims.mnc026.mcc310.3gppnetwork.org").
-	Domain string
-	// EPDGAddr is the ePDG address.
-	EPDGAddr string
-	// RegisterPolicy is the registration policy ("auto" | "manual").
-	RegisterPolicy string
-	// SecAgreeMode enables the security-agreement (sec-agree) flow.
-	SecAgreeMode bool
-	// Transport is the SIP transport ("udp" | "tcp").
-	Transport string
-	// SMSReceiverTransport is the SMS receiver transport.
-	SMSReceiverTransport string
-	// SMSRoutingMethod is the SMS routing method.
-	SMSRoutingMethod string
-	// IdentitySource is the IMS identity source.
-	IdentitySource string
-	// DNSServer overrides the DNS server for registrar discovery.
-	DNSServer string
-}
-
-// E911Config describes the carrier's e911 (emergency address) service.
-type E911Config struct {
-	Enabled  bool
-	Provider string
-}
-
-// CarrierPlan is the carrier plan for a PLMN.
-type CarrierPlan struct {
-	MCC      string
-	MNC      string
-	PresetID string
-	E911     E911Config
-	IMS      IMSRegisterTemplate
-}
-
 // IsZero reports whether the plan is empty.
 func (p *CarrierPlan) IsZero() bool {
 	return p == nil || (p.MCC == "" && p.MNC == "" && p.PresetID == "" && p.IMS.Domain == "")
-}
-
-// EffectiveCarrierConfig is the resolved carrier configuration.
-type EffectiveCarrierConfig struct {
-	MCC      string
-	MNC      string
-	PresetID string
-	E911     E911Config
-	IMS      IMSRegisterTemplate
-}
-
-// CarrierOverride overrides a carrier's configuration at runtime.
-type CarrierOverride struct {
-	MCC      string
-	MNC      string
-	PresetID string
-	E911     E911Config
-	IMS      IMSRegisterTemplate
 }
 
 // VoWiFiPolicyBlockError is returned when the carrier's MCC is blocked.
@@ -110,8 +55,8 @@ var defaultPresets = []EffectiveCarrierConfig{
 		IMS: IMSRegisterTemplate{
 			Domain:               "ims.mnc280.mcc310.3gppnetwork.org",
 			EPDGAddr:             "epdg.epc.att.net",
-			RegisterPolicy:       "auto",
-			SecAgreeMode:         true,
+			RegisterPolicyMode:   "auto",
+			SecAgreeEnabled:      true,
 			Transport:            "udp",
 			SMSReceiverTransport: "sip",
 			SMSRoutingMethod:     "sip",
@@ -136,8 +81,8 @@ func DefaultCarrierStandardEPDGAddr() string {
 // DefaultIMSRegisterTemplate returns the default IMS registration template.
 func DefaultIMSRegisterTemplate() IMSRegisterTemplate {
 	return IMSRegisterTemplate{
-		RegisterPolicy:       "auto",
-		SecAgreeMode:         true,
+		RegisterPolicyMode:   "auto",
+		SecAgreeEnabled:      true,
 		Transport:            "udp",
 		SMSReceiverTransport: "sip",
 		SMSRoutingMethod:     "sip",
@@ -147,7 +92,8 @@ func DefaultIMSRegisterTemplate() IMSRegisterTemplate {
 
 // IMSRegisterTemplateSecAgreeMode reports whether the template uses sec-agree.
 func IMSRegisterTemplateSecAgreeMode(t IMSRegisterTemplate) bool {
-	return t.SecAgreeMode
+	mode := strings.ToLower(strings.TrimSpace(t.SecAgreeMode))
+	return t.SecAgreeEnabled || (mode != "" && mode != "off" && mode != "disabled")
 }
 
 // NormalizeIMSRegisterPolicy normalizes the register policy string.
@@ -162,7 +108,13 @@ func NormalizeIMSRegisterPolicy(p string) string {
 
 // NormalizeIMSRegisterTemplate normalizes a template's fields.
 func NormalizeIMSRegisterTemplate(t IMSRegisterTemplate) IMSRegisterTemplate {
-	t.RegisterPolicy = NormalizeIMSRegisterPolicy(t.RegisterPolicy)
+	t.RegisterPolicyMode = NormalizeIMSRegisterPolicy(t.RegisterPolicyMode)
+	if t.RegisterPolicy.ID == "" {
+		t.RegisterPolicy.ID = t.RegisterPolicyMode
+	}
+	if t.SecAgreeEnabled && strings.TrimSpace(t.SecAgreeMode) == "" {
+		t.SecAgreeMode = "required"
+	}
 	t.Domain = strings.TrimSpace(t.Domain)
 	t.EPDGAddr = strings.TrimSpace(t.EPDGAddr)
 	t.Transport = NormalizeIMSTransport(t.Transport)
@@ -268,11 +220,11 @@ func (c *EffectiveCarrierConfig) MergeFromPreset(preset EffectiveCarrierConfig) 
 	if c.IMS.EPDGAddr == "" {
 		c.IMS.EPDGAddr = preset.IMS.EPDGAddr
 	}
-	if c.IMS.RegisterPolicy == "" {
-		c.IMS.RegisterPolicy = preset.IMS.RegisterPolicy
+	if c.IMS.RegisterPolicyMode == "" {
+		c.IMS.RegisterPolicyMode = preset.IMS.RegisterPolicyMode
 	}
-	if !c.IMS.SecAgreeMode {
-		c.IMS.SecAgreeMode = preset.IMS.SecAgreeMode
+	if !c.IMS.SecAgreeEnabled {
+		c.IMS.SecAgreeEnabled = preset.IMS.SecAgreeEnabled
 	}
 	if c.IMS.Transport == "" {
 		c.IMS.Transport = preset.IMS.Transport
@@ -350,8 +302,8 @@ func applyCarrierOverride(cfg *EffectiveCarrierConfig, ov CarrierOverride) {
 	if ov.IMS.EPDGAddr != "" {
 		cfg.IMS.EPDGAddr = ov.IMS.EPDGAddr
 	}
-	if ov.IMS.RegisterPolicy != "" {
-		cfg.IMS.RegisterPolicy = ov.IMS.RegisterPolicy
+	if ov.IMS.RegisterPolicyMode != "" {
+		cfg.IMS.RegisterPolicyMode = ov.IMS.RegisterPolicyMode
 	}
 	if ov.IMS.Transport != "" {
 		cfg.IMS.Transport = ov.IMS.Transport
@@ -400,7 +352,7 @@ func hasExternalCarrierOverrideKey(key string) bool {
 // a register-policy exists for a key.
 func hasExternalCarrierOverrideRegisterPolicyKey(key string) bool {
 	o, ok := carrierOverrideByKey(key)
-	return ok && o.IMS.RegisterPolicy != ""
+	return ok && o.IMS.RegisterPolicyMode != ""
 }
 
 // LoadCarrierOverridesFile loads overrides from a JSON file.

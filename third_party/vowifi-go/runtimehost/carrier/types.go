@@ -18,27 +18,66 @@ type EffectiveCarrierConfigInput struct {
 	MNC string
 }
 
-// E911Config describes the carrier's e911 (emergency address) service.
-type E911Config struct {
+// E911Policy is the recovered emergency-address policy. Websheet and
+// EntitlementEndpoint preserve the current endpoint-oriented surface.
+type E911Policy struct {
 	Enabled             bool   `json:"enabled"`
 	Provider            string `json:"provider"`
+	EntitlementURL      string `json:"entitlement_url"`
+	WebsheetHostPolicy  string `json:"websheet_host_policy"`
 	Websheet            string `json:"websheet"`
 	EntitlementEndpoint string `json:"entitlement_endpoint"`
 }
 
+type E911Config = E911Policy
+
+type IPSec3GPPSecurityMechanism struct {
+	Alg  string
+	EAlg string
+	Prot string
+	Mode string
+}
+
+type IMSRegisterPolicy struct {
+	ID                               string
+	TemporaryStatusCodes             []int
+	ForbiddenStatusCodes             []int
+	InitialRejectFallbackStatusCodes []int
+	TemporaryRetrySeconds            int
+}
+
 // IMSRegisterTemplate is the IMS registration template for the carrier.
 type IMSRegisterTemplate struct {
-	ExpiresSeconds            int
-	Transport                 string
-	SupportedHeader           string
-	AllowHeader               string
-	ContactMode               string
-	AccessType                string
-	ICSIRef                   string
-	ContactOrder              []string
-	IncludePANIAuthenticated  bool
-	StrictSecurityServerOffer bool
-	expiresSet                bool
+	ID                                  string
+	UsePlainDigestPlaceholder           bool
+	Expires                             int
+	SMSReceiverTransport                string
+	ContactMode                         string
+	FixedPANI                           string
+	SupportedHeader                     string
+	AllowHeader                         string
+	AccessType                          string
+	ICSIRef                             string
+	ContactParamOrder                   []string
+	VoiceSupportedHeader                string
+	VoiceAllowHeader                    string
+	VoiceAcceptContact                  string
+	VoicePPreferredService              string
+	ForceHeaderPort5060                 bool
+	IncludePANIAuthenticated            bool
+	IncludeConnectionKeepaliveInAuth    bool
+	SecAgreeMode                        string
+	SecurityClientIncludesServerParams  bool
+	SecurityClientMechanisms            []IPSec3GPPSecurityMechanism
+	StrictSecurityServerOffer           bool
+	EnableInitialRejectFallback         bool
+	FallbackIncludesServerParamsInSecCl bool
+	RegisterPolicy                      IMSRegisterPolicy
+
+	ExpiresSeconds int
+	Transport      string
+	ContactOrder   []string
+	expiresSet     bool
 }
 
 // UnmarshalJSON records whether expiry was explicitly present so a JSON zero
@@ -65,15 +104,49 @@ func (t *IMSRegisterTemplate) UnmarshalJSON(data []byte) error {
 
 // EffectiveCarrierConfig is the resolved carrier configuration.
 type EffectiveCarrierConfig struct {
-	MCC                   string
-	MNC                   string
-	PresetID              string
-	DeviceModel           string
-	IKEProposals          []string
-	ESPProposals          []string
-	ReauthIntervalSeconds int
-	E911                  E911Config
-	IMS                   IMSRegisterTemplate
+	MCC                           string
+	MNC                           string
+	PresetID                      string
+	MatchedTemplate               string
+	E911                          E911Policy
+	IPStackType                   string
+	EPDGAddr                      string
+	EPDGAddrSource                string
+	EPDGPort                      uint16
+	APN                           string
+	DNSServer                     string
+	NATKeepaliveSeconds           int
+	DPDIntervalSeconds            int
+	AKAChallengeMode              string
+	IKEIdentityMode               string
+	AKAIdentityMode               string
+	IKEProposals                  []string
+	ESPProposals                  []string
+	EnableLegacyCiphers           bool
+	AllowedLegacyCiphers          []string
+	AlgorithmPolicy               string
+	DeviceIdentityIMEI            string
+	DeviceIdentityEnabled         bool
+	DeviceModel                   string
+	IMSDomain                     string
+	IMSRealm                      string
+	IMSRegistrar                  string
+	IMSPCSCF                      string
+	IMSUserAgent                  string
+	IMSTransport                  string
+	IMSIdentitySource             string
+	IMSLocalPort                  int
+	IMSTCPKeepaliveSeconds        int
+	IMSOptionsPingIntervalSeconds int
+	DPDKeepaliveIntervalSeconds   int
+	ReauthIntervalSeconds         int
+	IMSRegisterTemplate           IMSRegisterTemplate
+	IMSRegisterPolicySource       string
+	SMSRoutingMethod              string
+	SMSRoutingGW                  string
+	ForceSMSCAuth                 bool
+
+	IMS IMSRegisterTemplate
 }
 
 // CarrierOverride overrides a carrier's configuration at runtime.

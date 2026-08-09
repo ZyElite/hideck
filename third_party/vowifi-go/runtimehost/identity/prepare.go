@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/iniwex5/vowifi-go/internal/runtimehostcarrier"
 	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 )
 
@@ -52,6 +53,7 @@ func PrepareStart(input PrepareStartInput) (PreparedSession, error) {
 	carrierConfig := carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{
 		MCC: profile.MCC, MNC: profile.MNC,
 	})
+	carrierConfig = runtimehostcarrier.FromInternal(runtimehostcarrier.ToInternal(carrierConfig))
 	if err := carrier.ValidateEffectiveCarrierConfig(carrierConfig); err != nil {
 		return PreparedSession{}, fmt.Errorf("identity: invalid carrier preset: %w", err)
 	}

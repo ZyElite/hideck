@@ -199,12 +199,32 @@ func validateIMSRegisterTemplate(template IMSRegisterTemplate) error {
 func cloneEffectiveCarrierConfig(cfg EffectiveCarrierConfig) EffectiveCarrierConfig {
 	cfg.IKEProposals = cloneStrings(cfg.IKEProposals)
 	cfg.ESPProposals = cloneStrings(cfg.ESPProposals)
-	cfg.IMS.ContactOrder = cloneStrings(cfg.IMS.ContactOrder)
+	cfg.AllowedLegacyCiphers = cloneStrings(cfg.AllowedLegacyCiphers)
+	cfg.IMSRegisterTemplate = cloneIMSRegisterTemplate(cfg.IMSRegisterTemplate)
+	cfg.IMS = cloneIMSRegisterTemplate(cfg.IMS)
 	return cfg
+}
+
+func cloneIMSRegisterTemplate(template IMSRegisterTemplate) IMSRegisterTemplate {
+	template.ContactParamOrder = cloneStrings(template.ContactParamOrder)
+	template.ContactOrder = cloneStrings(template.ContactOrder)
+	template.SecurityClientMechanisms = append(
+		[]IPSec3GPPSecurityMechanism(nil), template.SecurityClientMechanisms...,
+	)
+	template.RegisterPolicy.TemporaryStatusCodes = cloneInts(template.RegisterPolicy.TemporaryStatusCodes)
+	template.RegisterPolicy.ForbiddenStatusCodes = cloneInts(template.RegisterPolicy.ForbiddenStatusCodes)
+	template.RegisterPolicy.InitialRejectFallbackStatusCodes = cloneInts(
+		template.RegisterPolicy.InitialRejectFallbackStatusCodes,
+	)
+	return template
 }
 
 func cloneStrings(values []string) []string {
 	return append([]string(nil), values...)
+}
+
+func cloneInts(values []int) []int {
+	return append([]int(nil), values...)
 }
 
 func samePLMN(leftMCC, leftMNC, rightMCC, rightMNC string) bool {

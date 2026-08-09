@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -88,5 +89,51 @@ func TestCarrierPlanRoundTrip(t *testing.T) {
 	back := EffectiveCarrierConfigFromCarrierPlan(plan)
 	if back.MCC != cfg.MCC || back.PresetID != cfg.PresetID {
 		t.Errorf("round trip = %+v", back)
+	}
+}
+
+func TestIMSRegisterTemplateJSONSchemas(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		policyID   string
+		policyMode string
+		secMode    string
+		secEnabled bool
+		domain     string
+	}{
+		{
+			name: "recovered", input: `{"Domain":"ims.example","RegisterPolicy":{"ID":"temporary"},"SecAgreeMode":"required"}`,
+			policyID: "temporary", secMode: "required", domain: "ims.example",
+		},
+		{
+			name: "interim", input: `{"RegisterPolicy":"manual","SecAgreeMode":true}`,
+			policyMode: "manual", secEnabled: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var template IMSRegisterTemplate
+			if err := json.Unmarshal([]byte(test.input), &template); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+			if template.RegisterPolicy.ID != test.policyID || template.RegisterPolicyMode != test.policyMode ||
+				template.SecAgreeMode != test.secMode || template.SecAgreeEnabled != test.secEnabled ||
+				template.Domain != test.domain {
+				t.Fatalf("template = %+v", template)
+			}
+		})
+	}
+}
+
+func TestIMSRegisterTemplateJSONRejectsInvalidUnionTypes(t *testing.T) {
+	for _, input := range []string{
+		`{"RegisterPolicy":true}`,
+		`{"SecAgreeMode":42}`,
+	} {
+		var template IMSRegisterTemplate
+		if err := json.Unmarshal([]byte(input), &template); err == nil {
+			t.Fatalf("Unmarshal(%s) succeeded", input)
+		}
 	}
 }
