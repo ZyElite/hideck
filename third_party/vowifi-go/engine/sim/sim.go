@@ -23,6 +23,8 @@ var (
 	ErrSyncFailure = errors.New("sim: AKA synchronisation failure")
 	// ErrAuthFailure reports that the SIM rejected the network authentication.
 	ErrAuthFailure = errors.New("sim: AKA authentication failure")
+	// ErrAPDUBusy reports that the SIM APDU channel cannot serve AKA yet.
+	ErrAPDUBusy = errors.New("sim: APDU channel busy")
 )
 
 // ISIMAKAProvider computes AKA from the ISIM application (3GPP TS 31.103).

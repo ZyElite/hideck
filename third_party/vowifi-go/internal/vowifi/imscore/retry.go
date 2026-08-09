@@ -1,9 +1,5 @@
 package imscore
 
-import (
-	"time"
-)
-
 // RequestID returns the inbound request ID.
 func (h *imscoreInboundRequestHandle) RequestID() string {
 	if h == nil {
@@ -44,33 +40,4 @@ func (e *outboundModeResolveError) Unwrap() error {
 // newOutboundModeResolveError builds an outbound mode resolution error.
 func newOutboundModeResolveError(reason string) error {
 	return &outboundModeResolveError{reason: reason}
-}
-
-// registerRetryPolicy drives registration retry backoff (RFC 3261 §10.2).
-type registerRetryPolicy struct {
-	attempt int
-}
-
-// ShouldRetryDefaultInitial reports whether the first registration attempt
-// should retry after a transient failure.
-func (p *registerRetryPolicy) ShouldRetryDefaultInitial() bool {
-	if p == nil {
-		return true
-	}
-	return p.attempt < 3
-}
-
-// nextDelay returns the backoff delay for the current attempt.
-func (p *registerRetryPolicy) nextDelay() time.Duration {
-	if p == nil {
-		return 5 * time.Second
-	}
-	switch p.attempt {
-	case 0:
-		return time.Second
-	case 1:
-		return 5 * time.Second
-	default:
-		return 15 * time.Second
-	}
 }

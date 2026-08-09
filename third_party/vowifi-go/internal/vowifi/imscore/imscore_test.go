@@ -206,6 +206,9 @@ func TestUSSDLifecycle(t *testing.T) {
 	svc.regState = regRegistered
 	svc.regSession = &registerSession{serviceRoute: "<sip:pcscf.ims.example;lr>"}
 	svc.mu.Unlock()
+	if !svc.transitionRegStatus(registrationRegistered) {
+		t.Fatal("failed to mark service registered")
+	}
 	requests := make(chan string, 4)
 	svc.transport.SetSendFn(func(request string) error {
 		requests <- request

@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 
 	vowifidns "github.com/iniwex5/vowifi-go/internal/vowifi/dns"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/sipkit"
 )
 
 type initialRegistrationTransport struct {
@@ -19,16 +19,14 @@ type initialRegistrationTransport struct {
 	port   int
 }
 
-func registerTransportCandidates(configured string) ([]string, error) {
+func registerTransportCandidates(configured string) []string {
 	switch strings.ToLower(strings.TrimSpace(configured)) {
-	case "", "auto":
-		return []string{"tcp", "udp"}, nil
 	case "tcp":
-		return []string{"tcp"}, nil
+		return []string{"tcp", "udp"}
 	case "udp":
-		return []string{"udp"}, nil
+		return []string{"udp"}
 	default:
-		return nil, fmt.Errorf("imscore: unsupported REGISTER transport %q", configured)
+		return []string{"udp", "tcp"}
 	}
 }
 
@@ -36,13 +34,7 @@ func (s *Service) openInitialRegistrationTransport(
 	ctx context.Context,
 	serverListener, clientReservation net.Listener,
 ) error {
-	candidates, err := registerTransportCandidates(s.cfg.Transport)
-	if err != nil {
-		return err
-	}
-	if s.cfg.IPSec3GPPEnabled() && isAutoRegisterTransport(s.cfg.Transport) {
-		candidates = []string{"udp", "tcp"}
-	}
+	candidates := registerTransportCandidates(s.cfg.Transport)
 	var failures []error
 	for _, candidate := range candidates {
 		opened, openErr := s.openRegisterCandidate(ctx, candidate)
@@ -151,26 +143,69 @@ func closeRegistrationReservations(serverListener, clientReservation net.Listene
 	}
 }
 
-func (s *Service) resolveRegistrar(ctx context.Context, transport string) (*net.UDPAddr, error) {
-	target := strings.TrimSpace(s.cfg.Registrar)
-	if target == "" {
-		var err error
-		target, err = s.discoverRegistrar(ctx, transport)
+func (s *Service) replaceInitialRegistrationTransport(
+	ctx context.Context,
+	candidates []string,
+	start int,
+) (int, error) {
+	s.closeInitialRegistrationTransport()
+	var failures []error
+	for index := start; index < len(candidates); index++ {
+		opened, err := s.openRegisterCandidate(ctx, candidates[index])
 		if err != nil {
-			return nil, err
+			failures = append(failures, err)
+			continue
 		}
+		s.activateInitialRegistrationTransport(opened, nil, nil)
+		return index, nil
 	}
-	host, portText, err := net.SplitHostPort(target)
+	return -1, fmt.Errorf("imscore: open REGISTER transport: %w", errors.Join(failures...))
+}
+
+func (s *Service) closeInitialRegistrationTransport() {
+	s.mu.Lock()
+	packet := s.registrationIO
+	stream := s.registrationTCP
+	s.registrationIO = nil
+	s.registrationTCP = nil
+	s.registrationTCPProtected = false
+	s.registrationTransport = ""
+	s.registrationRemote = nil
+	s.mu.Unlock()
+	if packet != nil {
+		_ = packet.Close()
+	}
+	if stream != nil {
+		_ = stream.Close()
+	}
+}
+
+func (s *Service) resetRegistrationTransportForRegistrarRetry() {
+	s.closeInitialRegistrationTransport()
+	s.mu.Lock()
+	server := s.securityServerIO
+	reservation := s.clientPortReserve
+	s.securityServerIO = nil
+	s.clientPortReserve = nil
+	s.protectedClientPort = 0
+	s.protectedServerPort = 0
+	s.mu.Unlock()
+	closeRegistrationReservations(server, reservation)
+	s.transport.SetSendFn(nil)
+}
+
+func (s *Service) resolveRegistrar(ctx context.Context, transport string) (*net.UDPAddr, error) {
+	target, err := s.selectRegistrarCandidate(ctx, transport)
+	if err != nil {
+		return nil, err
+	}
+	host, port, err := sipkit.ParseHostPortWithDefault(target, defaultSIPPort)
 	if err != nil {
 		return nil, fmt.Errorf("imscore: parse registrar %q: %w", target, err)
 	}
-	ip, err := s.cfg.IMSNetwork.ResolveIP(ctx, host)
+	ip, err := s.cfg.IMSNetwork.ResolveIP(ctx, strings.Trim(host, "[]"))
 	if err != nil {
 		return nil, fmt.Errorf("imscore: resolve registrar %s: %w", host, err)
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil {
-		return nil, fmt.Errorf("imscore: parse registrar port %q: %w", portText, err)
 	}
 	return &net.UDPAddr{IP: ip, Port: port}, nil
 }

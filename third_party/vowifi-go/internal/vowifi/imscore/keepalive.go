@@ -151,6 +151,7 @@ func (s *Service) requestRuntimeReconnect(keepaliveErr error) {
 	s.registrationRefreshAt = time.Time{}
 	s.keepaliveFailures = 0
 	s.mu.Unlock()
+	s.transitionRegStatus(registrationRejectedTemporary)
 	s.notifySMSReadiness()
 	err := fmt.Errorf("imscore: fast reconnect requested after %d keepalive failures: %w",
 		s.keepaliveFailureLimit, keepaliveErr)

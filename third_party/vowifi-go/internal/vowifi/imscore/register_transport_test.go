@@ -73,37 +73,7 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 	}
 }
 
-func TestRegisterAutoPrefersTCP(t *testing.T) {
-	registrar, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer registrar.Close()
-	requestSeen := make(chan string, 1)
-	serverResult := make(chan error, 1)
-	go serveTCPRegisterStatus(registrar, requestSeen, serverResult)
-
-	svc, err := New(registerTransportTestConfig("auto", registrar.Addr().String()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer svc.Stop()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if err := svc.Register(ctx); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	request := <-requestSeen
-	if !strings.HasPrefix(sipHeaderValue(request, "Via"), "SIP/2.0/TCP ") ||
-		!strings.Contains(sipHeaderValue(request, "Contact"), ";transport=tcp>") {
-		t.Fatalf("auto REGISTER did not select TCP: %q", request)
-	}
-	if err := <-serverResult; err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestRegisterAutoFallsBackToUDPWhenTCPConnectFails(t *testing.T) {
+func TestRegisterAutoStartsWithUDP(t *testing.T) {
 	registrar, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +95,129 @@ func TestRegisterAutoFallsBackToUDPWhenTCPConnectFails(t *testing.T) {
 	request := <-requestSeen
 	if !strings.HasPrefix(sipHeaderValue(request, "Via"), "SIP/2.0/UDP ") ||
 		!strings.Contains(sipHeaderValue(request, "Contact"), ";transport=udp>") {
-		t.Fatalf("auto REGISTER did not fall back to UDP: %q", request)
+		t.Fatalf("auto REGISTER did not start with UDP: %q", request)
+	}
+}
+
+func TestRegisterTCPFallsBackToUDPWhenTCPConnectFails(t *testing.T) {
+	registrar, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registrar.Close()
+	requestSeen := make(chan string, 1)
+	go serveRegisterStatus(registrar, 200, requestSeen)
+
+	svc, err := New(registerTransportTestConfig("tcp", registrar.LocalAddr().String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	request := <-requestSeen
+	if !strings.HasPrefix(sipHeaderValue(request, "Via"), "SIP/2.0/UDP ") ||
+		!strings.Contains(sipHeaderValue(request, "Contact"), ";transport=udp>") {
+		t.Fatalf("tcp REGISTER did not fall back to UDP: %q", request)
+	}
+}
+
+func TestRegisterTCPRetriesUDPAfter503BeforeAuthentication(t *testing.T) {
+	tcpRegistrar, udpRegistrar := listenRegisterTransports(t)
+	defer tcpRegistrar.Close()
+	defer udpRegistrar.Close()
+	tcpSeen := make(chan string, 1)
+	udpSeen := make(chan string, 1)
+	tcpResult := make(chan error, 1)
+	go serveTCPRegisterStatusCode(tcpRegistrar, 503, tcpSeen, tcpResult)
+	go serveRegisterStatus(udpRegistrar, 200, udpSeen)
+
+	svc, err := New(registerTransportTestConfig("tcp", tcpRegistrar.Addr().String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if <-tcpSeen == "" || <-udpSeen == "" {
+		t.Fatal("REGISTER did not traverse TCP then UDP")
+	}
+	if err := <-tcpResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegisterTCPDoesNotRetryUDPAfter403(t *testing.T) {
+	tcpRegistrar, udpRegistrar := listenRegisterTransports(t)
+	defer tcpRegistrar.Close()
+	defer udpRegistrar.Close()
+	tcpResult := make(chan error, 1)
+	go serveTCPRegisterStatusCode(tcpRegistrar, 403, nil, tcpResult)
+
+	svc, err := New(registerTransportTestConfig("tcp", tcpRegistrar.Addr().String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err == nil || !strings.Contains(err.Error(), "status 403") {
+		t.Fatalf("Register error = %v", err)
+	}
+	if err := <-tcpResult; err != nil {
+		t.Fatal(err)
+	}
+	assertNoUDPRegister(t, udpRegistrar)
+}
+
+func listenRegisterTransports(t *testing.T) (*net.TCPListener, *net.UDPConn) {
+	t.Helper()
+	tcpRegistrar, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := tcpRegistrar.Addr().(*net.TCPAddr).Port
+	udpRegistrar, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
+	if err != nil {
+		tcpRegistrar.Close()
+		t.Fatal(err)
+	}
+	return tcpRegistrar, udpRegistrar
+}
+
+func serveTCPRegisterStatusCode(listener *net.TCPListener, status int, seen chan<- string, result chan<- error) {
+	conn, err := listener.AcceptTCP()
+	if err != nil {
+		result <- err
+		return
+	}
+	defer conn.Close()
+	request, err := readSIPStreamMessage(bufio.NewReader(conn))
+	if err == nil {
+		if seen != nil {
+			seen <- request
+		}
+		_, err = conn.Write([]byte(registerWireResponse(request, status, "")))
+	}
+	result <- err
+}
+
+func assertNoUDPRegister(t *testing.T, registrar *net.UDPConn) {
+	t.Helper()
+	if err := registrar.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 1)
+	if _, _, err := registrar.ReadFromUDP(buffer); err == nil {
+		t.Fatal("unexpected REGISTER retry over UDP")
+	} else if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
+		t.Fatalf("UDP read error = %v", err)
 	}
 }
 
@@ -295,12 +387,12 @@ func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 	}
 }
 
-func TestRegistrationExpiresPrefersContactBinding(t *testing.T) {
+func TestRegistrationExpiresPrefersExpiresHeader(t *testing.T) {
 	response := &sipResponse{Headers: map[string]string{
 		"Contact": "<sip:user@10.0.0.2>;expires=120", "Expires": "3600",
 	}}
-	if got := registrationExpires(response, time.Hour); got != 120*time.Second {
-		t.Fatalf("registrationExpires = %s, want 2m", got)
+	if got := registrationExpires(response, time.Hour); got != time.Hour {
+		t.Fatalf("registrationExpires = %s, want 1h", got)
 	}
 }
 
@@ -380,7 +472,7 @@ func TestRegisterLimitsAKAChallenges(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := svc.Register(ctx); err == nil || !strings.Contains(err.Error(), "AKA challenge limit 2 exceeded") {
+	if err := svc.Register(ctx); err == nil || !strings.Contains(err.Error(), "AKA challenge limit 3 exceeded") {
 		t.Fatalf("Register error = %v, want challenge limit", err)
 	}
 }

@@ -41,6 +41,21 @@ func TestNormalizeIMSRegisterPolicy(t *testing.T) {
 	}
 }
 
+func TestFallbackIMSRegisterTemplate(t *testing.T) {
+	template := DefaultIMSRegisterTemplate()
+	template.SecurityClientIncludesServerParams = true
+	template.FallbackIncludesServerParamsInSecCl = false
+	fallback := FallbackIMSRegisterTemplate(template)
+	if fallback.ID != "minimal_generic" || fallback.EnableInitialRejectFallback ||
+		fallback.SecurityClientIncludesServerParams {
+		t.Fatalf("FallbackIMSRegisterTemplate = %+v", fallback)
+	}
+	template.FallbackIncludesServerParamsInSecCl = true
+	if fallback := FallbackIMSRegisterTemplate(template); !fallback.SecurityClientIncludesServerParams {
+		t.Fatal("fallback server-parameter policy was not projected")
+	}
+}
+
 func TestNormalizeCarrierValues(t *testing.T) {
 	if got := NormalizeIMSDomain(" SIPS:IMS.Example.COM;transport=tcp "); got != "IMS.Example.COM" {
 		t.Fatalf("NormalizeIMSDomain() = %q", got)

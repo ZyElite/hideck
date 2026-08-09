@@ -9,6 +9,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ussi"
+	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 
 // New creates an IMS service from the configuration.
@@ -73,9 +74,7 @@ func (s *Service) IsRegistered() bool {
 	if s == nil {
 		return false
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.regState == regRegistered
+	return s.regStatus.Load() == registrationRegistered
 }
 
 // RegState returns the registration state.
@@ -90,18 +89,45 @@ func (s *Service) RegState() string {
 
 // Status returns a status snapshot.
 func (s *Service) Status() *ServiceStatus {
-	if s == nil {
+	if s == nil || s.cfg == nil {
 		return &ServiceStatus{}
 	}
+	s.receiverMu.Lock()
+	rxRunning := s.activeReceivers > 0
+	s.receiverMu.Unlock()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return &ServiceStatus{
-		Registered: s.regState == regRegistered,
-		State:      s.state,
-		RegState:   s.regState,
-		IMPU:       s.cfg.publicIdentities(),
-		Domain:     s.cfg.Domain,
+	identities := s.cfg.publicIdentities()
+	status := &ServiceStatus{
+		Enabled: s.cfg.Enabled, DeviceID: s.cfg.DeviceID,
+		Registered: s.regState == regRegistered || s.regStatus.Load() == registrationRegistered,
+		RegStatus:  registrationStatusText(s.regStatus.Load()),
+		Registrar:  s.registrar, RegistrarCandidates: append([]string(nil), s.registrarCandidates...),
+		RegistrarIndex: s.registrarIndex, RegistrarSource: s.registrarSource,
+		LastSIPCode: int(s.lastSIPCode.Load()), LastSIPText: s.lastSIPText,
+		Domain: s.cfg.Domain, IMPI: s.cfg.IMPI, IMPU: s.cfg.IMPU,
+		Transport: s.registrationTransport, SMSReceiverTransport: s.cfg.SMSReceiverTransport(),
+		LocalAddr: s.cfg.LocalAddr, LocalPort: s.cfg.LocalPort,
+		IPSecInstalled: len(s.spiPairs) > 0, RXRunning: rxRunning,
+		TCPSignalingRunning:   s.registrationTCP != nil,
+		TCPSignalingConnected: s.registrationTCP != nil,
+		RegFailCount:          int(s.regFailCount.Load()), ReRegisterPending: s.reRegisterPending.Load(),
+		LastPingAt: s.lastPingAt, ServiceRoute: currentServiceRoute(s.regSession),
+		Path: s.path, SecurityVerify: s.securityVerify, AssociatedMSISDN: s.assocMSISDN,
+		LastError: s.lastError, LastRegisterTraceID: s.lastRegisterTraceID,
+		LastRegisterAttemptAt: s.lastRegisterAttemptAt, LastRegisterOKAt: s.lastRegisterOKAt,
+		LastRegisterErr: s.lastRegisterErr,
+		State:           s.state, RegState: s.regState, IMPUs: identities,
 	}
+	status.SignalingReady = status.Registered && (s.externalTransport || s.registrationIO != nil || s.registrationTCP != nil)
+	return status
+}
+
+func currentServiceRoute(session *registerSession) string {
+	if session == nil {
+		return ""
+	}
+	return session.serviceRoute
 }
 
 // StatusSnapshot returns a status snapshot.
@@ -200,13 +226,20 @@ func (s *Service) GetPAccessNetworkInfo() string {
 		return ""
 	}
 	impu := firstNonBlank(cfg.publicIdentities()...)
-	if cfg.PAccessNetworkInfo != "" {
-		return cfg.PAccessNetworkInfo
+	if cfg.IMSRegisterTemplate.ID == "" && cfg.IMSRegisterTemplate.FixedPANI == "" &&
+		strings.TrimSpace(cfg.PAccessNetworkInfo) == "" {
+		seed := stablePANIGenerationSeed([]string{cfg.IMSI, cfg.IMPI, impu, cfg.Domain, cfg.DeviceID})
+		return AppendPAccessNetworkCountry(GenerateStablePAccessNetworkInfo(seed), cfg.PAccessNetworkCountry)
 	}
-	seed := stablePANIGenerationSeed([]string{cfg.IMSI, cfg.IMPI, impu, cfg.Domain, cfg.DeviceID})
-	return AppendPAccessNetworkCountry(
-		GenerateStablePAccessNetworkInfo(seed), cfg.PAccessNetworkCountry,
-	)
+	pani := registerPANIForTemplate(cfg.IMSRegisterTemplate, cfg.PAccessNetworkInfo, identity.IMSIdentity{
+		ActualSource: identity.IMSIdentitySourceDerived,
+		Applied:      true, IMPI: cfg.IMPI, IMPU: impu, Domain: cfg.Domain,
+	})
+	if strings.TrimSpace(cfg.IMSRegisterTemplate.FixedPANI) != "" ||
+		strings.TrimSpace(cfg.PAccessNetworkInfo) != "" {
+		return pani
+	}
+	return AppendPAccessNetworkCountry(pani, cfg.PAccessNetworkCountry)
 }
 
 // GetPubGRUU returns the public GRUU.
@@ -296,6 +329,7 @@ func (s *Service) Stop() {
 	select {
 	case <-s.stop:
 	default:
+		s.transitionRegStatus(registrationStopping)
 		close(s.stop)
 	}
 	s.mu.Lock()
@@ -342,6 +376,7 @@ func (s *Service) Stop() {
 	s.mu.Lock()
 	s.regState = regUnregister
 	s.mu.Unlock()
+	s.transitionRegStatus(registrationStopped)
 	s.notifySMSReadiness()
 }
 

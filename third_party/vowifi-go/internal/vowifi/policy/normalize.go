@@ -83,7 +83,11 @@ func IMSRegisterTemplateInitialSecAgreeEnabled(template IMSRegisterTemplate) boo
 }
 
 func FallbackIMSRegisterTemplate(template IMSRegisterTemplate) IMSRegisterTemplate {
-	return NormalizeIMSRegisterTemplate(template)
+	template = NormalizeIMSRegisterTemplate(template)
+	template.ID = "minimal_generic"
+	template.SecurityClientIncludesServerParams = template.FallbackIncludesServerParamsInSecCl
+	template.EnableInitialRejectFallback = false
+	return template
 }
 
 func NormalizeIMSIdentitySource(value string) string {

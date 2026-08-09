@@ -16,6 +16,17 @@ import (
 
 const defaultSIPPort = 5060
 
+func registerTransportDeadline(ctx context.Context, timeout time.Duration) time.Time {
+	deadline := time.Now().Add(timeout)
+	if ctx == nil {
+		return deadline
+	}
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		return contextDeadline
+	}
+	return deadline
+}
+
 func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 	if s.transport == nil {
 		return errors.New("imscore: no SIP transport")
@@ -24,10 +35,7 @@ func (s *Service) ensureRegistrationTransport(ctx context.Context) error {
 		return s.dialProtectedRegistrationTCP(ctx, client, server)
 	}
 	if s.transport.hasSendFn() {
-		candidates, err := registerTransportCandidates(s.cfg.Transport)
-		if err != nil {
-			return err
-		}
+		candidates := registerTransportCandidates(s.cfg.Transport)
 		s.mu.Lock()
 		if s.registrationIO == nil && s.registrationTCP == nil {
 			s.externalTransport = true
@@ -263,6 +271,7 @@ func (s *Service) clearClosedRegistrationTCP(conn net.Conn, readErr error) {
 	if !current || stopped {
 		return
 	}
+	s.transitionRegStatus(registrationRejectedTemporary)
 	s.notifySMSReadiness()
 	if readErr == nil {
 		readErr = io.EOF

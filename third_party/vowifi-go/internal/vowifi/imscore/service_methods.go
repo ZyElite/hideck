@@ -34,17 +34,34 @@ func (s *Service) Session() string {
 }
 
 // ToMap converts a service status to a map.
-func (st *ServiceStatus) ToMap() map[string]interface{} {
-	if st == nil {
-		return map[string]interface{}{}
-	}
+func (st ServiceStatus) ToMap() map[string]interface{} {
 	return map[string]interface{}{
-		"registered": st.Registered,
-		"state":      st.State,
-		"reg_state":  st.RegState,
-		"impu":       st.IMPU,
-		"domain":     st.Domain,
-		"last_error": st.LastError,
+		"enabled": st.Enabled, "device_id": st.DeviceID, "registered": st.Registered,
+		"reg_status": st.RegStatus, "registrar": st.Registrar,
+		"registrar_candidates": st.RegistrarCandidates, "registrar_index": st.RegistrarIndex,
+		"registrar_source": st.RegistrarSource, "last_sip_code": st.LastSIPCode,
+		"last_sip_text": st.LastSIPText, "domain": st.Domain, "impi": st.IMPI, "impu": st.IMPU,
+		"transport": st.Transport, "sms_receiver_transport": st.SMSReceiverTransport,
+		"local_addr": st.LocalAddr, "local_port": st.LocalPort, "ipsec_installed": st.IPSecInstalled,
+		"rx_running": st.RXRunning, "rx_port": st.RXPort,
+		"tcp_signaling_running":    st.TCPSignalingRunning,
+		"tcp_signaling_connected":  st.TCPSignalingConnected,
+		"effective_security_mode":  st.EffectiveSecurityMode,
+		"security_fallback_reason": st.SecurityFallbackReason,
+		"security_fallback_count":  st.SecurityFallbackCount,
+		"signaling_generation":     st.SignalingGeneration, "signaling_ready": st.SignalingReady,
+		"signaling_failure_reason": st.SignalingFailureReason,
+		"reg_fail_count":           st.RegFailCount, "re_register_pending": st.ReRegisterPending,
+		"ping_fail_count": st.PingFailCount, "last_ping_at": st.LastPingAt, "last_ping_ok": st.LastPingOK,
+		"last_register_trace_id":   st.LastRegisterTraceID,
+		"last_register_attempt_at": st.LastRegisterAttemptAt,
+		"last_register_ok_at":      st.LastRegisterOKAt, "last_register_err": st.LastRegisterErr,
+		"last_sms_send_trace_id": st.LastSMSSendTraceID, "last_sms_send_at": st.LastSMSSendAt,
+		"last_sms_send_err": st.LastSMSSendErr, "service_route": st.ServiceRoute, "path": st.Path,
+		"security_verify": st.SecurityVerify, "associated_msisdn": st.AssociatedMSISDN,
+		"last_error": st.LastError, "fragment_audit": st.FragmentAudit,
+		"ims_event_bus": st.IMSEventBus, "diagnostics": st.Diagnostics,
+		"state": st.State, "reg_state": st.RegState, "impus": st.IMPUs,
 	}
 }
 

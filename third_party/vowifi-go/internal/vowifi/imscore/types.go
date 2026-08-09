@@ -11,6 +11,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
@@ -144,6 +145,7 @@ func (n *SystemIMSNetwork) ListenPacket(network string, addr *net.UDPAddr) (net.
 // Service is the IMS core service.
 type Service struct {
 	cfg *IMSConfig
+	registrationRuntime
 
 	mu          sync.RWMutex
 	registerMu  sync.Mutex
@@ -212,8 +214,39 @@ type Service struct {
 
 	lastPingAt     time.Time
 	securityVerify string
+	lastError      string
+	serviceRoute   string
+	path           string
+	assocMSISDN    string
+	learnedAOR     string
+
+	lastRegisterTraceID   string
+	lastRegisterAttemptAt time.Time
+	lastRegisterOKAt      time.Time
+	lastRegisterErr       string
 
 	stop chan struct{}
+}
+
+type registrationRuntime struct {
+	callID              string
+	fromTag             string
+	cseq                atomic.Uint32
+	expires             uint32
+	authRealm           string
+	challengeRealm      string
+	registrar           string
+	registrarCandidates []string
+	registrarIndex      int
+	registrarSource     string
+	regStatus           atomic.Int32
+	nextRegister        time.Time
+	lastSIPCode         atomic.Int32
+	lastSIPText         string
+	reRegisterPending   atomic.Bool
+	regFailCount        atomic.Int32
+	OnReconnectNeeded   func()
+	reconnectTriggering atomic.Bool
 }
 
 // SMSReadiness describes the independently verifiable IMS SMS prerequisites.
@@ -229,17 +262,64 @@ type SMSReadiness struct {
 
 // ServiceStatus is a snapshot of the IMS service state.
 type ServiceStatus struct {
-	Registered bool
-	State      string
-	RegState   string
-	IMPU       []string
-	Domain     string
-	LastError  string
+	Enabled                bool
+	DeviceID               string
+	Registered             bool
+	RegStatus              string
+	Registrar              string
+	RegistrarCandidates    []string
+	RegistrarIndex         int
+	RegistrarSource        string
+	LastSIPCode            int
+	LastSIPText            string
+	Domain                 string
+	IMPI                   string
+	IMPU                   string
+	Transport              string
+	SMSReceiverTransport   string
+	LocalAddr              string
+	LocalPort              int
+	IPSecInstalled         bool
+	RXRunning              bool
+	RXPort                 int
+	TCPSignalingRunning    bool
+	TCPSignalingConnected  bool
+	EffectiveSecurityMode  string
+	SecurityFallbackReason string
+	SecurityFallbackCount  int64
+	SignalingGeneration    uint64
+	SignalingReady         bool
+	SignalingFailureReason string
+	RegFailCount           int
+	ReRegisterPending      bool
+	PingFailCount          int
+	LastPingAt             time.Time
+	LastPingOK             bool
+	LastRegisterTraceID    string
+	LastRegisterAttemptAt  time.Time
+	LastRegisterOKAt       time.Time
+	LastRegisterErr        string
+	LastSMSSendTraceID     string
+	LastSMSSendAt          time.Time
+	LastSMSSendErr         string
+	ServiceRoute           string
+	Path                   string
+	SecurityVerify         string
+	AssociatedMSISDN       string
+	LastError              string
+	FragmentAudit          map[string]interface{}
+	IMSEventBus            map[string]interface{}
+	Diagnostics            map[string]interface{}
+
+	// Compatibility fields added after v1.5.5.
+	State    string
+	RegState string
+	IMPUs    []string
 }
 
 // IsRegistered reports whether the service is registered.
-func (s *ServiceStatus) IsRegistered() bool {
-	return s != nil && s.Registered
+func (s ServiceStatus) IsRegistered() bool {
+	return s.Registered || strings.EqualFold(strings.TrimSpace(s.RegStatus), "Registered")
 }
 
 // DeliveryStore persists SMS delivery state.

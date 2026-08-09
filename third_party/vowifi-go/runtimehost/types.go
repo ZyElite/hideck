@@ -215,7 +215,13 @@ type DataplanePolicy struct {
 }
 
 // ErrAPDUBusy is returned when the SIM APDU channel is busy.
-var ErrAPDUBusy = errors.New("runtimehost: APDU channel busy")
+var ErrAPDUBusy error = apduBusyError{}
+
+type apduBusyError struct{}
+
+func (apduBusyError) Error() string { return "runtimehost: APDU channel busy" }
+
+func (apduBusyError) Unwrap() error { return enginesim.ErrAPDUBusy }
 
 // errNoService is returned when an operation requires a service that has not
 // been installed on the instance.

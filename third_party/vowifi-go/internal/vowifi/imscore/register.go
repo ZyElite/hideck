@@ -13,9 +13,10 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
 )
 
-const maxAKAChallenges = 2
+const maxAKAChallenges = 3
 
 // registerSession tracks one registration attempt.
 type registerSession struct {
@@ -30,7 +31,28 @@ type registerSession struct {
 	security     *securityAgreement
 	publicID     string
 	serviceRoute string
+	path         string
+	template     policy.IMSRegisterTemplate
 }
+
+type registerAttemptResult struct {
+	statusCode     int
+	challengeCount int
+	retryAfter     time.Duration
+	minExpires     uint32
+	secAgree       bool
+	authRealm      string
+	authorization  string
+	securityVerify string
+}
+
+type registerAttemptError struct {
+	result registerAttemptResult
+	err    error
+}
+
+func (e *registerAttemptError) Error() string { return e.err.Error() }
+func (e *registerAttemptError) Unwrap() error { return e.err }
 
 // Register performs the IMS registration flow (RFC 3261 + Digest-AKA).
 func (s *Service) Register(ctx context.Context) error {
@@ -44,19 +66,32 @@ func (s *Service) Register(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	s.regState = regRegistering
+	s.lastRegisterTraceID = common.TraceID(ctx)
+	s.lastRegisterAttemptAt = time.Now()
 	s.mu.Unlock()
 
 	expires, err := s.runRegisterFlow(ctx)
 	if err != nil {
 		s.mu.Lock()
 		s.regState = regFailed
+		s.lastError = err.Error()
+		s.lastRegisterErr = err.Error()
 		s.mu.Unlock()
+		if !isRegisterOperationCanceled(err) {
+			s.applyRegistrationFailureStatus(err)
+		}
 		s.notifySMSReadiness()
 		return err
 	}
 	s.mu.Lock()
 	s.regState = regRegistered
+	s.lastError = ""
+	s.lastRegisterErr = ""
+	s.lastRegisterOKAt = time.Now()
 	s.mu.Unlock()
+	s.transitionRegStatus(registrationRegistered)
+	s.regFailCount.Store(0)
+	s.reRegisterPending.Store(false)
 	if s.onRegistered != nil {
 		s.onRegistered()
 	}
@@ -75,62 +110,245 @@ func (s *Service) runRegisterFlow(ctx context.Context) (time.Duration, error) {
 	if err := s.ensureRegistrationTransport(ctx); err != nil {
 		return 0, err
 	}
+	candidates := registerTransportCandidates(s.cfg.Transport)
+	transportIndex := indexOfRegisterTransport(candidates, s.currentRegistrationTransport())
+	minExpiresRetried := false
+	for {
+		expires, result, err := s.runRegisterAttempt(ctx)
+		if err == nil {
+			return expires, nil
+		}
+		if result.statusCode == 423 && result.minExpires > 0 && !minExpiresRetried {
+			s.applyRegisterMinExpires(result.minExpires)
+			minExpiresRetried = true
+			continue
+		}
+		if s.usesExternalRegistrationTransport() || !shouldRetryNextRegisterTransport(result, err) {
+			return 0, &registerAttemptError{result: result, err: err}
+		}
+		next, switchErr := s.replaceInitialRegistrationTransport(ctx, candidates, transportIndex+1)
+		if switchErr != nil {
+			attemptErr := &registerAttemptError{result: result, err: err}
+			return 0, errors.Join(attemptErr, switchErr)
+		}
+		transportIndex = next
+	}
+}
+
+func (s *Service) runRegisterAttempt(ctx context.Context) (time.Duration, registerAttemptResult, error) {
+	var result registerAttemptResult
 	session, err := s.sessionForRegisterAttempt()
 	if err != nil {
-		return 0, err
+		return 0, result, err
 	}
 	s.mu.Lock()
 	s.regSession = session
 	s.mu.Unlock()
+	s.recordRegisterSession(session)
+	response, result, err := s.exchangeRegisterChallenges(ctx, session)
+	if err != nil {
+		return 0, result, err
+	}
+	expires, err := s.commitRegisterSuccess(response, session)
+	return expires, result, err
+}
 
+func (s *Service) exchangeRegisterChallenges(
+	ctx context.Context,
+	session *registerSession,
+) (*sipResponse, registerAttemptResult, error) {
+	var result registerAttemptResult
 	resp, err := s.exchangeRegister(ctx, session, session.authHeader)
 	if err != nil {
-		return 0, err
+		return nil, result, err
 	}
+	updateRegisterAttemptResponse(&result, resp)
+	resp, err = s.retryDefaultInitialRegister(ctx, session, resp)
+	if err != nil {
+		return nil, result, err
+	}
+	updateRegisterAttemptResponse(&result, resp)
 	for challengeCount := 0; isDigestChallengeResponse(resp); challengeCount++ {
+		result.challengeCount = challengeCount + 1
 		if challengeCount >= maxAKAChallenges {
-			return 0, fmt.Errorf("imscore: AKA challenge limit %d exceeded", maxAKAChallenges)
+			return nil, result, fmt.Errorf("imscore: AKA challenge limit %d exceeded", maxAKAChallenges)
 		}
 		auth, syncFailure, err := s.answerDigestChallenge(ctx, session, resp)
 		if err != nil {
-			return 0, err
+			return nil, result, err
 		}
+		updateRegisterAttemptAuth(&result, session, auth)
 		session.cseq++
 		session.authHeader = auth
 		resp, err = s.exchangeRegister(ctx, session, auth)
 		if err != nil {
-			return 0, err
+			return nil, result, err
 		}
+		updateRegisterAttemptResponse(&result, resp)
 		if syncFailure && !isDigestChallengeResponse(resp) {
-			return 0, fmt.Errorf("imscore: AKA synchronization response status %d did not provide a fresh challenge", resp.StatusCode)
+			return nil, result, fmt.Errorf("imscore: AKA synchronization response status %d did not provide a fresh challenge", resp.StatusCode)
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, registrationResponseError(resp, session.challenge != nil)
+		return nil, result, registrationResponseError(resp, session.challenge != nil)
 	}
 	if session.security != nil && session.security.server == nil {
-		return 0, errors.New("imscore: registration completed without 3GPP security agreement")
+		return nil, result, errors.New("imscore: registration completed without 3GPP security agreement")
 	}
+	return resp, result, nil
+}
+
+func updateRegisterAttemptResponse(result *registerAttemptResult, response *sipResponse) {
+	result.statusCode = response.StatusCode
+	result.retryAfter, result.minExpires = parseRegisterRetryHintsFromResponse(response)
+}
+
+func updateRegisterAttemptAuth(result *registerAttemptResult, session *registerSession, authorization string) {
+	result.authorization = authorization
+	result.secAgree = session.security != nil
+	if session.security != nil {
+		result.securityVerify = session.security.verifyHeader
+	}
+	if session.challenge != nil {
+		result.authRealm = session.challenge.Realm
+	}
+}
+
+func (s *Service) commitRegisterSuccess(resp *sipResponse, session *registerSession) (time.Duration, error) {
 	s.finalizeRegistrationTransportSwitch()
 	expires := registrationExpires(resp, s.cfg.Expires)
 	session.expires = expires
+	s.recordRegisterSession(session)
 	associatedURI := resp.Header("P-Associated-URI")
 	if publicID := associatedPublicIdentity(associatedURI); publicID != "" {
 		session.publicID = publicID
 	}
 	if number := imsheaders.ExtractPhoneFromAssociatedMSISDN(associatedURI); number != "" {
+		s.mu.Lock()
+		s.assocMSISDN = number
+		s.mu.Unlock()
 		s.publishLocalNumberLearned(number, "p-associated-uri")
+	}
+	if session.publicID != "" {
+		s.mu.Lock()
+		s.learnedAOR = session.publicID
+		s.mu.Unlock()
 	}
 	if serviceRoute := imsheaders.FirstRoute(resp.Header("Service-Route"), ""); serviceRoute != "" {
 		session.serviceRoute = serviceRoute
+		s.mu.Lock()
+		s.serviceRoute = serviceRoute
+		s.mu.Unlock()
+	}
+	if path := strings.TrimSpace(resp.Header("Path")); path != "" {
+		session.path = path
+		s.mu.Lock()
+		s.path = path
+		s.mu.Unlock()
 	}
 	return expires, nil
 }
 
+func registerAttemptReachedAuthPhase(result registerAttemptResult) bool {
+	return result.challengeCount > 0 || result.secAgree || strings.TrimSpace(result.securityVerify) != "" ||
+		strings.TrimSpace(result.authRealm) != "" || strings.TrimSpace(result.authorization) != ""
+}
+
+func shouldRetryNextRegisterTransport(result registerAttemptResult, err error) bool {
+	if isRegisterOperationCanceled(err) || registerAttemptReachedAuthPhase(result) {
+		return false
+	}
+	return result.statusCode == 0 || result.statusCode == 408 ||
+		(result.statusCode >= 502 && result.statusCode <= 504)
+}
+
+func isRegisterOperationCanceled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func indexOfRegisterTransport(candidates []string, current string) int {
+	for index, candidate := range candidates {
+		if candidate == current {
+			return index
+		}
+	}
+	return 0
+}
+
+func (s *Service) currentRegistrationTransport() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.registrationTransport
+}
+
+func (s *Service) usesExternalRegistrationTransport() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.externalTransport
+}
+
+func (s *Service) applyRegistrationFailureStatus(err error) {
+	if errors.Is(err, enginesim.ErrAPDUBusy) {
+		s.handleRegisterAPDUBusy(err)
+		return
+	}
+	var responseErr *registerResponseError
+	var attemptErr *registerAttemptError
+	result := registerAttemptResult{}
+	if errors.As(err, &attemptErr) {
+		result = attemptErr.result
+	}
+	errors.As(err, &responseErr)
+	transportFailure := result.statusCode == 0
+	if responseErr != nil {
+		result.statusCode = responseErr.statusCode
+		result.retryAfter = responseErr.retryAfter
+		result.minExpires = responseErr.minExpires
+	}
+	outcome := decideRegisterFailureOutcome(
+		time.Now(), result, s.cfg.IMSRegisterTemplate.RegisterPolicy, transportFailure,
+	)
+	logging.RunDebug("IMS REGISTER failure",
+		"status", result.statusCode, "reason", outcome.reason,
+		"register_policy", effectiveRegisterPolicyID(s.cfg.IMSRegisterTemplate, s.cfg.IMSRegisterPolicySource),
+		"register_policy_source", normalizeRegisterPolicySource(s.cfg.IMSRegisterPolicySource))
+	s.regFailCount.Add(1)
+	s.reRegisterPending.Store(outcome.kind == registrationRejectedTemporary)
+	s.mu.Lock()
+	s.nextRegister = outcome.nextRegister
+	s.mu.Unlock()
+	if responseErr != nil {
+		s.lastSIPCode.Store(int32(responseErr.statusCode))
+	}
+	s.transitionRegStatus(outcome.kind)
+	if outcome.kind == registrationRejectedTemporary && outcome.reason != "min_expires" {
+		if s.advanceRegistrarForNextRetry(outcome.reason) {
+			s.resetRegistrationTransportForRegistrarRetry()
+		}
+	}
+	s.triggerRegisterReconnect()
+}
+
+func (s *Service) applyRegisterMinExpires(seconds uint32) {
+	duration := time.Duration(seconds) * time.Second
+	if s.cfg.Expires < duration {
+		s.cfg.Expires = duration
+	}
+	if s.cfg.RegisterTemplate.Expires < duration {
+		s.cfg.RegisterTemplate.Expires = duration
+	}
+	if seconds > uint32(s.cfg.IMSRegisterTemplate.Expires) {
+		s.cfg.IMSRegisterTemplate.Expires = int(seconds)
+	}
+}
+
 func (s *Service) exchangeRegister(ctx context.Context, session *registerSession, authorization string) (*sipResponse, error) {
+	s.recordRegisterSession(session)
 	request := s.buildRegister(session, authorization)
 	logging.RunDebug("IMS REGISTER outbound", "cseq", session.cseq,
-		"authenticated", strings.TrimSpace(authorization) != "", "sip", logging.RedactSIPRaw(request))
+		"authenticated", strings.TrimSpace(authorization) != "",
+		"security_client_mechanisms", securityClientMechanismCount(rawSIPHeaderValue(request, "Security-Client")),
+		"sip", logging.RedactSIPRaw(request))
 	response, err := s.transport.RoundTrip(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("imscore: REGISTER CSeq %d transaction: %w", session.cseq, err)
@@ -144,6 +362,7 @@ func (s *Service) exchangeRegister(ctx context.Context, session *registerSession
 	}
 	logging.RunDebug("IMS REGISTER response", "cseq", session.cseq, "status", response.StatusCode,
 		"security_server", response.Header("Security-Server") != "", "digest_challenge", isDigestChallengeResponse(response))
+	s.recordRegisterResponse(response)
 	return response, nil
 }
 
@@ -157,6 +376,10 @@ func (s *Service) answerDigestChallenge(ctx context.Context, session *registerSe
 		return "", false, err
 	}
 	session.challenge = challenge
+	s.mu.Lock()
+	s.challengeRealm = challenge.Realm
+	s.authRealm = pickAuthRealm(s.cfg.Realm, challenge.Realm, s.cfg.Domain)
+	s.mu.Unlock()
 	logging.RunDebug("IMS Digest-AKA challenge", "cseq", session.cseq,
 		"algorithm", challenge.Algorithm, "qop", challenge.QOP)
 	authorization, aka, authErr := s.buildAuthorizationWithResult(session)
@@ -182,7 +405,7 @@ func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {
 			cseq:        previous.cseq + 1, challenge: previous.challenge,
 			authHeader: previous.authHeader, expires: previous.expires,
 			security: previous.security, publicID: previous.publicID,
-			serviceRoute: previous.serviceRoute,
+			serviceRoute: previous.serviceRoute, path: previous.path, template: previous.template,
 		}
 		s.mu.RUnlock()
 		return session, nil
@@ -194,8 +417,53 @@ func (s *Service) sessionForRegisterAttempt() (*registerSession, error) {
 	}
 	return &registerSession{
 		callID: newCallID(), fromTag: newTag(), contactUser: newUUID(),
-		cseq: 2, security: security,
+		cseq: 2, security: security, template: s.cfg.IMSRegisterTemplate,
 	}, nil
+}
+
+func (s *Service) retryDefaultInitialRegister(
+	ctx context.Context,
+	session *registerSession,
+	response *sipResponse,
+) (*sipResponse, error) {
+	template := session.template
+	if !template.EnableInitialRejectFallback || response == nil {
+		return response, nil
+	}
+	warning, body, _, _ := summarizeSIPFailure(response)
+	retryPolicy := defaultRegisterRetryPolicy(template.RegisterPolicy)
+	if !retryPolicy.ShouldRetryDefaultInitial(response.StatusCode, warning, body) {
+		return response, nil
+	}
+	session.template = policy.FallbackIMSRegisterTemplate(template)
+	session.cseq++
+	return s.exchangeRegister(ctx, session, session.authHeader)
+}
+
+func (s *Service) recordRegisterSession(session *registerSession) {
+	if session == nil {
+		return
+	}
+	s.mu.Lock()
+	s.callID = session.callID
+	s.fromTag = session.fromTag
+	s.expires = uint32(session.expires / time.Second)
+	s.mu.Unlock()
+	s.cseq.Store(uint32(session.cseq))
+}
+
+func (s *Service) recordRegisterResponse(response *sipResponse) {
+	if response == nil {
+		return
+	}
+	s.lastSIPCode.Store(int32(response.StatusCode))
+	text := strings.TrimSpace(response.Reason)
+	if text == "" {
+		text = SIPStatusText(response.StatusCode)
+	}
+	s.mu.Lock()
+	s.lastSIPText = text
+	s.mu.Unlock()
 }
 
 // buildRegister builds a REGISTER request.
@@ -224,7 +492,7 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
 	b.WriteString("Supported: " + formatHeaderList(registerSupportedHeader(cfg)) + "\r\n")
-	if allow := strings.TrimSpace(cfg.RegisterTemplate.AllowHeader); allow != "" {
+	if allow := registerConfiguredAllowHeader(cfg); allow != "" {
 		b.WriteString("Allow: " + allow + "\r\n")
 	}
 	if registerIncludesPANI(cfg.RegisterTemplate, authenticated || protected) {
@@ -235,6 +503,9 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 		b.WriteString("Cellular-Network-Info: " + cellular + "\r\n")
 	}
 	b.WriteString(registerSecurityHeaders(session))
+	if route := strings.TrimSpace(session.serviceRoute); route != "" {
+		b.WriteString("Route: " + route + "\r\n")
+	}
 	if authHeader == "" {
 		authHeader = initialIMSAuthorization(cfg)
 	}
@@ -250,7 +521,7 @@ func (s *Service) registerContactOptions(session *registerSession) imsheaders.Co
 	options := imsheaders.ContactOptions{
 		ContactID: session.contactUser, LocalAddr: s.cfg.LocalIP.String(),
 		LocalPortC: s.cfg.LocalPort, LocalPortS: s.cfg.LocalPort,
-		AccessType:        s.cfg.RegisterTemplate.AccessType,
+		AccessType:        registerConfiguredAccessType(s.cfg),
 		ContactParamOrder: s.cfg.RegisterTemplate.ContactOrder,
 		SIPInstance:       s.cfg.IMEI, IcsiRef: s.cfg.RegisterTemplate.ICSIRef,
 		IMEI: s.cfg.DeviceID,
@@ -290,6 +561,11 @@ func registerContact(options imsheaders.ContactOptions, transport string, expire
 }
 
 func registerExpires(cfg *IMSConfig) time.Duration {
+	if cfg.IMSRegisterTemplate.Expires > 0 {
+		return time.Duration(registerExpiresForTemplate(
+			cfg.IMSRegisterTemplate, int(cfg.Expires/time.Second),
+		)) * time.Second
+	}
 	if cfg.RegisterTemplate.Expires > 0 {
 		return cfg.RegisterTemplate.Expires
 	}
@@ -297,6 +573,20 @@ func registerExpires(cfg *IMSConfig) time.Duration {
 		return cfg.Expires
 	}
 	return 3600 * time.Second
+}
+
+func registerConfiguredAllowHeader(cfg *IMSConfig) string {
+	if cfg.IMSRegisterTemplate.ID != "" || cfg.IMSRegisterTemplate.AllowHeader != "" {
+		return registerAllowHeader(cfg.IMSRegisterTemplate)
+	}
+	return strings.TrimSpace(cfg.RegisterTemplate.AllowHeader)
+}
+
+func registerConfiguredAccessType(cfg *IMSConfig) string {
+	if cfg.IMSRegisterTemplate.ID != "" || cfg.IMSRegisterTemplate.AccessType != "" {
+		return registerAccessType(cfg.RegisterTemplate.AccessType, cfg.IMSRegisterTemplate)
+	}
+	return strings.TrimSpace(cfg.RegisterTemplate.AccessType)
 }
 
 func registerSupportedHeader(cfg *IMSConfig) string {
@@ -307,10 +597,7 @@ func registerSupportedHeader(cfg *IMSConfig) string {
 }
 
 func initialIMSAuthorization(cfg *IMSConfig) string {
-	realm := strings.TrimSpace(cfg.Realm)
-	if realm == "" {
-		realm = strings.TrimSpace(cfg.Domain)
-	}
+	realm := pickAuthRealm(cfg.Realm, "", cfg.Domain)
 	return fmt.Sprintf(`Digest uri="sip:%s",username="%s",response="",realm="%s",nonce=""`,
 		digestQuotedValue(cfg.Domain), digestQuotedValue(cfg.IMPI), digestQuotedValue(realm))
 }
@@ -360,10 +647,7 @@ func (s *Service) registerRequestTransport(protected bool) string {
 	if transport != "" {
 		return transport
 	}
-	candidates, err := registerTransportCandidates(s.cfg.Transport)
-	if err != nil || len(candidates) == 0 {
-		return "tcp"
-	}
+	candidates := registerTransportCandidates(s.cfg.Transport)
 	return candidates[0]
 }
 
@@ -390,12 +674,22 @@ func formatHeaderList(value string) string {
 	return strings.Join(parts, ", ")
 }
 
+type registerResponseError struct {
+	statusCode int
+	retryAfter time.Duration
+	minExpires uint32
+	message    string
+}
+
+func (e *registerResponseError) Error() string { return e.message }
+
 func registrationResponseError(response *sipResponse, challenged bool) error {
 	phase := "initial REGISTER"
 	if challenged {
 		phase = "authenticated REGISTER"
 	}
 	detail := strings.TrimSpace(response.Reason)
+	retryAfter, minExpires := parseRegisterRetryHintsFromResponse(response)
 	if warning := strings.TrimSpace(response.Header("Warning")); warning != "" {
 		if detail != "" {
 			detail += "; "
@@ -403,19 +697,23 @@ func registrationResponseError(response *sipResponse, challenged bool) error {
 		detail += "warning=" + warning
 	}
 	if detail == "" {
-		return fmt.Errorf("imscore: registration failed during %s with status %d", phase, response.StatusCode)
+		return &registerResponseError{statusCode: response.StatusCode, retryAfter: retryAfter, minExpires: minExpires, message: fmt.Sprintf(
+			"imscore: registration failed during %s with status %d", phase, response.StatusCode)}
 	}
-	return fmt.Errorf("imscore: registration failed during %s with status %d (%s)", phase, response.StatusCode, detail)
+	return &registerResponseError{statusCode: response.StatusCode, retryAfter: retryAfter, minExpires: minExpires, message: fmt.Sprintf(
+		"imscore: registration failed during %s with status %d (%s)", phase, response.StatusCode, detail)}
 }
 
 func primaryPublicIdentity(cfg *IMSConfig) string {
 	if identity := firstNonBlank(cfg.publicIdentities()...); identity != "" {
-		if strings.HasPrefix(strings.ToLower(identity), "sip:") {
+		if strings.Contains(identity, ":") {
 			return identity
 		}
-		return "sip:" + identity
+		user, domain, _ := strings.Cut(identity, "@")
+		return formatAORForSIP("sip", user, domain)
 	}
-	return "sip:" + cfg.IMPI
+	user, domain, _ := strings.Cut(cfg.IMPI, "@")
+	return formatAORForSIP("sip", user, domain)
 }
 
 func contactUser(cfg *IMSConfig) string {
@@ -427,16 +725,15 @@ func contactUser(cfg *IMSConfig) string {
 }
 
 func registrationExpires(resp *sipResponse, configured time.Duration) time.Duration {
-	if seconds := contactExpires(resp.Header("Contact")); seconds > 0 {
-		return time.Duration(seconds) * time.Second
-	}
-	if seconds, err := strconv.Atoi(strings.TrimSpace(resp.Header("Expires"))); err == nil && seconds > 0 {
-		return time.Duration(seconds) * time.Second
-	}
+	fallback := uint32(0)
 	if configured > 0 {
-		return configured
+		fallback = uint32(configured / time.Second)
 	}
-	return time.Hour
+	seconds := parseRegisterExpiresFromResponse(resp, fallback)
+	if seconds == 0 {
+		seconds = uint32(time.Hour / time.Second)
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func contactExpires(contact string) int {
@@ -457,7 +754,10 @@ func contactExpires(contact string) int {
 func (s *Service) scheduleRegistrationRefresh(expires time.Duration) {
 	delay := registrationRefreshDelay(expires)
 	s.mu.Lock()
-	s.registrationRefreshAt = time.Now().Add(delay)
+	now := time.Now()
+	s.registrationRefreshAt = nextRegisterAtAfterSuccess(now, delay)
+	s.registrationRuntime.expires = uint32(expires / time.Second)
+	s.nextRegister = nextRegisterAtAfterSuccess(now, delay)
 	s.mu.Unlock()
 	s.signalIMSMaintenance()
 }
@@ -480,12 +780,12 @@ func sipLocalAddress(cfg *IMSConfig) string {
 
 // extractChallenge extracts the digest challenge from a 401/407 response.
 func (s *Service) extractChallenge(resp *sipResponse, statusCode int) (*DigestChallenge, error) {
-	header := "WWW-Authenticate"
-	if statusCode == 407 {
-		header = "Proxy-Authenticate"
-	}
-	value := resp.Header(header)
+	header, value := pickAuthHeader(resp)
 	if value == "" {
+		header = "WWW-Authenticate"
+		if statusCode == 407 {
+			header = "Proxy-Authenticate"
+		}
 		return nil, errors.New("imscore: challenge response missing " + header)
 	}
 	return ParseDigestChallenge(value)
