@@ -101,6 +101,20 @@ func TestInstanceStop(t *testing.T) {
 	}
 }
 
+func TestInstanceStopReleasesIMSBeforeTunnel(t *testing.T) {
+	var order []string
+	tunnel := newLifecycleTunnel(nil)
+	tunnel.onShutdown = func() { order = append(order, "tunnel") }
+	service := &lifecycleIMS{onStop: func() { order = append(order, "ims") }}
+	instance := &Instance{tunnel: tunnel, service: service}
+	if err := instance.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if len(order) != 2 || order[0] != "ims" || order[1] != "tunnel" {
+		t.Fatalf("cleanup order = %v", order)
+	}
+}
+
 func TestTriggerMOBIKEUsesTunnelAndReportsFailure(t *testing.T) {
 	tunnel := newLifecycleTunnel(nil)
 	instance := &Instance{tunnel: tunnel}

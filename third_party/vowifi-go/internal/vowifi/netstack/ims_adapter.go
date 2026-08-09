@@ -18,6 +18,14 @@ type IMSNetworkAdapter struct {
 
 var _ imscore.IMSNetwork = (*IMSNetworkAdapter)(nil)
 
+// AdaptIMSNetwork exposes an existing restored Network through the IMS API.
+func AdaptIMSNetwork(network *Network) *IMSNetworkAdapter {
+	if network == nil {
+		return nil
+	}
+	return &IMSNetworkAdapter{network: network}
+}
+
 func NewTunnelNetwork(
 	innerIP net.IP,
 	prefixLen int,

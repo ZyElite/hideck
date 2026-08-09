@@ -56,6 +56,7 @@ type lifecycleTunnel struct {
 	terminalErr   error
 	oldIP         net.IP
 	newIP         net.IP
+	onShutdown    func()
 }
 
 type lifecycleIMS struct {
@@ -69,6 +70,7 @@ type lifecycleIMS struct {
 	refreshErrs chan error
 	sms         SMSReadiness
 	smsObserver func(SMSReadiness)
+	onStop      func()
 }
 
 func (s *lifecycleIMS) Register(ctx context.Context) error {
@@ -89,7 +91,12 @@ func (s *lifecycleIMS) Register(ctx context.Context) error {
 	return nil
 }
 
-func (s *lifecycleIMS) Stop() { s.stopped = true }
+func (s *lifecycleIMS) Stop() {
+	s.stopped = true
+	if s.onStop != nil {
+		s.onStop()
+	}
+}
 
 func (s *lifecycleIMS) Status() Status {
 	return Status{State: State{DeviceID: s.deviceID, IMSReady: s.registered}}
@@ -144,6 +151,9 @@ func (t *lifecycleTunnel) Connect(context.Context) error {
 
 func (t *lifecycleTunnel) Shutdown() {
 	t.shutdownOnce.Do(func() {
+		if t.onShutdown != nil {
+			t.onShutdown()
+		}
 		t.setState("shutdown")
 		close(t.done)
 	})
@@ -321,6 +331,20 @@ func TestStartShouldRunFalse(t *testing.T) {
 		ShouldRun: func() bool { return false },
 	}); err == nil {
 		t.Error("Start with ShouldRun=false should error")
+	}
+}
+
+func TestStartDefaultRoutesThroughRuntimeCorePreparation(t *testing.T) {
+	_, err := Start(context.Background(), StartRequest{
+		DeviceID: "dev-1",
+		Prepared: &identity.PreparedSession{
+			EPDGAddr: "epdg.example.com",
+		},
+		SIM:       startSIMAdapter{},
+		Dataplane: DataplanePolicy{Mode: swu.DataplaneModeUserspace},
+	})
+	if err == nil || !strings.Contains(err.Error(), "runtimecore: prepared session has no IMSI") {
+		t.Fatalf("Start error = %v, want runtimecore preparation error", err)
 	}
 }
 

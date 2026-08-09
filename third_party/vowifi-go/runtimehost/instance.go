@@ -75,11 +75,11 @@ func (i *Instance) Stop(ctx context.Context) error {
 	if voiceDetach != nil {
 		stopErr = voiceDetach()
 	}
-	if tunnel != nil {
-		tunnel.Shutdown()
-	}
 	if svc != nil {
 		svc.Stop()
+	}
+	if tunnel != nil {
+		tunnel.Shutdown()
 	}
 	i.updateState(func(state *State) {
 		state.SessionState = "stopped"

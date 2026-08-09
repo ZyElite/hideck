@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
@@ -344,6 +345,23 @@ func TestDeliveryStoreAdapter(t *testing.T) {
 	}
 	if err := sipResults.MarkSMSDeliveryPartSIPResult("msg-1", 1, 202, "pending", "", time.Now()); err != nil {
 		t.Fatal(err)
+	}
+	if store.sipCode != 202 {
+		t.Fatalf("persisted SIP code = %d", store.sipCode)
+	}
+}
+
+func TestRuntimeCoreDeliveryStorePreservesOptionalSIPResults(t *testing.T) {
+	store := &memDeliveryStore{}
+	adapter := runtimeCoreDeliveryStore(store)
+	sipResults, ok := adapter.(smsdelivery.SIPResultStore)
+	if !ok {
+		t.Fatal("runtimehost runtimecore adapter lost SIP result capability")
+	}
+	if err := sipResults.MarkSMSDeliveryPartSIPResult(
+		"msg-1", 1, 202, "pending", "", time.Now(),
+	); err != nil {
+		t.Fatalf("MarkSMSDeliveryPartSIPResult: %v", err)
 	}
 	if store.sipCode != 202 {
 		t.Fatalf("persisted SIP code = %d", store.sipCode)

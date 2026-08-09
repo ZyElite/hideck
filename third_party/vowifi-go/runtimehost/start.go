@@ -94,6 +94,9 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 	if err := validateStartRequest(req); err != nil {
 		return nil, err
 	}
+	if req.TunnelFactory == nil && req.IMSFactory == nil {
+		return startRuntimeCore(ctx, req)
+	}
 	if req.BeforeStart != nil {
 		if err := req.BeforeStart(ctx, SessionConfig{DataplaneMode: req.Dataplane.Mode}); err != nil {
 			return nil, err
@@ -240,7 +243,7 @@ func initialState(req StartRequest) State {
 
 func newTunnel(req StartRequest, inst *Instance) (Tunnel, error) {
 	prepared := preparedForRuntimeCore(req.Prepared)
-	cfg, err := runtimecore.BuildSWUConfig(prepared, req.SIM.AKAProvider())
+	cfg, err := runtimecore.BuildCompatibilitySWUConfig(prepared, req.SIM.AKAProvider())
 	if err != nil {
 		return nil, err
 	}
@@ -280,10 +283,20 @@ func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.Pre
 			IMPI: prepared.IMSIdentity.IMPI, IMPU: []string{prepared.IMSIdentity.IMPU},
 			Domain: prepared.IMSIdentity.Domain,
 		},
+		IMSIdentityResult: profile.IMSIdentityResult{
+			RequestedSource:  string(prepared.IMSIdentity.RequestedSource),
+			ActualSource:     string(prepared.IMSIdentity.ActualSource),
+			AKAAppPreference: string(prepared.IMSIdentity.AKAAppPreference),
+			Applied:          prepared.IMSIdentity.Applied,
+			IMPI:             prepared.IMSIdentity.IMPI,
+			IMPU:             prepared.IMSIdentity.IMPU,
+			Domain:           prepared.IMSIdentity.Domain,
+		},
 		AuthPlan: authPlanForPreference(string(prepared.IMSIdentity.AKAAppPreference)),
 		EPDGAddr: prepared.EPDGAddr, EPDGSource: prepared.EPDGSource,
-		APN:     imsAPNFromDomain(prepared.IMSIdentity.Domain),
-		Carrier: prepared.CarrierConfig,
+		APN:                imsAPNFromDomain(prepared.IMSIdentity.Domain),
+		Carrier:            prepared.CarrierConfig,
+		IdentityIMEISource: prepared.IdentityIMEISource,
 	}
 }
 
