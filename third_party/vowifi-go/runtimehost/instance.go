@@ -2,13 +2,12 @@ package runtimehost
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
 
@@ -394,7 +393,5 @@ func (i *Instance) TriggerMOBIKE(oldIP, newIP string) error {
 
 // newTraceID returns a random hex trace id.
 func newTraceID() string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	return common.NewTraceID()
 }

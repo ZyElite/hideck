@@ -10,6 +10,7 @@ import (
 	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
@@ -33,6 +34,7 @@ type registerSession struct {
 
 // Register performs the IMS registration flow (RFC 3261 + Digest-AKA).
 func (s *Service) Register(ctx context.Context) error {
+	ctx = common.WithTraceID(ctx, common.TraceID(ctx))
 	s.registerMu.Lock()
 	defer s.registerMu.Unlock()
 	select {
@@ -585,15 +587,9 @@ func newUUID() string {
 	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:]
 }
 
-// randomHex generates a hex string of n random bytes.
+// randomHex generates a hexadecimal string with exactly n characters.
 func randomHex(n int) string {
-	const digits = "0123456789abcdef"
-	b := make([]byte, n)
-	_, _ = randRead(b)
-	for i := range b {
-		b[i] = digits[int(b[i])%16]
-	}
-	return string(b)
+	return common.RandomHex(n)
 }
 
 // transportUpper upper-cases a transport token.

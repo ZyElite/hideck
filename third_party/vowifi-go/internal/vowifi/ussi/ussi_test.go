@@ -24,6 +24,14 @@ func TestEncodeDecodeXML(t *testing.T) {
 	}
 }
 
+func TestRandomHexUsesRecoveredCharacterLength(t *testing.T) {
+	for _, length := range []int{8, 12, 32} {
+		if actual := randomHex(length); len(actual) != length {
+			t.Fatalf("randomHex(%d) length = %d", length, len(actual))
+		}
+	}
+}
+
 func TestDecodeXMLRejectsUnrelatedRoot(t *testing.T) {
 	if _, err := DecodeXML([]byte("<message>hello</message>")); err == nil {
 		t.Fatal("DecodeXML accepted an unrelated root")

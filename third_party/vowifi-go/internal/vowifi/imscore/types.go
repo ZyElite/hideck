@@ -15,6 +15,7 @@ import (
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ussi"
 )
 
@@ -131,7 +132,13 @@ func (n *SystemIMSNetwork) LocalIP() net.IP { return n.localIP }
 
 // HasLocalIP reports whether the network has the address.
 func (n *SystemIMSNetwork) HasLocalIP(ip net.IP) bool {
-	return n.localIP != nil && n.localIP.Equal(ip)
+	if ip == nil {
+		return false
+	}
+	if n.localIP != nil && n.localIP.Equal(ip) {
+		return true
+	}
+	return common.HostHasIP(ip.String())
 }
 
 // ResolveIP resolves a host to an IP.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 )
 
@@ -27,6 +28,7 @@ type outboundSMSPart struct {
 }
 
 func (s *Service) sendOutboundSMS(ctx context.Context, to, text string, opts SMSSendOptions) (*SMSSendOutcome, error) {
+	ctx = common.WithTraceID(ctx, common.TraceID(ctx))
 	if s == nil || s.cfg == nil {
 		return nil, errors.New("imscore: service not configured")
 	}

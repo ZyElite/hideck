@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 )
 
 // IsZero reports whether the plan is empty.
@@ -67,10 +69,7 @@ var defaultPresets = []EffectiveCarrierConfig{
 
 // DefaultCarrierIMSDomain returns the default IMS domain for a PLMN.
 func DefaultCarrierIMSDomain(mcc, mnc string) string {
-	if len(mnc) == 2 {
-		mnc = "0" + mnc
-	}
-	return fmt.Sprintf("ims.mnc%s.mcc%s.3gppnetwork.org", mnc, mcc)
+	return fmt.Sprintf("ims.mnc%s.mcc%s.3gppnetwork.org", common.Plmn3(mnc), common.Plmn3(mcc))
 }
 
 // DefaultCarrierStandardEPDGAddr returns the default ePDG address.

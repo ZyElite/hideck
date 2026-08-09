@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
@@ -441,7 +442,5 @@ func StartSessionIMSCore(deviceID string, ident identity.IMSIdentity, epdgAddr s
 
 // newTraceID returns a random trace id.
 func newTraceID() string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("%x", b)
+	return common.NewTraceID()
 }

@@ -3,6 +3,9 @@ package imscore
 import (
 	"log/slog"
 	"net"
+	"strings"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 )
 
 // SIPOption configures the IMS SIP stack (recovered from the binary's
@@ -111,10 +114,12 @@ func (s *Service) applySIPOptions(opts ...SIPOption) {
 
 // hostOnly extracts the host part of a host[:port] string.
 func hostOnly(addr string) string {
-	for i := 0; i < len(addr); i++ {
-		if addr[i] == ':' {
-			return addr[:i]
-		}
+	addr = strings.TrimSpace(addr)
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	if common.IsIPv6AddrString(addr) {
+		return strings.Trim(addr, "[]")
 	}
 	return addr
 }

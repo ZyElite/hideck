@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/internal/runtimehostcarrier"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 )
 
@@ -134,9 +135,5 @@ func resolveEPDG(override string, carrier EffectiveCarrier) (addr, source string
 }
 
 func paddedMNC(mnc string) string {
-	mnc = strings.TrimSpace(mnc)
-	for len(mnc) < 3 {
-		mnc = "0" + mnc
-	}
-	return mnc
+	return common.Plmn3(mnc)
 }

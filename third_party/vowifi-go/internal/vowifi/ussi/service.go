@@ -2,12 +2,12 @@ package ussi
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 )
 
 const dialogFailureCleanupTimeout = 5 * time.Second
@@ -384,11 +384,7 @@ func dialstringURI(command, domain string) string {
 }
 
 func randomHex(size int) string {
-	data := make([]byte, size)
-	if _, err := rand.Read(data); err != nil {
-		panic("ussi: crypto/rand failed: " + err.Error())
-	}
-	return hex.EncodeToString(data)
+	return common.RandomHex(size)
 }
 
 func token(value string) string {

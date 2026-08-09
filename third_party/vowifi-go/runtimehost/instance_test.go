@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net"
 	"testing"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 )
 
 type stubService struct {
@@ -120,7 +122,18 @@ func TestTriggerMOBIKEUsesTunnelAndReportsFailure(t *testing.T) {
 
 func TestNewTraceID(t *testing.T) {
 	a, b := NewTraceID(), NewTraceID()
-	if a == "" || a == b {
+	if len(a) != 16 || a == b {
 		t.Errorf("trace ids = %q %q", a, b)
+	}
+}
+
+func TestWithTraceIDBridgesRuntimeContext(t *testing.T) {
+	generated := WithTraceID(nil, "")
+	if traceID := common.TraceID(generated); len(traceID) != 16 {
+		t.Fatalf("generated runtime trace ID = %q", traceID)
+	}
+	explicit := WithTraceID(context.Background(), "runtime-trace")
+	if traceID := common.TraceID(explicit); traceID != "runtime-trace" {
+		t.Fatalf("explicit runtime trace ID = %q", traceID)
 	}
 }

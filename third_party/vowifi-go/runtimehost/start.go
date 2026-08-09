@@ -10,6 +10,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
 	"github.com/iniwex5/vowifi-go/engine/swu"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/netstack"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
@@ -329,10 +330,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 	if innerIP == nil || tunnel.InnerPacketIO() == nil {
 		return nil, errors.New("runtimehost: SWu tunnel has no usable inner packet network")
 	}
-	dns := make([]string, 0, len(inner.DNS))
-	for _, server := range inner.DNS {
-		dns = append(dns, server.String())
-	}
+	dns := common.ToStrings(inner.DNS)
 	imsNetwork, err := netstack.NewTunnelNetwork(innerIP, prefixLen, dns, tunnel.InnerPacketIO())
 	if err != nil {
 		return nil, fmt.Errorf("runtimehost: create IMS tunnel network: %w", err)
@@ -422,7 +420,5 @@ func epdgOf(req StartRequest) string {
 
 // WithTraceID returns a context carrying the given trace id.
 func WithTraceID(ctx context.Context, traceID string) context.Context {
-	return context.WithValue(ctx, traceIDKey{}, traceID)
+	return common.WithTraceID(ctx, traceID)
 }
-
-type traceIDKey struct{}
