@@ -79,7 +79,7 @@ func TestPrepareSessionStartResolvesCarrierAndOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareSessionStart() error = %v", err)
 	}
-	if prepared.EPDGAddr != "epdg.override.example" || prepared.EPDGSource != "runtime_override" {
+	if prepared.EPDGAddr != "epdg.override.example" || prepared.EPDGSource != "redirect" {
 		t.Fatalf("runtime override not applied: %+v", prepared)
 	}
 	if prepared.CarrierPlan.Metadata.PresetID != "giffgaff_23410" {

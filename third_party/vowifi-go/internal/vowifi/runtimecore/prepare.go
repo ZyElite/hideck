@@ -18,9 +18,9 @@ func preparedSessionWithRuntimeOverride(
 		return prepared
 	}
 	prepared.EPDGAddr = override
-	prepared.EPDGSource = "runtime_override"
+	prepared.EPDGSource = "redirect"
 	prepared.CarrierPlan.EPDG.Addr = override
-	prepared.CarrierPlan.EPDG.AddrSource = "runtime_override"
+	prepared.CarrierPlan.EPDG.AddrSource = "redirect"
 	return prepared
 }
 
