@@ -53,7 +53,7 @@ func TestPrepareStart(t *testing.T) {
 	if prepared.IMSIdentity.ActualSource != IMSIdentitySourceISIM || !prepared.IMSIdentity.Applied {
 		t.Errorf("identity = %+v", prepared.IMSIdentity)
 	}
-	if prepared.EffectiveCarrier.MCC != "310" || prepared.EffectiveCarrier.MNC != "26" {
+	if prepared.EffectiveCarrier.MCC != "310" || prepared.EffectiveCarrier.MNC != "026" {
 		t.Errorf("carrier = %+v", prepared.EffectiveCarrier)
 	}
 	// Default ePDG FQDN from the carrier.

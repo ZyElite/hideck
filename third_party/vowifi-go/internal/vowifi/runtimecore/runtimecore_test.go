@@ -2,6 +2,7 @@ package runtimecore
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
@@ -57,15 +58,47 @@ func TestBuildSWUConfigAppliesGiffgaffAlgorithms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSWUConfig() error = %v", err)
 	}
-	if cfg.IKEEncryption != 12 || cfg.IKEEncryptionKeyBits != 256 || cfg.IKEPRF != 7 ||
-		cfg.IKEIntegrity != 14 || cfg.IKEDH != 14 {
-		t.Fatalf("IKE config = %+v", cfg)
+	if !reflect.DeepEqual(cfg.IKEProposals, carrierConfig.IKEProposals) {
+		t.Fatalf("IKE proposals = %v, want %v", cfg.IKEProposals, carrierConfig.IKEProposals)
 	}
-	if cfg.ESPEncryption != 12 || cfg.ESPEncryptionKeyBits != 256 || cfg.ESPIntegrity != 14 {
-		t.Fatalf("ESP config = %+v", cfg)
+	if !reflect.DeepEqual(cfg.ESPProposals, carrierConfig.ESPProposals) {
+		t.Fatalf("ESP proposals = %v, want %v", cfg.ESPProposals, carrierConfig.ESPProposals)
 	}
 	if cfg.ReauthSeconds != 0 {
 		t.Fatalf("reauth = %s", cfg.ReauthSeconds)
+	}
+}
+
+func TestBuildSWUConfigPreservesOrderedCarrierProposals(t *testing.T) {
+	carrierConfig := carrier.EffectiveCarrierConfig{
+		AlgorithmPolicy: "balanced",
+		IKEProposals: []string{
+			"aes128-sha256-modp2048",
+			"aes128-sha1-modp1024",
+		},
+		ESPProposals:         []string{"aes256gcm16", "aes128-sha1"},
+		EnableLegacyCiphers:  true,
+		AllowedLegacyCiphers: []string{"3des"},
+	}
+	cfg, err := BuildSWUConfig(
+		&PreparedSessionStart{Carrier: carrierConfig},
+		&recordingAKAProvider{},
+	)
+	if err != nil {
+		t.Fatalf("BuildSWUConfig() error = %v", err)
+	}
+	if !reflect.DeepEqual(cfg.IKEProposals, carrierConfig.IKEProposals) ||
+		!reflect.DeepEqual(cfg.ESPProposals, carrierConfig.ESPProposals) {
+		t.Fatalf("proposal order not preserved: IKE=%v ESP=%v", cfg.IKEProposals, cfg.ESPProposals)
+	}
+	if cfg.AlgorithmPolicy != "balanced" || !cfg.EnableLegacyCiphers ||
+		!reflect.DeepEqual(cfg.AllowedLegacyCiphers, []string{"3des"}) {
+		t.Fatalf("algorithm policy not preserved: %+v", cfg)
+	}
+	carrierConfig.IKEProposals[0] = "changed"
+	carrierConfig.AllowedLegacyCiphers[0] = "changed"
+	if cfg.IKEProposals[0] == "changed" || cfg.AllowedLegacyCiphers[0] == "changed" {
+		t.Fatal("BuildSWUConfig() retained carrier slice aliases")
 	}
 }
 

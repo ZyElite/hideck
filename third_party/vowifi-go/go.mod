@@ -10,6 +10,7 @@ require (
 	github.com/warthog618/sms v0.3.0
 	go.uber.org/multierr v1.10.0
 	go.uber.org/zap v1.27.1
+	gopkg.in/yaml.v3 v3.0.1
 	golang.org/x/sys v0.46.0
 	gvisor.dev/gvisor v0.0.0-20260527191743-a81fd9dd382e
 )

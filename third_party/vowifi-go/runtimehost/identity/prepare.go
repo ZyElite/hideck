@@ -7,6 +7,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/runtimehostcarrier"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
 	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 )
 
@@ -51,19 +52,13 @@ func PrepareStart(input PrepareStartInput) (PreparedSession, error) {
 		return PreparedSession{}, err
 	}
 
-	carrierConfig := carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{
-		MCC: profile.MCC, MNC: profile.MNC,
-	})
-	carrierConfig = runtimehostcarrier.FromInternal(runtimehostcarrier.ToInternal(carrierConfig))
-	if err := carrier.ValidateEffectiveCarrierConfig(carrierConfig); err != nil {
-		return PreparedSession{}, fmt.Errorf("identity: invalid carrier preset: %w", err)
-	}
+	carrierConfig := runtimehostcarrier.FromInternal(policy.ResolveEffectiveCarrierConfig(profile.MCC, profile.MNC))
 	effectiveCarrier := EffectiveCarrier{
 		MCC: carrierConfig.MCC, MNC: carrierConfig.MNC, PresetID: carrierConfig.PresetID,
 	}
 
 	// Resolve the ePDG endpoint.
-	epdgAddr, epdgSource := resolveEPDG(input.RuntimeEPDGOverride, effectiveCarrier)
+	epdgAddr, epdgSource := resolveConfiguredEPDG(input.RuntimeEPDGOverride, carrierConfig)
 
 	return PreparedSession{
 		Profile:            profile,
@@ -132,6 +127,20 @@ func resolveEPDG(override string, carrier EffectiveCarrier) (addr, source string
 		return fmt.Sprintf("epdg.epc.mnc%s.mcc%s.pub.3gppnetwork.org", paddedMNC(carrier.MNC), carrier.MCC), "carrier"
 	}
 	return "", "none"
+}
+
+func resolveConfiguredEPDG(override string, config carrier.EffectiveCarrierConfig) (addr, source string) {
+	if override = strings.TrimSpace(override); override != "" {
+		return override, "redirect"
+	}
+	if addr = strings.TrimSpace(config.EPDGAddr); addr != "" {
+		source = strings.TrimSpace(config.EPDGAddrSource)
+		if source == "" {
+			source = "carrier"
+		}
+		return addr, source
+	}
+	return resolveEPDG("", EffectiveCarrier{MCC: config.MCC, MNC: config.MNC, PresetID: config.PresetID})
 }
 
 func paddedMNC(mnc string) string {
