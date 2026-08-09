@@ -153,7 +153,11 @@ func (a *Agent) HandleClientCancel(callID string) error {
 	if call.GetState() == callstate.StateConnected {
 		return errors.New("voice: connected call must be ended with BYE")
 	}
-	if err := a.sendIMSDialogRequest(BuildIMSCancel(a, call)); err != nil {
+	cancel, err := buildIMSCancel(a, call)
+	if err != nil {
+		return fmt.Errorf("voice: build CANCEL: %w", err)
+	}
+	if err := a.sendIMSDialogRequest(cancel); err != nil {
 		return fmt.Errorf("voice: send CANCEL: %w", err)
 	}
 	call.MarkLocalCancelSent()

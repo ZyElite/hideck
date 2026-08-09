@@ -150,7 +150,11 @@ func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, err
 	if err != nil {
 		return nil, a.failOutboundCall(call, err)
 	}
-	invite := buildIMSInviteWithSDP(a, call, imsOffer)
+	invite, err := buildIMSInviteWithSDPChecked(a, call, imsOffer)
+	if err != nil {
+		return nil, a.failOutboundCall(call, err)
+	}
+	call.setOutboundInvite(invite)
 	logging.RunDebug("IMS INVITE outbound", "sip", logging.RedactSIPRaw(invite))
 	response, err := a.ims.RoundTripSIPWithProvisional(ctx, invite, func(response imscore.SIPResponse) error {
 		return a.handleOutboundProvisional(ctx, call, response)
@@ -274,7 +278,11 @@ func (a *Agent) hangupCall(ctx context.Context, call *Call) error {
 		return a.hangupInboundCall(ctx, call)
 	}
 	if call.GetState() != callstate.StateConnected {
-		if err := a.sendIMSDialogRequest(BuildIMSCancel(a, call)); err != nil {
+		cancel, err := buildIMSCancel(a, call)
+		if err != nil {
+			return fmt.Errorf("voice: build CANCEL: %w", err)
+		}
+		if err := a.sendIMSDialogRequest(cancel); err != nil {
 			return fmt.Errorf("voice: send CANCEL: %w", err)
 		}
 		call.MarkLocalCancelSent()

@@ -8,51 +8,6 @@ import (
 	"time"
 )
 
-const (
-	voiceInviteSupported = "100rel, timer, replaces, norefersub, early-session, sec-agree"
-	voiceInviteAllow     = "INVITE, ACK, CANCEL, BYE, UPDATE, REFER, NOTIFY, MESSAGE, OPTIONS"
-)
-
-// BuildIMSInvite builds the initial IMS INVITE with the registered route.
-func BuildIMSInvite(agent *Agent, call *Call) string {
-	return buildIMSInviteWithSDP(agent, call, "")
-}
-
-func buildIMSInviteWithSDP(agent *Agent, call *Call, sdp string) string {
-	if agent == nil || call == nil {
-		return ""
-	}
-	dialog := call.voiceDialogSnapshot()
-	if dialog.remoteURI == "" {
-		dialog = fallbackVoiceDialog(agent, call)
-		call.setVoiceDialog(&dialog)
-	}
-	if strings.TrimSpace(sdp) == "" {
-		sdp = generateBasicSDP(agent, call)
-	}
-	var request strings.Builder
-	fmt.Fprintf(&request, "INVITE %s SIP/2.0\r\n", dialog.remoteURI)
-	writeVoiceCoreHeaders(&request, dialog, call.CallID(), "INVITE", dialog.inviteBranch)
-	writeVoiceOptionalHeader(&request, "Contact", dialog.contactHeader)
-	if dialog.securityVerify != "" {
-		request.WriteString("Require: sec-agree\r\nProxy-Require: sec-agree\r\n")
-	}
-	request.WriteString("Supported: " + voiceInviteSupported + "\r\n")
-	request.WriteString("Allow: " + voiceInviteAllow + "\r\n")
-	request.WriteString("Accept-Contact: *;+g.3gpp.icsi-ref=\"urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel\"\r\n")
-	request.WriteString("P-Preferred-Service: urn:urn-7:3gpp-service.ims.icsi.mmtel\r\n")
-	writeVoiceOptionalHeader(&request, "P-Access-Network-Info", dialog.pani)
-	writeVoiceOptionalHeader(&request, "P-Preferred-Identity", "<"+dialog.localURI+">")
-	writeVoiceOptionalHeader(&request, "Security-Verify", dialog.securityVerify)
-	writeVoiceOptionalHeader(&request, "User-Agent", dialog.userAgent)
-	writeVoiceOptionalHeader(&request, "Session-ID", dialog.sessionID)
-	if sdp != "" {
-		request.WriteString("Content-Type: application/sdp\r\n")
-	}
-	fmt.Fprintf(&request, "Content-Length: %d\r\n\r\n%s", len(sdp), sdp)
-	return request.String()
-}
-
 // BuildIMSBye builds an in-dialog BYE.
 func BuildIMSBye(agent *Agent, call *Call) string {
 	if agent == nil || call == nil {
@@ -93,16 +48,6 @@ func buildIMSACKForStatus(agent *Agent, call *Call, statusCode int) string {
 		branch = dialog.inviteBranch
 	}
 	return buildVoiceRequest(dialog, call.CallID(), "ACK", branch, "")
-}
-
-// BuildIMSCancel builds a CANCEL matching the initial INVITE transaction.
-func BuildIMSCancel(agent *Agent, call *Call) string {
-	if agent == nil || call == nil {
-		return ""
-	}
-	dialog := ensureBuilderVoiceDialog(agent, call)
-	dialog.cseq = dialog.inviteCSeq
-	return buildVoiceRequest(dialog, call.CallID(), "CANCEL", dialog.inviteBranch, "")
 }
 
 func buildIMSPrack(agent *Agent, call *Call, rseq uint32) string {

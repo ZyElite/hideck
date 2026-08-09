@@ -72,6 +72,18 @@ func (c *Call) voiceDialogSnapshot() voiceSIPDialog {
 	return copy
 }
 
+func (c *Call) setOutboundInvite(request string) {
+	c.mu.Lock()
+	c.outboundInvite = request
+	c.mu.Unlock()
+}
+
+func (c *Call) outboundInviteSnapshot() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.outboundInvite
+}
+
 func (c *Call) advanceVoiceCSeq() voiceSIPDialog {
 	c.mu.Lock()
 	defer c.mu.Unlock()

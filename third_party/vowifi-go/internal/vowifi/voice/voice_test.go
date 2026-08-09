@@ -601,6 +601,49 @@ func TestBuildIMSInviteMatchesRegisteredCarrierProfile(t *testing.T) {
 	}
 }
 
+func TestBuildIMSCancelUsesStoredInitialInviteTransaction(t *testing.T) {
+	agent := &Agent{}
+	call := NewCall(agent, callstate.DirectionOutbound, "cancel-call", "+447942985429")
+	call.setVoiceDialog(&voiceSIPDialog{
+		localURI: "sip:local@ims.example", remoteURI: "sip:peer@ims.example",
+		remoteTarget: "sip:peer@ims.example", contactHeader: "<sip:local@192.0.2.10>",
+		localAddress: "192.0.2.10:5060", transport: "udp",
+		serviceRoute: []string{"<sip:initial-route.example;lr>"},
+		pani:         "3GPP-NR", userAgent: "VoHive-Test", localTag: "local-tag",
+		inviteBranch: "z9hG4bK-initial", cseq: 15, inviteCSeq: 15,
+	})
+	invite := buildIMSInviteWithSDP(agent, call, "v=0\r\n")
+	call.setOutboundInvite(invite)
+
+	dialog := call.voiceDialogSnapshot()
+	dialog.inviteBranch = "z9hG4bK-mutated"
+	dialog.inviteCSeq = 99
+	dialog.serviceRoute = []string{"<sip:mutated-route.example;lr>"}
+	call.setVoiceDialog(&dialog)
+
+	cancel, err := buildIMSCancel(agent, call)
+	if err != nil {
+		t.Fatalf("buildIMSCancel: %v", err)
+	}
+	for _, want := range []string{
+		"CANCEL sip:peer@ims.example SIP/2.0",
+		"branch=z9hG4bK-initial",
+		"Route: <sip:initial-route.example;lr>",
+		"CSeq: 15 CANCEL",
+		"Max-Forwards: 70",
+		"Content-Length: 0",
+	} {
+		if !strings.Contains(cancel, want) {
+			t.Errorf("CANCEL missing %q: %s", want, cancel)
+		}
+	}
+	for _, unwanted := range []string{"z9hG4bK-mutated", "mutated-route", "Contact:", "P-Access-Network-Info:", "User-Agent:"} {
+		if strings.Contains(cancel, unwanted) {
+			t.Errorf("CANCEL contains %q: %s", unwanted, cancel)
+		}
+	}
+}
+
 func TestBuildIMSCalledPartyURIUsesAssociatedPublicDomain(t *testing.T) {
 	got := buildIMSCalledPartyURI(
 		"+44 7942 985429", "sip:+447840844894@o2.co.uk", "ims.mnc010.mcc234.3gppnetwork.org",

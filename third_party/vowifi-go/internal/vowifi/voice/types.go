@@ -72,6 +72,7 @@ type Call struct {
 	clientRemoteSDP   string
 	clientLocalSDP    string
 	imsLocalSDP       string
+	outboundInvite    string
 	inboundDecisionMu sync.Mutex
 
 	ackSent              bool
