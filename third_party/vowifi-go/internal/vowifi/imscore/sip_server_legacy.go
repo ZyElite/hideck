@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 )
@@ -59,6 +60,7 @@ func (handle *imscoreServerInviteHandle) markResponding() error {
 
 func (s *Service) RespondInboundRequest(
 	ctx context.Context,
+	_ string,
 	inbound imsendpoint.InboundRequestHandle,
 	options imsendpoint.InboundResponseOptions,
 ) error {
@@ -67,6 +69,15 @@ func (s *Service) RespondInboundRequest(
 		return errors.New("inbound request handle 类型无效")
 	}
 	return s.respondInboundRequestWithOptions(ctx, handle, options)
+}
+
+// RespondInboundRequestForCurrentDevice retains the additive device-implicit API.
+func (s *Service) RespondInboundRequestForCurrentDevice(
+	ctx context.Context,
+	inbound imsendpoint.InboundRequestHandle,
+	options imsendpoint.InboundResponseOptions,
+) error {
+	return s.RespondInboundRequest(ctx, s.DeviceID(), inbound, options)
 }
 
 func (s *Service) respondInboundRequestWithOptions(
@@ -105,6 +116,7 @@ func (s *Service) respondInboundRequestWithOptions(
 
 func (s *Service) AnswerServerInvite(
 	ctx context.Context,
+	_ string,
 	invite imsendpoint.ServerInviteHandle,
 	options imsendpoint.ServerInviteAnswerOptions,
 ) (imsendpoint.DialogHandle, error) {
@@ -132,12 +144,23 @@ func (s *Service) AnswerServerInvite(
 		return nil, err
 	}
 	dialog := newServerDialogHandle(handle.req, response)
+	dialog.inviteTx = handle.tx
 	s.storeServerDialog(dialog, handle.req)
 	return dialog, nil
 }
 
+// AnswerServerInviteForCurrentDevice retains the additive device-implicit API.
+func (s *Service) AnswerServerInviteForCurrentDevice(
+	ctx context.Context,
+	invite imsendpoint.ServerInviteHandle,
+	options imsendpoint.ServerInviteAnswerOptions,
+) (imsendpoint.DialogHandle, error) {
+	return s.AnswerServerInvite(ctx, s.DeviceID(), invite, options)
+}
+
 func (s *Service) RejectServerInvite(
 	ctx context.Context,
+	_ string,
 	invite imsendpoint.ServerInviteHandle,
 	options imsendpoint.ServerInviteRejectOptions,
 ) error {
@@ -164,6 +187,15 @@ func (s *Service) RejectServerInvite(
 		}
 	}
 	return handle.tx.Respond(response)
+}
+
+// RejectServerInviteForCurrentDevice retains the additive device-implicit API.
+func (s *Service) RejectServerInviteForCurrentDevice(
+	ctx context.Context,
+	invite imsendpoint.ServerInviteHandle,
+	options imsendpoint.ServerInviteRejectOptions,
+) error {
+	return s.RejectServerInvite(ctx, s.DeviceID(), invite, options)
 }
 
 func validServerInviteHandle(
@@ -213,15 +245,45 @@ func sanitizeInboundResponse(code int, reason string) (int, string) {
 }
 
 func newServerDialogHandle(request *sip.Request, response *sip.Response) *imscoreDialogHandle {
-	return &imscoreDialogHandle{
-		callID:  requestCallID(request),
-		fromTag: toHeaderTag(response.To()),
-		toTag:   fromHeaderTag(request.From()),
+	id, err := sip.DialogIDFromResponse(response)
+	if err != nil {
+		id = sip.DialogIDMake(requestCallID(request), toHeaderTag(response.To()), fromHeaderTag(request.From()))
+	}
+	session := &sipgo.DialogServerSession{Dialog: sipgo.Dialog{
+		ID: id, InviteRequest: request.Clone(), InviteResponse: response.Clone(),
+	}}
+	session.InitWithState(sip.DialogStateEstablished)
+	handle := &imscoreDialogHandle{
+		id: id, server: session, callID: requestCallID(request),
+		fromTag: toHeaderTag(response.To()), toTag: fromHeaderTag(request.From()),
+		inviteRequest: request.Clone(), inviteResponse: response.Clone(),
+		confirmedCh: make(chan struct{}),
+	}
+	initializeServerDialogTarget(handle, request, response)
+	return handle
+}
+
+func initializeServerDialogTarget(
+	handle *imscoreDialogHandle,
+	request *sip.Request,
+	response *sip.Response,
+) {
+	if request.CSeq() != nil {
+		handle.localCSeq = request.CSeq().SeqNo
+		handle.remoteCSeq = request.CSeq().SeqNo
+	}
+	if response.Contact() != nil {
+		handle.localContact = response.Contact().Clone()
+	}
+	if request.Contact() != nil {
+		handle.remoteTarget = *request.Contact().Address.Clone()
+	} else if request.From() != nil {
+		handle.remoteTarget = *request.From().Address.Clone()
 	}
 }
 
 func (s *Service) storeServerDialog(dialog *imscoreDialogHandle, request *sip.Request) {
-	if s == nil || s.dialogs == nil || dialog == nil || request == nil {
+	if s == nil || dialog == nil || request == nil {
 		return
 	}
 	routes := request.GetHeaders("Record-Route")
@@ -233,10 +295,9 @@ func (s *Service) storeServerDialog(dialog *imscoreDialogHandle, request *sip.Re
 	if request.CSeq() != nil {
 		cseq = int(request.CSeq().SeqNo)
 	}
-	s.dialogs.store(dialog.callID, &dialogEntry{
-		handle: dialog, localTag: dialog.fromTag, remoteTag: dialog.toTag,
-		cseq: cseq, route: routeSet,
-	})
+	dialog.routeSet = routeSet
+	dialog.localCSeq = uint32(cseq)
+	s.dialogs().store(dialog)
 }
 
 func (s *Service) sendInboundSIPResponse(
@@ -297,10 +358,12 @@ func (s *Service) AnswerServerInviteRaw(handle *imscoreServerInviteHandle) error
 
 // RejectServerInviteRaw retains the previous handle-only compatibility helper.
 func (s *Service) RejectServerInviteRaw(handle *imscoreServerInviteHandle) error {
-	return s.RejectServerInvite(context.Background(), handle, imsendpoint.ServerInviteRejectOptions{})
+	return s.RejectServerInvite(context.Background(), s.DeviceID(), handle, imsendpoint.ServerInviteRejectOptions{})
 }
 
 // RespondInboundRequestRaw retains the previous status-only compatibility helper.
 func (s *Service) RespondInboundRequestRaw(handle *imscoreInboundRequestHandle, status int) error {
-	return s.RespondInboundRequest(context.Background(), handle, imsendpoint.InboundResponseOptions{Code: status})
+	return s.RespondInboundRequest(
+		context.Background(), s.DeviceID(), handle, imsendpoint.InboundResponseOptions{Code: status},
+	)
 }

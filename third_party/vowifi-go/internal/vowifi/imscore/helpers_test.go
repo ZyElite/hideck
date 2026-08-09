@@ -201,11 +201,11 @@ func TestServiceMethods(t *testing.T) {
 	if err := svc.Subscribe("reg.example.com"); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	h := &imscoreDialogHandle{callID: "call-1", fromTag: "f", toTag: "t"}
-	if err := svc.SendDialogRequest(h, "BYE", ""); err == nil {
+	h := &imscoreDialogHandle{id: "call-1", callID: "call-1", fromTag: "f", toTag: "t"}
+	if err := svc.SendDialogRequestRaw(h, "BYE", ""); err == nil {
 		t.Fatal("SendDialogRequest succeeded without a dialog target")
 	}
-	if err := svc.SendReliableProvisionalPRACK(h); err == nil {
+	if err := svc.SendReliableProvisionalPRACKRaw(h); err == nil {
 		t.Fatal("PRACK succeeded without reliable provisional context")
 	}
 	inv := &imscoreServerInviteHandle{id: "call-in"}

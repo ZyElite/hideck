@@ -117,16 +117,16 @@ func (s *Service) VoiceProfile() VoiceProfile {
 	}
 }
 
-// SendDialogRequest sends a request within a dialog.
-func (s *Service) SendDialogRequest(handle *imscoreDialogHandle, method string, body string) error {
+// SendDialogRequestRaw retains the additive handle-only compatibility API.
+func (s *Service) SendDialogRequestRaw(handle *imscoreDialogHandle, method string, body string) error {
 	if s == nil || handle == nil {
 		return errors.New("imscore: no dialog")
 	}
 	return errors.New("imscore: dialog target is unavailable on compatibility handle")
 }
 
-// SendReliableProvisionalPRACK sends a PRACK for a reliable provisional.
-func (s *Service) SendReliableProvisionalPRACK(handle *imscoreDialogHandle) error {
+// SendReliableProvisionalPRACKRaw retains the additive handle-only compatibility API.
+func (s *Service) SendReliableProvisionalPRACKRaw(handle *imscoreDialogHandle) error {
 	if s == nil || handle == nil {
 		return errors.New("imscore: no dialog for PRACK")
 	}

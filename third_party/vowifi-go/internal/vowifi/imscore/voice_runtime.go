@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
 )
@@ -26,19 +27,23 @@ type SIPDialogProfile struct {
 
 // InboundVoiceRequest is a SIP request routed to the active voice agent.
 type InboundVoiceRequest struct {
-	Method         string
-	CallID         string
-	From           string
-	To             string
-	Contact        string
-	RecordRoute    string
-	CSeq           string
-	ContentType    string
-	SessionExpires string
-	Body           []byte
-	Responder      InboundVoiceResponder
-	InboundRequest imsendpoint.InboundRequestHandle
-	ServerInvite   imsendpoint.ServerInviteHandle
+	Method           string
+	CallID           string
+	From             string
+	To               string
+	Contact          string
+	RecordRoute      string
+	CSeq             string
+	ContentType      string
+	SessionExpires   string
+	Body             []byte
+	Responder        InboundVoiceResponder
+	InboundRequest   imsendpoint.InboundRequestHandle
+	ServerInvite     imsendpoint.ServerInviteHandle
+	Dialog           imsendpoint.DialogHandle
+	DialogMatched    bool
+	DialogResponded  bool
+	DialogTerminated bool
 }
 
 // InboundVoiceResponse is one provisional or final response to an inbound
@@ -173,6 +178,7 @@ func (s *Service) handleInboundVoice(
 	if handler == nil {
 		return inboundSIPResult{}, false, nil
 	}
+	dialogRead := s.readInboundVoiceDialog(raw, transaction)
 	body, err := rawSIPBody(raw)
 	if err != nil {
 		return inboundSIPResult{}, true, err
@@ -184,6 +190,8 @@ func (s *Service) handleInboundVoice(
 		CSeq: rawSIPHeaderValue(raw, "CSeq"), ContentType: rawSIPHeaderValue(raw, "Content-Type"),
 		SessionExpires: rawSIPHeaderValue(raw, "Session-Expires"),
 		Body:           body, Responder: newInboundVoiceResponder(raw, reply),
+		Dialog: dialogRead.handle, DialogMatched: dialogRead.matched,
+		DialogResponded: dialogRead.responded, DialogTerminated: dialogRead.terminated,
 	}
 	if transaction != nil {
 		request.InboundRequest = newInboundRequestHandle(transaction.request, transaction)
@@ -191,9 +199,13 @@ func (s *Service) handleInboundVoice(
 			request.ServerInvite = newServerInviteHandle(transaction.request, transaction)
 		}
 	}
-	result, err := handler.HandleInboundVoiceRequest(request)
+	result, handlerErr := handler.HandleInboundVoiceRequest(request)
+	err = errors.Join(dialogRead.err, handlerErr)
 	if !result.Handled {
 		return inboundSIPResult{}, false, err
+	}
+	if dialogRead.responded {
+		return inboundSIPResult{}, true, err
 	}
 	if result.StatusCode == 0 {
 		return inboundSIPResult{}, true, err
@@ -203,6 +215,21 @@ func (s *Service) handleInboundVoice(
 		return inboundSIPResult{}, true, responseErr
 	}
 	return inboundSIPResult{response: response}, true, err
+}
+
+func (s *Service) readInboundVoiceDialog(
+	raw string,
+	transaction *serverSIPTransaction,
+) inboundDialogReadResult {
+	message, err := parseSIPMessage(raw)
+	if err != nil {
+		return inboundDialogReadResult{err: err}
+	}
+	request, ok := message.(*sip.Request)
+	if !ok {
+		return inboundDialogReadResult{err: errors.New("inbound voice message is not a request")}
+	}
+	return s.dialogs().readInboundRequest(request, transaction)
 }
 
 func cloneSIPHeaders(headers map[string]string) map[string]string {

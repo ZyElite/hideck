@@ -41,7 +41,7 @@ func New(cfg *IMSConfig) (*Service, error) {
 		cfg:                   cfg,
 		state:                 regIdle,
 		regState:              regIdle,
-		dialogs:               newDialogRegistry(),
+		dialogRegistry:        newDialogRegistry(),
 		bus:                   bus,
 		delivery:              cfg.DeliveryStore,
 		stop:                  make(chan struct{}),
@@ -383,6 +383,9 @@ func (s *Service) Stop() {
 	}
 	s.protectedConnMu.Unlock()
 	s.networkDone.Wait()
+	if dialogs := s.dialogs(); dialogs != nil {
+		dialogs.closeAll()
+	}
 	s.clearServerTransactions()
 	if closer, ok := s.cfg.IMSNetwork.(interface{ Close() error }); ok {
 		_ = closer.Close()

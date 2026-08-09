@@ -258,7 +258,7 @@ func TestUSSDLifecycle(t *testing.T) {
 
 func TestDialogRegistry(t *testing.T) {
 	r := newDialogRegistry()
-	r.store("call-1", &dialogEntry{handle: &imscoreDialogHandle{callID: "call-1"}})
+	r.store(&imscoreDialogHandle{id: "call-1", callID: "call-1"})
 	if r.len() != 1 {
 		t.Errorf("len = %d", r.len())
 	}

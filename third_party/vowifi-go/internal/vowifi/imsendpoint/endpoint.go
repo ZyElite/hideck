@@ -2,21 +2,29 @@ package imsendpoint
 
 import (
 	"context"
-	"time"
 
 	"github.com/emiago/sipgo/sip"
 )
 
+// DialogEndpoint is the v1.5.5 in-dialog signaling surface.
+type DialogEndpoint interface {
+	CloseDialog(context.Context, string, DialogHandle) error
+	SendDialogRequest(context.Context, string, DialogHandle, *sip.Request, DialogRequestOptions) (*sip.Response, error)
+}
+
 // Endpoint is the runtime-owned IMS service surface needed by voice lifecycle binding.
 // The full call and dialog contract is restored with imscore and voice.
 type Endpoint interface {
+	DialogEndpoint
 	DeviceID() string
 	IsRegistered() bool
-	StartClientInvite(context.Context, ClientInviteOptions) (*ClientInviteResult, error)
-	CancelClientInvite(context.Context, InviteHandle, ClientInviteCancelOptions) error
-	RespondInboundRequest(context.Context, InboundRequestHandle, InboundResponseOptions) error
-	AnswerServerInvite(context.Context, ServerInviteHandle, ServerInviteAnswerOptions) (DialogHandle, error)
-	RejectServerInvite(context.Context, ServerInviteHandle, ServerInviteRejectOptions) error
+	NextCSeq() uint32
+	SendReliableProvisionalPRACK(context.Context, string, ReliableProvisionalOptions) error
+	StartClientInvite(context.Context, string, ClientInviteOptions) (*ClientInviteResult, error)
+	CancelClientInvite(context.Context, string, InviteHandle, ClientInviteCancelOptions) error
+	RespondInboundRequest(context.Context, string, InboundRequestHandle, InboundResponseOptions) error
+	AnswerServerInvite(context.Context, string, ServerInviteHandle, ServerInviteAnswerOptions) (DialogHandle, error)
+	RejectServerInvite(context.Context, string, ServerInviteHandle, ServerInviteRejectOptions) error
 }
 
 // InviteHandle identifies a client INVITE transaction.
@@ -43,9 +51,32 @@ type ServerInviteHandle interface {
 type ClientInviteOptions struct {
 	Request    *sip.Request
 	Contact    *sip.ContactHeader
-	Timeout    time.Duration
+	Timeout    int64
 	OnStarted  func(InviteHandle) error
 	OnResponse func(*sip.Response) error
+}
+
+// DialogRequestOptions controls one in-dialog transaction.
+type DialogRequestOptions struct {
+	Timeout int64
+}
+
+// RetryPolicy controls reliable-provisional retry timing.
+type RetryPolicy struct {
+	Initial int64
+	Max     int64
+	Count   int
+}
+
+// ReliableProvisionalOptions contains the context needed to construct PRACK.
+type ReliableProvisionalOptions struct {
+	Invite       InviteHandle
+	Dialog       DialogHandle
+	RSeq         string
+	RAck         string
+	Contact      string
+	RecordRoutes []string
+	Retry        RetryPolicy
 }
 
 // ClientInviteResult retains transaction context even when the INVITE fails.

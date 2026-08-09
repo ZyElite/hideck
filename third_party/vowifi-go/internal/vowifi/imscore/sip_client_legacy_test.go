@@ -20,7 +20,7 @@ func TestLegacyClientInviteAPICompletesRealTransaction(t *testing.T) {
 	events := make(chan string, 4)
 	result := make(chan legacyClientInviteOutcome, 1)
 	go func() {
-		value, err := service.StartClientInvite(context.Background(), imsendpoint.ClientInviteOptions{
+		value, err := service.StartClientInvite(context.Background(), service.DeviceID(), imsendpoint.ClientInviteOptions{
 			Request: request, Contact: request.Contact(),
 			OnStarted: func(handle imsendpoint.InviteHandle) error {
 				events <- "started:" + handle.InviteID()
@@ -64,7 +64,7 @@ func TestLegacyCancelAPIUsesRelatedClientTransaction(t *testing.T) {
 	started := make(chan imsendpoint.InviteHandle, 1)
 	inviteResult := make(chan legacyClientInviteOutcome, 1)
 	go func() {
-		value, err := service.StartClientInvite(context.Background(), imsendpoint.ClientInviteOptions{
+		value, err := service.StartClientInvite(context.Background(), service.DeviceID(), imsendpoint.ClientInviteOptions{
 			Request: request, Contact: request.Contact(),
 			OnStarted: func(handle imsendpoint.InviteHandle) error {
 				started <- handle
@@ -80,7 +80,7 @@ func TestLegacyCancelAPIUsesRelatedClientTransaction(t *testing.T) {
 	cancelResult := make(chan error, 1)
 	go func() {
 		cancelResult <- service.CancelClientInvite(
-			context.Background(), handle, imsendpoint.ClientInviteCancelOptions{Reason: "user"},
+			context.Background(), service.DeviceID(), handle, imsendpoint.ClientInviteCancelOptions{Reason: "user"},
 		)
 	}()
 	writtenCancel := waitForTransactionMethod(t, outbound, "CANCEL")
@@ -108,7 +108,7 @@ func TestLegacyClientInviteContextCancellationRetainsFinalResponse(t *testing.T)
 	responses := make(chan int, 2)
 	result := make(chan legacyClientInviteOutcome, 1)
 	go func() {
-		value, err := service.StartClientInvite(ctx, imsendpoint.ClientInviteOptions{
+		value, err := service.StartClientInvite(ctx, service.DeviceID(), imsendpoint.ClientInviteOptions{
 			Request: request, Contact: request.Contact(),
 			OnResponse: func(response *sip.Response) error {
 				responses <- response.StatusCode
@@ -145,7 +145,7 @@ func TestLegacyClientInviteRequiresRegisteredService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = service.StartClientInvite(context.Background(), imsendpoint.ClientInviteOptions{
+	_, err = service.StartClientInvite(context.Background(), service.DeviceID(), imsendpoint.ClientInviteOptions{
 		Request: mustClientInviteRequest(t, "not-registered"),
 		Contact: mustClientInviteRequest(t, "contact").Contact(),
 	})
@@ -158,7 +158,7 @@ func TestLegacyClientInviteOnStartedFailureCleansTransaction(t *testing.T) {
 	service := newRegisteredClientInviteService(t)
 	service.transport.SetSendFn(func(string) error { return nil })
 	want := errors.New("started failed")
-	result, err := service.StartClientInvite(context.Background(), imsendpoint.ClientInviteOptions{
+	result, err := service.StartClientInvite(context.Background(), service.DeviceID(), imsendpoint.ClientInviteOptions{
 		Request:   mustClientInviteRequest(t, "started-error"),
 		Contact:   mustClientInviteRequest(t, "contact").Contact(),
 		OnStarted: func(imsendpoint.InviteHandle) error { return want },

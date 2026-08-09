@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
@@ -450,14 +451,17 @@ type testEndpoint struct{ id string }
 
 func (endpoint *testEndpoint) DeviceID() string { return endpoint.id }
 func (*testEndpoint) IsRegistered() bool        { return true }
+func (*testEndpoint) NextCSeq() uint32          { return 1 }
 func (*testEndpoint) StartClientInvite(
 	context.Context,
+	string,
 	imsendpoint.ClientInviteOptions,
 ) (*imsendpoint.ClientInviteResult, error) {
 	return nil, errors.New("test endpoint has no client INVITE transport")
 }
 func (*testEndpoint) CancelClientInvite(
 	context.Context,
+	string,
 	imsendpoint.InviteHandle,
 	imsendpoint.ClientInviteCancelOptions,
 ) error {
@@ -465,6 +469,7 @@ func (*testEndpoint) CancelClientInvite(
 }
 func (*testEndpoint) RespondInboundRequest(
 	context.Context,
+	string,
 	imsendpoint.InboundRequestHandle,
 	imsendpoint.InboundResponseOptions,
 ) error {
@@ -472,6 +477,7 @@ func (*testEndpoint) RespondInboundRequest(
 }
 func (*testEndpoint) AnswerServerInvite(
 	context.Context,
+	string,
 	imsendpoint.ServerInviteHandle,
 	imsendpoint.ServerInviteAnswerOptions,
 ) (imsendpoint.DialogHandle, error) {
@@ -479,10 +485,30 @@ func (*testEndpoint) AnswerServerInvite(
 }
 func (*testEndpoint) RejectServerInvite(
 	context.Context,
+	string,
 	imsendpoint.ServerInviteHandle,
 	imsendpoint.ServerInviteRejectOptions,
 ) error {
 	return errors.New("test endpoint has no server transaction transport")
+}
+func (*testEndpoint) CloseDialog(context.Context, string, imsendpoint.DialogHandle) error {
+	return errors.New("test endpoint has no dialog transport")
+}
+func (*testEndpoint) SendDialogRequest(
+	context.Context,
+	string,
+	imsendpoint.DialogHandle,
+	*sip.Request,
+	imsendpoint.DialogRequestOptions,
+) (*sip.Response, error) {
+	return nil, errors.New("test endpoint has no dialog transport")
+}
+func (*testEndpoint) SendReliableProvisionalPRACK(
+	context.Context,
+	string,
+	imsendpoint.ReliableProvisionalOptions,
+) error {
+	return errors.New("test endpoint has no reliable provisional transport")
 }
 
 type recordingVoice struct {

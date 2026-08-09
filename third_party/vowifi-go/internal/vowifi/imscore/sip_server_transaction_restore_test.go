@@ -69,7 +69,7 @@ func TestServerNonInviteUsesHandleAndMemoizesAfterTimerJ(t *testing.T) {
 	if captured.InboundRequest == nil {
 		t.Fatal("inbound request handle was not routed to production handler")
 	}
-	if err := service.RespondInboundRequest(t.Context(), captured.InboundRequest, imsendpoint.InboundResponseOptions{
+	if err := service.RespondInboundRequest(t.Context(), service.DeviceID(), captured.InboundRequest, imsendpoint.InboundResponseOptions{
 		Code: 202, Reason: "Accepted",
 	}); err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestRejectedInviteRetransmitsAndACKStopsTransaction(t *testing.T) {
 	if err := service.dispatchInboundSIP(request, recorder.reply); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.RejectServerInvite(t.Context(), invite.ServerInvite, imsendpoint.ServerInviteRejectOptions{
+	if err := service.RejectServerInvite(t.Context(), service.DeviceID(), invite.ServerInvite, imsendpoint.ServerInviteRejectOptions{
 		Code: 486, Reason: "Busy Here",
 	}); err != nil {
 		t.Fatal(err)
@@ -178,13 +178,17 @@ func TestAcceptedInviteUsesLegacyAPIAndOnlyReplaysOnRequest(t *testing.T) {
 	if err := sip.ParseUri("sip:user@192.0.2.10:5060", &contactURI); err != nil {
 		t.Fatal(err)
 	}
-	dialog, err := service.AnswerServerInvite(t.Context(), invite.ServerInvite, imsendpoint.ServerInviteAnswerOptions{
+	dialog, err := service.AnswerServerInvite(t.Context(), service.DeviceID(), invite.ServerInvite, imsendpoint.ServerInviteAnswerOptions{
 		Response: response, Contact: &sip.ContactHeader{Address: contactURI},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dialog.DialogID() != "answer-call" {
+	wantDialogID, dialogIDErr := sip.DialogIDFromResponse(response)
+	if dialogIDErr != nil {
+		t.Fatal(dialogIDErr)
+	}
+	if dialog.DialogID() != wantDialogID {
 		t.Fatalf("dialog ID=%q", dialog.DialogID())
 	}
 	waitForServerCondition(t, func() bool { return len(recorder.snapshot()) == 1 })
@@ -242,7 +246,7 @@ func TestRejectedInviteTimerHReportsTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	handle := invite.ServerInvite.(*imscoreServerInviteHandle)
-	if err := service.RejectServerInvite(t.Context(), handle, imsendpoint.ServerInviteRejectOptions{Code: 486}); err != nil {
+	if err := service.RejectServerInvite(t.Context(), service.DeviceID(), handle, imsendpoint.ServerInviteRejectOptions{Code: 486}); err != nil {
 		t.Fatal(err)
 	}
 	select {

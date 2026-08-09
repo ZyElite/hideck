@@ -19,9 +19,26 @@ type InviteHandle = imscoreInviteHandle
 
 // imscoreDialogHandle identifies a SIP dialog.
 type imscoreDialogHandle struct {
-	callID  string
-	fromTag string
-	toTag   string
+	id     string
+	client *sipgo.DialogClientSession
+	server *sipgo.DialogServerSession
+
+	mu             sync.Mutex
+	callID         string
+	fromTag        string
+	toTag          string
+	inviteRequest  *sip.Request
+	inviteResponse *sip.Response
+	routeSet       []string
+	localContact   *sip.ContactHeader
+	remoteTarget   sip.Uri
+	sender         func(string) error
+	localCSeq      uint32
+	remoteCSeq     uint32
+	confirmed      bool
+	confirmedCh    chan struct{}
+	inviteTx       sip.ServerTransaction
+	closed         bool
 }
 
 // DialogID returns the dialog ID.
@@ -29,7 +46,7 @@ func (h *imscoreDialogHandle) DialogID() string {
 	if h == nil {
 		return ""
 	}
-	return h.callID
+	return h.id
 }
 
 // ToTag returns the remote tag.
@@ -128,84 +145,6 @@ type inboundRequestResponseMemo struct {
 	At     time.Time
 }
 
-// dialogEntry is one registered dialog.
-type dialogEntry struct {
-	handle    *imscoreDialogHandle
-	localTag  string
-	remoteTag string
-	cseq      int
-	route     []string
-}
-
-// dialogRegistry stores in-progress dialogs.
-type dialogRegistry struct {
-	mu      sync.RWMutex
-	dialogs map[string]*dialogEntry // keyed by call ID
-}
-
-// newDialogRegistry creates a dialog registry.
-func newDialogRegistry() *dialogRegistry {
-	return &dialogRegistry{dialogs: make(map[string]*dialogEntry)}
-}
-
-// store registers a dialog.
-func (r *dialogRegistry) store(callID string, d *dialogEntry) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.dialogs[callID] = d
-	r.mu.Unlock()
-}
-
-// load returns a dialog by call ID.
-func (r *dialogRegistry) load(callID string) *dialogEntry {
-	if r == nil {
-		return nil
-	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.dialogs[callID]
-}
-
-// delete removes a dialog.
-func (r *dialogRegistry) delete(callID string) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	delete(r.dialogs, callID)
-	r.mu.Unlock()
-}
-
-// len returns the number of dialogs.
-func (r *dialogRegistry) len() int {
-	if r == nil {
-		return 0
-	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return len(r.dialogs)
-}
-
-// matchInboundRequest finds a dialog matching an inbound request.
-func (r *dialogRegistry) matchInboundRequest(callID, fromTag, toTag string) *dialogEntry {
-	if r == nil {
-		return nil
-	}
-	return r.load(callID)
-}
-
-// readInboundRequest reads the dialog for an inbound request.
-func (r *dialogRegistry) readInboundRequest(callID string) *dialogEntry {
-	return r.load(callID)
-}
-
-// inboundDialogCandidateIDs returns candidate dialog IDs for an inbound request.
-func inboundDialogCandidateIDs(callID string) []string {
-	return []string{callID}
-}
-
 // CancelClientInviteRaw retains the additive handle-only cancellation API.
 func (s *Service) CancelClientInviteRaw(handle *imscoreInviteHandle) error {
 	if s == nil || handle == nil {
@@ -243,6 +182,7 @@ func (s *Service) CancelClientInviteRaw(handle *imscoreInviteHandle) error {
 // CancelClientInvite cancels a v1.5.5 client INVITE transaction.
 func (s *Service) CancelClientInvite(
 	ctx context.Context,
+	_ string,
 	invite imsendpoint.InviteHandle,
 	options imsendpoint.ClientInviteCancelOptions,
 ) error {
@@ -256,26 +196,30 @@ func (s *Service) CancelClientInvite(
 	return s.cancelClientInviteWithContext(ctx, handle, options)
 }
 
-// CloseDialog closes a dialog.
-func (s *Service) CloseDialog(handle *imscoreDialogHandle) error {
-	if s == nil || s.dialogs == nil || handle == nil {
-		return errors.New("imscore: dialog handle is required")
-	}
-	s.dialogs.delete(handle.DialogID())
-	return nil
+// CancelClientInviteForCurrentDevice retains the additive device-implicit API.
+func (s *Service) CancelClientInviteForCurrentDevice(
+	ctx context.Context,
+	invite imsendpoint.InviteHandle,
+	options imsendpoint.ClientInviteCancelOptions,
+) error {
+	return s.CancelClientInvite(ctx, s.DeviceID(), invite, options)
 }
 
-// NextCSeq returns the next CSeq for a dialog.
-func (s *Service) NextCSeq(handle *imscoreDialogHandle) int {
-	if s == nil || handle == nil || s.dialogs == nil {
+// CloseDialogRaw retains the additive handle-only close API.
+func (s *Service) CloseDialogRaw(handle *imscoreDialogHandle) error {
+	if s == nil || handle == nil {
+		return errors.New("imscore: dialog handle is required")
+	}
+	return s.closeDialogHandle(handle)
+}
+
+// NextDialogCSeqRaw retains the additive per-dialog CSeq helper.
+func (s *Service) NextDialogCSeqRaw(handle *imscoreDialogHandle) int {
+	if s == nil || handle == nil {
 		return 1
 	}
-	s.dialogs.mu.Lock()
-	defer s.dialogs.mu.Unlock()
-	d := s.dialogs.dialogs[handle.DialogID()]
-	if d == nil {
-		return 1
-	}
-	d.cseq++
-	return d.cseq
+	handle.mu.Lock()
+	defer handle.mu.Unlock()
+	handle.localCSeq++
+	return int(handle.localCSeq)
 }

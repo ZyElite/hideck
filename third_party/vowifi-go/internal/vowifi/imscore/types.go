@@ -193,10 +193,11 @@ type Service struct {
 	keepaliveFailures        int
 
 	// Dialogs.
-	dialogs      *dialogRegistry
-	serverTxMu   sync.Mutex
-	serverTx     map[string]trackedServerTransaction
-	serverTimers serverTransactionTimers
+	dialogRegistry *dialogRegistry
+	endpointCSeq   atomic.Uint32
+	serverTxMu     sync.Mutex
+	serverTx       map[string]trackedServerTransaction
+	serverTimers   serverTransactionTimers
 
 	inboundSeenMu  sync.Mutex
 	inboundSeen    map[string]time.Time
