@@ -463,6 +463,27 @@ func (*testEndpoint) CancelClientInvite(
 ) error {
 	return errors.New("test endpoint has no client INVITE transport")
 }
+func (*testEndpoint) RespondInboundRequest(
+	context.Context,
+	imsendpoint.InboundRequestHandle,
+	imsendpoint.InboundResponseOptions,
+) error {
+	return errors.New("test endpoint has no server transaction transport")
+}
+func (*testEndpoint) AnswerServerInvite(
+	context.Context,
+	imsendpoint.ServerInviteHandle,
+	imsendpoint.ServerInviteAnswerOptions,
+) (imsendpoint.DialogHandle, error) {
+	return nil, errors.New("test endpoint has no server transaction transport")
+}
+func (*testEndpoint) RejectServerInvite(
+	context.Context,
+	imsendpoint.ServerInviteHandle,
+	imsendpoint.ServerInviteRejectOptions,
+) error {
+	return errors.New("test endpoint has no server transaction transport")
+}
 
 type recordingVoice struct {
 	mu       sync.Mutex

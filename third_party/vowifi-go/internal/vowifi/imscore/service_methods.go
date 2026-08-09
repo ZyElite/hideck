@@ -117,22 +117,6 @@ func (s *Service) VoiceProfile() VoiceProfile {
 	}
 }
 
-// RejectServerInvite rejects a server-side INVITE (486 Busy Here).
-func (s *Service) RejectServerInvite(handle *imscoreServerInviteHandle) error {
-	if s == nil || handle == nil {
-		return errors.New("imscore: server INVITE handle is required")
-	}
-	return errors.New("imscore: cannot reject INVITE without its inbound request context")
-}
-
-// RespondInboundRequest responds to an inbound request with the given status.
-func (s *Service) RespondInboundRequest(handle *imscoreInboundRequestHandle, status int) error {
-	if s == nil || handle == nil {
-		return errors.New("imscore: inbound request handle is required")
-	}
-	return errors.New("imscore: cannot respond without the inbound request context")
-}
-
 // SendDialogRequest sends a request within a dialog.
 func (s *Service) SendDialogRequest(handle *imscoreDialogHandle, method string, body string) error {
 	if s == nil || handle == nil {

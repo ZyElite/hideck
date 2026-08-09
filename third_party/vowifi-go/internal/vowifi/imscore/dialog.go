@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
@@ -83,7 +84,12 @@ func (h *imscoreInviteHandle) markDone(confirmed bool) {
 
 // imscoreServerInviteHandle identifies a server INVITE transaction.
 type imscoreServerInviteHandle struct {
-	callID string
+	id        string
+	req       *sip.Request
+	tx        sip.ServerTransaction
+	mu        sync.Mutex
+	responded bool
+	runtime   *serverSIPTransaction
 }
 
 // InviteID returns the invite ID.
@@ -91,13 +97,17 @@ func (h *imscoreServerInviteHandle) InviteID() string {
 	if h == nil {
 		return ""
 	}
-	return h.callID
+	return h.id
 }
 
 // imscoreInboundRequestHandle identifies an inbound request.
 type imscoreInboundRequestHandle struct {
-	method string
-	callID string
+	id        string
+	req       *sip.Request
+	tx        sip.ServerTransaction
+	mu        sync.Mutex
+	responded bool
+	runtime   *serverSIPTransaction
 }
 
 // Method returns the request method.
@@ -105,13 +115,17 @@ func (h *imscoreInboundRequestHandle) Method() string {
 	if h == nil {
 		return ""
 	}
-	return h.method
+	if h.req == nil {
+		return ""
+	}
+	return string(h.req.Method)
 }
 
 // inboundRequestResponseMemo caches a response to an inbound request.
 type inboundRequestResponseMemo struct {
-	statusCode int
-	headers    map[string]string
+	Code   int
+	Reason string
+	At     time.Time
 }
 
 // dialogEntry is one registered dialog.
@@ -190,16 +204,6 @@ func (r *dialogRegistry) readInboundRequest(callID string) *dialogEntry {
 // inboundDialogCandidateIDs returns candidate dialog IDs for an inbound request.
 func inboundDialogCandidateIDs(callID string) []string {
 	return []string{callID}
-}
-
-// Service dialog methods.
-
-// AnswerServerInvite answers a server-side INVITE.
-func (s *Service) AnswerServerInvite(handle *imscoreServerInviteHandle) error {
-	if s == nil || handle == nil {
-		return errors.New("imscore: server INVITE handle is required")
-	}
-	return errors.New("imscore: server INVITE request context is unavailable")
 }
 
 // CancelClientInviteRaw retains the additive handle-only cancellation API.

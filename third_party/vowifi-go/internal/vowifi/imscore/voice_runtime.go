@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
 )
 
@@ -36,6 +37,8 @@ type InboundVoiceRequest struct {
 	SessionExpires string
 	Body           []byte
 	Responder      InboundVoiceResponder
+	InboundRequest imsendpoint.InboundRequestHandle
+	ServerInvite   imsendpoint.ServerInviteHandle
 }
 
 // InboundVoiceResponse is one provisional or final response to an inbound
@@ -159,7 +162,11 @@ func (s *Service) EventBus() *EventBus {
 	return s.bus
 }
 
-func (s *Service) handleInboundVoice(raw string, reply func(string) error) (inboundSIPResult, bool, error) {
+func (s *Service) handleInboundVoice(
+	raw string,
+	reply func(string) error,
+	transaction *serverSIPTransaction,
+) (inboundSIPResult, bool, error) {
 	s.mu.RLock()
 	handler := s.voiceHandler
 	s.mu.RUnlock()
@@ -170,14 +177,21 @@ func (s *Service) handleInboundVoice(raw string, reply func(string) error) (inbo
 	if err != nil {
 		return inboundSIPResult{}, true, err
 	}
-	result, err := handler.HandleInboundVoiceRequest(InboundVoiceRequest{
+	request := InboundVoiceRequest{
 		Method: sipRequestMethod(raw), CallID: rawSIPHeaderValue(raw, "Call-ID"),
 		From: rawSIPHeaderValue(raw, "From"), To: rawSIPHeaderValue(raw, "To"),
 		Contact: rawSIPHeaderValue(raw, "Contact"), RecordRoute: rawSIPHeaderValue(raw, "Record-Route"),
 		CSeq: rawSIPHeaderValue(raw, "CSeq"), ContentType: rawSIPHeaderValue(raw, "Content-Type"),
 		SessionExpires: rawSIPHeaderValue(raw, "Session-Expires"),
 		Body:           body, Responder: newInboundVoiceResponder(raw, reply),
-	})
+	}
+	if transaction != nil {
+		request.InboundRequest = newInboundRequestHandle(transaction.request, transaction)
+		if transaction.request.IsInvite() {
+			request.ServerInvite = newServerInviteHandle(transaction.request, transaction)
+		}
+	}
+	result, err := handler.HandleInboundVoiceRequest(request)
 	if !result.Handled {
 		return inboundSIPResult{}, false, err
 	}

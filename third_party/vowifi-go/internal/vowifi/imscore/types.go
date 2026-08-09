@@ -193,7 +193,14 @@ type Service struct {
 	keepaliveFailures        int
 
 	// Dialogs.
-	dialogs *dialogRegistry
+	dialogs      *dialogRegistry
+	serverTxMu   sync.Mutex
+	serverTx     map[string]trackedServerTransaction
+	serverTimers serverTransactionTimers
+
+	inboundSeenMu  sync.Mutex
+	inboundSeen    map[string]time.Time
+	inboundSeenRsp map[string]inboundRequestResponseMemo
 
 	// Event bus.
 	bus *imsEventBus

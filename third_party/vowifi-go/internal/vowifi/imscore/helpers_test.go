@@ -208,8 +208,8 @@ func TestServiceMethods(t *testing.T) {
 	if err := svc.SendReliableProvisionalPRACK(h); err == nil {
 		t.Fatal("PRACK succeeded without reliable provisional context")
 	}
-	inv := &imscoreServerInviteHandle{callID: "call-in"}
-	if err := svc.RejectServerInvite(inv); err == nil {
+	inv := &imscoreServerInviteHandle{id: "call-in"}
+	if err := svc.RejectServerInviteRaw(inv); err == nil {
 		t.Fatal("RejectServerInvite succeeded without inbound request context")
 	}
 	if err := svc.TriggerFastReconnect(); err != nil {

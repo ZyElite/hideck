@@ -61,6 +61,15 @@ func (s *Service) handleInboundSIP(ctx context.Context, raw string) (inboundSIPR
 }
 
 func (s *Service) handleInboundSIPWithReply(ctx context.Context, raw string, reply func(string) error) (inboundSIPResult, error) {
+	return s.handleInboundSIPTransaction(ctx, raw, reply, nil)
+}
+
+func (s *Service) handleInboundSIPTransaction(
+	ctx context.Context,
+	raw string,
+	reply func(string) error,
+	transaction *serverSIPTransaction,
+) (inboundSIPResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -88,19 +97,25 @@ func (s *Service) handleInboundSIPWithReply(ctx context.Context, raw string, rep
 		if handled {
 			return result, err
 		}
-		result, handled, err = s.handleInboundVoice(raw, reply)
+		result, handled, err = s.handleInboundVoice(raw, reply, transaction)
 		if handled {
 			return result, err
 		}
 		response, responseErr := buildSIPRequestResponse(raw, 405)
 		return inboundSIPResult{response: response}, responseErr
-	case "INVITE", "CANCEL", "ACK", "PRACK", "UPDATE":
-		result, handled, err := s.handleInboundVoice(raw, reply)
+	case "INVITE", "CANCEL", "PRACK", "UPDATE":
+		result, handled, err := s.handleInboundVoice(raw, reply, transaction)
 		if handled {
 			return result, err
 		}
 		response, responseErr := buildSIPRequestResponse(raw, 405)
 		return inboundSIPResult{response: response}, responseErr
+	case "ACK":
+		result, handled, err := s.handleInboundVoice(raw, reply, nil)
+		if handled {
+			return result, err
+		}
+		return inboundSIPResult{}, err
 	default:
 		response, err := buildSIPRequestResponse(raw, 405)
 		return inboundSIPResult{response: response}, err
@@ -122,23 +137,43 @@ func (s *Service) dispatchInboundSIPMessage(message sip.Message, raw string, rep
 		s.transport.DeliverResponse(newSIPResponse(parsed))
 		return nil
 	case *sip.Request:
-		return s.dispatchInboundSIPRequest(raw, reply)
+		return s.dispatchInboundSIPRequest(parsed, raw, reply)
 	default:
 		return errors.New("imscore: unsupported inbound SIP message")
 	}
 }
 
-func (s *Service) dispatchInboundSIPRequest(raw string, reply func(string) error) error {
+func (s *Service) dispatchInboundSIPRequest(
+	request *sip.Request,
+	raw string,
+	reply func(string) error,
+) error {
 	s.transport.DeliverRequest(raw)
-	result, err := s.handleInboundSIPWithReply(context.Background(), raw, reply)
-	if result.response == "" {
+	transaction, handled, err := s.acceptServerRequest(request, raw, reply)
+	if handled || err != nil {
 		return err
 	}
-	if reply == nil {
+	responseWriter := reply
+	if transaction != nil {
+		responseWriter = transaction.respondRaw
+	}
+	result, err := s.handleInboundSIPTransaction(
+		context.Background(), raw, responseWriter, transaction,
+	)
+	if result.response == "" {
+		if err != nil && transaction != nil {
+			transaction.fail(err, true)
+		}
+		return err
+	}
+	if request.IsAck() {
+		return errors.New("imscore: ACK handler attempted to send a SIP response")
+	}
+	if responseWriter == nil {
 		return errors.New("imscore: inbound SIP reply path is unavailable")
 	}
-	if err := reply(result.response); err != nil {
-		return err
+	if responseErr := responseWriter(result.response); responseErr != nil {
+		return responseErr
 	}
 	if result.afterReply != nil {
 		s.networkDone.Add(1)

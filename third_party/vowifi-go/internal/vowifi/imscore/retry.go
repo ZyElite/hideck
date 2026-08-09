@@ -1,21 +1,26 @@
 package imscore
 
+import "strings"
+
 // RequestID returns the inbound request ID.
 func (h *imscoreInboundRequestHandle) RequestID() string {
 	if h == nil {
 		return ""
 	}
-	return h.callID
+	return h.id
 }
 
-// Sanitize redacts sensitive header values from the response memo.
-func (m *inboundRequestResponseMemo) Sanitize() {
-	if m == nil || m.headers == nil {
-		return
+// Sanitize normalizes a memo before it is replayed.
+func (m *inboundRequestResponseMemo) Sanitize() (int, string) {
+	code := m.Code
+	if code < 1 {
+		code = 200
 	}
-	// Never leak the digest challenge in a memo.
-	delete(m.headers, "WWW-Authenticate")
-	delete(m.headers, "Proxy-Authenticate")
+	reason := strings.TrimSpace(m.Reason)
+	if reason == "" {
+		reason = "OK"
+	}
+	return code, reason
 }
 
 // outboundModeResolveError is returned when the outbound mode cannot be

@@ -383,6 +383,7 @@ func (s *Service) Stop() {
 	}
 	s.protectedConnMu.Unlock()
 	s.networkDone.Wait()
+	s.clearServerTransactions()
 	if closer, ok := s.cfg.IMSNetwork.(interface{ Close() error }); ok {
 		_ = closer.Close()
 	}

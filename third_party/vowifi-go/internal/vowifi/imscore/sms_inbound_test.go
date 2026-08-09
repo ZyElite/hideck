@@ -148,12 +148,17 @@ func waitForOutboundSMSControl(t *testing.T, outbound <-chan string) string {
 
 func inboundSMSRequest(t *testing.T, contentType string, body []byte) string {
 	t.Helper()
+	transactionID := 1
+	if len(body) > 1 {
+		transactionID = int(body[1]) + 1
+	}
 	return fmt.Sprintf("MESSAGE sip:234102356143376@ims.example SIP/2.0\r\n"+
-		"Via: SIP/2.0/TCP 10.0.0.1:5060;branch=z9hG4bK-inbound\r\n"+
+		"Via: SIP/2.0/TCP 10.0.0.1:5060;branch=z9hG4bK-inbound-%d\r\n"+
 		"From: <sip:+447802002606@ims.example>;tag=remote\r\n"+
 		"To: <sip:234102356143376@ims.example>\r\n"+
-		"Call-ID: inbound-sms\r\nCSeq: 1 MESSAGE\r\n"+
-		"Content-Type: %s\r\nContent-Length: %d\r\n\r\n%s", contentType, len(body), body)
+		"Call-ID: inbound-sms\r\nCSeq: %d MESSAGE\r\n"+
+		"Content-Type: %s\r\nContent-Length: %d\r\n\r\n%s",
+		transactionID, transactionID, contentType, len(body), body)
 }
 
 func inboundRPData(t *testing.T, mr byte, sender, text string) []byte {
