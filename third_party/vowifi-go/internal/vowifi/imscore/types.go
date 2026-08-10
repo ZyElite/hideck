@@ -269,7 +269,6 @@ type pingState struct {
 	lastPingAt    time.Time
 	lastPingOK    atomic.Bool
 	pingSending   atomic.Bool
-	pingCSeq      uint32
 }
 
 // SMSReadiness describes the independently verifiable IMS SMS prerequisites.

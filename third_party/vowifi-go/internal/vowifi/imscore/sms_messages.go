@@ -94,6 +94,7 @@ func (s *Service) buildRPAckMESSAGE(inbound string, body []byte) (*sip.Request, 
 type registeredSIPRoute struct {
 	clientAddress  string
 	serverAddress  string
+	remoteAddress  string
 	serviceRoute   string
 	securityVerify string
 	transport      string
@@ -118,6 +119,7 @@ func (s *Service) registeredSIPRouteLocked() registeredSIPRoute {
 	if serverPort > 0 {
 		route.serverAddress = net.JoinHostPort(s.cfg.LocalIP.String(), fmt.Sprint(serverPort))
 	}
+	route.remoteAddress = s.registeredRemoteAddressLocked()
 	if s.regSession != nil {
 		route.serviceRoute = strings.TrimSpace(s.regSession.serviceRoute)
 		if s.regSession.security != nil {
@@ -126,6 +128,38 @@ func (s *Service) registeredSIPRouteLocked() registeredSIPRoute {
 	}
 	route.live = s.registeredSIPTransportReadyLocked()
 	return route
+}
+
+func (s *Service) registeredRemoteAddressLocked() string {
+	if s.registrationTCP != nil {
+		if address := validSIPRemoteAddress(s.registrationTCP.RemoteAddr()); address != "" {
+			return address
+		}
+	}
+	if s.registrationRemote == nil || s.registrationRemote.IP == nil {
+		return ""
+	}
+	port := s.registrationRemote.Port
+	if s.regSession != nil && s.regSession.security != nil && s.regSession.security.server != nil {
+		if negotiated := int(s.regSession.security.server.PortS); negotiated > 0 {
+			port = negotiated
+		}
+	}
+	if port < 1 {
+		return ""
+	}
+	return net.JoinHostPort(s.registrationRemote.IP.String(), fmt.Sprint(port))
+}
+
+func validSIPRemoteAddress(address net.Addr) string {
+	if address == nil {
+		return ""
+	}
+	host, port, err := net.SplitHostPort(strings.TrimSpace(address.String()))
+	if err != nil || strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+		return ""
+	}
+	return net.JoinHostPort(strings.Trim(host, "[]"), port)
 }
 
 func (s *Service) registeredSIPTransportReadyLocked() bool {

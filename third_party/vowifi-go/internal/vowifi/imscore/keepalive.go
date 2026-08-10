@@ -2,12 +2,12 @@ package imscore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/sipkit"
@@ -21,6 +21,8 @@ const (
 	imsMaintenanceMinimumDelay     = 100 * time.Millisecond
 	imsRegistrationRefreshAdvance  = 60 * time.Second
 	imsKeepaliveFlow               = "options_keepalive"
+	imsKeepaliveSupported          = "path, 100rel, replaces, outbound, gruu"
+	imsProtectedKeepaliveSupported = "path, sec-agree, 100rel, replaces, outbound, gruu"
 )
 
 type imsMaintenanceAction uint8
@@ -209,25 +211,30 @@ func (s *Service) buildIMSKeepaliveOPTIONS() (*sip.Request, error) {
 	if err != nil {
 		return nil, fmt.Errorf("imscore: keepalive registered profile: %w", err)
 	}
+	recipient, err := parseKeepaliveURI("sip:" + profile.RemoteAddress)
+	if err != nil {
+		return nil, fmt.Errorf("imscore: keepalive P-CSCF endpoint: %w", err)
+	}
 	aor, err := parseKeepaliveURI(profile.LocalURI)
 	if err != nil {
 		return nil, err
 	}
-	contact, err := parseKeepaliveContact(profile.ContactHeader)
-	if err != nil {
-		return nil, err
-	}
 	securityMode := "disabled"
+	supported := imsKeepaliveSupported
 	if strings.TrimSpace(profile.SecurityVerify) != "" {
 		securityMode = securityModeIPSec
+		supported = imsProtectedKeepaliveSupported
 	}
-	return sipkit.BuildIMSRequest(sip.OPTIONS, aor, sipkit.IMSRequestOptions{
-		Transport: profile.Transport, Branch: "z9hG4bK" + newBranch(),
-		FromURI: aor, FromTag: newTag(), ToURI: aor,
-		CallID: newCallID(), CSeq: uint32(profile.InitialCSeq), Contact: contact,
+	return sipkit.BuildIMSRequest(sip.OPTIONS, recipient, sipkit.IMSRequestOptions{
+		Destination: profile.RemoteAddress,
+		Transport:   profile.Transport, Branch: "z9hG4bK." + common.RandomHex(20),
+		FromURI: aor, FromTag: profile.FromTag, ToURI: aor,
+		CallID: common.RandomHex(20), CSeq: uint32(profile.InitialCSeq),
 		Kind: sipkit.RequestKindOutOfDialog, SecurityMode: securityMode,
 		AddRPort:          true,
 		AddUserAgent:      strings.TrimSpace(profile.UserAgent) != "",
+		AddSupported:      true,
+		Supported:         supported,
 		PreferredIdentity: imsheaders.PreferredIdentityHeaderValue(profile.LocalURI),
 		Runtime: sipkit.IMSRuntimeSnapshot{
 			ServiceRoute: profile.ServiceRoute, SecVerify: profile.SecurityVerify,
@@ -243,20 +250,4 @@ func parseKeepaliveURI(value string) (sip.Uri, error) {
 		return sip.Uri{}, fmt.Errorf("imscore: keepalive AOR: %w", err)
 	}
 	return uri, nil
-}
-
-func parseKeepaliveContact(value string) (*sip.ContactHeader, error) {
-	parser := sip.HeadersParser(sip.DefaultHeadersParser())
-	headers, err := parser.ParseHeader(nil, []byte("Contact: "+value))
-	if err != nil {
-		return nil, fmt.Errorf("imscore: keepalive Contact: %w", err)
-	}
-	if len(headers) != 1 {
-		return nil, errors.New("imscore: keepalive Contact did not contain one address")
-	}
-	contact, ok := headers[0].(*sip.ContactHeader)
-	if !ok {
-		return nil, errors.New("imscore: keepalive Contact has an unexpected header type")
-	}
-	return contact, nil
 }

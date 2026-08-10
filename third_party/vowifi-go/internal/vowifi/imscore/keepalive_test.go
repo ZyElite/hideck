@@ -83,16 +83,34 @@ func TestIMSKeepaliveUsesRegisteredProtectedProfile(t *testing.T) {
 			done <- err
 			return
 		}
-		if !strings.HasPrefix(request, "OPTIONS sip:+447840844894@o2.co.uk;transport=tcp SIP/2.0") {
-			done <- errors.New("keepalive did not target the registered public identity")
+		if !strings.HasPrefix(request, "OPTIONS sip:[2001:db8::20]:6060;transport=tcp SIP/2.0") {
+			done <- errors.New("keepalive did not target the registered P-CSCF endpoint")
 			return
 		}
 		if rawSIPHeaderValue(request, "Security-Verify") == "" ||
 			rawSIPHeaderValue(request, "Route") == "" ||
-			rawSIPHeaderValue(request, "Contact") == "" ||
 			rawSIPHeaderValue(request, "P-Access-Network-Info") == "" ||
 			rawSIPHeaderValue(request, "P-Preferred-Identity") == "" {
 			done <- errors.New("keepalive omitted registered security routing")
+			return
+		}
+		if rawSIPHeaderValue(request, "Contact") != "" {
+			done <- errors.New("keepalive included Contact")
+			return
+		}
+		if rawSIPHeaderValue(request, "Supported") != imsProtectedKeepaliveSupported {
+			done <- errors.New("keepalive Supported header differs from v1.5.5")
+			return
+		}
+		if !strings.Contains(rawSIPHeaderValue(request, "From"), ";tag=register-tag") ||
+			rawSIPHeaderValue(request, "CSeq") != "6 OPTIONS" {
+			done <- errors.New("keepalive did not reuse REGISTER dialog identity and shared CSeq")
+			return
+		}
+		branch, branchErr := parseTopViaBranch(rawSIPHeaderValue(request, "Via"))
+		if branchErr != nil || !strings.HasPrefix(branch, "z9hG4bK.") || len(branch) != len("z9hG4bK.")+20 ||
+			len(rawSIPHeaderValue(request, "Call-ID")) != 20 {
+			done <- errors.New("keepalive transaction identifiers differ from v1.5.5")
 			return
 		}
 		if rawSIPHeaderValue(request, "Require") != "sec-agree" ||
@@ -201,10 +219,14 @@ func newProtectedKeepaliveTestService(t *testing.T) *Service {
 	service.protectedClientPort = 16082
 	service.protectedServerPort = 16083
 	service.regSession = &registerSession{
-		contactUser: "registered-contact", cseq: 3,
+		contactUser: "registered-contact", fromTag: "register-tag", cseq: 3,
 		publicID: "sip:+447840844894@o2.co.uk", serviceRoute: "<sip:pcscf.ims.example;lr>",
-		security: &securityAgreement{verifyHeader: "ipsec-3gpp;alg=hmac-sha-1-96"},
+		security: &securityAgreement{
+			verifyHeader: "ipsec-3gpp;alg=hmac-sha-1-96",
+			server:       &securityMechanism{PortS: 6060},
+		},
 	}
+	service.registrationRemote = &net.UDPAddr{IP: net.ParseIP("2001:db8::20"), Port: 5060}
 	service.mu.Unlock()
 	t.Cleanup(service.Stop)
 	return service

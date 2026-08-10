@@ -13,10 +13,12 @@ import (
 // SIPDialogProfile is the registered signaling endpoint used by IMS dialogs.
 type SIPDialogProfile struct {
 	LocalURI       string
+	FromTag        string
 	ContactURI     string
 	ContactHeader  string
 	Domain         string
 	LocalAddress   string
+	RemoteAddress  string
 	Transport      string
 	ServiceRoute   string
 	SecurityVerify string
@@ -122,7 +124,8 @@ func (s *Service) reserveRegisteredSIPProfile() (SIPDialogProfile, error) {
 	contactURI, contactHeader := registeredVoiceContact(s.cfg, registeredContactUser, route.serverAddress)
 	return SIPDialogProfile{
 		LocalURI: localURI, Domain: strings.TrimSpace(s.cfg.Domain),
-		LocalAddress: route.clientAddress, Transport: route.transport, ServiceRoute: route.serviceRoute,
+		FromTag: session.fromTag, LocalAddress: route.clientAddress, RemoteAddress: route.remoteAddress,
+		Transport: route.transport, ServiceRoute: route.serviceRoute,
 		ContactURI: contactURI, ContactHeader: contactHeader,
 		SecurityVerify: route.securityVerify, PANI: s.GetPAccessNetworkInfo(),
 		UserAgent: strings.TrimSpace(s.cfg.UserAgent), InitialCSeq: initialCSeq,
