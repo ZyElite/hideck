@@ -1,6 +1,7 @@
 server:
   debug: false
   port: 7575
+  sms_rate_limit_disabled: false
 
 web:
   username: admin

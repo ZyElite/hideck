@@ -114,8 +114,9 @@ type WebConfig struct {
 }
 
 type ServerConfig struct {
-	Port  string `mapstructure:"port"`
-	Debug bool   `mapstructure:"debug"`
+	Port                 string `mapstructure:"port"`
+	Debug                bool   `mapstructure:"debug"`
+	SMSRateLimitDisabled bool   `mapstructure:"sms_rate_limit_disabled"`
 }
 
 type ESIMSwitchConfig struct {

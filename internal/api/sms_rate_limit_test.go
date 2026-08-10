@@ -73,6 +73,26 @@ func TestSMSRateLimiterResetsDailyCountAtLocalMidnight(t *testing.T) {
 	}
 }
 
+func TestSMSRateLimiterCanBeDisabledForTesting(t *testing.T) {
+	now := time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)
+	limiter := newSMSRateLimiterWithConfig(now, func() time.Time { return now }, true)
+
+	for i := 0; i < smsDailyLimit+1; i++ {
+		if result := limiter.Allow(); !result.Allowed {
+			t.Fatalf("send %d allowed=%v code=%q", i+1, result.Allowed, result.Code)
+		}
+	}
+}
+
+func TestServerDisablesSMSRateLimiterFromConfig(t *testing.T) {
+	server := &Server{cfg: config.ServerConfig{SMSRateLimitDisabled: true}}
+	for i := 0; i < smsDailyLimit+1; i++ {
+		if result := server.smsRateLimiter().Allow(); !result.Allowed {
+			t.Fatalf("send %d allowed=%v code=%q", i+1, result.Allowed, result.Code)
+		}
+	}
+}
+
 func TestHandleSendSMSReturnsRateLimitBeforeBackendSend(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	now := time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)

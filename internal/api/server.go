@@ -118,8 +118,10 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 		proxyRepo:     repo.NewDBRepo(),
 		websheets:     vwebsheet.New(vwebsheet.Config{BasePath: "/api/websheets"}),
 		loginAttempts: make(map[string]loginAttempt),
-		smsLimiter:    newSMSRateLimiter(time.Now(), time.Now),
-		shutdownCh:    make(chan struct{}),
+		smsLimiter: newSMSRateLimiterWithConfig(
+			time.Now(), time.Now, cfg.Server.SMSRateLimitDisabled,
+		),
+		shutdownCh: make(chan struct{}),
 	}
 
 	return s
@@ -137,7 +139,9 @@ func (s *Server) smsRateLimiter() *smsRateLimiter {
 	s.smsLimiterMu.Lock()
 	defer s.smsLimiterMu.Unlock()
 	if s.smsLimiter == nil {
-		s.smsLimiter = newSMSRateLimiter(time.Now(), time.Now)
+		s.smsLimiter = newSMSRateLimiterWithConfig(
+			time.Now(), time.Now, s.cfg.SMSRateLimitDisabled,
+		)
 	}
 	return s.smsLimiter
 }

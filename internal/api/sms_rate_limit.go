@@ -27,12 +27,17 @@ type smsRateLimiter struct {
 	mu             sync.Mutex
 	startedAt      time.Time
 	now            func() time.Time
+	disabled       bool
 	day            smsRateLimitDay
 	firstHourCount int
 	dailyCount     int
 }
 
 func newSMSRateLimiter(startedAt time.Time, now func() time.Time) *smsRateLimiter {
+	return newSMSRateLimiterWithConfig(startedAt, now, false)
+}
+
+func newSMSRateLimiterWithConfig(startedAt time.Time, now func() time.Time, disabled bool) *smsRateLimiter {
 	if now == nil {
 		now = time.Now
 	}
@@ -42,6 +47,7 @@ func newSMSRateLimiter(startedAt time.Time, now func() time.Time) *smsRateLimite
 	return &smsRateLimiter{
 		startedAt: startedAt,
 		now:       now,
+		disabled:  disabled,
 		day:       smsRateLimitDayOf(startedAt),
 	}
 }
@@ -52,7 +58,7 @@ func smsRateLimitDayOf(t time.Time) smsRateLimitDay {
 }
 
 func (l *smsRateLimiter) Allow() smsRateLimitResult {
-	if l == nil {
+	if l == nil || l.disabled {
 		return smsRateLimitResult{Allowed: true}
 	}
 
