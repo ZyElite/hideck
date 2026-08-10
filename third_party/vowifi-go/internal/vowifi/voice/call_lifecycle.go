@@ -1,9 +1,7 @@
 package voice
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
@@ -106,16 +104,11 @@ func (c *Call) StartOutboundNoAnswerTimer(timeout time.Duration) error {
 	}
 	c.noAnswerTimer = time.AfterFunc(timeout, func() {
 		if c.CallState() == callstate.StateDialing || c.CallState() == callstate.StateAlerting {
-			cause := errors.New("voice: no answer")
 			if c.agent != nil {
-				if err := c.agent.cancelVoiceClientInvite(context.Background(), c, cause.Error()); err != nil {
-					cause = errors.Join(cause, fmt.Errorf("send CANCEL: %w", err))
-				}
-				c.SetOutboundCancelReason(cause.Error())
-				_ = c.agent.failOutboundCall(c, cause)
+				c.agent.handleOutboundInviteNoAnswerTimeout(c)
 				return
 			}
-			c.SetOutboundCancelReason(cause.Error())
+			c.SetOutboundCancelReason("no_answer")
 			_ = c.TransitionChecked(callstate.StateFailed)
 			c.CloseDone()
 		}

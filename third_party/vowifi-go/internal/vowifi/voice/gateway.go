@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"context"
 	"errors"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
@@ -134,8 +135,23 @@ func (g *Gateway) DeviceStatus() map[string]interface{} {
 	return g.agent.deviceStatus()
 }
 
-// SimulateCall preserves the legacy name while placing a real IMS call.
-func (g *Gateway) SimulateCall(number string) (*Call, error) {
+// SimulateCall runs the recovered device-scoped timed-call workflow.
+func (g *Gateway) SimulateCall(
+	ctx context.Context,
+	deviceID string,
+	request SimulateCallRequest,
+) (*SimulateCallResult, error) {
+	if g == nil || g.agent == nil {
+		return nil, errors.New("voice: no agent")
+	}
+	if deviceID != "" && deviceID != g.agent.DeviceID() {
+		return nil, errors.New("voice: agent not found for device " + deviceID)
+	}
+	return g.agent.SimulateCall(ctx, request)
+}
+
+// SimulateCallNumber retains the additive direct-dial convenience API.
+func (g *Gateway) SimulateCallNumber(number string) (*Call, error) {
 	if g == nil || g.agent == nil {
 		return nil, errors.New("voice: no agent")
 	}

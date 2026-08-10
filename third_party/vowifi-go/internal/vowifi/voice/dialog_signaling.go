@@ -31,8 +31,9 @@ func (a *Agent) startVoiceClientInvite(
 		OnResponse: func(response *sip.Response) error {
 			value := publicVoiceSIPResponse(response)
 			if value.StatusCode < 200 {
-				return a.handleOutboundProvisional(ctx, call, value)
+				return a.handleIMSResponseEvent(ctx, call, response)
 			}
+			updateCallDialogFromResponse(call, response)
 			if !finalObserved.Swap(true) {
 				return nil
 			}

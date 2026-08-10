@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	voiceInviteTimeout         = 45 * time.Second
+	voiceInviteTimeout         = 30 * time.Second
 	voiceHangupTimeout         = 10 * time.Second
 	voiceActorEventLogInterval = 10 * time.Second
 )
@@ -214,7 +214,9 @@ func voiceValueEventCallID(ev events.Event) string {
 
 // Dial places an outbound call to the given number.
 func (a *Agent) Dial(number string) (*Call, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), voiceInviteTimeout)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), voiceInviteTimeout+outboundCancelSettle,
+	)
 	defer cancel()
 	return a.DialContext(ctx, number)
 }
@@ -244,38 +246,50 @@ func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, err
 	if err != nil {
 		return nil, err
 	}
-	imsOffer, err := a.prepareOutboundMedia(call, sdp)
+	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
+	call.SetOutboundRuntimeCancel(cancelRuntime)
+	defer cancelRuntime()
+	_, err = a.executeOutboundCall(runtimeCtx, call, sdp)
 	if err != nil {
-		return nil, a.failOutboundCall(call, err)
+		return nil, err
+	}
+	return call, nil
+}
+
+func (a *Agent) executeOutboundCall(
+	ctx context.Context,
+	call *Call,
+	sdp string,
+) (imscore.SIPResponse, error) {
+	imsOffer, err := a.prepareOutboundCallSDP(call, sdp)
+	if err != nil {
+		return imscore.SIPResponse{}, a.handleOutboundInviteRuntimeError(call, err)
 	}
 	invite, err := buildIMSInviteWithSDPChecked(a, call, imsOffer)
 	if err != nil {
-		return nil, a.failOutboundCall(call, err)
+		return imscore.SIPResponse{}, a.handleOutboundInviteRuntimeError(call, err)
 	}
 	call.setOutboundInvite(invite)
+	if err := call.StartOutboundNoAnswerTimer(voiceInviteTimeout); err != nil {
+		return imscore.SIPResponse{}, a.handleOutboundInviteRuntimeError(call, err)
+	}
 	logging.RunDebug("IMS INVITE outbound", "sip", logging.RedactSIPRaw(invite))
 	response, err := a.startVoiceClientInvite(ctx, call, invite)
+	_ = call.StopOutboundNoAnswerTimer()
+	if response.StatusCode >= 200 {
+		logOutboundInviteResponse("IMS INVITE 最终响应", response)
+		return response, errors.Join(
+			a.handleOutboundInviteRuntimeResponse(ctx, call, response), err,
+		)
+	}
 	if err != nil {
-		return nil, a.failOutboundCall(call, fmt.Errorf("voice: INVITE transaction failed: %w", err))
+		return response, a.handleOutboundInviteRuntimeError(
+			call, fmt.Errorf("voice: INVITE transaction failed: %w", err),
+		)
 	}
-	logOutboundInviteResponse("IMS INVITE 最终响应", response)
-	if call.HasLocalCancelSent() && response.StatusCode >= 200 && response.StatusCode < 300 {
-		return nil, a.closeLateAcceptedInvite(ctx, call, response)
-	}
-	if err := a.completeOutboundInvite(ctx, call, response); err != nil {
-		return nil, a.failOutboundCall(call, err)
-	}
-	if err := a.completeOutboundMedia(call, response); err != nil {
-		return nil, a.failEstablishedOutboundCall(ctx, call, err)
-	}
-	if err := call.TransitionChecked(callstate.StateConnected); err != nil {
-		return nil, a.failEstablishedOutboundCall(ctx, call, err)
-	}
-	if err := call.StartSessionTimer(call.voiceSessionExpires()); err != nil {
-		return nil, a.failEstablishedOutboundCall(ctx, call, err)
-	}
-	a.emitCallAnswered(call)
-	return call, nil
+	return response, a.handleOutboundInviteRuntimeError(
+		call, errors.New("voice: INVITE transaction ended without a final response"),
+	)
 }
 
 func (a *Agent) startOutboundCall(number string) (*Call, error) {
@@ -694,14 +708,14 @@ func (a *Agent) deviceStatus() map[string]interface{} {
 	}
 }
 
-// SimulateCall preserves the public API while using the real IMS transaction.
-func (a *Agent) SimulateCall(number string) (*Call, error) {
+// SimulateCallNumber retains the additive direct-dial convenience API.
+func (a *Agent) SimulateCallNumber(number string) (*Call, error) {
 	return a.Dial(number)
 }
 
 // simulateCall preserves the recovered private symbol without bypassing IMS.
 func (a *Agent) simulateCall(number string) (*Call, error) {
-	return a.Dial(number)
+	return a.SimulateCallNumber(number)
 }
 
 // newVoiceCallID generates a call ID.

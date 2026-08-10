@@ -22,6 +22,28 @@ type voiceAgentAdapter struct {
 	agent *voice.Agent
 }
 
+func (a *voiceAgentAdapter) SimulateCall(
+	ctx context.Context,
+	request voicehost.SimulateCallRequest,
+) (voicehost.SimulateCallResult, error) {
+	if a == nil || a.agent == nil {
+		return voicehost.SimulateCallResult{}, errors.New("runtimehost: voice agent is unavailable")
+	}
+	result, err := a.agent.SimulateCall(ctx, voice.SimulateCallRequest{
+		Callee: request.Callee, HoldSeconds: request.HoldSeconds, OnConnected: request.OnConnected,
+	})
+	if result == nil {
+		return voicehost.SimulateCallResult{}, err
+	}
+	adapted := voicehost.SimulateCallResult{
+		Success: result.Success, DurationMs: result.DurationMs, Reason: result.Reason,
+	}
+	if result.Success {
+		adapted.Message = "call completed"
+	}
+	return adapted, err
+}
+
 func (a *voiceAgentAdapter) DialContext(ctx context.Context, number string) (interface{}, error) {
 	if a == nil || a.agent == nil {
 		return nil, errors.New("runtimehost: voice agent is unavailable")

@@ -12,7 +12,19 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
-func (a *Agent) handleOutboundProvisional(ctx context.Context, call *Call, response imscore.SIPResponse) error {
+func (a *Agent) handleOutboundProvisional(
+	ctx context.Context,
+	call *Call,
+	response imscore.SIPResponse,
+) (resultErr error) {
+	return a.handleIMS1xxResponse(ctx, call, response)
+}
+
+func (a *Agent) handleIMS1xxResponse(
+	ctx context.Context,
+	call *Call,
+	response imscore.SIPResponse,
+) (resultErr error) {
 	if call == nil || response.StatusCode <= 100 || response.StatusCode >= 200 {
 		return nil
 	}

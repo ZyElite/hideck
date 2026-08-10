@@ -226,7 +226,7 @@ func TestAgentSimulateCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
-	call, err := agent.SimulateCall("+8613800000000")
+	call, err := agent.SimulateCallNumber("+8613800000000")
 	if err != nil {
 		t.Fatalf("SimulateCall: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestAgentHangupReleasesCallWhenBYEFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
-	call, err := agent.SimulateCall("+8613800000000")
+	call, err := agent.SimulateCallNumber("+8613800000000")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -677,7 +677,7 @@ func TestGatewayLifecycle(t *testing.T) {
 	if status["registered"] != true {
 		t.Errorf("status = %+v", status)
 	}
-	call, err := gw.SimulateCall("+8613800000000")
+	call, err := gw.SimulateCallNumber("+8613800000000")
 	if err != nil {
 		t.Fatalf("SimulateCall: %v", err)
 	}

@@ -22,6 +22,10 @@ type voiceAgent interface {
 	Stop() error
 }
 
+type timedCallAgent interface {
+	SimulateCall(context.Context, SimulateCallRequest) (SimulateCallResult, error)
+}
+
 // DefaultSimulateCallHoldSeconds is the default hold time for the legacy call command.
 const DefaultSimulateCallHoldSeconds = 10
 
@@ -201,6 +205,9 @@ func (g *Gateway) SimulateCall(ctx context.Context, deviceID string, req Simulat
 	}
 	if strings.TrimSpace(req.Callee) == "" {
 		return SimulateCallResult{}, errors.New("voicehost: callee is empty")
+	}
+	if timed, ok := agent.(timedCallAgent); ok {
+		return timed.SimulateCall(ctx, req)
 	}
 	call, err := agent.DialContext(ctx, req.Callee)
 	if err != nil {

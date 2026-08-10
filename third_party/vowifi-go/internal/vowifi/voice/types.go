@@ -190,6 +190,25 @@ type InboundAnswer struct {
 	State    string
 }
 
+// SimulateCallRequest is the recovered v1.5.5 timed-call request.
+type SimulateCallRequest struct {
+	Callee      string `json:"callee"`
+	HoldSeconds int    `json:"hold_seconds,omitempty"`
+	OnConnected func() `json:"-" binding:"-"`
+}
+
+// SimulateCallResult is the recovered v1.5.5 timed-call outcome.
+type SimulateCallResult struct {
+	Success    bool   `json:"success"`
+	DurationMs int64  `json:"duration_ms"`
+	Reason     string `json:"reason"`
+}
+
+type simulateInviteRuntimeResult struct {
+	response *sip.Response
+	err      error
+}
+
 // Go runs fn in the fire pool with a bounded concurrency semaphore.
 func (p *firePool) Go(fn func()) {
 	if p == nil || fn == nil {

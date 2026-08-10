@@ -358,44 +358,6 @@ func (a *Agent) HandleIMSCancelEvent(callID string) error { return a.OnIMSCancel
 // HandleIMSUpdateEvent handles an IMS UPDATE event.
 func (a *Agent) HandleIMSUpdateEvent(callID string) error { return a.OnIMSUpdate(callID) }
 
-// HandleOutboundInvite verifies that the synchronous INVITE flow completed.
-func (a *Agent) HandleOutboundInvite(callID string) error {
-	if a == nil {
-		return errors.New("voice: nil agent")
-	}
-	call := a.callByID(callID)
-	if call == nil {
-		return errors.New("voice: call not found")
-	}
-	if !call.HasInviteFinalSeen() {
-		return errors.New("voice: INVITE final response not received")
-	}
-	return nil
-}
-
-// HandleOutboundACK handles the outbound ACK for a 2xx response.
-func (a *Agent) HandleOutboundACK(callID string) error {
-	if a == nil {
-		return errors.New("voice: nil agent")
-	}
-	a.mu.RLock()
-	call := a.calls[callID]
-	a.mu.RUnlock()
-	if call == nil {
-		return errors.New("voice: call not found")
-	}
-	if !call.IsACKSent() {
-		return errors.New("voice: outbound ACK has not been sent")
-	}
-	return nil
-}
-
-// HandlePrack handles a PRACK transaction.
-func (a *Agent) HandlePrack(callID string) error { return a.HandleClientPrack(callID) }
-
-// HandleCancel handles a local cancel.
-func (a *Agent) HandleCancel(callID string) error { return a.HandleClientCancel(callID) }
-
 // --- Wiring ---
 
 // ReplaceIMSProvider swaps the IMS service.
