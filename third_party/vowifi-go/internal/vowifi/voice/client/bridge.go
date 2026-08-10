@@ -1,216 +1,112 @@
-// Package client implements the local client bridge: a SIP endpoint that
-// the LAN-side client talks to, forwarding requests to the IMS network.
-//
-// Reconstructed from the decompiled internal/vowifi/voice/client.
+// Package client implements the local SIP client bridge used by the voice
+// agent to forward requests to the LAN-side voice client.
 package client
 
 import (
-	"errors"
-	"net"
+	"context"
 	"sync"
+	"time"
+
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voiceclient"
 )
 
-// Bridge is the client-facing SIP bridge.
+const (
+	writeWorkerCount = 4
+	writeQueueSize   = 256
+	writeTimeout     = 2 * time.Second
+)
+
+// Bridge is the client-facing structured SIP bridge. The field order is the
+// v1.5.5 layout recovered from the original binary.
 type Bridge struct {
-	mu       sync.RWMutex
-	conn     net.PacketConn
-	remote   net.Addr
-	contact  string
-	localIP  net.IP
-	writeCh  chan []byte
-	stop     chan struct{}
-	started  bool
-	writeErr error
-	endpoint interface {
-		SendRawSIP(req string) error
+	deviceID string
+	adapter  voiceclient.Adapter
+	client   *sipgo.Client
+	ua       *sipgo.UserAgent
+	mu       sync.Mutex
+	ctx      context.Context
+	cancel   context.CancelFunc
+	writeCh  chan writeTask
+	wg       sync.WaitGroup
+}
+
+type writeTask struct {
+	flow       string
+	req        *sip.Request
+	enqueuedAt time.Time
+	done       chan error
+}
+
+// NewBridge constructs the v1.5.5 local voice bridge.
+func NewBridge(deviceID string, adapter voiceclient.Adapter) *Bridge {
+	bridge := &Bridge{deviceID: deviceID, adapter: adapter}
+	if adapter != nil {
+		bridge.client = adapter.GetClient()
+		bridge.ua = adapter.GetUA()
 	}
+	return bridge
 }
 
-// TransportConfig injects the LAN-side packet transport owned by the bridge.
-type TransportConfig struct {
-	Conn    net.PacketConn
-	Remote  net.Addr
-	Contact string
-	LocalIP net.IP
-}
-
-// NewBridge creates a client bridge.
-func NewBridge() *Bridge {
-	return &Bridge{}
-}
-
-// ConfigureTransport configures the real client-facing packet path.
-func (b *Bridge) ConfigureTransport(config TransportConfig) error {
+// Start launches the fixed-size client writer pool. Repeated starts are
+// idempotent until Stop has completed.
+func (b *Bridge) Start(ctx context.Context) {
 	if b == nil {
-		return errors.New("client: nil bridge")
+		return
 	}
-	if config.Conn == nil || config.Remote == nil {
-		return errors.New("client: packet connection and remote address are required")
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.started {
-		return errors.New("client: cannot replace transport while started")
+	if b.writeCh != nil {
+		b.mu.Unlock()
+		return
 	}
-	b.conn = config.Conn
-	b.remote = config.Remote
-	b.contact = config.Contact
-	b.localIP = append(net.IP(nil), config.LocalIP...)
-	b.writeErr = nil
-	return nil
+	b.ctx, b.cancel = context.WithCancel(ctx)
+	b.writeCh = make(chan writeTask, writeQueueSize)
+	workerCtx, writeCh := b.ctx, b.writeCh
+	for workerID := 0; workerID < writeWorkerCount; workerID++ {
+		b.wg.Add(1)
+		go b.runWriteWorker(workerCtx, workerID, writeCh)
+	}
+	b.mu.Unlock()
 }
 
-// SetEndpoint wires the IMS-side endpoint.
-func (b *Bridge) SetEndpoint(ep interface {
-	SendRawSIP(req string) error
-}) {
+// Stop cancels all writer workers and waits until they have released their
+// references before making the bridge restartable.
+func (b *Bridge) Stop() {
 	if b == nil {
 		return
 	}
 	b.mu.Lock()
-	b.endpoint = ep
+	cancel := b.cancel
 	b.mu.Unlock()
-}
-
-// Contact returns the contact address.
-func (b *Bridge) Contact() string {
-	if b == nil {
-		return ""
+	if cancel != nil {
+		cancel()
 	}
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.contact
-}
-
-// LocalIP returns the local IP.
-func (b *Bridge) LocalIP() net.IP {
-	if b == nil {
-		return nil
-	}
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return append(net.IP(nil), b.localIP...)
-}
-
-// ListenHostPort returns the local host:port.
-func (b *Bridge) ListenHostPort() string {
-	if b == nil || b.conn == nil {
-		return ""
-	}
-	return b.conn.LocalAddr().String()
-}
-
-// Start begins the bridge write worker.
-func (b *Bridge) Start() error {
-	if b == nil {
-		return errors.New("client: nil bridge")
-	}
+	b.wg.Wait()
 	b.mu.Lock()
-	if b.started {
-		b.mu.Unlock()
-		return nil
-	}
-	if b.conn == nil || b.remote == nil {
-		b.mu.Unlock()
-		return errors.New("client: packet transport is not configured")
-	}
-	b.started = true
-	b.stop = make(chan struct{})
-	b.writeCh = make(chan []byte, 64)
-	writeCh, stop := b.writeCh, b.stop
+	b.writeCh = nil
+	b.ctx = nil
+	b.cancel = nil
 	b.mu.Unlock()
-	go b.runWriteWorker(writeCh, stop)
-	return nil
 }
 
-// Stop shuts the bridge down.
-func (b *Bridge) Stop() error {
-	if b == nil {
-		return nil
+// Contact delegates contact selection to the injected local client adapter.
+// The original phone-number argument is retained although v1.5.5 does not use
+// it when resolving the per-device contact.
+func (b *Bridge) Contact(_ []string) (string, string, string, error) {
+	if b == nil || b.adapter == nil {
+		return "", "", "", errAdapterUninitialized
 	}
-	b.mu.Lock()
-	if !b.started {
-		b.mu.Unlock()
-		return nil
-	}
-	b.started = false
-	close(b.stop)
-	conn := b.conn
-	b.conn = nil
-	b.remote = nil
-	b.mu.Unlock()
-	if conn != nil {
-		_ = conn.Close()
-	}
-	return nil
+	return b.adapter.GetClientContact(b.deviceID)
 }
 
-// WriteRequest queues a request for the client.
-func (b *Bridge) WriteRequest(req []byte) error {
-	if b == nil {
-		return errors.New("client: nil bridge")
+// SendPush delegates the original four-field notification to the adapter.
+func (b *Bridge) SendPush(title, body, category, callID string) error {
+	if b == nil || b.adapter == nil {
+		return errAdapterUninitialized
 	}
-	b.mu.RLock()
-	started := b.started
-	writeCh := b.writeCh
-	b.mu.RUnlock()
-	if !started {
-		return errors.New("client: bridge not started")
-	}
-	select {
-	case writeCh <- append([]byte(nil), req...):
-		return nil
-	default:
-		return errors.New("client: write queue full")
-	}
-}
-
-// StartTransaction forwards a client request to the IMS endpoint.
-func (b *Bridge) StartTransaction(req []byte) error {
-	if b == nil {
-		return errors.New("client: nil bridge")
-	}
-	b.mu.RLock()
-	ep := b.endpoint
-	b.mu.RUnlock()
-	if ep == nil {
-		return errors.New("client: no endpoint")
-	}
-	return ep.SendRawSIP(string(req))
-}
-
-// SendPush sends a push notification to the client.
-func (b *Bridge) SendPush(payload []byte) error {
-	return b.WriteRequest(payload)
-}
-
-// LastWriteError returns the most recent asynchronous packet write failure.
-func (b *Bridge) LastWriteError() error {
-	if b == nil {
-		return errors.New("client: nil bridge")
-	}
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.writeErr
-}
-
-// runWriteWorker drains the write queue.
-func (b *Bridge) runWriteWorker(writeCh <-chan []byte, stop <-chan struct{}) {
-	for {
-		select {
-		case <-stop:
-			return
-		case req := <-writeCh:
-			b.mu.RLock()
-			conn, remote := b.conn, b.remote
-			b.mu.RUnlock()
-			if conn != nil && remote != nil {
-				if _, err := conn.WriteTo(req, remote); err != nil {
-					b.mu.Lock()
-					b.writeErr = err
-					b.mu.Unlock()
-				}
-			}
-		}
-	}
+	return b.adapter.SendPushNotification(title, body, category, callID)
 }

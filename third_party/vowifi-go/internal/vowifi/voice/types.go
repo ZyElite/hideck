@@ -6,6 +6,7 @@
 package voice
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -14,8 +15,10 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/client"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/dialog"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/media"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voiceclient"
 )
 
 // Agent owns the voice calls for one device. It serializes call work on an
@@ -34,8 +37,11 @@ type Agent struct {
 	incomingHandler func(IncomingCall)
 	newMediaRelay   func(string) (*media.RTPRelay, error)
 	started         bool
+	ctx             context.Context
+	cancel          context.CancelFunc
 
-	clientAdapter   interface{}
+	clientAdapter   voiceclient.Adapter
+	clientBridge    *client.Bridge
 	eventDispatcher interface{ Dispatch(interface{}) }
 }
 
@@ -93,10 +99,11 @@ type Call struct {
 // Gateway bridges the local client (LAN side) to the IMS network. It owns
 // the client-facing SIP endpoint and forwards requests/responses.
 type Gateway struct {
-	mu       sync.RWMutex
-	agent    *Agent
-	notifier func(events.Event)
-	started  bool
+	mu            sync.RWMutex
+	agent         *Agent
+	notifier      func(events.Event)
+	clientAdapter voiceclient.Adapter
+	started       bool
 }
 
 // SDPInfo is a parsed SDP session description (RFC 4566).

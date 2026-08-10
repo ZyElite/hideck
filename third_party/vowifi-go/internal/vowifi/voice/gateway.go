@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voiceclient"
 )
 
 // NewGateway creates a client-facing gateway.
@@ -37,6 +38,31 @@ func (g *Gateway) GetNotifier() func(events.Event) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.notifier
+}
+
+// SetClientAdapter installs the local SIP/RTP adapter and immediately
+// projects it into the production agent owned by this gateway.
+func (g *Gateway) SetClientAdapter(adapter voiceclient.Adapter) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	g.clientAdapter = adapter
+	agent := g.agent
+	g.mu.Unlock()
+	if agent != nil {
+		agent.SetClientAdapter(adapter)
+	}
+}
+
+// GetClientAdapter returns the configured local client adapter.
+func (g *Gateway) GetClientAdapter() voiceclient.Adapter {
+	if g == nil {
+		return nil
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.clientAdapter
 }
 
 // Start starts the gateway.

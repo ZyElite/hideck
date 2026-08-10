@@ -11,6 +11,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/client"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/dialog"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/media"
 )
@@ -33,8 +34,9 @@ func NewAgent(deviceID string, ims *imscore.Service, bus *imscore.EventBus) *Age
 		actor: callstate.NewActorWithConfig(callstate.ActorConfig{
 			DeviceID: deviceID,
 		}),
-		dialog: dialog.NewController(deviceID, ims),
-		calls:  make(map[string]*Call),
+		dialog:       dialog.NewController(deviceID, ims),
+		clientBridge: client.NewBridge(deviceID, nil),
+		calls:        make(map[string]*Call),
 	}
 	agent.newMediaRelay = func(localIP string) (*media.RTPRelay, error) {
 		return newVoiceMediaRelay(imscorePacketListener{service: ims}, localIP)
@@ -60,9 +62,14 @@ func (a *Agent) Start() error {
 		a.mu.Unlock()
 		return nil
 	}
-	a.actor.Start(context.Background())
+	a.ctx, a.cancel = context.WithCancel(context.Background())
+	a.actor.Start(a.ctx)
 	if a.ims != nil {
 		a.ims.SetVoiceRequestHandler(a)
+	}
+	if a.clientAdapter != nil {
+		a.clientBridge = client.NewBridge(a.deviceID, a.clientAdapter)
+		a.clientBridge.Start(a.ctx)
 	}
 	a.started = true
 	a.mu.Unlock()
@@ -80,11 +87,21 @@ func (a *Agent) Stop() error {
 		return nil
 	}
 	a.started = false
+	cancel := a.cancel
+	a.cancel = nil
+	a.ctx = nil
+	clientBridge := a.clientBridge
 	var activeCall *Call
 	if a.activeCall != nil && !a.activeCall.IsTerminalState() {
 		activeCall = a.activeCall
 	}
 	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if clientBridge != nil {
+		clientBridge.Stop()
+	}
 	var stopErr error
 	if activeCall != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)

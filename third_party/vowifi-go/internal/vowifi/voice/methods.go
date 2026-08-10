@@ -9,6 +9,8 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/client"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voiceclient"
 )
 
 // --- Call naming aliases (recovered API surface) ---
@@ -350,18 +352,27 @@ func (a *Agent) ReplaceIMSProvider(ims *imscore.Service) {
 	a.mu.Unlock()
 }
 
-// SetClientAdapter wires the client adapter.
-func (a *Agent) SetClientAdapter(adapter interface{}) {
+// SetClientAdapter wires the structured local SIP client adapter.
+func (a *Agent) SetClientAdapter(adapter voiceclient.Adapter) {
 	if a == nil {
 		return
 	}
+	bridge := client.NewBridge(a.deviceID, adapter)
 	a.mu.Lock()
+	previous := a.clientBridge
 	a.clientAdapter = adapter
+	a.clientBridge = bridge
+	if a.started && adapter != nil {
+		bridge.Start(a.ctx)
+	}
 	a.mu.Unlock()
+	if previous != nil {
+		previous.Stop()
+	}
 }
 
 // GetClientAdapter returns the client adapter.
-func (a *Agent) GetClientAdapter() interface{} {
+func (a *Agent) GetClientAdapter() voiceclient.Adapter {
 	if a == nil {
 		return nil
 	}
