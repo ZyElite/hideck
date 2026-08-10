@@ -19,7 +19,7 @@ type Profile struct {
 }
 
 // IMSIdentitySource is where the IMS identity was read from.
-type IMSIdentitySource string
+type IMSIdentitySource = string
 
 const (
 	IMSIdentitySourceISIM    IMSIdentitySource = "isim"
@@ -29,7 +29,7 @@ const (
 )
 
 // AKAAppPreference selects the SIM application used for AKA.
-type AKAAppPreference string
+type AKAAppPreference = string
 
 const (
 	AKAAppPreferenceISIMStrict AKAAppPreference = "isim_strict"
@@ -37,19 +37,19 @@ const (
 	AKAAppPreferenceAuto       AKAAppPreference = "auto"
 )
 
-// IMSIdentity is the resolved IMS identity.
-type IMSIdentity struct {
-	RequestedSource  IMSIdentitySource
-	ActualSource     IMSIdentitySource
-	AKAAppPreference AKAAppPreference
+// IMSIdentityResult is the recovered startup identity projection.
+type IMSIdentityResult struct {
+	RequestedSource  string
+	ActualSource     string
+	AKAAppPreference string
 	Applied          bool
 	IMPI             string
 	IMPU             string
 	Domain           string
 }
 
-// IMSIdentityResult is the original name of the startup identity projection.
-type IMSIdentityResult = IMSIdentity
+// IMSIdentity preserves the name added by the current host API.
+type IMSIdentity = IMSIdentityResult
 
 // AuthPlan selects the SIM applications used by SWu and IMS authentication.
 type AuthPlan struct {
@@ -57,12 +57,8 @@ type AuthPlan struct {
 	IMSApp  string
 }
 
-// EffectiveCarrier is the resolved carrier (PLMN) for the session.
-type EffectiveCarrier struct {
-	MCC      string
-	MNC      string
-	PresetID string
-}
+// EffectiveCarrier preserves the current name for the recovered full config.
+type EffectiveCarrier = carrier.EffectiveCarrierConfig
 
 // StartupState carries the network state at startup.
 type StartupState struct {
@@ -72,15 +68,17 @@ type StartupState struct {
 // PreparedSession is the outcome of PrepareStart.
 type PreparedSession struct {
 	Profile            Profile
-	IMSIdentity        IMSIdentity
-	EffectiveCarrier   EffectiveCarrier
-	CarrierConfig      carrier.EffectiveCarrierConfig
+	EffectiveCarrier   carrier.EffectiveCarrierConfig
+	IMSIdentity        IMSIdentityResult
 	AuthPlan           AuthPlan
-	EPDGSource         string
 	EPDGAddr           string
+	EPDGSource         string
 	IdentityIMEISource string
-	NetworkMode        string
-	StartupState       StartupState
+
+	// Additive current-host projections follow the recovered field prefix.
+	CarrierConfig carrier.EffectiveCarrierConfig
+	NetworkMode   string
+	StartupState  StartupState
 }
 
 // PrepareStartInput is the input to PrepareStart.
@@ -90,16 +88,11 @@ type PrepareStartInput struct {
 	RuntimeEPDGOverride string
 	IMSIdentityResult   IMSIdentityResult
 	IdentityProvider    IMSIdentityProvider
-	Access              Access
+	Access              AccessAdapter
 }
 
-// Access is the modem access surface used to read the identity.
-type Access interface {
-	IMSIdentityProvider() IMSIdentityProvider
-}
-
-// Capabilities describes the modem's identity capabilities.
-type Capabilities struct {
+// AccessCapabilities describes the modem identity and AKA facilities.
+type AccessCapabilities struct {
 	SIM          bool
 	ISIMIdentity bool
 	ISIMAKA      bool
@@ -111,8 +104,19 @@ type Capabilities struct {
 	HasUSIM bool
 }
 
-// AccessAdapter is the original name of the modem identity access surface.
-type AccessAdapter = Access
+// Capabilities preserves the name added by the current host API.
+type Capabilities = AccessCapabilities
+
+// AccessAdapter is the recovered modem identity access surface.
+type AccessAdapter interface {
+	Capabilities() AccessCapabilities
+	IMSIdentityProvider() IMSIdentityProvider
+}
+
+// Access preserves the minimal provider surface added by the current host API.
+type Access interface {
+	IMSIdentityProvider() IMSIdentityProvider
+}
 
 // IMSIdentityProvider reads the ISIM identity from the SIM.
 type IMSIdentityProvider interface {
@@ -121,18 +125,31 @@ type IMSIdentityProvider interface {
 
 // Identity is a raw ISIM identity.
 type Identity struct {
-	IMSI   string
 	IMPI   string
 	IMPU   []string
 	Domain string
+
+	// IMSI was added by the current host API.
+	IMSI string
 }
 
-// accessAdapter adapts an Access to the identity provider surface.
+// accessAdapter adapts the public host surface to startup internals.
 type accessAdapter struct {
-	access Access
+	host AccessAdapter
 }
 
 // identityProviderAdapter adapts an IMSIdentityProvider.
 type identityProviderAdapter struct {
 	provider IMSIdentityProvider
+}
+
+type currentAccessAdapter struct{ access Access }
+type currentIdentityProviderAdapter struct{ provider IMSIdentityProvider }
+
+// ResolvedCarrierConfig selects the recovered field before the current alias.
+func (session PreparedSession) ResolvedCarrierConfig() carrier.EffectiveCarrierConfig {
+	if session.EffectiveCarrier.MCC != "" || session.EffectiveCarrier.MNC != "" {
+		return session.EffectiveCarrier
+	}
+	return session.CarrierConfig
 }

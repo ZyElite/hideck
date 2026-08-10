@@ -69,11 +69,8 @@ type StartRequest struct {
 	ShouldRun     func() bool
 }
 
-// ModemAccessAdapter is the modem access surface handed to the runtime host.
-type ModemAccessAdapter interface {
-	Capabilities() ModemCapabilities
-	IMSIdentityProvider() IMSIdentityProvider
-}
+// ModemAccessAdapter preserves the current name for the identity access ABI.
+type ModemAccessAdapter = identity.AccessAdapter
 
 // NewModemAccessAdapter adapts a Modem to the ModemAccessAdapter surface.
 func NewModemAccessAdapter(m Modem) ModemAccessAdapter {
@@ -299,7 +296,7 @@ func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.Pre
 		AuthPlan: authPlan,
 		EPDGAddr: prepared.EPDGAddr, EPDGSource: prepared.EPDGSource,
 		APN:                imsAPNFromDomain(prepared.IMSIdentity.Domain),
-		Carrier:            prepared.CarrierConfig,
+		Carrier:            prepared.ResolvedCarrierConfig(),
 		IdentityIMEISource: prepared.IdentityIMEISource,
 	}
 }
@@ -346,8 +343,9 @@ func newIMS(req StartRequest, tunnel Tunnel) (IMSLifecycle, error) {
 // imscoreFromPrepared builds an imscore.Service from the prepared session.
 func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, error) {
 	ident := req.Prepared.IMSIdentity
+	carrierConfig := req.Prepared.ResolvedCarrierConfig()
 	domain := firstNonEmptyString(
-		ident.Domain, req.Prepared.CarrierConfig.IMSDomain, req.Prepared.Profile.IMSDomain,
+		ident.Domain, carrierConfig.IMSDomain, req.Prepared.Profile.IMSDomain,
 	)
 	impi := strings.TrimSpace(ident.IMPI)
 	if impi == "" && req.Prepared.Profile.IMSI != "" && domain != "" {

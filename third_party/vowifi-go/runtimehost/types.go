@@ -127,10 +127,8 @@ type Modem interface {
 	GetRegStatus() (int, string)
 }
 
-// ModemCapabilities describes what the modem supports.
-type ModemCapabilities struct {
-	// (recovered as needed)
-}
+// ModemCapabilities preserves the current name for identity capabilities.
+type ModemCapabilities = identity.AccessCapabilities
 
 // IMSIdentityProvider reads the IMS identity from the SIM.
 type IMSIdentityProvider = identity.IMSIdentityProvider

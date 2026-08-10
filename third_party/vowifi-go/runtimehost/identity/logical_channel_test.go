@@ -101,9 +101,9 @@ func TestReadISIMIdentityFromLogicalChannel(t *testing.T) {
 		efIMPU:   {isimDataObject("sip:234102356143376@ims.mnc010.mcc234.3gppnetwork.org")},
 	}}
 
-	got, err := ReadISIMIdentityFromLogicalChannel(stub)
+	got, err := ReadISIMIdentity(stub)
 	if err != nil {
-		t.Fatalf("ReadISIMIdentityFromLogicalChannel() error = %v", err)
+		t.Fatalf("ReadISIMIdentity() error = %v", err)
 	}
 	if got.IMPI != "234102356143376@ims.mnc010.mcc234.3gppnetwork.org" {
 		t.Fatalf("IMPI = %q", got.IMPI)

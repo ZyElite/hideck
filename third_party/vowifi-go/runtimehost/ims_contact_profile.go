@@ -15,7 +15,7 @@ func imsRegisterConfigForPrepared(prepared *identity.PreparedSession) (imscore.I
 	if prepared == nil {
 		return imscore.IMSRegisterTemplate{}, "", fmt.Errorf("runtimehost: nil prepared session")
 	}
-	carrierConfig := prepared.CarrierConfig
+	carrierConfig := prepared.ResolvedCarrierConfig()
 	if carrierConfig.MCC == "" || carrierConfig.MNC == "" {
 		carrierConfig = carrier.ResolveEffectiveCarrierConfig(prepared.Profile.MCC, prepared.Profile.MNC)
 	}

@@ -9,66 +9,91 @@ import (
 	internalprofile "github.com/iniwex5/vowifi-go/internal/vowifi/profile"
 )
 
-// errNoProvider is returned when no identity provider is installed.
 var errNoProvider = errors.New("identity: no identity provider")
 
-// Capabilities returns the modem's identity capabilities.
-func (a *accessAdapter) Capabilities() Capabilities {
-	if a == nil || a.access == nil {
-		return Capabilities{}
+func (a accessAdapter) Capabilities() internalaccess.Capabilities {
+	if a.host == nil {
+		return internalaccess.Capabilities{}
 	}
-	provider := a.access.IMSIdentityProvider()
-	if provider == nil {
-		return Capabilities{}
+	value := a.host.Capabilities()
+	return internalaccess.Capabilities{
+		SIM: value.SIM || value.HasUSIM, ISIMIdentity: value.ISIMIdentity || value.HasISIM,
+		ISIMAKA: value.ISIMAKA, Modem: value.Modem, Reader: value.Reader,
 	}
-	// The provider surface does not expose ISIM/USIM presence directly;
-	// report ISIM as available when a provider is present.
-	return Capabilities{ISIMIdentity: true, HasISIM: true}
 }
 
-// IMSIdentityProvider returns the underlying identity provider.
-func (a *accessAdapter) IMSIdentityProvider() IMSIdentityProvider {
+func (a accessAdapter) IMSIdentityProvider() internalprofile.Provider {
+	if a.host == nil {
+		return nil
+	}
+	provider := a.host.IMSIdentityProvider()
+	if provider == nil {
+		return nil
+	}
+	return &identityProviderAdapter{provider: provider}
+}
+
+func (a identityProviderAdapter) GetISIMIdentity() (internalprofile.Identity, error) {
+	if a.provider == nil {
+		return internalprofile.Identity{}, nil
+	}
+	value, err := a.provider.GetISIMIdentity()
+	if err != nil {
+		return internalprofile.Identity{}, err
+	}
+	return internalprofile.Identity{
+		IMPI: value.IMPI, IMPU: append([]string(nil), value.IMPU...), Domain: value.Domain,
+	}, nil
+}
+
+// NewAccessAdapter adapts an Access surface.
+func NewAccessAdapter(access Access) *currentAccessAdapter {
+	return &currentAccessAdapter{access: access}
+}
+
+// NewIdentityProviderAdapter adapts an IMSIdentityProvider.
+func NewIdentityProviderAdapter(provider IMSIdentityProvider) *currentIdentityProviderAdapter {
+	return &currentIdentityProviderAdapter{provider: provider}
+}
+
+func (a *currentAccessAdapter) Capabilities() AccessCapabilities {
+	if a == nil || a.access == nil {
+		return AccessCapabilities{}
+	}
+	providerAvailable := a.access.IMSIdentityProvider() != nil
+	return AccessCapabilities{ISIMIdentity: providerAvailable, HasISIM: providerAvailable}
+}
+
+func (a *currentAccessAdapter) IMSIdentityProvider() IMSIdentityProvider {
 	if a == nil || a.access == nil {
 		return nil
 	}
 	return a.access.IMSIdentityProvider()
 }
 
-// GetISIMIdentity reads the ISIM identity through the provider.
-func (a *identityProviderAdapter) GetISIMIdentity() (Identity, error) {
+func (a *currentIdentityProviderAdapter) GetISIMIdentity() (Identity, error) {
 	if a == nil || a.provider == nil {
 		return Identity{}, errNoProvider
 	}
-	return a.provider.GetISIMIdentity()
-}
-
-// NewAccessAdapter adapts an Access surface.
-func NewAccessAdapter(access Access) *accessAdapter {
-	return &accessAdapter{access: access}
-}
-
-// NewIdentityProviderAdapter adapts an IMSIdentityProvider.
-func NewIdentityProviderAdapter(provider IMSIdentityProvider) *identityProviderAdapter {
-	return &identityProviderAdapter{provider: provider}
+	value, err := a.provider.GetISIMIdentity()
+	value.IMPU = append([]string(nil), value.IMPU...)
+	return value, err
 }
 
 // preparedSessionFromInternal converts an internal prepared session.
 func preparedSessionFromInternal(value internalprofile.PreparedSession) PreparedSession {
-	carrierConfig := runtimehostcarrier.FromInternal(
-		policy.EffectiveCarrierConfigFromCarrierPlan(value.CarrierPlan),
-	)
+	internalCarrier := policy.EffectiveCarrierConfigFromCarrierPlan(value.CarrierPlan)
+	carrierConfig := runtimehostcarrier.FromInternal(internalCarrier)
 	return PreparedSession{
-		Profile: profileFromInternal(value.Profile),
-		EffectiveCarrier: EffectiveCarrier{
-			MCC: carrierConfig.MCC, MNC: carrierConfig.MNC, PresetID: carrierConfig.PresetID,
-		},
-		CarrierConfig: carrierConfig,
-		IMSIdentity:   imsIdentityResultFromInternal(value.IMSIdentity),
+		Profile:          profileFromInternal(value.Profile),
+		EffectiveCarrier: carrierConfig,
+		IMSIdentity:      imsIdentityResultFromInternal(value.IMSIdentity),
 		AuthPlan: AuthPlan{
 			EPDGApp: value.AuthPlan.EPDGApp, IMSApp: value.AuthPlan.IMSApp,
 		},
 		EPDGAddr: value.EPDGAddr, EPDGSource: value.EPDGSource,
 		IdentityIMEISource: value.IdentityIMEISource,
+		CarrierConfig:      runtimehostcarrier.FromInternal(internalCarrier),
 	}
 }
 
@@ -81,55 +106,22 @@ func profileFromInternal(value internalprofile.Profile) Profile {
 
 func imsIdentityResultFromInternal(value internalprofile.IMSIdentityResult) IMSIdentityResult {
 	return IMSIdentityResult{
-		RequestedSource:  IMSIdentitySource(value.RequestedSource),
-		ActualSource:     IMSIdentitySource(value.ActualSource),
-		AKAAppPreference: AKAAppPreference(value.AKAAppPreference), Applied: value.Applied,
+		RequestedSource: value.RequestedSource, ActualSource: value.ActualSource,
+		AKAAppPreference: value.AKAAppPreference, Applied: value.Applied,
 		IMPI: value.IMPI, IMPU: value.IMPU, Domain: value.Domain,
 	}
-}
-
-type startupIdentityProvider struct{ provider IMSIdentityProvider }
-
-func (adapter startupIdentityProvider) GetISIMIdentity() (internalprofile.Identity, error) {
-	identity, err := adapter.provider.GetISIMIdentity()
-	return internalprofile.Identity{
-		IMPI: identity.IMPI, IMPU: append([]string(nil), identity.IMPU...), Domain: identity.Domain,
-	}, err
 }
 
 func adaptIdentityProvider(provider IMSIdentityProvider) internalprofile.Provider {
 	if provider == nil {
 		return nil
 	}
-	return startupIdentityProvider{provider: provider}
+	return &identityProviderAdapter{provider: provider}
 }
 
-type startupAccessAdapter struct{ access Access }
-
-func (adapter startupAccessAdapter) Capabilities() internalaccess.Capabilities {
-	providerAvailable := adapter.access != nil && adapter.access.IMSIdentityProvider() != nil
-	result := internalaccess.Capabilities{ISIMIdentity: providerAvailable}
-	if source, ok := adapter.access.(interface{ Capabilities() Capabilities }); ok {
-		capabilities := source.Capabilities()
-		result.SIM = capabilities.SIM || capabilities.HasUSIM
-		result.ISIMIdentity = capabilities.ISIMIdentity || capabilities.HasISIM
-		result.ISIMAKA = capabilities.ISIMAKA
-		result.Modem = capabilities.Modem
-		result.Reader = capabilities.Reader
-	}
-	return result
-}
-
-func (adapter startupAccessAdapter) IMSIdentityProvider() internalprofile.Provider {
-	if adapter.access == nil {
-		return nil
-	}
-	return adaptIdentityProvider(adapter.access.IMSIdentityProvider())
-}
-
-func adaptAccessAdapter(adapter Access) internalaccess.Adapter {
+func adaptAccessAdapter(adapter AccessAdapter) internalaccess.Adapter {
 	if adapter == nil {
 		return nil
 	}
-	return startupAccessAdapter{access: adapter}
+	return &accessAdapter{host: adapter}
 }

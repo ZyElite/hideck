@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	internalaccess "github.com/iniwex5/vowifi-go/internal/vowifi/access"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
 	internalprofile "github.com/iniwex5/vowifi-go/internal/vowifi/profile"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/startup"
@@ -22,8 +23,8 @@ func NormalizeProfile(p Profile) Profile {
 	}
 }
 
-// ReadISIMIdentity reads the ISIM identity through the modem access surface.
-func ReadISIMIdentity(access Access) (Identity, error) {
+// ReadISIMIdentityFromAccess preserves the current provider-based entrypoint.
+func ReadISIMIdentityFromAccess(access Access) (Identity, error) {
 	if access == nil {
 		return Identity{}, errors.New("identity: no modem access")
 	}
@@ -34,15 +35,31 @@ func ReadISIMIdentity(access Access) (Identity, error) {
 	return provider.GetISIMIdentity()
 }
 
-// PrepareStart converts the public host input to the restored startup boundary.
+type internalPrepareStartInput struct {
+	deviceID            string
+	profile             internalprofile.Profile
+	runtimeEPDGOverride string
+	identity            internalprofile.IMSIdentityResult
+	provider            internalprofile.Provider
+	access              internalaccess.Adapter
+}
+
+func (input PrepareStartInput) toInternal() internalPrepareStartInput {
+	return internalPrepareStartInput{
+		deviceID: input.DeviceID, profile: profileToInternal(input.Profile),
+		runtimeEPDGOverride: input.RuntimeEPDGOverride,
+		identity:            imsIdentityResultToInternal(input.IMSIdentityResult),
+		provider:            adaptIdentityProvider(input.IdentityProvider),
+		access:              adaptAccessAdapter(input.Access),
+	}
+}
+
+// PrepareStart converts the recovered public input to the startup boundary.
 func PrepareStart(input PrepareStartInput) (PreparedSession, error) {
+	converted := input.toInternal()
 	prepared, err := startup.PrepareStart(
-		input.DeviceID,
-		profileToInternal(input.Profile),
-		input.RuntimeEPDGOverride,
-		imsIdentityResultToInternal(input.IMSIdentityResult),
-		adaptIdentityProvider(input.IdentityProvider),
-		adaptAccessAdapter(input.Access),
+		converted.deviceID, converted.profile, converted.runtimeEPDGOverride,
+		converted.identity, converted.provider, converted.access,
 	)
 	if err != nil {
 		return PreparedSession{}, err
@@ -59,8 +76,8 @@ func profileToInternal(value Profile) internalprofile.Profile {
 
 func imsIdentityResultToInternal(value IMSIdentityResult) internalprofile.IMSIdentityResult {
 	return internalprofile.IMSIdentityResult{
-		RequestedSource: string(value.RequestedSource), ActualSource: string(value.ActualSource),
-		AKAAppPreference: string(value.AKAAppPreference), Applied: value.Applied,
+		RequestedSource: value.RequestedSource, ActualSource: value.ActualSource,
+		AKAAppPreference: value.AKAAppPreference, Applied: value.Applied,
 		IMPI: value.IMPI, IMPU: value.IMPU, Domain: value.Domain,
 	}
 }

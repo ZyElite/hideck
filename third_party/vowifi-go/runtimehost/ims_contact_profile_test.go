@@ -62,3 +62,23 @@ func TestIMSRegisterConfigRejectsUnknownContactMode(t *testing.T) {
 		t.Fatalf("imsRegisterConfigForPrepared() error = %v", err)
 	}
 }
+
+func TestRecoveredPreparedCarrierFeedsProductionConsumers(t *testing.T) {
+	config := carrier.ResolveEffectiveCarrierConfig("234", "10")
+	prepared := &identity.PreparedSession{
+		Profile:          identity.Profile{MCC: "234", MNC: "10"},
+		EffectiveCarrier: config,
+	}
+	template, userAgent, err := imsRegisterConfigForPrepared(prepared)
+	if err != nil {
+		t.Fatalf("imsRegisterConfigForPrepared() error = %v", err)
+	}
+	if userAgent != "iOS/18.2.1 iPhone (iPhone15,4)" ||
+		template.ContactMode != "android_default" || !template.StrictSecurityServerOffer {
+		t.Fatalf("IMS template = %+v, user agent = %q", template, userAgent)
+	}
+	corePrepared := preparedForRuntimeCore(prepared)
+	if corePrepared.Carrier.PresetID != config.PresetID || corePrepared.Carrier.MCC != "234" {
+		t.Fatalf("runtimecore carrier = %+v", corePrepared.Carrier)
+	}
+}
