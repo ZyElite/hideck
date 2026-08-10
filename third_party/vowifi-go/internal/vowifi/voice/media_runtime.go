@@ -68,24 +68,8 @@ func newVoiceMediaRelay(imsNetwork imsPacketListener, imsLocalIP string) (*media
 	)
 }
 
-func mediaRemote(info *SDPInfo) (*net.UDPAddr, error) {
-	if info == nil || info.GetMediaPort() <= 0 {
-		return nil, errors.New("voice: SDP media port must be greater than zero")
-	}
-	ip := net.ParseIP(strings.TrimSpace(info.GetMediaAddress()))
-	if ip == nil {
-		return nil, fmt.Errorf("voice: invalid SDP media address %q", info.GetMediaAddress())
-	}
-	return &net.UDPAddr{IP: ip, Port: info.GetMediaPort()}, nil
-}
-
 func (a *Agent) prepareInboundMedia(call *Call, offer string) error {
-	parsed, err := ProcessIncomingIMSSDP(offer)
-	if err != nil {
-		return err
-	}
-	remote, err := mediaRemote(parsed)
-	if err != nil {
+	if err := validateSDPMediaEndpoint([]byte(offer), "IMS offer"); err != nil {
 		return err
 	}
 	if a.newMediaRelay == nil {
@@ -95,39 +79,31 @@ func (a *Agent) prepareInboundMedia(call *Call, offer string) error {
 	if err != nil {
 		return err
 	}
-	if err := relay.SetRemoteAddr(remote); err != nil {
+	call.SetRTPRelay(relay)
+	rewritten, err := ProcessIncomingIMSSDP(call, []byte(offer), clientRelayIP)
+	if err != nil {
 		_ = relay.Stop()
 		return err
 	}
-	configureRelayDTMF(relay, parsed)
-	call.SetRTPRelay(relay)
-	call.setRemoteSDP(offer, RewriteSDP(offer, clientRelayIP, relay.LANPort()))
+	call.setRemoteSDP(offer, string(rewritten))
 	return nil
 }
 
 func (a *Agent) applyInboundAnswer(call *Call, answer string) (InboundAnswer, error) {
-	parsedAnswer, err := ProcessOutgoingClientSDP(answer)
-	if err != nil {
-		return InboundAnswer{}, err
-	}
-	clientRemote, err := mediaRemote(parsedAnswer)
-	if err != nil {
+	if err := validateSDPMediaEndpoint([]byte(answer), "client answer"); err != nil {
 		return InboundAnswer{}, err
 	}
 	relay := call.RTPRelay()
 	if relay == nil || relay.IMSPort() <= 0 || relay.LANPort() <= 0 {
 		return InboundAnswer{}, errors.New("voice: inbound media relay is unavailable")
 	}
-	remoteOffer, err := ProcessIncomingIMSSDP(call.remoteSDPValue())
+	setCallClientSDP(call, []byte(answer))
+	imsAnswer, err := ProcessOutgoingClientSDP(call, []byte(answer), a.localIP())
 	if err != nil {
 		return InboundAnswer{}, err
 	}
-	if err := relay.SetClientAddr(clientRemote); err != nil {
-		return InboundAnswer{}, err
-	}
-	relay.SetPTMapping(ExtractAndApplyPTMapping(remoteOffer, parsedAnswer))
-	imsAnswer := RewriteSDP(answer, a.localIP(), relay.IMSPort())
-	call.setLocalSDP(answer, imsAnswer)
+	ExtractAndApplyPTMapping(call, []byte(call.remoteSDPValue()))
+	call.setLocalSDP(answer, string(imsAnswer))
 	return InboundAnswer{CallID: call.CallID(), OfferSDP: call.clientRemoteSDPValue(), State: call.CallState().String()}, nil
 }
 
@@ -135,26 +111,22 @@ func (a *Agent) prepareOutboundMedia(call *Call, clientOffer string) (string, er
 	if strings.TrimSpace(clientOffer) == "" {
 		return a.prepareSimulatedOutboundMedia(call)
 	}
-	parsedOffer, err := ProcessOutgoingClientSDP(clientOffer)
-	if err != nil {
-		return "", err
-	}
-	clientRemote, err := mediaRemote(parsedOffer)
-	if err != nil {
+	if err := validateSDPMediaEndpoint([]byte(clientOffer), "client offer"); err != nil {
 		return "", err
 	}
 	relay, err := a.newOutboundMediaRelay()
 	if err != nil {
 		return "", err
 	}
-	if err := relay.SetClientAddr(clientRemote); err != nil {
+	call.SetRTPRelay(relay)
+	setCallClientSDP(call, []byte(clientOffer))
+	imsOffer, err := ProcessOutgoingClientSDP(call, []byte(clientOffer), a.localIP())
+	if err != nil {
 		_ = relay.Stop()
 		return "", err
 	}
-	call.SetRTPRelay(relay)
-	imsOffer := RewriteSDP(clientOffer, a.localIP(), relay.IMSPort())
-	call.setLocalSDP(clientOffer, imsOffer)
-	return imsOffer, nil
+	call.setLocalSDP(clientOffer, string(imsOffer))
+	return string(imsOffer), nil
 }
 
 func (a *Agent) prepareSimulatedOutboundMedia(call *Call) (string, error) {
@@ -163,7 +135,7 @@ func (a *Agent) prepareSimulatedOutboundMedia(call *Call) (string, error) {
 		return "", err
 	}
 	call.SetRTPRelay(relay)
-	imsOffer := generateBasicSDP(a, call)
+	imsOffer := generateBasicSDPCurrent(a, call)
 	if strings.TrimSpace(imsOffer) == "" {
 		_ = relay.Stop()
 		return "", errors.New("voice: failed to generate simulated-call SDP")
@@ -184,12 +156,7 @@ func (a *Agent) completeOutboundMedia(call *Call, response imscore.SIPResponse) 
 	if !isVoiceSDPContentType(voiceResponseHeader(response.Headers, "Content-Type")) {
 		return errors.New("voice: IMS INVITE response has no application/sdp media answer")
 	}
-	imsAnswer, err := ProcessIncomingIMSSDP(string(response.Body))
-	if err != nil {
-		return err
-	}
-	remote, err := mediaRemote(imsAnswer)
-	if err != nil {
+	if err := validateSDPMediaEndpoint(response.Body, "IMS answer"); err != nil {
 		return err
 	}
 	relay := call.RTPRelay()
@@ -197,22 +164,16 @@ func (a *Agent) completeOutboundMedia(call *Call, response imscore.SIPResponse) 
 		return errors.New("voice: outbound media relay is unavailable")
 	}
 	clientOffer, _ := call.localSDPs()
-	if err := relay.SetRemoteAddr(remote); err != nil {
-		return err
-	}
-	configureRelayDTMF(relay, imsAnswer)
-	if strings.TrimSpace(clientOffer) == "" {
-		return completeSimulatedOutboundMedia(a, call, string(response.Body))
-	}
-	parsedClientOffer, err := ProcessOutgoingClientSDP(clientOffer)
+	clientAnswer, err := ProcessIncomingIMSSDP(call, response.Body, clientRelayIP)
 	if err != nil {
 		return err
 	}
-	relay.SetPTMapping(ExtractAndApplyPTMapping(imsAnswer, parsedClientOffer))
-	clientAnswer := RewriteSDP(string(response.Body), clientRelayIP, relay.LANPort())
-	call.setRemoteSDP(string(response.Body), clientAnswer)
+	if strings.TrimSpace(clientOffer) == "" {
+		return completeSimulatedOutboundMedia(a, call, string(response.Body))
+	}
+	call.setRemoteSDP(string(response.Body), string(clientAnswer))
 	a.enableMediaMonitor(call)
-	return call.StartMedia()
+	return nil
 }
 
 func finalOrEarlyMediaResponse(call *Call, response imscore.SIPResponse) imscore.SIPResponse {
@@ -242,51 +203,35 @@ func (a *Agent) updateRemoteMedia(call *Call, response imscore.SIPResponse) erro
 	if !isVoiceSDPContentType(voiceResponseHeader(response.Headers, "Content-Type")) {
 		return errors.New("voice: session refresh response has no application/sdp media answer")
 	}
+	if err := validateSDPMediaEndpoint(response.Body, "IMS session refresh"); err != nil {
+		return err
+	}
 	remoteSDP := string(response.Body)
-	parsedRemote, err := ProcessIncomingIMSSDP(remoteSDP)
-	if err != nil {
-		return err
-	}
-	remote, err := mediaRemote(parsedRemote)
-	if err != nil {
-		return err
-	}
 	relay := call.RTPRelay()
 	if relay == nil {
 		return errors.New("voice: session refresh media relay is unavailable")
 	}
 	clientLocal, _ := call.localSDPs()
-	if strings.TrimSpace(clientLocal) == "" {
-		if err := relay.SetRemoteAddr(remote); err != nil {
-			return err
-		}
-		configureRelayDTMF(relay, parsedRemote)
-		call.setRemoteSDP(remoteSDP, "")
-		return call.StartMedia()
-	}
-	parsedClient, err := ProcessOutgoingClientSDP(clientLocal)
+	clientRemote, err := ProcessIncomingIMSSDP(call, response.Body, clientRelayIP)
 	if err != nil {
 		return err
 	}
-	if err := relay.SetRemoteAddr(remote); err != nil {
-		return err
+	if strings.TrimSpace(clientLocal) == "" {
+		call.setRemoteSDP(remoteSDP, "")
+		return nil
 	}
-	configureRelayDTMF(relay, parsedRemote)
-	relay.SetPTMapping(ExtractAndApplyPTMapping(parsedRemote, parsedClient))
-	call.setRemoteSDP(remoteSDP, RewriteSDP(remoteSDP, clientRelayIP, relay.LANPort()))
-	return call.StartMedia()
+	call.setRemoteSDP(remoteSDP, string(clientRemote))
+	return nil
 }
 
 func configureRelayDTMF(relay *media.RTPRelay, info *SDPInfo) {
 	if relay == nil || info == nil {
 		return
 	}
-	for _, section := range info.Media {
-		for _, codec := range section.Codecs {
-			if strings.EqualFold(codec.Encoding, "telephone-event") {
-				_ = relay.SetDTMFPayloadType(codec.PayloadType)
-				return
-			}
+	for _, codec := range info.Codecs {
+		if strings.EqualFold(codec.Name, sdpTelephoneEvent) {
+			_ = relay.SetDTMFPayloadType(codec.PayloadType)
+			return
 		}
 	}
 }

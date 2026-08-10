@@ -56,20 +56,9 @@ func TestVoiceMediaRelayUsesIMSNetworkForIPv6(t *testing.T) {
 
 func TestRewriteSDPUsesIPv6AddressFamily(t *testing.T) {
 	input := "v=0\r\nc=IN IP4 192.0.2.1\r\nm=audio 10000 RTP/AVP 0\r\n"
-	got := RewriteSDP(input, "2001:db8::8", 20000)
-	want := "v=0\r\nc=IN IP6 2001:db8::8\r\nm=audio 20000 RTP/AVP 0\r\n"
-	if got != want {
+	got := RewriteSDP([]byte(input), "2001:db8::8", 20000)
+	want := "v=0\r\nc=IN IP6 2001:db8::8\r\nm=audio 20000 RTP/AVP 0"
+	if string(got) != want {
 		t.Fatalf("RewriteSDP()=%q want %q", got, want)
-	}
-}
-
-func TestMediaRemoteAcceptsIPv6(t *testing.T) {
-	info, err := ParseSDP("v=0\r\nc=IN IP6 2001:db8::9\r\nm=audio 30000 RTP/AVP 0\r\n")
-	if err != nil {
-		t.Fatalf("ParseSDP: %v", err)
-	}
-	remote, err := mediaRemote(info)
-	if err != nil || !remote.IP.Equal(net.ParseIP("2001:db8::9")) || remote.Port != 30000 {
-		t.Fatalf("mediaRemote()=%v err=%v", remote, err)
 	}
 }

@@ -18,7 +18,7 @@ func TestAgentSendDTMFUsesCallRegistryAndNegotiatedPayload(t *testing.T) {
 	if err := relay.SetRemoteAddr(imsPeer.LocalAddr().(*net.UDPAddr)); err != nil {
 		t.Fatal(err)
 	}
-	answer, err := ParseSDP("v=0\r\nc=IN IP4 127.0.0.1\r\nm=audio 25000 RTP/AVP 97\r\na=rtpmap:97 telephone-event/8000\r\n")
+	answer, err := ParseSDP([]byte("v=0\r\nc=IN IP4 127.0.0.1\r\nm=audio 25000 RTP/AVP 97\r\na=rtpmap:97 telephone-event/8000\r\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

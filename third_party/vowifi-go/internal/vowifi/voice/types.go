@@ -152,26 +152,44 @@ type gatewayEntryWorker struct {
 	cancel   context.CancelFunc
 }
 
-// SDPInfo is a parsed SDP session description (RFC 4566).
+// SDPInfo is the recovered v1.5.5 audio-session projection.
 type SDPInfo struct {
+	ConnectionIP string
+	MediaPort    int
+	MediaType    string
+	Codecs       []CodecInfo
+	RawSDP       []byte
+}
+
+// CodecInfo is one recovered RTP codec declaration.
+type CodecInfo struct {
+	PayloadType int
+	Name        string
+	ClockRate   int
+	Channels    int
+	Fmtp        string
+}
+
+// SDPInfoCurrent retains the displaced multi-section parser projection.
+type SDPInfoCurrent struct {
 	Origin      string
 	SessionName string
 	Connection  string
 	Media       []MediaInfo
 }
 
-// MediaInfo is one m= line in an SDP description.
+// MediaInfo is one additive m= line projection.
 type MediaInfo struct {
 	Type       string // "audio" / "video"
 	Port       int
 	Protocol   string
 	Formats    []int
-	Codecs     []CodecInfo
+	Codecs     []CodecInfoCurrent
 	Connection string
 }
 
-// CodecInfo describes one codec (rtpmap).
-type CodecInfo struct {
+// CodecInfoCurrent retains the displaced codec projection.
+type CodecInfoCurrent struct {
 	PayloadType int
 	Encoding    string
 	ClockRate   int

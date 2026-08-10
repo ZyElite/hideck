@@ -80,7 +80,7 @@ func TestInboundCallAnswerRelaysRTPAndRemoteBYECleansUp(t *testing.T) {
 	if got := responder.statuses(); fmt.Sprint(got) != "[180]" {
 		t.Fatalf("provisional statuses = %v", got)
 	}
-	offer, err := ParseSDP(delivered.OfferSDP)
+	offer, err := ParseSDP([]byte(delivered.OfferSDP))
 	if err != nil || offer.GetMediaPort() <= 0 || offer.GetMediaPort() == imsPeer.LocalAddr().(*net.UDPAddr).Port {
 		t.Fatalf("delivered offer = %q err=%v", delivered.OfferSDP, err)
 	}
@@ -222,7 +222,7 @@ func TestInboundReinviteMovesRTPToNewIMSRemote(t *testing.T) {
 		t.Fatalf("re-INVITE result=%+v statuses=%v err=%v", result, reinviteResponder.statuses(), err)
 	}
 	call := agent.callByID(request.CallID)
-	clientOffer, _ := ParseSDP(call.ClientSDP())
+	clientOffer, _ := ParseSDP([]byte(call.ClientSDP()))
 	writeVoicePacket(t, client, clientOffer.GetMediaPort(), []byte("new-ims"))
 	if got := readVoicePacket(t, secondPeer); string(got) != "new-ims" {
 		t.Fatalf("new IMS peer received %q", got)

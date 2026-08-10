@@ -1,222 +1,176 @@
 package voice
 
 import (
-	"errors"
+	"bytes"
+	"net"
 	"strconv"
 	"strings"
 )
 
-// ParseSDP parses an SDP session description (RFC 4566).
-func ParseSDP(sdp string) (*SDPInfo, error) {
-	if strings.TrimSpace(sdp) == "" {
-		return nil, errors.New("voice: empty SDP")
+const defaultCodecChannels = 1
+
+// ParseSDP recovers the v1.5.5 byte-oriented audio SDP parser.
+func ParseSDP(raw []byte) (*SDPInfo, error) {
+	if len(raw) == 0 {
+		return nil, nil
 	}
-	info := &SDPInfo{}
-	var cur *MediaInfo
-	for _, line := range strings.Split(sdp, "\r\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if len(line) < 2 || line[1] != '=' {
-			continue
-		}
-		key := line[0]
-		value := line[2:]
-		switch key {
-		case 'o':
-			info.Origin = value
-		case 's':
-			info.SessionName = value
-		case 'c':
-			if cur != nil {
-				cur.Connection = value
-			} else {
-				info.Connection = value
+	info := &SDPInfo{RawSDP: raw}
+	for _, line := range bytes.Split(raw, []byte{'\n'}) {
+		line = bytes.TrimRight(line, "\r")
+		switch {
+		case bytes.HasPrefix(line, []byte("c=")):
+			parseConnectionLine(info, line[2:])
+		case bytes.HasPrefix(line, []byte("m=")):
+			parseAudioMediaLine(info, line[2:])
+		case bytes.HasPrefix(line, []byte("a=rtpmap:")):
+			if codec := parseRTPMapBytes(line[len("a=rtpmap:"):]); codec != nil {
+				info.Codecs = append(info.Codecs, *codec)
 			}
-		case 'm':
-			m, err := parseMediaLine(value)
-			if err != nil {
-				return nil, err
-			}
-			info.Media = append(info.Media, *m)
-			cur = &info.Media[len(info.Media)-1]
-		case 'a':
-			if cur != nil {
-				applyAttribute(cur, value)
-			}
+		case bytes.HasPrefix(line, []byte("a=fmtp:")):
+			applyCodecFMTP(info, line[len("a=fmtp:"):])
 		}
-	}
-	if len(info.Media) == 0 {
-		return nil, errors.New("voice: SDP has no media lines")
 	}
 	return info, nil
 }
 
-// parseMediaLine parses an m= line.
-func parseMediaLine(value string) (*MediaInfo, error) {
-	parts := strings.Fields(value)
-	if len(parts) < 3 {
-		return nil, errors.New("voice: malformed m= line")
+func parseConnectionLine(info *SDPInfo, value []byte) {
+	fields := bytes.Fields(value)
+	if len(fields) >= 3 {
+		info.ConnectionIP = string(fields[2])
 	}
-	m := &MediaInfo{
-		Type:     parts[0],
-		Protocol: parts[2],
+}
+
+func parseAudioMediaLine(info *SDPInfo, value []byte) {
+	fields := bytes.Fields(value)
+	if len(fields) == 0 {
+		return
 	}
-	port, err := strconv.Atoi(parts[1])
+	info.MediaType = string(fields[0])
+	if len(fields) < 2 {
+		return
+	}
+	if port, err := strconv.Atoi(string(fields[1])); err == nil {
+		info.MediaPort = port
+	}
+}
+
+func applyCodecFMTP(info *SDPInfo, value []byte) {
+	fields := bytes.Fields(value)
+	if len(fields) < 2 {
+		return
+	}
+	payloadType, err := strconv.Atoi(string(fields[0]))
 	if err != nil {
-		return nil, errors.New("voice: malformed m= port")
+		return
 	}
-	m.Port = port
-	for _, f := range parts[3:] {
-		pt, err := strconv.Atoi(f)
-		if err != nil {
-			continue
-		}
-		m.Formats = append(m.Formats, pt)
-	}
-	return m, nil
-}
-
-// applyAttribute applies an a= attribute to a media section.
-func applyAttribute(m *MediaInfo, value string) {
-	switch {
-	case strings.HasPrefix(value, "rtpmap:"):
-		codec, err := parseRTPMap(value[len("rtpmap:"):])
-		if err == nil {
-			m.Codecs = append(m.Codecs, *codec)
-		}
-	case strings.HasPrefix(value, "fmtp:"):
-		rest := value[len("fmtp:"):]
-		ptStr, fmtp, _ := strings.Cut(rest, " ")
-		pt, err := strconv.Atoi(ptStr)
-		if err != nil {
-			return
-		}
-		for i := range m.Codecs {
-			if m.Codecs[i].PayloadType == pt {
-				m.Codecs[i].Fmtp = fmtp
-				return
-			}
-		}
+	fmtp := codecAttributeRemainder(value)
+	if codec := info.GetCodecByPT(payloadType); codec != nil {
+		codec.Fmtp = fmtp
 	}
 }
 
-// parseRTPMap parses an rtpmap attribute.
-func parseRTPMap(value string) (*CodecInfo, error) {
-	ptStr, rest, ok := strings.Cut(value, " ")
-	if !ok {
-		return nil, errors.New("voice: malformed rtpmap")
+func codecAttributeRemainder(value []byte) string {
+	value = bytes.TrimSpace(value)
+	for index, char := range value {
+		if char == ' ' || char == '\t' {
+			return strings.TrimSpace(string(value[index:]))
+		}
 	}
-	pt, err := strconv.Atoi(ptStr)
+	return ""
+}
+
+func parseRTPMapBytes(value []byte) *CodecInfo {
+	fields := bytes.Fields(value)
+	if len(fields) < 2 {
+		return nil
+	}
+	payloadType, err := strconv.Atoi(string(fields[0]))
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	codec := &CodecInfo{PayloadType: pt}
-	enc := rest
-	if i := strings.IndexByte(rest, '/'); i >= 0 {
-		enc = rest[:i]
-		rateStr := rest[i+1:]
-		if j := strings.IndexByte(rateStr, '/'); j >= 0 {
-			chStr := rateStr[j+1:]
-			rateStr = rateStr[:j]
-			if ch, err := strconv.Atoi(chStr); err == nil {
-				codec.Channels = ch
-			}
-		}
-		if rate, err := strconv.Atoi(rateStr); err == nil {
-			codec.ClockRate = rate
+	parts := bytes.Split(fields[1], []byte{'/'})
+	if len(parts) < 2 {
+		return nil
+	}
+	codec := &CodecInfo{
+		PayloadType: payloadType,
+		Name:        string(parts[0]),
+		Channels:    defaultCodecChannels,
+	}
+	if clockRate, parseErr := strconv.Atoi(string(parts[1])); parseErr == nil {
+		codec.ClockRate = clockRate
+	}
+	if len(parts) > 2 {
+		if channels, parseErr := strconv.Atoi(string(parts[2])); parseErr == nil {
+			codec.Channels = channels
 		}
 	}
-	codec.Encoding = enc
-	return codec, nil
+	return codec
 }
 
-// FindCodec returns the codec with the given payload type.
-func (s *SDPInfo) FindCodec(pt int) *CodecInfo {
+// FindCodec returns a codec matching name, clock rate and channel count.
+// Non-positive rate/channel arguments retain the recovered wildcard behavior.
+func (s *SDPInfo) FindCodec(name string, clockRate, channels int) *CodecInfo {
 	if s == nil {
 		return nil
 	}
-	for i := range s.Media {
-		for j := range s.Media[i].Codecs {
-			if s.Media[i].Codecs[j].PayloadType == pt {
-				return &s.Media[i].Codecs[j]
-			}
+	for index := range s.Codecs {
+		codec := &s.Codecs[index]
+		if !strings.EqualFold(codec.Name, name) {
+			continue
+		}
+		if clockRate > 0 && codec.ClockRate != clockRate {
+			continue
+		}
+		if channels > 0 && codec.Channels != channels {
+			continue
+		}
+		return codec
+	}
+	return nil
+}
+
+// GetCodecByPT returns the codec declared for payloadType.
+func (s *SDPInfo) GetCodecByPT(payloadType int) *CodecInfo {
+	if s == nil {
+		return nil
+	}
+	for index := range s.Codecs {
+		if s.Codecs[index].PayloadType == payloadType {
+			return &s.Codecs[index]
 		}
 	}
 	return nil
 }
 
-// GetMediaAddress returns the media connection address (the IP only).
+// GetPreferredCodec returns the first codec in SDP payload order.
+func (s *SDPInfo) GetPreferredCodec() *CodecInfo {
+	if s == nil || len(s.Codecs) == 0 {
+		return nil
+	}
+	return &s.Codecs[0]
+}
+
+// GetMediaAddress returns the recovered host:port media address.
 func (s *SDPInfo) GetMediaAddress() string {
+	if s == nil || s.ConnectionIP == "" || s.MediaPort == 0 {
+		return ""
+	}
+	return net.JoinHostPort(s.ConnectionIP, strconv.Itoa(s.MediaPort))
+}
+
+// GetMediaPort retains the additive scalar accessor.
+func (s *SDPInfo) GetMediaPort() int {
+	if s == nil {
+		return 0
+	}
+	return s.MediaPort
+}
+
+// GetMediaIPCurrent retains the displaced IP-only projection.
+func (s *SDPInfo) GetMediaIPCurrent() string {
 	if s == nil {
 		return ""
 	}
-	conn := s.Connection
-	if len(s.Media) > 0 && s.Media[0].Connection != "" {
-		conn = s.Media[0].Connection
-	}
-	// c=IN IP4 10.0.0.1 -> 10.0.0.1
-	fields := strings.Fields(conn)
-	if len(fields) >= 3 {
-		return fields[2]
-	}
-	return conn
-}
-
-// GetMediaPort returns the first media port.
-func (s *SDPInfo) GetMediaPort() int {
-	if s == nil || len(s.Media) == 0 {
-		return 0
-	}
-	return s.Media[0].Port
-}
-
-// RewriteSDP rewrites the connection address and port in an SDP body.
-func RewriteSDP(sdp, ip string, port int) string {
-	if sdp == "" {
-		return sdp
-	}
-	var b strings.Builder
-	ipFamily := sdpIPFamily(ip)
-	for _, line := range strings.Split(sdp, "\r\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(line, "c="):
-			b.WriteString("c=IN " + ipFamily + " " + ip + "\r\n")
-			continue
-		case strings.HasPrefix(line, "m="):
-			parts := strings.Fields(line)
-			if len(parts) >= 3 && port > 0 {
-				b.WriteString(parts[0] + " " + strconv.Itoa(port) + " " + strings.Join(parts[2:], " ") + "\r\n")
-				continue
-			}
-		}
-		b.WriteString(line + "\r\n")
-	}
-	return b.String()
-}
-
-// ExtractAndApplyPTMapping builds a LAN->IMS payload type mapping from an
-// SDP answer.
-func ExtractAndApplyPTMapping(offer, answer *SDPInfo) map[int]int {
-	mapping := make(map[int]int)
-	if offer == nil || answer == nil {
-		return mapping
-	}
-	for _, om := range offer.Media {
-		for _, oc := range om.Codecs {
-			for _, am := range answer.Media {
-				for _, ac := range am.Codecs {
-					if oc.Encoding == ac.Encoding && oc.ClockRate == ac.ClockRate {
-						mapping[ac.PayloadType] = oc.PayloadType
-					}
-				}
-			}
-		}
-	}
-	return mapping
+	return s.ConnectionIP
 }

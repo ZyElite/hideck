@@ -518,38 +518,35 @@ func TestParseSDP(t *testing.T) {
 		"a=rtpmap:96 AMR-WB/16000/1\r\n" +
 		"a=rtpmap:97 telephone-event/8000\r\n" +
 		"a=fmtp:96 mode-set=0,1,2\r\n"
-	info, err := ParseSDP(sdp)
+	info, err := ParseSDP([]byte(sdp))
 	if err != nil {
 		t.Fatalf("ParseSDP: %v", err)
 	}
-	if len(info.Media) != 1 {
-		t.Fatalf("media count = %d", len(info.Media))
+	if info.MediaType != "audio" || info.MediaPort != 49170 {
+		t.Fatalf("media = %s:%d", info.MediaType, info.MediaPort)
 	}
-	if info.Media[0].Port != 49170 {
-		t.Errorf("port = %d", info.Media[0].Port)
-	}
-	codec := info.FindCodec(96)
+	codec := info.GetCodecByPT(96)
 	if codec == nil {
 		t.Fatal("codec 96 not found")
 	}
-	if codec.Encoding != "AMR-WB" || codec.ClockRate != 16000 {
+	if codec.Name != "AMR-WB" || codec.ClockRate != 16000 {
 		t.Errorf("codec = %+v", codec)
 	}
 	if codec.Fmtp != "mode-set=0,1,2" {
 		t.Errorf("fmtp = %q", codec.Fmtp)
 	}
-	if addr := info.GetMediaAddress(); addr != "10.0.0.1" {
+	if addr := info.GetMediaAddress(); addr != "10.0.0.1:49170" {
 		t.Errorf("media addr = %q", addr)
 	}
 }
 
 func TestRewriteSDP(t *testing.T) {
 	sdp := "v=0\r\nc=IN IP4 10.0.0.1\r\nm=audio 49170 RTP/AVP 96\r\n"
-	out := RewriteSDP(sdp, "192.168.1.5", 50000)
-	if !strings.Contains(out, "c=IN IP4 192.168.1.5") {
+	out := RewriteSDP([]byte(sdp), "192.168.1.5", 50000)
+	if !strings.Contains(string(out), "c=IN IP4 192.168.1.5") {
 		t.Errorf("rewritten SDP missing new IP: %q", out)
 	}
-	if !strings.Contains(out, "m=audio 50000 RTP/AVP 96") {
+	if !strings.Contains(string(out), "m=audio 50000 RTP/AVP 96") {
 		t.Errorf("rewritten SDP missing new port: %q", out)
 	}
 }
@@ -564,8 +561,9 @@ func TestBuildIMSInvite(t *testing.T) {
 	if !strings.Contains(invite, "Call-ID: call-1") {
 		t.Errorf("invite missing Call-ID: %q", invite)
 	}
-	if strings.Contains(invite, "m=audio 0 ") || !strings.Contains(invite, "Content-Length: 0") {
-		t.Errorf("builder exposed an unusable media endpoint: %q", invite)
+	if strings.Contains(invite, "m=audio 0 ") ||
+		!strings.Contains(invite, "m=audio 12000 RTP/AVP 104 114 9 8 0 101") {
+		t.Errorf("builder did not emit the recovered basic offer: %q", invite)
 	}
 }
 
@@ -691,10 +689,10 @@ func TestGatewayLifecycle(t *testing.T) {
 }
 
 func TestExtractAndApplyPTMapping(t *testing.T) {
-	offer, _ := ParseSDP("v=0\r\nm=audio 100 RTP/AVP 96\r\na=rtpmap:96 AMR-WB/16000/1\r\n")
-	answer, _ := ParseSDP("v=0\r\nm=audio 200 RTP/AVP 8\r\na=rtpmap:8 AMR-WB/16000/1\r\n")
-	m := ExtractAndApplyPTMapping(offer, answer)
-	if m[8] != 96 {
-		t.Errorf("mapping = %+v, want {8:96}", m)
+	remote, _ := ParseSDP([]byte("v=0\r\nm=audio 100 RTP/AVP 96\r\na=rtpmap:96 AMR-WB/16000/1\r\n"))
+	client, _ := ParseSDP([]byte("v=0\r\nm=audio 200 RTP/AVP 8\r\na=rtpmap:8 AMR-WB/16000/1\r\n"))
+	mapping := codecPTMapping(remote, client)
+	if mapping[96] != 8 {
+		t.Errorf("mapping = %+v, want {96:8}", mapping)
 	}
 }

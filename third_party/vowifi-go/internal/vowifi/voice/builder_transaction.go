@@ -34,7 +34,7 @@ func buildIMSInviteWithSDPChecked(agent *Agent, call *Call, sdp string) (string,
 		call.setVoiceDialog(&dialog)
 	}
 	if strings.TrimSpace(sdp) == "" {
-		sdp = generateBasicSDP(agent, call)
+		sdp = generateBasicSDPCurrent(agent, call)
 	}
 	recipient, err := parseVoiceURI(dialog.remoteURI)
 	if err != nil {

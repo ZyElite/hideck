@@ -104,8 +104,7 @@ func validateClientInviteOffer(request *sip.Request) error {
 	if !isVoiceSDPContentType(contentType) {
 		return fmt.Errorf("voice: unsupported local INVITE content type %q", contentType)
 	}
-	_, err := ProcessOutgoingClientSDP(string(request.Body()))
-	return err
+	return validateSDPMediaEndpoint(request.Body(), "local INVITE")
 }
 
 func validateClientInviteRequest(request *sip.Request) error {

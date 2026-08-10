@@ -159,23 +159,6 @@ func NewCallFromClientInviteForAgent(agent *Agent, peer, callID, clientCallID st
 	return call
 }
 
-// --- SDP processing ---
-
-// ProcessIncomingIMSSDP parses an SDP offer received from the IMS network.
-func ProcessIncomingIMSSDP(sdp string) (*SDPInfo, error) {
-	return ParseSDP(sdp)
-}
-
-// ProcessOutgoingClientSDP parses an SDP offer received from the local client.
-func ProcessOutgoingClientSDP(sdp string) (*SDPInfo, error) {
-	return ParseSDP(sdp)
-}
-
-// RewriteSDPForClient rewrites an SDP body for the local client.
-func RewriteSDPForClient(sdp, ip string, port int) string {
-	return RewriteSDP(sdp, ip, port)
-}
-
 // --- Client request handlers ---
 
 // HandleClientInvite handles an inbound INVITE from the local client bridge.
@@ -183,7 +166,7 @@ func (a *Agent) HandleClientInvite(peer string, sdp string) (*Call, error) {
 	if a == nil {
 		return nil, errors.New("voice: nil agent")
 	}
-	if _, err := ProcessOutgoingClientSDP(sdp); err != nil {
+	if _, err := ProcessOutgoingClientSDPCurrent(sdp); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), voiceInviteTimeout)

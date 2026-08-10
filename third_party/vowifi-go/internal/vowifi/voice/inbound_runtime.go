@@ -216,29 +216,19 @@ func (a *Agent) handleReinvite(request imscore.InboundVoiceRequest, call *Call) 
 	if request.Responder == nil || !isVoiceSDPContentType(request.ContentType) {
 		return voiceResult(488), nil
 	}
-	offer, err := ProcessIncomingIMSSDP(string(request.Body))
-	if err != nil {
-		return voiceResult(488), nil
-	}
-	remote, err := mediaRemote(offer)
-	if err != nil {
-		return voiceResult(488), nil
-	}
 	relay := call.RTPRelay()
 	clientAnswer, imsAnswer := call.localSDPs()
 	if relay == nil || clientAnswer == "" || imsAnswer == "" {
 		return voiceResult(488), nil
 	}
-	parsedClientAnswer, err := ProcessOutgoingClientSDP(clientAnswer)
+	if err := validateSDPMediaEndpoint(request.Body, "IMS re-INVITE"); err != nil {
+		return voiceResult(488), nil
+	}
+	rewritten, err := ProcessIncomingIMSSDP(call, request.Body, clientRelayIP)
 	if err != nil {
 		return voiceResult(488), nil
 	}
-	if err := relay.SetRemoteAddr(remote); err != nil {
-		return voiceResult(488), nil
-	}
-	configureRelayDTMF(relay, offer)
-	relay.SetPTMapping(ExtractAndApplyPTMapping(offer, parsedClientAnswer))
-	call.setRemoteSDP(string(request.Body), RewriteSDP(string(request.Body), clientRelayIP, relay.LANPort()))
+	call.setRemoteSDP(string(request.Body), string(rewritten))
 	if err := request.Responder.Respond(a.voiceSDPResponse(call, 200, imsAnswer)); err != nil {
 		return voiceResult(0), err
 	}

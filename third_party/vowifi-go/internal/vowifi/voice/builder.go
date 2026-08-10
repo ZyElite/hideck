@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const defaultVoiceRTPPort = 12000
+
 // BuildIMSBye builds an in-dialog BYE.
 func BuildIMSBye(agent *Agent, call *Call) string {
 	if agent == nil || call == nil {
@@ -153,18 +155,46 @@ func (a *Agent) imsConfig() *imsConfigView {
 	return &imsConfigView{Domain: snapshot.Realm, IMPI: strings.TrimPrefix(snapshot.IMPU, "sip:")}
 }
 
-func generateBasicSDP(agent *Agent, call *Call) string {
-	ip := agent.localIP()
+// generateBasicSDP restores the original Agent method and byte return type.
+func (a *Agent) generateBasicSDP() []byte {
+	port := defaultVoiceRTPPort
+	var gateway *Gateway
+	if a != nil {
+		a.mu.RLock()
+		gateway = a.gateway
+		a.mu.RUnlock()
+	}
+	if gateway != nil {
+		if adapter := gateway.GetClientAdapter(); adapter != nil {
+			_, end := adapter.RTPPortRange()
+			if end > 1 {
+				port = end - 2
+			}
+		}
+	}
+	return buildBasicSDP(a.localIP(), port, time.Now().Unix())
+}
+
+func generateBasicSDPCurrent(agent *Agent, call *Call) string {
+	port := 0
+	if call != nil && call.RTPRelay() != nil {
+		port = call.RTPRelay().IMSPort()
+	}
+	if port <= 0 {
+		return string(agent.generateBasicSDP())
+	}
+	return string(buildBasicSDP(agent.localIP(), port, time.Now().Unix()))
+}
+
+func buildBasicSDP(ip string, port int, sessionID int64) []byte {
 	if ip == "" {
 		ip = "0.0.0.0"
 	}
-	port := agent.mediaPort()
 	if port <= 0 {
-		return ""
+		return nil
 	}
 	ipFamily := sdpIPFamily(ip)
-	sessionID := voiceSessID()
-	return fmt.Sprintf("v=0\r\no=- %d %d IN %s %s\r\ns=VoHive Call\r\nc=IN %s %s\r\nt=0 0\r\nm=audio %d RTP/AVP 104 114 9 8 0 101\r\nb=AS:50\r\na=rtpmap:104 AMR-WB/16000\r\na=fmtp:104 octet-align=1; max-red=0\r\na=rtpmap:114 AMR/8000\r\na=fmtp:114 octet-align=1; max-red=0\r\na=rtpmap:9 G722/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=sendrecv\r\na=ptime:20\r\na=maxptime:20\r\n", sessionID, sessionID, ipFamily, ip, ipFamily, ip, port)
+	return []byte(fmt.Sprintf("v=0\r\no=- %d %d IN %s %s\r\ns=VoHive Call\r\nc=IN %s %s\r\nt=0 0\r\nm=audio %d RTP/AVP 104 114 9 8 0 101\r\nb=AS:50\r\na=rtpmap:104 AMR-WB/16000\r\na=fmtp:104 octet-align=1; max-red=0\r\na=rtpmap:114 AMR/8000\r\na=fmtp:114 octet-align=1; max-red=0\r\na=rtpmap:9 G722/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=sendrecv\r\na=ptime:20\r\na=maxptime:20\r\n", sessionID, sessionID, ipFamily, ip, ipFamily, ip, port))
 }
 
 func (a *Agent) localAddr() string {
@@ -257,19 +287,6 @@ func publicIdentityDomain(identity string) string {
 func voiceTag() string       { return voiceHex(16) }
 func voiceBranch() string    { return "z9hG4bK-" + voiceHex(24) }
 func voiceSessionID() string { return voiceHex(32) }
-
-func voiceSessID() int64 {
-	bytes := make([]byte, 8)
-	_, _ = rand.Read(bytes)
-	var value int64
-	for _, item := range bytes {
-		value = value*256 + int64(item)
-	}
-	if value < 0 {
-		value = -value
-	}
-	return value % 1000000000
-}
 
 func voiceHex(length int) string {
 	const digits = "0123456789abcdef"
