@@ -6,9 +6,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+const rtcpSilenceProbeTimeout = 100 * time.Millisecond
 
 func TestOriginalAddressAndPTMappingForms(t *testing.T) {
 	relay := NewRTPRelay(listenMediaUDP(t), listenMediaUDP(t))
@@ -67,6 +70,94 @@ func TestRTPRelayForwardsRTCPBothDirections(t *testing.T) {
 	if imsRTCPBytes != uint64(len(packet)) || lanRTCPBytes != uint64(len(packet)) {
 		t.Fatalf("RTCP stats = %d/%d", imsRTCPBytes, lanRTCPBytes)
 	}
+	if atomic.LoadUint32(&relay.imsRTCPFirstPacket) != 1 || atomic.LoadUint32(&relay.lanRTCPFirstPacket) != 1 {
+		t.Fatal("successful RTCP forwarding did not record first-packet state")
+	}
+	oversized := make([]byte, mediaReadBufferSize+256)
+	writeUDPTo(t, imsPeerRTCP, imsRTCP.LocalAddr().(*net.UDPAddr), oversized)
+	if got := readUDP(t, lanPeerRTCP); len(got) != mediaReadBufferSize {
+		t.Fatalf("oversized RTCP forwarded bytes = %d, want %d", len(got), mediaReadBufferSize)
+	}
+}
+
+func TestRTCPActivityCountsWithoutForwardingDestination(t *testing.T) {
+	relay := newRTPRelay(nil, nil, nil, nil)
+	relay.Monitor = NewRTPMonitor()
+	packet := []byte{0x80, 0xc9, 0, 1, 1, 2, 3, 4}
+	before := time.Now().UnixNano()
+	relay.handleIMSRTCPPacket(packet, &net.UDPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 5001})
+	relay.handleLANRTCPPacket(packet, &net.UDPAddr{IP: net.IPv4(198, 51, 100, 1), Port: 6001})
+
+	_, _, imsBytes, lanBytes := relay.Stats()
+	if imsBytes != uint64(len(packet)) || lanBytes != uint64(len(packet)) {
+		t.Fatalf("RTCP received bytes = %d/%d", imsBytes, lanBytes)
+	}
+	imsCount, lanCount := relay.Monitor.Counts()
+	if imsCount != 1 || lanCount != 1 {
+		t.Fatalf("RTCP monitor counts = %d/%d", imsCount, lanCount)
+	}
+	if relay.Monitor.LastIMSToLAN.Load() < before || relay.Monitor.LastLANToIMS.Load() < before {
+		t.Fatal("RTCP did not update media activity timestamps")
+	}
+	if relay.clientAddrRTCP.Load() != nil {
+		t.Fatal("LAN RTCP incorrectly replaced the SDP-configured client address")
+	}
+}
+
+func TestIMSRTCPUsesConfiguredDestinationWithoutSourceFiltering(t *testing.T) {
+	lanRTCP := listenMediaUDP(t)
+	clientPeer := listenMediaUDP(t)
+	relay := newRTPRelay(nil, nil, nil, lanRTCP)
+	relay.clientAddrRTCP.Store(clientPeer.LocalAddr().(*net.UDPAddr))
+	relay.remoteAddrRTCP.Store(&net.UDPAddr{IP: net.IPv4(203, 0, 113, 9), Port: 9001})
+	packet := []byte{0x80, 0xc9, 0, 1, 8, 7, 6, 5}
+	relay.handleIMSRTCPPacket(packet, &net.UDPAddr{IP: net.IPv4(192, 0, 2, 9), Port: 7001})
+	if got := readUDP(t, clientPeer); string(got) != string(packet) {
+		t.Fatalf("forwarded RTCP = %x, want %x", got, packet)
+	}
+}
+
+func TestRTCPKeepaliveWireSuppressionAndTimerReplacement(t *testing.T) {
+	imsRTCP := listenMediaUDP(t)
+	imsPeer := listenMediaUDP(t)
+	relay := newRTPRelay(nil, nil, imsRTCP, nil)
+	relay.remoteAddrRTCP.Store(imsPeer.LocalAddr().(*net.UDPAddr))
+	relay.mu.Lock()
+	relay.active = true
+	relay.mu.Unlock()
+
+	relay.startRTCPKeepaliveLoop()
+	relay.rtcpMu.Lock()
+	firstTimer := relay.rtcpKeepaliveTimer
+	relay.rtcpMu.Unlock()
+	relay.startRTCPKeepaliveLoop()
+	if firstTimer.Stop() {
+		t.Fatal("replaced RTCP keepalive timer remained active")
+	}
+	relay.runRTCPKeepalive()
+	if got := readUDP(t, imsPeer); string(got) != string(emptyReceiverReport) {
+		t.Fatalf("RTCP keepalive = %x, want %x", got, emptyReceiverReport)
+	}
+	relay.Stop()
+
+	silentRTCP := listenMediaUDP(t)
+	silentPeer := listenMediaUDP(t)
+	silent := newRTPRelay(nil, nil, silentRTCP, nil)
+	silent.remoteAddrRTCP.Store(silentPeer.LocalAddr().(*net.UDPAddr))
+	silent.Monitor = NewRTPMonitor()
+	silent.Monitor.UpdateLAN()
+	silent.mu.Lock()
+	silent.active = true
+	silent.mu.Unlock()
+	silent.runRTCPKeepalive()
+	if err := silentPeer.SetReadDeadline(time.Now().Add(rtcpSilenceProbeTimeout)); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, len(emptyReceiverReport))
+	if _, _, err := silentPeer.ReadFromUDP(buffer); !isRTPRelayReadTimeout(err) {
+		t.Fatalf("recent outbound activity did not suppress RTCP keepalive: %v", err)
+	}
+	silent.Stop()
 }
 
 func TestRTPRelayWritesOriginalPCAPWireFormat(t *testing.T) {

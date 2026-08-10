@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	mediaReadBufferSize = 64 * 1024
+	mediaReadBufferSize = 2048
 	monitorInterval     = 5 * time.Second
 	rtcpKeepalive       = 10 * time.Second
 )
@@ -385,20 +385,27 @@ func (r *RTPRelay) isStopped() bool {
 }
 
 func (r *RTPRelay) loopIMS() {
-	r.readLoop(r.connIMS, func(packet []byte, source *net.UDPAddr) {
+	r.readLoop(r.connIMS, 0, func(packet []byte, source *net.UDPAddr) {
 		r.handleIMSPacket(packet, source)
 	})
 }
 
 func (r *RTPRelay) loopLAN() {
-	r.readLoop(r.lanRTPConn(), func(packet []byte, source *net.UDPAddr) {
+	r.readLoop(r.lanRTPConn(), 0, func(packet []byte, source *net.UDPAddr) {
 		r.handleLANPacket(packet, source)
 	})
 }
 
-func (r *RTPRelay) readLoop(conn net.PacketConn, handle func([]byte, *net.UDPAddr)) {
+func (r *RTPRelay) readLoop(
+	conn net.PacketConn,
+	readTimeout time.Duration,
+	handle func([]byte, *net.UDPAddr),
+) {
 	buffer := make([]byte, mediaReadBufferSize)
 	for !r.shouldStop() {
+		if readTimeout > 0 {
+			_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
+		}
 		n, source, err := conn.ReadFrom(buffer)
 		if err != nil {
 			if isRTPRelayReadClosedError(err) || r.isStopped() {
