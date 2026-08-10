@@ -64,7 +64,7 @@ func (c *Coordinator) StartWebsheet(ctx context.Context, deviceID string) (websh
 		client:   runtimee911.NewDefaultHTTPClient(),
 	}
 
-	websheetReq, err := runtimee911.StartEmergencyAddressUpdate(ctx, runtimee911.Request{
+	websheetReq, err := runtimee911.StartEmergencyAddressUpdateCurrent(ctx, runtimee911.Request{
 		Carrier:     cfg,
 		Identity:    buildRuntimeE911Identity(status, mcc, mnc, displayName(w)),
 		AKAProvider: akaProvider,

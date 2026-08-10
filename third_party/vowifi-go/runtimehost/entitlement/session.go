@@ -1,178 +1,136 @@
-// Package entitlement implements the TS.43 entitlement session used to
-// check VoWiFi entitlement and drive the E911 address update.
-//
-// Reconstructed from the decompiled engine/runtimehost/entitlement.
 package entitlement
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
-	"net/http"
+	"fmt"
 	"strings"
+
+	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/entitlement/providers/att"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/entitlement/ts43"
 )
 
-// Session is a TS.43 entitlement session.
-type Session struct {
-	client *http.Client
-	url    string
-	att    *attSession
+const attEntitlementProvider = "att_entitlement"
+
+func NewSession(req Request) (*Session, error) {
+	provider := strings.TrimSpace(req.Provider)
+	if provider != attEntitlementProvider {
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedProvider, provider)
+	}
+	return &Session{provider: provider, att: newATTSession(req)}, nil
 }
 
-// NewSession creates an entitlement session.
-func NewSession(client *http.Client, url string) *Session {
-	if client == nil {
-		client = http.DefaultClient
+func newATTSession(req Request) *attSession {
+	if req.Client == nil {
+		req.Client = NewDefaultHTTPClient()
 	}
-	return &Session{client: client, url: url}
+	return &attSession{req: req}
 }
 
-// StartE911AddressUpdate begins the E911 address update flow.
-func (s *Session) StartE911AddressUpdate(ctx context.Context) error {
-	if s == nil {
-		return errors.New("entitlement: nil session")
-	}
-	if s.att == nil {
-		s.att = newATTSession(s.client, s.url)
+func (s *Session) StartE911AddressUpdate(ctx context.Context) (
+	url, userData, contentType, title string,
+	err error,
+) {
+	if s == nil || s.att == nil {
+		return "", "", "", "", fmt.Errorf("%w: session is unavailable", ErrUnsupportedProvider)
 	}
 	return s.att.StartE911AddressUpdate(ctx)
 }
 
-// attSession is the AT&T-specific entitlement session.
-type attSession struct {
-	client *http.Client
-	url    string
-}
-
-// newATTSession creates an AT&T session.
-func newATTSession(client *http.Client, url string) *attSession {
-	if client == nil {
-		client = http.DefaultClient
-	}
-	return &attSession{client: client, url: url}
-}
-
-// StartE911AddressUpdate drives the AT&T E911 address update.
-func (s *attSession) StartE911AddressUpdate(ctx context.Context) error {
+func (s *attSession) StartE911AddressUpdate(ctx context.Context) (
+	url, userData, contentType, title string,
+	err error,
+) {
 	if s == nil {
-		return errors.New("entitlement: nil att session")
+		return "", "", "", "", errors.New("entitlement ATT session is nil")
 	}
-	if s.url == "" {
-		return errors.New("entitlement: no entitlement URL")
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", s.url, strings.NewReader(`{"action":"e911_address_update"}`))
+	req := s.req
+	result, err := att.CheckE911AddressUpdate(
+		contextOrBackground(ctx), strings.TrimSpace(req.EntitlementURL),
+		req.Identity.IMSI, req.Identity.ICCID, selectedIMEI(req),
+		req.Identity.MCC, req.Identity.MNC,
+		req.Identity.SIPUsername, req.Identity.DisplayName,
+		req.Token.Token, req.Token.AppToken,
+		attHTTPClientAdapter{client: req.Client, trace: req.Trace},
+		attAKAProviderAdapter{provider: req.AKAProvider},
+	)
 	if err != nil {
-		return err
+		return "", "", "", "", err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.client.Do(req)
+	url, userData = result.Websheet()
+	if strings.TrimSpace(url) == "" || strings.TrimSpace(userData) == "" {
+		return "", "", "", "", ErrWebsheetUnavailable
+	}
+	return url, userData, att.WebsheetContentType, att.WebsheetTitle, nil
+}
+
+func selectedIMEI(req Request) string {
+	return strings.TrimSpace(req.Identity.IMEI)
+}
+
+func contextOrBackground(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func (a attHTTPClientAdapter) Do(req *ts43.HTTPRequest) (*ts43.HTTPResponse, error) {
+	if a.client == nil {
+		return nil, errors.New("entitlement HTTP client is required")
+	}
+	hostReq := fromTS43HTTPRequest(req)
+	if a.trace != nil {
+		a.trace.Request(hostReq)
+	}
+	resp, err := a.client.Do(hostReq)
 	if err != nil {
-		return err
+		if a.trace != nil {
+			a.trace.Error(hostReq, err)
+		}
+		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return errors.New("entitlement: e911 update failed with status " + http.StatusText(resp.StatusCode))
+	if resp == nil {
+		err = errors.New("entitlement HTTP client returned nil response")
+		if a.trace != nil {
+			a.trace.Error(hostReq, err)
+		}
+		return nil, err
 	}
-	return nil
-}
-
-// HTTPClientAdapter adapts an http.Client to the entitlement HTTP surface.
-type HTTPClientAdapter struct {
-	client *http.Client
-}
-
-// Do performs an HTTP request.
-func (a *HTTPClientAdapter) Do(req *http.Request) (*http.Response, error) {
-	if a == nil || a.client == nil {
-		return nil, errors.New("entitlement: nil http client")
+	if a.trace != nil {
+		a.trace.Response(hostReq, resp)
 	}
-	return a.client.Do(req)
+	return &ts43.HTTPResponse{StatusCode: resp.StatusCode, Body: cloneBytes(resp.Body)}, nil
 }
 
-// attHTTPClientAdapter is the AT&T HTTP client adapter.
-type attHTTPClientAdapter struct {
-	client *http.Client
-}
-
-// Do performs an HTTP request.
-func (a *attHTTPClientAdapter) Do(req *http.Request) (*http.Response, error) {
-	if a == nil || a.client == nil {
-		return nil, errors.New("entitlement: nil http client")
+func (a attAKAProviderAdapter) CalculateAKAResult(rand16, autn16 []byte) (ts43.AKAResult, error) {
+	if a.provider == nil {
+		return ts43.AKAResult{}, errors.New("entitlement AKA provider is required")
 	}
-	return a.client.Do(req)
-}
-
-// attAKAProviderAdapter adapts an AKA provider for the AT&T flow.
-type attAKAProviderAdapter struct {
-	provider interface {
-		CalculateAKA(rand16, autn16 []byte) (res, ck, ik []byte, err error)
+	result, err := a.provider.CalculateAKA(cloneBytes(rand16), cloneBytes(autn16))
+	if errors.Is(err, enginesim.ErrSyncFailure) && len(result.AUTS) != 0 {
+		err = nil
 	}
+	return ts43.AKAResult{
+		RES: cloneBytes(result.RES), CK: cloneBytes(result.CK),
+		IK: cloneBytes(result.IK), AUTS: cloneBytes(result.AUTS),
+	}, err
 }
 
-// CalculateAKAResult computes the AKA result.
-func (a *attAKAProviderAdapter) CalculateAKAResult(rand16, autn16 []byte) (res, ck, ik []byte, err error) {
-	if a == nil || a.provider == nil {
-		return nil, nil, nil, errors.New("entitlement: no AKA provider")
-	}
-	return a.provider.CalculateAKA(rand16, autn16)
-}
-
-// fallbackRoundTripper falls back from HTTP/2 to HTTP/1.1.
-type fallbackRoundTripper struct {
-	base http.RoundTripper
-}
-
-// RoundTrip performs the request, falling back to HTTP/1.1 on HTTP/2 errors.
-func (f *fallbackRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if f == nil || f.base == nil {
-		return nil, errors.New("entitlement: nil round tripper")
-	}
-	resp, err := f.base.RoundTrip(req)
-	if err != nil && isHTTP2SawHTTP1HeaderError(err) {
-		// Retry over HTTP/1.1.
-		req2 := cloneRequestWithBody(req)
-		req2.Proto = "HTTP/1.1"
-		req2.ProtoMajor = 1
-		req2.ProtoMinor = 1
-		return f.base.RoundTrip(req2)
-	}
-	return resp, err
-}
-
-// cloneRequestWithBody clones an HTTP request, preserving the body.
-func cloneRequestWithBody(req *http.Request) *http.Request {
+func fromTS43HTTPRequest(req *ts43.HTTPRequest) *HTTPRequest {
 	if req == nil {
 		return nil
 	}
-	clone := req.Clone(req.Context())
-	if req.Body != nil {
-		body, _ := readRequestBody(req.Body)
-		clone.Body = io.NopCloser(bytes.NewReader(body))
+	headers := make([]HeaderPair, len(req.Headers))
+	for index, header := range req.Headers {
+		headers[index] = HeaderPair{Key: header.Key, Value: header.Value}
 	}
-	return clone
+	return &HTTPRequest{
+		Method: req.Method, URL: req.URL, Headers: headers, Body: cloneBytes(req.Body),
+	}
 }
 
-// readRequestBody reads a request body fully.
-func readRequestBody(r io.Reader) ([]byte, error) {
-	if r == nil {
-		return nil, nil
-	}
-	return io.ReadAll(r)
-}
-
-// dialUTLSWithNextProtos dials a TLS connection with ALPN next-protos.
-func dialUTLSWithNextProtos(ctx context.Context, network, addr string, nextProtos []string) (interface{}, error) {
-	// The entitlement client uses the standard library TLS; this hook is
-	// retained for the recovered uTLS path.
-	return nil, errors.New("entitlement: uTLS dial not available")
-}
-
-// isHTTP2SawHTTP1HeaderError reports whether err is the HTTP/2 "saw HTTP/1
-// header" error.
-func isHTTP2SawHTTP1HeaderError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "saw HTTP/1 header")
+func cloneBytes(value []byte) []byte {
+	return append([]byte(nil), value...)
 }

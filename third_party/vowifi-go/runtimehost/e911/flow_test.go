@@ -58,7 +58,7 @@ func TestStartEmergencyAddressUpdateUsesRealDefaultHTTPClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	response, err := StartEmergencyAddressUpdate(context.Background(), Request{
+	response, err := StartEmergencyAddressUpdateCurrent(context.Background(), Request{
 		Carrier: carrier.EffectiveCarrierConfig{E911: carrier.E911Config{
 			Provider: "att-ts43", Websheet: "https://example.test/e911",
 			EntitlementEndpoint: server.URL,
@@ -99,7 +99,7 @@ func TestStartEmergencyAddressUpdateAnswersAKAChallenge(t *testing.T) {
 	defer server.Close()
 	aka := &testAKAProvider{}
 
-	response, err := StartEmergencyAddressUpdate(context.Background(), Request{
+	response, err := StartEmergencyAddressUpdateCurrent(context.Background(), Request{
 		Carrier: carrier.EffectiveCarrierConfig{E911: carrier.E911Config{
 			Provider: "att", Websheet: "https://example.test/e911",
 			EntitlementEndpoint: server.URL,
@@ -142,7 +142,7 @@ func TestStartEmergencyAddressUpdateAnswersEAPRelayIdentity(t *testing.T) {
 	}))
 	defer server.Close()
 
-	response, err := StartEmergencyAddressUpdate(context.Background(), Request{
+	response, err := StartEmergencyAddressUpdateCurrent(context.Background(), Request{
 		Carrier: carrier.EffectiveCarrierConfig{E911: carrier.E911Config{
 			Provider: "att", Websheet: "https://example.test/e911", EntitlementEndpoint: server.URL,
 		}},
@@ -190,13 +190,13 @@ func TestStartEmergencyAddressUpdatePropagatesHTTPFailureAndCancellation(t *test
 	request := Request{
 		Carrier: carrier.EffectiveCarrierConfig{E911: carrier.E911Config{Provider: "att", EntitlementEndpoint: server.URL}},
 	}
-	if _, err := StartEmergencyAddressUpdate(context.Background(), request); err == nil || !strings.Contains(err.Error(), "HTTP status 502") {
+	if _, err := StartEmergencyAddressUpdateCurrent(context.Background(), request); err == nil || !strings.Contains(err.Error(), "HTTP status 502") {
 		t.Fatalf("HTTP failure = %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := StartEmergencyAddressUpdate(ctx, request); !errors.Is(err, context.Canceled) {
+	if _, err := StartEmergencyAddressUpdateCurrent(ctx, request); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled request error = %v", err)
 	}
 }

@@ -33,8 +33,13 @@ func (r entitlementResult) hasChallenge() bool {
 		(r.EAPPacket != nil && r.EAPPacket.Code == eapaka.CodeRequest)
 }
 
-func StartEmergencyAddressUpdate(ctx context.Context, req Request) (Response, error) {
+// StartEmergencyAddressUpdateCurrent retains the request/response API added
+// after v1.5.5. The original positional API is StartEmergencyAddressUpdate.
+func StartEmergencyAddressUpdateCurrent(ctx context.Context, req Request) (Response, error) {
 	provider, websheetURL, endpoint := requestCarrierSettings(req)
+	if provider == attEntitlementProvider {
+		return startLegacyATTCurrent(ctx, req)
+	}
 	if !supportedProvider(provider) {
 		return Response{}, ErrUnsupportedProvider
 	}
@@ -74,7 +79,7 @@ func requestCarrierSettings(req Request) (provider, websheetURL, endpoint string
 
 func supportedProvider(provider string) bool {
 	switch provider {
-	case "att", "att-ts43", "ts43":
+	case "att", "att-ts43", "ts43", attEntitlementProvider:
 		return true
 	default:
 		return false
