@@ -388,20 +388,41 @@ func TestFragmentLifecycleLogFieldsMatchRecoveredSet(t *testing.T) {
 	if len(fields) != 30 {
 		t.Fatalf("field count = %d", len(fields))
 	}
+	wantKeys := []string{
+		"trace_id", "device", "sender", "ref", "ref_bits", "seq", "total", "transport",
+		"call_id", "rp_mr", "arrive_at", "content_len", "sc_addr", "local_identity", "key",
+	}
 	got := make(map[string]interface{}, len(fields)/2)
 	for index := 0; index < len(fields); index += 2 {
-		got[fields[index].(string)] = fields[index+1]
+		key := fields[index].(string)
+		if key != wantKeys[index/2] {
+			t.Fatalf("field key %d = %q, want %q", index/2, key, wantKeys[index/2])
+		}
+		got[key] = fields[index+1]
 	}
 	want := map[string]interface{}{
 		"trace_id": "trace", "device": "device", "sender": "+447700900123",
 		"ref": 7, "ref_bits": 8, "seq": 2, "total": 3, "transport": "tcp",
-		"call_id": "fragment-call", "rp_mr": byte(58),
+		"call_id": "fragment-call", "rp_mr": 58,
 		"arrive_at": "2026-08-10T11:12:13.456+01:00", "content_len": 4,
 		"sc_addr": "+447802002606", "local_identity": "sip:user@ims.example",
 		"key": "fragment-key",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("fields = %#v", got)
+	}
+}
+
+func TestAppendFragmentAuditFailurePreservesZeroTimestamp(t *testing.T) {
+	service, err := New(&IMSConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Stop)
+	service.appendFragmentAuditFailure(fragmentAuditFailure{Key: "zero-time"})
+	failures := service.fragmentAuditSnapshot()["recent_failures"].([]fragmentAuditFailure)
+	if len(failures) != 1 || !failures[0].At.IsZero() {
+		t.Fatalf("failures = %#v", failures)
 	}
 }
 

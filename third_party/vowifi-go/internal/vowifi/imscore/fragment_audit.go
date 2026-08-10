@@ -45,9 +45,6 @@ func (s *Service) appendFragmentAuditFailure(failure fragmentAuditFailure) {
 }
 
 func (s *Service) appendFragmentAuditFailureLocked(failure fragmentAuditFailure) {
-	if failure.At.IsZero() {
-		failure.At = time.Now()
-	}
 	s.fragmentAuditFailures = append(s.fragmentAuditFailures, failure)
 	if len(s.fragmentAuditFailures) > fragmentAuditLimit {
 		s.fragmentAuditFailures = append([]fragmentAuditFailure(nil), s.fragmentAuditFailures[len(s.fragmentAuditFailures)-fragmentAuditLimit:]...)

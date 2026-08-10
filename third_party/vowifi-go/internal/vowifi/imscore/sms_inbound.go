@@ -200,8 +200,8 @@ func fragmentLifecycleLogFields(ctx fragmentLifecycleContext) []interface{} {
 	return []interface{}{
 		"trace_id", ctx.TraceID, "device", ctx.Device,
 		"sender", normalizeFragmentIdentity(message.sender), "ref", message.concatRef,
-		"ref_bits", message.refBits, "total", message.total, "seq", message.partNo,
-		"transport", ctx.Transport, "call_id", ctx.CallID, "rp_mr", message.rpMR,
+		"ref_bits", message.refBits, "seq", message.partNo, "total", message.total,
+		"transport", ctx.Transport, "call_id", ctx.CallID, "rp_mr", int(message.rpMR),
 		"arrive_at", ctx.ArrivedAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
 		"content_len", len(message.content), "sc_addr", message.serviceCenter,
 		"local_identity", message.targetURI, "key", ctx.Key,
