@@ -141,12 +141,12 @@ func (c *Call) stopSessionTimer() error {
 	if c == nil {
 		return nil
 	}
-	c.mu.Lock()
-	if c.sessionTimer != nil {
-		c.sessionTimer.Stop()
-		c.sessionTimer = nil
+	c.SessionTimerMu.Lock()
+	if c.SessionTimer != nil {
+		c.SessionTimer.Stop()
+		c.SessionTimer = nil
 	}
-	c.mu.Unlock()
+	c.SessionTimerMu.Unlock()
 	return nil
 }
 

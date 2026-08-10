@@ -21,6 +21,7 @@ type reliableProvisionalRegistrar struct {
 	conn                *net.UDPConn
 	prack               chan string
 	ack                 chan string
+	update              chan string
 	prackResponsesAfter int
 	prackCount          int
 	sessionExpires      string
@@ -77,6 +78,7 @@ func startReliableProvisionalRegistrarWithOptions(
 	}
 	registrar := &reliableProvisionalRegistrar{
 		conn: conn, prack: make(chan string, 4), ack: make(chan string, 1),
+		update:              make(chan string, 4),
 		prackResponsesAfter: options.prackResponsesAfter,
 		sessionExpires:      options.finalSessionExpires,
 		provisionalExpires:  options.provisionalSessionExpires,
@@ -111,6 +113,9 @@ func (r *reliableProvisionalRegistrar) serve() {
 			r.writeFinalInvite(invite, inviteRemote)
 		case "ACK":
 			r.ack <- request
+		case "UPDATE":
+			r.update <- request
+			r.writeResponse(sipTestResponse{request: request, remote: remote, status: 200})
 		default:
 			r.writeResponse(sipTestResponse{request: request, remote: remote, status: 200})
 		}
@@ -176,7 +181,7 @@ func TestAgentPRACKsReliableProvisionalBeforeFinalInvite(t *testing.T) {
 	if call.CallState() != callstate.StateConnected || !call.HasReliableProvisional() {
 		t.Fatalf("state=%s reliable=%t", call.CallState(), call.HasReliableProvisional())
 	}
-	if call.sessionTimer != nil {
+	if call.Timers.SessionTimer != nil {
 		t.Fatal("call without Session-Expires installed a session timer")
 	}
 	inviteCSeq := call.voiceDialogSnapshot().inviteCSeq
@@ -338,8 +343,8 @@ func TestAgentRetransmitsPRACKWithOriginalTransaction(t *testing.T) {
 			t.Fatalf("retransmitted PRACK %s changed: %q / %q", name, first, second)
 		}
 	}
-	if call.voiceSessionExpires() != 120*time.Second || call.sessionTimer == nil {
-		t.Fatalf("negotiated session timer = %s, timer=%v", call.voiceSessionExpires(), call.sessionTimer)
+	if call.voiceSessionExpires() != 120*time.Second || call.Timers.SessionTimer == nil {
+		t.Fatalf("negotiated session timer = %s, timer=%v", call.voiceSessionExpires(), call.Timers.SessionTimer)
 	}
 	if call.prackTimer != nil {
 		t.Fatal("PRACK timer remains active after final response")
@@ -362,8 +367,8 @@ func TestAgentRetainsSessionExpiryFromReliableProvisional(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dialContext: %v", err)
 	}
-	if call.voiceSessionExpires() != 180*time.Second || call.sessionTimer == nil {
-		t.Fatalf("provisional session timer = %s, timer=%v", call.voiceSessionExpires(), call.sessionTimer)
+	if call.voiceSessionExpires() != 180*time.Second || call.Timers.SessionTimer == nil {
+		t.Fatalf("provisional session timer = %s, timer=%v", call.voiceSessionExpires(), call.Timers.SessionTimer)
 	}
 }
 

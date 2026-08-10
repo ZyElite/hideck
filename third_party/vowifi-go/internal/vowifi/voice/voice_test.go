@@ -288,7 +288,7 @@ func TestAgentStopReleasesCallWhenBYEFails(t *testing.T) {
 	if err := agent.Stop(); err == nil || !strings.Contains(err.Error(), "forced write failure") {
 		t.Fatalf("Stop error = %v", err)
 	}
-	if agent.IsBusy() || call.noAnswerTimer != nil || call.sessionTimer != nil {
+	if agent.IsBusy() || call.noAnswerTimer != nil || call.Timers.SessionTimer != nil {
 		t.Fatalf("call was not released: state=%s busy=%t", call.CallState(), agent.IsBusy())
 	}
 	select {
@@ -408,13 +408,12 @@ func TestCallTimersStopAndDoneCloseOnce(t *testing.T) {
 	if err := call.StartOutboundNoAnswerTimer(time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if err := call.StartSessionTimer(time.Hour); err != nil {
-		t.Fatal(err)
-	}
+	call.applyVoiceSessionExpires("3600")
+	call.StartSessionTimer(func() {})
 	if err := call.EnsureTimerStopped(); err != nil {
 		t.Fatal(err)
 	}
-	if call.noAnswerTimer != nil || call.sessionTimer != nil {
+	if call.noAnswerTimer != nil || call.Timers.SessionTimer != nil {
 		t.Fatal("call timers remain installed after cleanup")
 	}
 	call.CloseDone()

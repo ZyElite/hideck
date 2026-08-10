@@ -38,18 +38,18 @@ func (c *Call) applyVoiceSessionExpires(value string) {
 	if !ok {
 		return
 	}
-	c.mu.Lock()
-	c.sessionExpires = expires
-	c.mu.Unlock()
+	c.SessionTimerMu.Lock()
+	c.SessionExpires = int(expires / time.Second)
+	c.SessionTimerMu.Unlock()
 }
 
 func (c *Call) voiceSessionExpires() time.Duration {
 	if c == nil {
 		return 0
 	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.sessionExpires
+	c.SessionTimerMu.Lock()
+	defer c.SessionTimerMu.Unlock()
+	return time.Duration(c.SessionExpires) * time.Second
 }
 
 func sessionRefreshDelay(expires time.Duration) time.Duration {
@@ -63,44 +63,65 @@ func sessionRefreshDelay(expires time.Duration) time.Duration {
 	return expires
 }
 
-// StartSessionTimer schedules the negotiated RFC 4028 session refresh.
-func (c *Call) StartSessionTimer(expires time.Duration) error {
+// StartSessionTimer retains the v1.5.5 callback-based timer API.
+func (c *Call) StartSessionTimer(callback func()) {
+	if c == nil {
+		return
+	}
+	c.SessionTimerMu.Lock()
+	defer c.SessionTimerMu.Unlock()
+	if c.SessionExpires < 1 {
+		return
+	}
+	if c.SessionTimer != nil {
+		c.SessionTimer.Stop()
+	}
+	delay := sessionRefreshDelay(time.Duration(c.SessionExpires) * time.Second)
+	c.SessionTimer = time.AfterFunc(delay, func() {
+		if callback != nil {
+			callback()
+		}
+	})
+}
+
+// StartSessionTimerCurrent retains the additive duration-based API.
+func (c *Call) StartSessionTimerCurrent(expires time.Duration) error {
 	if c == nil {
 		return errors.New("voice: nil call")
 	}
 	if expires > 0 {
-		c.mu.Lock()
-		c.sessionExpires = expires
-		c.mu.Unlock()
+		c.SessionTimerMu.Lock()
+		c.SessionExpires = int(expires / time.Second)
+		c.SessionTimerMu.Unlock()
 	}
-	expires = c.voiceSessionExpires()
-	if expires <= 0 {
+	if c.voiceSessionExpires() <= 0 {
 		return c.stopSessionTimer()
 	}
 	if c.agent == nil || c.agent.ims == nil {
 		return errors.New("voice: session timer has no IMS agent")
 	}
-	c.scheduleSessionRefresh(sessionRefreshDelay(expires))
+	c.agent.startVoiceSessionTimer(c)
 	return nil
 }
 
-func (c *Call) scheduleSessionRefresh(delay time.Duration) {
-	c.mu.Lock()
-	if c.sessionTimer != nil {
-		c.sessionTimer.Stop()
+func (a *Agent) startVoiceSessionTimer(call *Call) {
+	if a == nil || call == nil {
+		return
 	}
-	c.sessionTimer = time.AfterFunc(delay, c.runSessionRefresh)
-	c.mu.Unlock()
+	call.StartSessionTimer(func() {
+		a.runCallTask(call, "session_update", func() { a.sendIMSSessionUpdate(call) })
+	})
 }
 
-func (c *Call) runSessionRefresh() {
-	if c.CallState() != callstate.StateConnected {
+func (a *Agent) sendIMSSessionUpdate(call *Call) {
+	if a == nil || call == nil || call.CallState() != callstate.StateConnected {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), voiceSessionRefreshTimeout)
-	err := c.agent.refreshVoiceSession(ctx, c)
-	cancel()
+	defer cancel()
+	err := a.refreshVoiceSession(ctx, call)
 	if err != nil {
-		logging.WarnRate("ims-voice-session-refresh-failed", "IMS 会话刷新失败", "err", err)
+		logging.WarnRate("ims-voice-session-refresh-failed:"+call.CallID(),
+			"IMS 会话刷新失败", "device", a.deviceID, "call_id", call.CallID(), "err", err)
 	}
 }

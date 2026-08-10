@@ -52,10 +52,7 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 		a.releaseInboundCall(call, err, false)
 		return InboundAnswer{}, err
 	}
-	if err := call.StartSessionTimer(call.voiceSessionExpires()); err != nil {
-		a.releaseInboundCall(call, err, false)
-		return InboundAnswer{}, err
-	}
+	a.startVoiceSessionTimer(call)
 	answer.State = call.CallState().String()
 	a.emitCallAnswered(call)
 	return answer, nil

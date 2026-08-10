@@ -90,8 +90,8 @@ func TestInboundCallAnswerRelaysRTPAndRemoteBYECleansUp(t *testing.T) {
 		t.Fatalf("AnswerWithSDP answer=%+v err=%v", answer, err)
 	}
 	call := agent.callByID(delivered.CallID)
-	if response := responder.lastResponse(); response.SessionExpires != "120" || call.sessionTimer == nil {
-		t.Fatalf("inbound Session-Expires response=%q timer=%v", response.SessionExpires, call.sessionTimer)
+	if response := responder.lastResponse(); response.SessionExpires != "120" || call.Timers.SessionTimer == nil {
+		t.Fatalf("inbound Session-Expires response=%q timer=%v", response.SessionExpires, call.Timers.SessionTimer)
 	}
 	assertVoiceRelayPacket(t, client, offer.GetMediaPort(), imsPeer, call.RTPRelay().IMSPort())
 	if _, err := agent.HandleInboundVoiceRequest(imscore.InboundVoiceRequest{Method: "BYE", CallID: call.CallID()}); err != nil {

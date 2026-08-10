@@ -78,13 +78,11 @@ type Call struct {
 	callee       string
 
 	noAnswerTimer *time.Timer
-	sessionTimer  *time.Timer
 	prackTimer    *time.Timer
 
 	prackGeneration uint64
 	prackRetransmit func()
 	prackDeadline   time.Time
-	sessionExpires  time.Duration
 
 	imsDialog         *imscore.DialogHandle
 	imsInvite         *imscore.InviteHandle

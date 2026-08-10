@@ -51,9 +51,7 @@ func (a *Agent) handleIMS2xxResponse(
 	if err := call.TransitionChecked(callstate.StateConnected); err != nil {
 		return a.failEstablishedOutboundCall(ctx, call, err)
 	}
-	if err := call.StartSessionTimer(call.voiceSessionExpires()); err != nil {
-		return a.failEstablishedOutboundCall(ctx, call, err)
-	}
+	a.startVoiceSessionTimer(call)
 	a.emitCallAnswered(call)
 	return nil
 }

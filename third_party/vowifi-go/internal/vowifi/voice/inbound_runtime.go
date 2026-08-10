@@ -195,7 +195,8 @@ func (a *Agent) handleInboundUpdate(request imscore.InboundVoiceRequest, call *C
 	if err := a.applyIMSUpdate(call); err != nil {
 		return voiceResult(200), err
 	}
-	return voiceResult(200), call.StartSessionTimer(call.voiceSessionExpires())
+	a.startVoiceSessionTimer(call)
+	return voiceResult(200), nil
 }
 
 func (a *Agent) handleReinvite(request imscore.InboundVoiceRequest, call *Call) (imscore.InboundVoiceResult, error) {
@@ -209,7 +210,8 @@ func (a *Agent) handleReinvite(request imscore.InboundVoiceRequest, call *Call) 
 		if err := a.applyIMSUpdate(call); err != nil {
 			return voiceResult(200), err
 		}
-		return voiceResult(200), call.StartSessionTimer(call.voiceSessionExpires())
+		a.startVoiceSessionTimer(call)
+		return voiceResult(200), nil
 	}
 	if request.Responder == nil || !isVoiceSDPContentType(request.ContentType) {
 		return voiceResult(488), nil
@@ -243,9 +245,7 @@ func (a *Agent) handleReinvite(request imscore.InboundVoiceRequest, call *Call) 
 	if err := a.applyIMSUpdate(call); err != nil {
 		return voiceResult(0), err
 	}
-	if err := call.StartSessionTimer(call.voiceSessionExpires()); err != nil {
-		return voiceResult(0), err
-	}
+	a.startVoiceSessionTimer(call)
 	a.notifyIncomingCall(call)
 	return voiceResult(0), nil
 }
