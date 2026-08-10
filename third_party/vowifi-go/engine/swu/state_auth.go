@@ -195,6 +195,7 @@ func spoofAppleIMEI(imsi string) string {
 func (s *Session) runIKEAuthLoop(ctx context.Context) error {
 	s.setState(stateAuthenticating)
 	s.stage = stageInit
+	s.eapSuccessReceived = false
 
 	for {
 		switch s.stage {

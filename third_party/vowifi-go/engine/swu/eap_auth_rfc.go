@@ -39,6 +39,7 @@ func (s *Session) handleEAP(data []byte) ([]ikev2.Payload, error) {
 		if s.eapResultIndicated && !s.eapResultConfirmed {
 			return nil, errors.New("swu: EAP success before authenticated result indication")
 		}
+		s.eapSuccessReceived = true
 		s.stage = stageFinal
 		return nil, nil
 	case eapaka.CodeFailure:

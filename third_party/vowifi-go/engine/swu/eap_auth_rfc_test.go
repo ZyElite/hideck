@@ -323,6 +323,55 @@ func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
 	}
 }
 
+func TestEAPOnlyResponderMayOmitFinalAuthAfterMutualAKA(t *testing.T) {
+	session := NewSession(&Config{IMSI: "234102356143376", EPDGAddr: "epdg.example"})
+	session.eapOnlyAuthentication = true
+	session.eapType = eapaka.TypeAKA
+	session.eapKeys = eapaka.Keys{MSK: bytes.Repeat([]byte{0x71}, eapaka.KeyLengthMSK)}
+	session.responderIDType = ikev2.IDTypeFQDN
+	session.responderID = []byte("epdg.example")
+
+	if err := session.verifyEAPResponderAuth(nil); err == nil {
+		t.Fatal("accepted missing responder AUTH before EAP Success")
+	}
+	if _, err := session.handleEAP([]byte{eapaka.CodeSuccess, 8, 0, 4}); err != nil {
+		t.Fatalf("handle EAP Success: %v", err)
+	}
+	if err := session.verifyEAPResponderAuth(nil); err != nil {
+		t.Fatalf("original mutual EAP-AKA compatibility rejected missing responder AUTH: %v", err)
+	}
+}
+
+func TestMissingResponderAuthCompatibilityRejectsUnsafeState(t *testing.T) {
+	tests := []struct {
+		name       string
+		eapType    byte
+		msk        []byte
+		eapSuccess bool
+	}{
+		{name: "missing MSK", eapType: eapaka.TypeAKA, eapSuccess: true},
+		{
+			name: "AKA prime", eapType: eapaka.TypeAKAPrime,
+			msk: bytes.Repeat([]byte{0x71}, eapaka.KeyLengthMSK), eapSuccess: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session := NewSession(&Config{IMSI: "234102356143376", EPDGAddr: "epdg.example"})
+			session.eapOnlyAuthentication = true
+			session.eapType = test.eapType
+			session.eapKeys = eapaka.Keys{MSK: test.msk}
+			session.eapSuccessReceived = test.eapSuccess
+			session.responderIDType = ikev2.IDTypeFQDN
+			session.responderID = []byte("epdg.example")
+			session.stage = stageFinal
+			if err := session.verifyEAPResponderAuth(nil); err == nil {
+				t.Fatal("accepted missing responder AUTH in unsafe state")
+			}
+		})
+	}
+}
+
 func TestEAPOnlyResponderCannotOmitUnconfiguredIdentity(t *testing.T) {
 	session := NewSession(&Config{IMSI: "234102356143376"})
 	session.eapOnlyRequested = true

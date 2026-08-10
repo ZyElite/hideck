@@ -152,14 +152,21 @@ func configuredEPDGIdentity(address string) (byte, []byte, bool) {
 }
 
 func (s *Session) verifyEAPResponderAuth(payloads []ikev2.Payload) error {
+	auth := responderAuthPayload(payloads)
+	if auth == nil {
+		if err := s.canAcceptMissingResponderAuth(); err != nil {
+			return err
+		}
+		logger.Warn("ePDG 未返回 AUTH payload（显式允许缺失 Responder AUTH）")
+		return nil
+	}
 	if s.eapType != eapaka.TypeAKA && s.eapType != eapaka.TypeAKAPrime {
 		return fmt.Errorf("swu: responder AUTH used unsafe EAP type %d", s.eapType)
 	}
 	if len(s.eapKeys.MSK) == 0 || len(s.responderID) == 0 {
 		return errors.New("swu: incomplete EAP responder authentication state")
 	}
-	auth := responderAuthPayload(payloads)
-	if auth == nil || auth.AuthMethod != ikev2.AuthMethodSharedKey || len(auth.AuthData) == 0 {
+	if auth.AuthMethod != ikev2.AuthMethodSharedKey || len(auth.AuthData) == 0 {
 		return fmt.Errorf("swu: final EAP IKE_AUTH response missing MSK AUTH (payloads=%s)", ikePayloadTypes(payloads))
 	}
 	signed, err := s.responderSignedOctets(s.responderIDType, s.responderID)
@@ -171,6 +178,19 @@ func (s *Session) verifyEAPResponderAuth(payloads []ikev2.Payload) error {
 	if !hmac.Equal(auth.AuthData, expected) {
 		s.logResponderAuthMismatch(expected, auth.AuthData)
 		return errors.New("swu: EAP responder MSK AUTH verification failed")
+	}
+	return nil
+}
+
+func (s *Session) canAcceptMissingResponderAuth() error {
+	if !s.eapSuccessReceived {
+		return errors.New("EAP Success 未完成，拒绝缺失 Responder AUTH")
+	}
+	if len(s.eapKeys.MSK) == 0 {
+		return errors.New("MSK 不可用，拒绝缺失 Responder AUTH")
+	}
+	if s.eapType != eapaka.TypeAKA {
+		return fmt.Errorf("当前 EAP 方法不是 mutual EAP-AKA，拒绝缺失 Responder AUTH: type=%d", s.eapType)
 	}
 	return nil
 }

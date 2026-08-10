@@ -277,6 +277,7 @@ type Session struct {
 	eapIdentityTranscript  [][]byte
 	eapResultIndicated     bool
 	eapResultConfirmed     bool
+	eapSuccessReceived     bool
 	authPayload            []byte // responder AUTH payload (for verification)
 	skf                    []byte // SKF (encrypted IKE_AUTH response) pending decrypt
 	responderAuthenticated bool

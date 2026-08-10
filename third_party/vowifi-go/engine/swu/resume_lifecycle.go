@@ -76,6 +76,7 @@ func (s *Session) resetAfterSessionResumeFailure() {
 	s.responderAuthenticated = false
 	s.eapOnlyAuthentication = false
 	s.eapOnlyRequested = false
+	s.eapSuccessReceived = false
 	s.sessionResumed = false
 	s.syncLegacyIKEStateLocked()
 	s.mu.Unlock()
