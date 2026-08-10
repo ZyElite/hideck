@@ -52,4 +52,14 @@ func TestVoWiFiDeliveryStoreReportsMatchedPart(t *testing.T) {
 	if completed.State != "acked" || completed.Parts[0].SIPCode != 202 || completed.Parts[0].ReportAt == nil {
 		t.Fatalf("completed delivery result = %+v", completed)
 	}
+	if err := store.MarkSMSDeliveryPartSIPResult("message-1", 1, 202, "pending", "late SIP result", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	preserved, err := store.GetSMSDeliveryStatus("message-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved.Parts[0].State != "acked" || preserved.Parts[0].ReportAt == nil || preserved.Parts[0].ErrorText != "" {
+		t.Fatalf("late SIP result downgraded report = %+v", preserved.Parts[0])
+	}
 }

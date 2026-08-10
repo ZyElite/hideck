@@ -24,6 +24,7 @@ const (
 	// Recovered from the v1.5.5 data value used by dispatchSMSSendAccepted.
 	smsSendAcceptedExpiresHint int64 = 1_200_000_000
 	smsDeliveryStatePending          = "pending"
+	smsDeliveryStatePartialAck       = "partial_ack"
 	smsDeliveryStateFailed           = "failed"
 )
 
@@ -127,15 +128,19 @@ func (s *Service) executeSMSDelivery(
 	}
 	outcome := SendOutcome{
 		MessageID: environment.messageID, PartsTotal: len(parts),
-		DeliveryState: smsDeliveryStateAcked,
+		DeliveryState: smsDeliveryStatePending,
 	}
+	ackedParts := 0
 	for index := range parts {
-		pending, err := s.sendOutboundSMSPart(ctx, environment.messageID, parts[index])
+		pending, state, err := s.sendOutboundSMSPart(ctx, environment.messageID, parts[index])
 		if err != nil {
 			outcome.DeliveryState = smsDeliveryStateFailed
 			return outcome, err
 		}
 		parts[index].pending = pending
+		if state == smsDeliveryStateAcked {
+			ackedParts++
+		}
 		if index < len(parts)-1 {
 			if err := s.waitSMSInterPartDelay(ctx); err != nil {
 				outcome.DeliveryState = smsDeliveryStateFailed
@@ -143,10 +148,22 @@ func (s *Service) executeSMSDelivery(
 			}
 		}
 	}
+	outcome.DeliveryState = successfulSMSDeliveryState(ackedParts, len(parts))
 	if shouldSendTGSuccess(ctx) {
 		s.publishOutboundSMS(environment.recipient, environment.text, len(parts))
 	}
 	return outcome, nil
+}
+
+func successfulSMSDeliveryState(ackedParts, totalParts int) string {
+	switch {
+	case totalParts > 0 && ackedParts == totalParts:
+		return smsDeliveryStateAcked
+	case ackedParts > 0:
+		return smsDeliveryStatePartialAck
+	default:
+		return smsDeliveryStatePending
+	}
 }
 
 func (s *Service) waitSMSInterPartDelay(ctx context.Context) error {
@@ -218,18 +235,18 @@ func (s *Service) sendOutboundSMSPart(
 	ctx context.Context,
 	messageID string,
 	part outboundSMSPart,
-) (*smsPendingInfo, error) {
+) (*smsPendingInfo, string, error) {
 	sentAt := time.Now()
 	if s.delivery != nil {
 		if err := s.delivery.UpsertSMSDeliveryPart(messageID, part.number, part.callID, int(part.rpMR), smsDeliveryStatePending, sentAt); err != nil {
-			return nil, s.recordOutboundSMSFailure(messageID, part, fmt.Errorf("persist pending part: %w", err))
+			return nil, smsDeliveryStateFailed, s.recordOutboundSMSFailure(messageID, part, fmt.Errorf("persist pending part: %w", err))
 		}
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if s.smsTransactionTimeout <= 0 {
-		return nil, s.recordOutboundSMSFailure(messageID, part, errors.New("SMS transaction timeout is not configured"))
+		return nil, smsDeliveryStateFailed, s.recordOutboundSMSFailure(messageID, part, errors.New("SMS transaction timeout is not configured"))
 	}
 	transactionCtx, cancel := context.WithTimeout(ctx, s.smsTransactionTimeout)
 	defer cancel()
@@ -240,28 +257,30 @@ func (s *Service) sendOutboundSMSPart(
 			messageID: messageID, part: part, pending: pending, dispatchErr: transactionErr,
 		}
 		if isSoftMOSubmitProbeTimeout(transactionErr, sipResponseCode(response), s.cfg.Transport) {
-			return s.preservePendingSubmit(wait)
+			retained, preserveErr := s.preservePendingSubmit(wait)
+			return retained, smsDeliveryStatePending, preserveErr
 		}
 		if shouldWaitForSubmitReport(ctx, response, transactionErr) {
 			return s.waitForSubmitReport(ctx, wait)
 		}
 		s.takePendingSMSByCallID(part.callID)
 		persistErr := s.persistOutboundSIPResult(messageID, part.number, 0, smsDeliveryStateFailed, transactionErr.Error())
-		return nil, s.recordOutboundSMSFailure(messageID, part, errors.Join(transactionErr, persistErr))
+		return nil, smsDeliveryStateFailed, s.recordOutboundSMSFailure(messageID, part, errors.Join(transactionErr, persistErr))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		err = fmt.Errorf("MESSAGE rejected with status %d (%s)", response.StatusCode, strings.TrimSpace(response.Reason))
 		persistErr := s.persistOutboundSIPResult(
 			messageID, part.number, response.StatusCode, smsDeliveryStateFailed, err.Error(),
 		)
-		return nil, s.recordOutboundSMSFailure(messageID, part, errors.Join(err, persistErr))
+		return nil, smsDeliveryStateFailed, s.recordOutboundSMSFailure(messageID, part, errors.Join(err, persistErr))
 	}
-	if err := s.persistAcceptedSIPPart(messageID, part, response.StatusCode); err != nil {
+	state, err := s.persistAcceptedSIPPart(messageID, part, response.StatusCode)
+	if err != nil {
 		s.takePendingSMSByCallID(part.callID)
-		return nil, s.recordOutboundSMSFailure(messageID, part, err)
+		return nil, smsDeliveryStateFailed, s.recordOutboundSMSFailure(messageID, part, err)
 	}
 	s.expirePendingSMSAfter(part.callID, pendingSMSReportRetention)
-	return pending, nil
+	return pending, state, nil
 }
 
 func shouldWaitForSubmitReport(callerCtx context.Context, response *sip.Response, dispatchErr error) bool {
@@ -286,7 +305,7 @@ func (s *Service) preservePendingSubmit(wait smsSubmitReportWait) (*smsPendingIn
 		wait.messageID, wait.part.number, 0, smsDeliveryStatePending, wait.dispatchErr.Error(),
 	)
 	if persistErr == nil && s.delivery != nil {
-		persistErr = s.publishSMSDeliveryStatus(wait.messageID)
+		_, persistErr = s.publishSMSDeliveryStatus(wait.messageID)
 	}
 	if persistErr != nil {
 		s.takePendingSMSByCallID(wait.part.callID)
@@ -301,45 +320,51 @@ func (s *Service) preservePendingSubmit(wait smsSubmitReportWait) (*smsPendingIn
 func (s *Service) waitForSubmitReport(
 	ctx context.Context,
 	wait smsSubmitReportWait,
-) (*smsPendingInfo, error) {
+) (*smsPendingInfo, string, error) {
 	result, err := s.waitDeliveryReport(ctx, wait.pending, s.smsReportTimeout)
 	if err != nil {
 		waitErr := errors.Join(wait.dispatchErr, err)
 		persistErr := s.persistOutboundSIPResult(
 			wait.messageID, wait.part.number, 0, smsDeliveryStateFailed, waitErr.Error(),
 		)
-		return nil, s.recordOutboundSMSFailure(
+		return nil, smsDeliveryStateFailed, s.recordOutboundSMSFailure(
 			wait.messageID, wait.part, errors.Join(waitErr, persistErr),
 		)
 	}
 	if result.Status == smsDeliveryStateFailed {
 		reportErr := errors.New(firstNonBlank(result.Reason, "SMS delivery report failed"))
-		return nil, s.recordOutboundSMSFailure(wait.messageID, wait.part, reportErr)
+		return nil, smsDeliveryStateFailed, s.recordOutboundSMSFailure(wait.messageID, wait.part, reportErr)
 	}
-	return wait.pending, nil
+	if result.Status != smsDeliveryStateAcked {
+		return wait.pending, smsDeliveryStatePending, nil
+	}
+	return wait.pending, smsDeliveryStateAcked, nil
 }
 
-func (s *Service) persistAcceptedSIPPart(messageID string, part outboundSMSPart, sipCode int) error {
-	if err := s.persistOutboundSIPResult(messageID, part.number, sipCode, smsDeliveryStateAcked, ""); err != nil {
-		return err
+func (s *Service) persistAcceptedSIPPart(messageID string, part outboundSMSPart, sipCode int) (string, error) {
+	if err := s.persistOutboundSIPResult(messageID, part.number, sipCode, smsDeliveryStatePending, ""); err != nil {
+		return smsDeliveryStateFailed, err
 	}
 	if s.delivery == nil {
-		return nil
+		return smsDeliveryStatePending, nil
 	}
-	match, err := s.delivery.MarkSMSDeliveryPartReport(
-		part.callID, part.callID, s.cfg.DeviceID, int(part.rpMR),
-		smsDeliveryStateAcked, sipCode, 0, "", time.Now(),
-	)
+	status, err := s.publishSMSDeliveryStatus(messageID)
 	if err != nil {
-		return fmt.Errorf("persist accepted MESSAGE: %w", err)
+		return smsDeliveryStateFailed, err
 	}
-	if !match.Matched && strings.TrimSpace(match.MessageID) == "" {
-		return errors.New("persist accepted MESSAGE: delivery part did not match")
+	return successfulPartState(status, part.number), nil
+}
+
+func successfulPartState(status *DeliveryStatus, partNo int) string {
+	if status == nil {
+		return smsDeliveryStatePending
 	}
-	if err := s.delivery.RecomputeSMSDelivery(messageID, time.Now()); err != nil {
-		return fmt.Errorf("recompute accepted MESSAGE: %w", err)
+	for _, part := range status.Parts {
+		if part.PartNo == partNo && part.State == smsDeliveryStateAcked {
+			return smsDeliveryStateAcked
+		}
 	}
-	return s.publishSMSDeliveryStatus(messageID)
+	return smsDeliveryStatePending
 }
 
 func (s *Service) dispatchSubmitPartWithRetry(

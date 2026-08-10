@@ -87,10 +87,6 @@ func (s *Service) recordSMSDeliveryReport(raw string, report smsDeliveryReport) 
 	s.recordMORPErrorCause(report.rpCause)
 	inReplyTo := rawSIPHeaderValue(raw, "In-Reply-To")
 	callID := rawSIPHeaderValue(raw, "Call-ID")
-	s.completePendingSMSByReport(inReplyTo, callID, report.reference, smsSendResult{
-		Code: report.sipCode, Status: report.state, Reason: report.errorText,
-		Body: append([]byte(nil), []byte(raw)...), At: time.Now(),
-	})
 	if s.delivery == nil {
 		return errors.New("imscore: SMS delivery report store is unavailable")
 	}
@@ -112,7 +108,14 @@ func (s *Service) recordSMSDeliveryReport(raw string, report smsDeliveryReport) 
 	if err := s.delivery.RecomputeSMSDelivery(match.MessageID, time.Now()); err != nil {
 		return fmt.Errorf("imscore: recompute SMS delivery: %w", err)
 	}
-	return s.publishSMSDeliveryStatus(match.MessageID)
+	if _, err = s.publishSMSDeliveryStatus(match.MessageID); err != nil {
+		return err
+	}
+	s.completePendingSMSByReport(inReplyTo, callID, report.reference, smsSendResult{
+		Code: report.sipCode, Status: report.state, Reason: report.errorText,
+		Body: append([]byte(nil), []byte(raw)...), At: time.Now(),
+	})
+	return nil
 }
 
 func (s *Service) recordMORPErrorCause(cause int) {
@@ -126,10 +129,10 @@ func (s *Service) recordMORPErrorCause(cause int) {
 	}
 }
 
-func (s *Service) publishSMSDeliveryStatus(messageID string) error {
+func (s *Service) publishSMSDeliveryStatus(messageID string) (*DeliveryStatus, error) {
 	status, err := s.delivery.GetSMSDeliveryStatus(messageID)
 	if err != nil {
-		return fmt.Errorf("imscore: read SMS delivery status: %w", err)
+		return nil, fmt.Errorf("imscore: read SMS delivery status: %w", err)
 	}
 	now := time.Now()
 	partNo, sipCode, rpCause := latestDeliveryPart(status)
@@ -141,7 +144,7 @@ func (s *Service) publishSMSDeliveryStatus(messageID string) error {
 	case smsDeliveryStateFailed:
 		s.handleReportFailure(status, sipCode, now)
 	}
-	return nil
+	return status, nil
 }
 
 func (s *Service) dispatchSMSDeliveryUpdated(

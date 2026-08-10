@@ -2,6 +2,7 @@ package imscore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -13,6 +14,21 @@ import (
 	"github.com/warthog618/sms/encoding/tpdu"
 )
 
+type failingReportStore struct {
+	*memoryDeliveryStore
+}
+
+func (s *failingReportStore) MarkSMSDeliveryPartReport(
+	_, _, _ string,
+	_ int,
+	_ string,
+	_, _ int,
+	_ string,
+	_ time.Time,
+) (DeliveryPartMatch, error) {
+	return DeliveryPartMatch{}, errors.New("report persistence failed")
+}
+
 func TestInboundRPAckCompletesSMSDelivery(t *testing.T) {
 	service, subscriber, store, outbound := newDeliveryReportTestService(t)
 	outcome := sendDeliveryTestSMS(t, service, subscriber, outbound, "hello")
@@ -23,8 +39,8 @@ func TestInboundRPAckCompletesSMSDelivery(t *testing.T) {
 	}
 	assertDeliveryStatus(t, store, outcome.MessageID, smsDeliveryStateAcked, smsDeliveryStateAcked)
 	reported := store.part(outcome.MessageID, 1)
-	if reported.errorText != smsSubmitReportAck {
-		t.Fatalf("RP-ACK error text = %q", reported.errorText)
+	if reported.errorText != smsSubmitReportAck || reported.reportAt.IsZero() {
+		t.Fatalf("RP-ACK report = %+v", reported)
 	}
 	assertDeliveryEvents(t, subscriber, outcome.MessageID, "SMSDeliveryUpdated", "SMSDeliveryCompleted")
 }
@@ -83,8 +99,14 @@ func TestSuccessfulSIPResponseRetainsRPReportCorrelation(t *testing.T) {
 	service.smsReportTimeout = 20 * time.Millisecond
 	outcome := sendDeliveryTestSMS(t, service, subscriber, outbound, "hello")
 	time.Sleep(2 * service.smsReportTimeout)
-	assertDeliveryStatus(t, store, outcome.MessageID, smsDeliveryStateAcked, smsDeliveryStateAcked)
+	assertDeliveryStatus(t, store, outcome.MessageID, smsDeliveryStatePending, smsDeliveryStatePending)
+	if outcome.DeliveryState != smsDeliveryStatePending {
+		t.Fatalf("SIP-only outcome = %+v", outcome)
+	}
 	part := store.part(outcome.MessageID, 1)
+	if part.sipCode != 200 || !part.reportAt.IsZero() {
+		t.Fatalf("SIP acceptance persisted a report = %+v", part)
+	}
 	service.outboundMu.Lock()
 	pending := service.matchPendingByCallIDLocked(part.callID)
 	service.outboundMu.Unlock()
@@ -105,6 +127,28 @@ func TestUnmatchedDeliveryReportReturnsErrorAfterSIPResponse(t *testing.T) {
 	}
 	if !strings.HasPrefix(response, "SIP/2.0 200") {
 		t.Fatalf("SIP response = %q", response)
+	}
+}
+
+func TestReportPersistenceFailureDoesNotCompletePendingSend(t *testing.T) {
+	service, subscriber, store, outbound := newDeliveryReportTestService(t)
+	outcome := sendDeliveryTestSMS(t, service, subscriber, outbound, "hello")
+	part := store.part(outcome.MessageID, 1)
+	service.delivery = &failingReportStore{memoryDeliveryStore: store}
+
+	err := service.dispatchInboundSIP(
+		deliveryReportRequest([]byte{0x03, byte(part.rpMR)}, part.callID),
+		func(string) error { return nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "report persistence failed") {
+		t.Fatalf("dispatch error = %v", err)
+	}
+	assertDeliveryStatus(t, store, outcome.MessageID, smsDeliveryStatePending, smsDeliveryStatePending)
+	service.outboundMu.Lock()
+	pending := service.matchPendingByCallIDLocked(part.callID)
+	service.outboundMu.Unlock()
+	if pending == nil {
+		t.Fatal("failed report persistence completed the pending send")
 	}
 }
 
@@ -154,7 +198,7 @@ func sendDeliveryTestSMS(t *testing.T, service *Service, subscriber *captureIMSE
 		t.Fatalf("first event = %s", event.Type())
 	}
 	assertIMSEventTypes(t, subscriber,
-		"SMSDeliveryUpdated", "SMSDeliveryCompleted", "LogNotify", "SMSSent",
+		"SMSDeliveryUpdated", "LogNotify", "SMSSent",
 	)
 	return outcome
 }

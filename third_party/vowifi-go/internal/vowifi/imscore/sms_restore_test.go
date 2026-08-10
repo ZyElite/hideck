@@ -196,7 +196,7 @@ func TestOutboundSMSUsesProductionUDPSocket(t *testing.T) {
 	requestCh := make(chan string, 1)
 	go serveSingleSMSMessage(registrar, requestCh, serverErr)
 	outcome, err := service.SendSMSWithResult(context.Background(), "+447700900123", "socket")
-	if err != nil || outcome.MessageID == "" || outcome.DeliveryState != smsDeliveryStateAcked {
+	if err != nil || outcome.MessageID == "" || outcome.DeliveryState != smsDeliveryStatePending {
 		t.Fatalf("outcome=%+v err=%v", outcome, err)
 	}
 	select {

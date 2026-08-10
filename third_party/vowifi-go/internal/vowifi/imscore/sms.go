@@ -12,7 +12,7 @@ type SendOptions struct {
 	Encoding string
 }
 
-// SendOutcome is the v1.5.5 value result returned by SMS sends.
+// SendOutcome preserves the v1.5.5 value shape returned by SMS sends.
 type SendOutcome = smsdelivery.SendOutcome
 
 // SMSSendOptions carries optional SMS delivery parameters.

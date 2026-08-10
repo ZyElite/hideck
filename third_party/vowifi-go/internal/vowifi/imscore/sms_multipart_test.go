@@ -77,7 +77,7 @@ func TestOutboundMultipartSMSUsesCorrelatedReferences(t *testing.T) {
 			t.Fatalf("delivery event = %#v", event)
 		}
 	}
-	assertIMSEventTypes(t, subscriber, "SMSDeliveryCompleted", "LogNotify")
+	assertIMSEventTypes(t, subscriber, "LogNotify")
 	event := <-subscriber.events
 	sent, ok := event.(*events.EventSMSSent)
 	if !ok || sent.Content != text || sent.TotalParts != outcome.PartsTotal {

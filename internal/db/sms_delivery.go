@@ -165,9 +165,15 @@ func MarkSMSDeliveryPartSIPResult(
 	result := DB.Model(&SMSDeliveryPart{}).
 		Where("message_id = ? AND part_no = ?", messageID, partNo).
 		Updates(map[string]any{
-			"state":      strings.TrimSpace(state),
-			"sip_code":   sipCode,
-			"error_text": strings.TrimSpace(errText),
+			"state": gorm.Expr(
+				"CASE WHEN report_at IS NULL THEN ? ELSE state END",
+				strings.TrimSpace(state),
+			),
+			"sip_code": sipCode,
+			"error_text": gorm.Expr(
+				"CASE WHEN report_at IS NULL THEN ? ELSE error_text END",
+				strings.TrimSpace(errText),
+			),
 			"updated_at": at,
 		})
 	if result.Error != nil {

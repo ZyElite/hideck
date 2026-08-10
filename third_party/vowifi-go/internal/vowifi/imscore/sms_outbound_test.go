@@ -23,6 +23,7 @@ type captureDeliveryStore struct {
 	finalError  string
 	createError error
 	parts       map[string]capturedDeliveryPart
+	reportCalls int
 }
 
 type capturedSIPResult struct {
@@ -77,6 +78,7 @@ func (s *captureDeliveryStore) MarkSMSDeliveryPartSIPResult(
 func (s *captureDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, _ string, rpMR int, state string, _ int, _ int, _ string, _ time.Time) (DeliveryPartMatch, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reportCalls++
 	for _, key := range []string{inReplyTo, callID} {
 		if part, ok := s.parts[key]; ok {
 			return DeliveryPartMatch{MessageID: part.messageID, PartNo: part.partNo, State: state, Matched: true}, nil
@@ -163,10 +165,10 @@ func TestSendOutboundSMSWaitsForSIPSuccess(t *testing.T) {
 		t.Fatal("SMS send did not finish after SIP 200")
 	}
 	outcome := <-results
-	if outcome.DeliveryState != smsDeliveryStateAcked || outcome.PartsTotal != 1 || outcome.MessageID == "" {
+	if outcome.DeliveryState != smsDeliveryStatePending || outcome.PartsTotal != 1 || outcome.MessageID == "" {
 		t.Fatalf("outcome = %+v", outcome)
 	}
-	assertIMSEventTypes(t, subscriber, "SMSDeliveryUpdated", "SMSDeliveryCompleted", "LogNotify")
+	assertIMSEventTypes(t, subscriber, "SMSDeliveryUpdated", "LogNotify")
 	event := <-subscriber.events
 	sent, ok := event.(*events.EventSMSSent)
 	if !ok || sent.TargetURI != "+447700900123" || sent.Content != "hello" || sent.TotalParts != 1 {
@@ -175,8 +177,11 @@ func TestSendOutboundSMSWaitsForSIPSuccess(t *testing.T) {
 	if store.created == nil || store.created.Peer != "+447700900123" || len(store.partStates) != 1 || store.partStates[0] != smsDeliveryStatePending {
 		t.Fatalf("delivery store = %+v, parts = %v", store.created, store.partStates)
 	}
-	if len(store.sipResults) != 1 || store.sipResults[0].code != 200 || store.sipResults[0].state != smsDeliveryStateAcked {
+	if len(store.sipResults) != 1 || store.sipResults[0].code != 200 || store.sipResults[0].state != smsDeliveryStatePending {
 		t.Fatalf("SIP results = %+v", store.sipResults)
+	}
+	if store.reportCalls != 0 || store.created.State != smsDeliveryStatePending {
+		t.Fatalf("SIP acceptance fabricated a delivery report: calls=%d status=%+v", store.reportCalls, store.created)
 	}
 }
 
@@ -352,7 +357,7 @@ func TestUDPSubmitProbeTimeoutReturnsPendingAndRetainsRPReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome.DeliveryState != smsDeliveryStateAcked {
+	if outcome.DeliveryState != smsDeliveryStatePending {
 		t.Fatalf("outcome = %+v", outcome)
 	}
 	request := <-requests

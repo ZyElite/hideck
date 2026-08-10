@@ -15,6 +15,7 @@ type memoryDeliveryPart struct {
 	sipCode   int
 	rpCause   int
 	errorText string
+	reportAt  time.Time
 }
 
 type memoryDeliveryStore struct {
@@ -65,14 +66,17 @@ func (s *memoryDeliveryStore) MarkSMSDeliveryPartSIPResult(
 	defer s.mu.Unlock()
 	for _, part := range s.parts[messageID] {
 		if part.partNo == partNo {
-			part.state, part.sipCode, part.errorText = state, sipCode, errText
+			part.sipCode = sipCode
+			if part.reportAt.IsZero() {
+				part.state, part.errorText = state, errText
+			}
 			return nil
 		}
 	}
 	return errors.New("delivery part not found")
 }
 
-func (s *memoryDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, _ string, rpMR int, state string, sipCode int, rpCause int, errText string, _ time.Time) (DeliveryPartMatch, error) {
+func (s *memoryDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, _ string, rpMR int, state string, sipCode int, rpCause int, errText string, at time.Time) (DeliveryPartMatch, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	part := s.findPart(inReplyTo, callID, rpMR)
@@ -84,6 +88,7 @@ func (s *memoryDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, _ str
 		part.sipCode = sipCode
 	}
 	part.rpCause, part.errorText = rpCause, errText
+	part.reportAt = at
 	return DeliveryPartMatch{
 		MessageID: part.messageID, PartNo: part.partNo, State: state, Matched: true,
 	}, nil
@@ -158,9 +163,14 @@ func (s *memoryDeliveryStore) GetSMSDeliveryStatus(messageID string) (*DeliveryS
 	copyStatus := *delivery
 	copyStatus.Parts = make([]DeliveryPartStatus, 0, len(s.parts[messageID]))
 	for _, part := range s.parts[messageID] {
+		var reportAt *time.Time
+		if !part.reportAt.IsZero() {
+			value := part.reportAt
+			reportAt = &value
+		}
 		copyStatus.Parts = append(copyStatus.Parts, DeliveryPartStatus{
 			PartNo: part.partNo, CallID: part.callID, State: part.state,
-			SIPCode: part.sipCode, RPCause: part.rpCause,
+			SIPCode: part.sipCode, RPCause: part.rpCause, ReportAt: reportAt,
 		})
 	}
 	return &copyStatus, nil
