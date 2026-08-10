@@ -47,6 +47,7 @@ type InboundVoiceRequest struct {
 	DialogMatched    bool
 	DialogResponded  bool
 	DialogTerminated bool
+	Session          *imsendpoint.Session
 }
 
 // InboundVoiceResponse is one provisional or final response to an inbound
@@ -76,6 +77,13 @@ type InboundVoiceResult struct {
 // VoiceRequestHandler consumes inbound IMS voice dialog requests.
 type VoiceRequestHandler interface {
 	HandleInboundVoiceRequest(InboundVoiceRequest) (InboundVoiceResult, error)
+}
+
+// EventOwnedVoiceRequestHandler lets the v1.5.5 endpoint event consumer own
+// selected methods without racing the additive synchronous handler.
+type EventOwnedVoiceRequestHandler interface {
+	OwnsInboundVoiceMethod(method string) bool
+	InboundVoiceEventSubscription() string
 }
 
 // SetVoiceRequestHandler installs or removes the active voice router.
@@ -182,37 +190,39 @@ func (s *Service) EventBus() *EventBus {
 	return s.bus
 }
 
-func (s *Service) handleInboundVoice(
-	raw string,
-	reply func(string) error,
-	transaction *serverSIPTransaction,
-) (inboundSIPResult, bool, error) {
+func (s *Service) handleInboundVoice(dispatch inboundSIPDispatch) (inboundSIPResult, bool, error) {
 	s.mu.RLock()
 	handler := s.voiceHandler
 	s.mu.RUnlock()
 	if handler == nil {
 		return inboundSIPResult{}, false, nil
 	}
-	dialogRead := s.readInboundVoiceDialog(raw, transaction)
-	body, err := rawSIPBody(raw)
+	method := strings.ToUpper(strings.TrimSpace(sipRequestMethod(dispatch.raw)))
+	owner, eventOwned := handler.(EventOwnedVoiceRequestHandler)
+	if eventOwned && owner.OwnsInboundVoiceMethod(method) &&
+		dispatch.events.enqueuedFor(owner.InboundVoiceEventSubscription()) {
+		return inboundSIPResult{}, true, nil
+	}
+	dialogRead := s.readInboundVoiceDialog(dispatch.raw, dispatch.transaction)
+	body, err := rawSIPBody(dispatch.raw)
 	if err != nil {
 		return inboundSIPResult{}, true, err
 	}
 	request := InboundVoiceRequest{
-		Method: sipRequestMethod(raw), CallID: rawSIPHeaderValue(raw, "Call-ID"),
-		From: rawSIPHeaderValue(raw, "From"), To: rawSIPHeaderValue(raw, "To"),
-		Contact: rawSIPHeaderValue(raw, "Contact"), RecordRoute: rawSIPHeaderValue(raw, "Record-Route"),
-		CSeq: rawSIPHeaderValue(raw, "CSeq"), ContentType: rawSIPHeaderValue(raw, "Content-Type"),
-		SessionExpires: rawSIPHeaderValue(raw, "Session-Expires"),
-		Body:           body, Responder: newInboundVoiceResponder(raw, reply),
+		Method: sipRequestMethod(dispatch.raw), CallID: rawSIPHeaderValue(dispatch.raw, "Call-ID"),
+		From: rawSIPHeaderValue(dispatch.raw, "From"), To: rawSIPHeaderValue(dispatch.raw, "To"),
+		Contact: rawSIPHeaderValue(dispatch.raw, "Contact"), RecordRoute: rawSIPHeaderValue(dispatch.raw, "Record-Route"),
+		CSeq: rawSIPHeaderValue(dispatch.raw, "CSeq"), ContentType: rawSIPHeaderValue(dispatch.raw, "Content-Type"),
+		SessionExpires: rawSIPHeaderValue(dispatch.raw, "Session-Expires"),
+		Body:           body, Responder: newInboundVoiceResponder(dispatch.raw, dispatch.reply),
 		Dialog: dialogRead.handle, DialogMatched: dialogRead.matched,
 		DialogResponded: dialogRead.responded, DialogTerminated: dialogRead.terminated,
 	}
-	if transaction != nil && transaction.request != nil {
-		request.Request = transaction.request.Clone()
-		request.InboundRequest = newInboundRequestHandle(transaction.request, transaction)
-		if transaction.request.IsInvite() {
-			request.ServerInvite = newServerInviteHandle(transaction.request, transaction)
+	if dispatch.transaction != nil && dispatch.transaction.request != nil {
+		request.Request = dispatch.transaction.request.Clone()
+		request.InboundRequest = newInboundRequestHandle(dispatch.transaction.request, dispatch.transaction)
+		if dispatch.transaction.request.IsInvite() {
+			request.ServerInvite = newServerInviteHandle(dispatch.transaction.request, dispatch.transaction)
 		}
 	}
 	result, handlerErr := handler.HandleInboundVoiceRequest(request)
@@ -226,7 +236,7 @@ func (s *Service) handleInboundVoice(
 	if result.StatusCode == 0 {
 		return inboundSIPResult{}, true, err
 	}
-	response, responseErr := buildSIPRequestResponse(raw, result.StatusCode)
+	response, responseErr := buildSIPRequestResponse(dispatch.raw, result.StatusCode)
 	if responseErr != nil {
 		return inboundSIPResult{}, true, responseErr
 	}

@@ -53,6 +53,17 @@ type imsEventBus struct {
 	publishCounts map[string]uint64
 }
 
+type imsEventPublishReceipt struct {
+	matched       int
+	enqueued      int
+	queueFull     int
+	subscriptions map[string]int
+}
+
+func (r imsEventPublishReceipt) enqueuedFor(name string) bool {
+	return r.subscriptions[strings.TrimSpace(name)] > 0
+}
+
 func newIMSEventBus(device string) *imsEventBus {
 	return &imsEventBus{
 		device:        strings.TrimSpace(device),
@@ -137,13 +148,18 @@ func (b *imsEventBus) unsubscribe(id uint64) {
 }
 
 func (b *imsEventBus) publish(event imsendpoint.Event) (matched, enqueued, queueFull int) {
+	receipt := b.publishWithReceipt(event)
+	return receipt.matched, receipt.enqueued, receipt.queueFull
+}
+
+func (b *imsEventBus) publishWithReceipt(event imsendpoint.Event) imsEventPublishReceipt {
 	if b == nil {
-		return 0, 0, 0
+		return imsEventPublishReceipt{}
 	}
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
-		return 0, 0, 0
+		return imsEventPublishReceipt{}
 	}
 	b.publishCounts[imsEventCounterKey(event)]++
 	subscribers := make([]*imsEventSubscriber, 0, len(b.subscribers))
@@ -151,18 +167,20 @@ func (b *imsEventBus) publish(event imsendpoint.Event) (matched, enqueued, queue
 		subscribers = append(subscribers, subscriber)
 	}
 	b.mu.Unlock()
+	receipt := imsEventPublishReceipt{subscriptions: make(map[string]int)}
 	for _, subscriber := range subscribers {
 		if !subscriber.matches(event) {
 			continue
 		}
-		matched++
+		receipt.matched++
 		if subscriber.enqueue(event) {
-			enqueued++
+			receipt.enqueued++
+			receipt.subscriptions[subscriber.spec.Name]++
 			continue
 		}
-		queueFull++
+		receipt.queueFull++
 	}
-	return matched, enqueued, queueFull
+	return receipt
 }
 
 func (b *imsEventBus) close() {

@@ -23,6 +23,13 @@ type inboundSIPResult struct {
 	afterReply func()
 }
 
+type inboundSIPDispatch struct {
+	raw         string
+	reply       func(string) error
+	transaction *serverSIPTransaction
+	events      imsEventPublishReceipt
+}
+
 func (s *Service) receiverStarted() {
 	s.receiverMu.Lock()
 	s.activeReceivers++
@@ -74,6 +81,15 @@ func (s *Service) handleInboundSIPTransaction(
 	reply func(string) error,
 	transaction *serverSIPTransaction,
 ) (inboundSIPResult, error) {
+	return s.handleInboundSIPDispatch(ctx, inboundSIPDispatch{
+		raw: raw, reply: reply, transaction: transaction,
+	})
+}
+
+func (s *Service) handleInboundSIPDispatch(
+	ctx context.Context,
+	dispatch inboundSIPDispatch,
+) (inboundSIPResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -82,47 +98,48 @@ func (s *Service) handleInboundSIPTransaction(
 		return inboundSIPResult{}, ctx.Err()
 	default:
 	}
-	method := strings.ToUpper(sipRequestMethod(raw))
+	method := strings.ToUpper(sipRequestMethod(dispatch.raw))
 	if method == "" {
 		return inboundSIPResult{}, errors.New("imscore: invalid inbound SIP message")
 	}
 	switch method {
 	case "NOTIFY":
-		response, err := buildSIPRequestResponse(raw, 200)
+		response, err := buildSIPRequestResponse(dispatch.raw, 200)
 		return inboundSIPResult{response: response, afterReply: func() {
-			s.handleRegistrationNotification(raw)
+			s.handleRegistrationNotification(dispatch.raw)
 		}}, err
 	case "OPTIONS":
-		response, err := buildSIPRequestResponse(raw, 200)
+		response, err := buildSIPRequestResponse(dispatch.raw, 200)
 		return inboundSIPResult{response: response}, err
 	case "MESSAGE":
-		return s.handleInboundSMS(raw)
+		return s.handleInboundSMS(dispatch.raw)
 	case "INFO", "BYE":
-		result, handled, err := s.handleInboundUSSI(raw)
+		result, handled, err := s.handleInboundUSSI(dispatch.raw)
 		if handled {
 			return result, err
 		}
-		result, handled, err = s.handleInboundVoice(raw, reply, transaction)
+		result, handled, err = s.handleInboundVoice(dispatch)
 		if handled {
 			return result, err
 		}
-		response, responseErr := buildSIPRequestResponse(raw, 405)
+		response, responseErr := buildSIPRequestResponse(dispatch.raw, 405)
 		return inboundSIPResult{response: response}, responseErr
 	case "INVITE", "CANCEL", "PRACK", "UPDATE":
-		result, handled, err := s.handleInboundVoice(raw, reply, transaction)
+		result, handled, err := s.handleInboundVoice(dispatch)
 		if handled {
 			return result, err
 		}
-		response, responseErr := buildSIPRequestResponse(raw, 405)
+		response, responseErr := buildSIPRequestResponse(dispatch.raw, 405)
 		return inboundSIPResult{response: response}, responseErr
 	case "ACK":
-		result, handled, err := s.handleInboundVoice(raw, reply, nil)
+		dispatch.transaction = nil
+		result, handled, err := s.handleInboundVoice(dispatch)
 		if handled {
 			return result, err
 		}
 		return inboundSIPResult{}, err
 	default:
-		response, err := buildSIPRequestResponse(raw, 405)
+		response, err := buildSIPRequestResponse(dispatch.raw, 405)
 		return inboundSIPResult{response: response}, err
 	}
 }
@@ -162,14 +179,14 @@ func (s *Service) dispatchInboundSIPRequest(
 	if handled || err != nil {
 		return err
 	}
-	s.publishIMSEvent(s.buildInboundRequestEvent(request, transaction))
+	events := s.publishIMSEvent(s.buildInboundRequestEvent(request, transaction))
 	responseWriter := reply
 	if transaction != nil {
 		responseWriter = transaction.respondRaw
 	}
-	result, err := s.handleInboundSIPTransaction(
-		context.Background(), raw, responseWriter, transaction,
-	)
+	result, err := s.handleInboundSIPDispatch(context.Background(), inboundSIPDispatch{
+		raw: raw, reply: responseWriter, transaction: transaction, events: events,
+	})
 	if result.response == "" {
 		if err != nil && transaction != nil {
 			transaction.fail(err, true)

@@ -25,14 +25,14 @@ func (s *Service) getIMSEventBus() *imsEventBus {
 	return s.imsEventBus
 }
 
-func (s *Service) publishIMSEvent(event imsendpoint.Event) {
+func (s *Service) publishIMSEvent(event imsendpoint.Event) imsEventPublishReceipt {
 	if s == nil {
-		return
+		return imsEventPublishReceipt{}
 	}
 	if strings.TrimSpace(event.DeviceID) == "" {
 		event.DeviceID = s.DeviceID()
 	}
-	s.getIMSEventBus().publish(event)
+	return s.getIMSEventBus().publishWithReceipt(event)
 }
 
 func (s *Service) buildIMSEventFromRequest(request *sip.Request) imsendpoint.Event {

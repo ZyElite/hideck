@@ -23,7 +23,7 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 		return InboundAnswer{}, errors.New("voice: inbound call is not alerting")
 	}
 	responder := call.inboundResponseWriter()
-	if responder == nil {
+	if responder == nil && !call.hasServerInvite() {
 		return InboundAnswer{}, errors.New("voice: inbound INVITE response context is unavailable")
 	}
 	answer, err := a.applyInboundAnswer(call, clientSDP)
@@ -83,7 +83,7 @@ func (a *Agent) rejectInboundCall(call *Call, statusCode int) error {
 		return errors.New("voice: inbound call is not alerting")
 	}
 	responder := call.inboundResponseWriter()
-	if responder == nil {
+	if responder == nil && !call.hasServerInvite() {
 		return errors.New("voice: inbound INVITE response context is unavailable")
 	}
 	structured, err := a.rejectStoredServerInvite(call, statusCode)
@@ -121,7 +121,7 @@ func (a *Agent) notifyIncomingCall(call *Call) {
 
 func (a *Agent) startInboundNoAnswerTimer(call *Call) {
 	call.mu.Lock()
-	call.noAnswerTimer = time.AfterFunc(voiceInviteTimeout, func() {
+	call.noAnswerTimer = time.AfterFunc(inboundClientWaitTimeout, func() {
 		call.inboundDecisionMu.Lock()
 		defer call.inboundDecisionMu.Unlock()
 		if call.CallState() != callstate.StateAlerting {
@@ -136,14 +136,14 @@ func (a *Agent) startInboundNoAnswerTimer(call *Call) {
 func (a *Agent) sendInboundTimeout(call *Call) error {
 	cause := errors.New("voice: inbound call timed out")
 	responder := call.inboundResponseWriter()
-	if responder == nil {
+	if responder == nil && !call.hasServerInvite() {
 		return cause
 	}
 	structured, err := a.rejectStoredServerInvite(call, 480)
 	if err != nil {
 		return errors.Join(cause, err)
 	}
-	if !structured {
+	if !structured && responder != nil {
 		if err := responder.Respond(imscore.InboundVoiceResponse{StatusCode: 480}); err != nil {
 			return errors.Join(cause, fmt.Errorf("send 480 response: %w", err))
 		}

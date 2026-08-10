@@ -257,17 +257,6 @@ func (a *Agent) HandleClientPrack(callID string) error {
 	return errors.New("voice: PRACK requires the reliable provisional response context")
 }
 
-// --- IMS event handlers ---
-
-// OnIMSInvite handles an incoming INVITE from the IMS network.
-func (a *Agent) OnIMSInvite(peer, callID string, sdp string) *Call {
-	call := NewCallFromRequestForAgent(a, peer, callID)
-	_, _ = ProcessIncomingIMSSDP(sdp)
-	a.emitIncomingCall(call)
-	a.emitCallRinging(call)
-	return call
-}
-
 // OnIMSBye handles a BYE from the IMS network.
 func (a *Agent) OnIMSBye(callID string) error {
 	if a == nil {
@@ -288,15 +277,16 @@ func (a *Agent) OnIMSBye(callID string) error {
 }
 
 func (a *Agent) finishRemoteBye(call *Call) error {
+	clientErr := a.sendClientBye(call)
 	_ = call.TransitionChecked(callstate.StateDisconnected)
 	_ = call.TransitionChecked(callstate.StateEnded)
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
-	call.SetIMSDialog(nil)
+	closeErr := a.closeCallDialog(context.Background(), call)
 	call.CloseDone()
 	a.emitCallEnded(call, "remote_bye")
 	a.finalizeActiveCall(call)
-	return nil
+	return errors.Join(clientErr, closeErr)
 }
 
 // OnIMSCancel handles a CANCEL from the IMS network.
@@ -310,13 +300,9 @@ func (a *Agent) OnIMSCancel(callID string) error {
 	if call == nil {
 		return errors.New("voice: call not found")
 	}
-	_ = call.TransitionChecked(callstate.StateFailed)
-	_ = call.StopMedia()
-	_ = call.EnsureTimerStopped()
-	call.CloseDone()
-	a.emitCallCanceled(call, "remote_cancel")
-	a.finalizeActiveCall(call)
-	return nil
+	clientErr := a.sendClientCancel(call)
+	a.releaseInboundCall(call, errors.New("voice: call canceled by IMS"), true)
+	return clientErr
 }
 
 // OnIMSUpdate handles a re-INVITE/UPDATE from the IMS network.
@@ -348,15 +334,6 @@ func (a *Agent) applyIMSUpdate(call *Call) error {
 	a.emitCallMediaUpdated(call)
 	return nil
 }
-
-// HandleIMSByeEvent handles an IMS BYE event.
-func (a *Agent) HandleIMSByeEvent(callID string) error { return a.OnIMSBye(callID) }
-
-// HandleIMSCancelEvent handles an IMS CANCEL event.
-func (a *Agent) HandleIMSCancelEvent(callID string) error { return a.OnIMSCancel(callID) }
-
-// HandleIMSUpdateEvent handles an IMS UPDATE event.
-func (a *Agent) HandleIMSUpdateEvent(callID string) error { return a.OnIMSUpdate(callID) }
 
 // --- Wiring ---
 

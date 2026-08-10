@@ -75,6 +75,10 @@ func (a *Agent) HandleInboundVoiceRequest(request imscore.InboundVoiceRequest) (
 
 func (a *Agent) handleInboundInvite(request imscore.InboundVoiceRequest, call *Call) (imscore.InboundVoiceResult, error) {
 	if call != nil {
+		if call.CallDirection() == callstate.DirectionInbound && call.CallState() == callstate.StateAlerting {
+			a.maybeStartInboundClient(call)
+			return voiceResult(0), nil
+		}
 		return a.handleReinvite(request, call)
 	}
 	if strings.TrimSpace(request.CallID) == "" || voiceHeaderURI(request.From) == "" || voiceHeaderURI(request.To) == "" {
@@ -83,13 +87,18 @@ func (a *Agent) handleInboundInvite(request imscore.InboundVoiceRequest, call *C
 	if !isVoiceSDPContentType(request.ContentType) {
 		return voiceResult(415), nil
 	}
-	if request.Responder == nil {
+	if request.Responder == nil && request.ServerInvite == nil {
 		return voiceResult(500), errors.New("voice: inbound INVITE reply path is unavailable")
 	}
+	var created bool
 	var err error
-	call, err = a.reserveInboundCall(request)
+	call, created, err = a.reserveInboundCall(request)
 	if err != nil {
 		return voiceResult(486), nil
+	}
+	if !created {
+		a.maybeStartInboundClient(call)
+		return voiceResult(0), nil
 	}
 	status, err := a.beginInboundInvite(call, request)
 	if status != 0 || err != nil {
@@ -98,6 +107,7 @@ func (a *Agent) handleInboundInvite(request imscore.InboundVoiceRequest, call *C
 	a.emitIncomingCall(call)
 	a.emitCallRinging(call)
 	a.notifyIncomingCall(call)
+	a.maybeStartInboundClient(call)
 	return voiceResult(0), nil
 }
 
@@ -107,7 +117,16 @@ func (a *Agent) beginInboundInvite(call *Call, request imscore.InboundVoiceReque
 	call.SetStartTime(time.Now())
 	call.setInboundRequest(request.Responder)
 	call.setServerInvite(request.ServerInvite, request.Request)
+	if call.ClientCallID() == "" {
+		call.SetClientCallID(call.CallID() + "-" + voiceHex(16))
+	}
 	call.applyVoiceSessionExpires(request.SessionExpires)
+	if request.ServerInvite != nil {
+		if _, err := a.rejectStoredServerInvite(call, 100); err != nil {
+			a.releaseInboundCall(call, err, false)
+			return 0, err
+		}
+	}
 	if err := a.prepareInboundVoiceDialog(call, request); err != nil {
 		a.releaseInboundCall(call, err, false)
 		return 500, err
@@ -116,12 +135,20 @@ func (a *Agent) beginInboundInvite(call *Call, request imscore.InboundVoiceReque
 		a.releaseInboundCall(call, err, false)
 		return 488, nil
 	}
-	if err := request.Responder.Respond(imscore.InboundVoiceResponse{StatusCode: 180}); err != nil {
+	if err := a.respondInboundProvisional(call, 180); err != nil {
 		a.releaseInboundCall(call, err, false)
 		return 0, err
 	}
+	call.markInboundPrepared()
 	a.startInboundNoAnswerTimer(call)
 	return 0, nil
+}
+
+func (a *Agent) respondInboundProvisional(call *Call, status int) error {
+	if call == nil {
+		return errInboundCallUnavailable
+	}
+	return a.sendStatusResponseResult(status, imscore.SIPStatusText(status), call)
 }
 
 func (a *Agent) handleInboundCancel(request imscore.InboundVoiceRequest, call *Call) (imscore.InboundVoiceResult, error) {
@@ -134,21 +161,22 @@ func (a *Agent) handleInboundCancel(request imscore.InboundVoiceRequest, call *C
 		return voiceResult(481), nil
 	}
 	responder := call.inboundResponseWriter()
-	if responder == nil {
+	if responder == nil && !call.hasServerInvite() {
 		return voiceResult(500), errors.New("voice: inbound INVITE response context is unavailable")
 	}
 	if request.Responder == nil {
 		return voiceResult(500), errors.New("voice: CANCEL reply path is unavailable")
 	}
 	cancelErr := request.Responder.Respond(imscore.InboundVoiceResponse{
-		StatusCode: 200, ToTag: responder.LocalTag(),
+		StatusCode: 200, ToTag: call.inboundLocalTagValue(),
 	})
 	structured, inviteErr := a.rejectStoredServerInvite(call, 487)
-	if !structured {
+	if !structured && responder != nil {
 		inviteErr = responder.Respond(imscore.InboundVoiceResponse{StatusCode: 487})
 	}
+	clientErr := a.sendClientCancel(call)
 	a.releaseInboundCall(call, errors.New("voice: call canceled by IMS"), true)
-	return voiceResult(0), errors.Join(cancelErr, inviteErr)
+	return voiceResult(0), errors.Join(cancelErr, inviteErr, clientErr)
 }
 
 func (a *Agent) handleInboundUpdate(request imscore.InboundVoiceRequest, call *Call) (imscore.InboundVoiceResult, error) {

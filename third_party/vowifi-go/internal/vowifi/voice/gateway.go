@@ -3,8 +3,11 @@ package voice
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voiceclient"
 )
 
@@ -133,6 +136,28 @@ func (g *Gateway) DeviceStatus() map[string]interface{} {
 		return map[string]interface{}{"registered": false}
 	}
 	return g.agent.deviceStatus()
+}
+
+// OnIMSInvite retains the v1.5.5 raw compatibility entry point. Production
+// endpoint delivery uses Agent.OnIMSInvite with a retained server handle.
+func (g *Gateway) OnIMSInvite(deviceID string, raw []byte, session *imsendpoint.Session) {
+	if g == nil || g.agent == nil {
+		logging.WarnRate("voice-gateway-invite:"+strings.TrimSpace(deviceID),
+			voiceActorEventLogInterval, "voice gateway has no agent", "device", deviceID)
+		return
+	}
+	if deviceID = strings.TrimSpace(deviceID); deviceID != "" && deviceID != g.agent.DeviceID() {
+		logging.WarnRate("voice-gateway-invite:"+deviceID, voiceActorEventLogInterval,
+			"voice gateway agent does not match device", "device", deviceID)
+		return
+	}
+	request, err := parseVoiceRequest(string(raw))
+	if err != nil {
+		logging.WarnRate("voice-gateway-invite-parse:"+deviceID, voiceActorEventLogInterval,
+			"voice gateway INVITE parse failed", "device", deviceID, "err", err)
+		return
+	}
+	g.agent.OnIMSInvite(request, session, nil)
 }
 
 // SimulateCall runs the recovered device-scoped timed-call workflow.

@@ -20,6 +20,8 @@ const (
 	voiceInviteTimeout         = 30 * time.Second
 	voiceHangupTimeout         = 10 * time.Second
 	voiceActorEventLogInterval = 10 * time.Second
+	inboundClientWaitTimeout   = 120 * time.Second
+	inboundClientTxTimeout     = 32 * time.Second
 )
 
 // NewAgent creates a voice agent for a device.
@@ -66,6 +68,7 @@ func (a *Agent) Start() error {
 	a.actor.Start(a.ctx)
 	if a.ims != nil {
 		a.ims.SetVoiceRequestHandler(a)
+		a.imsUnsubscribe = a.subscribeIMSEvents()
 	}
 	if a.clientAdapter != nil {
 		a.clientBridge = client.NewBridge(a.deviceID, a.clientAdapter)
@@ -91,6 +94,8 @@ func (a *Agent) Stop() error {
 	a.cancel = nil
 	a.ctx = nil
 	clientBridge := a.clientBridge
+	unsubscribe := a.imsUnsubscribe
+	a.imsUnsubscribe = nil
 	var activeCall *Call
 	if a.activeCall != nil && !a.activeCall.IsTerminalState() {
 		activeCall = a.activeCall
@@ -98,6 +103,9 @@ func (a *Agent) Stop() error {
 	a.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if unsubscribe != nil {
+		unsubscribe()
 	}
 	if clientBridge != nil {
 		clientBridge.Stop()
