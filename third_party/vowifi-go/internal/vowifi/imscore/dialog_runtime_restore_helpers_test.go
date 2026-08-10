@@ -65,7 +65,7 @@ func newRegisteredUDPDialogService(
 		kind: "udp", remote: remote, packet: client,
 		port: client.LocalAddr().(*net.UDPAddr).Port,
 	})
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	return service, registrar, testUDPClientDialog(t, service)
 }
 

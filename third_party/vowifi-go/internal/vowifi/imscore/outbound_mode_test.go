@@ -107,7 +107,7 @@ func TestWriteStatelessWithSipgoUsesResolvedExternalSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	request := parsedDispatchRequest(t, "stateless-message", 1)
 	originalDestination := request.Destination()
 	var sent string
@@ -151,7 +151,7 @@ func TestOutboundModeSnapshotFallsBackToRemoteRoute(t *testing.T) {
 		_ = packet.Close()
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	request := parsedDispatchRequest(t, "route-fallback", 1)
 	service.mu.Lock()
 	service.registrationIO = packet

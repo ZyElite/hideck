@@ -34,7 +34,7 @@ func TestRegisterUsesConfiguredIMSNetworkTransport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err != nil {
@@ -86,7 +86,7 @@ func TestRegisterAutoStartsWithUDP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err != nil {
@@ -112,7 +112,7 @@ func TestRegisterTCPFallsBackToUDPWhenTCPConnectFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err != nil {
@@ -139,7 +139,7 @@ func TestRegisterTCPRetriesUDPAfter503BeforeAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err != nil {
@@ -164,7 +164,7 @@ func TestRegisterTCPDoesNotRetryUDPAfter403(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err == nil || !strings.Contains(err.Error(), "status 403") {
@@ -349,7 +349,7 @@ func TestRegistrationRefreshesBeforeExpiryAndReportsFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err != nil {
@@ -432,7 +432,7 @@ func TestRegisterRecoversFromAKASQNSynchronizationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err != nil {
@@ -462,7 +462,7 @@ func TestRegisterLimitsAKAChallenges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	svc.transport.SetSendFn(func(request string) error {
 		challenge := strings.TrimPrefix(strings.TrimSpace(digestChallengeHeader(0x11, 0x22)), "WWW-Authenticate: ")
 		svc.transport.DeliverResponse(registerResponseForRequest(request, 401, map[string]string{
@@ -531,7 +531,7 @@ func TestRegisterPropagatesRegistrarRejection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err == nil || !strings.Contains(err.Error(), "status 403") {

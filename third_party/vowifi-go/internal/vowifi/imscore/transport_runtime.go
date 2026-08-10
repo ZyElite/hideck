@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/emiago/sipgo/sip"
 )
@@ -137,11 +136,12 @@ func (s *Service) dispatchInboundSIP(raw string, reply func(string) error) error
 }
 
 func (s *Service) dispatchInboundSIPMessage(message sip.Message, raw string, reply func(string) error) error {
-	s.UpdateLastPingAt(time.Now())
+	s.UpdateLastPingAt()
 	s.inboundSIPParsedMessage.Add(1)
 	switch parsed := message.(type) {
 	case *sip.Response:
 		s.inboundSIPParsedResp.Add(1)
+		s.publishIMSEvent(s.buildIMSEventFromResponse(parsed))
 		s.transport.DeliverResponse(newSIPResponse(parsed))
 		return nil
 	case *sip.Request:
@@ -162,6 +162,7 @@ func (s *Service) dispatchInboundSIPRequest(
 	if handled || err != nil {
 		return err
 	}
+	s.publishIMSEvent(s.buildInboundRequestEvent(request, transaction))
 	responseWriter := reply
 	if transaction != nil {
 		responseWriter = transaction.respondRaw

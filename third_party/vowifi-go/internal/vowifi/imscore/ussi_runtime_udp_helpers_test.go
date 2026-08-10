@@ -45,7 +45,7 @@ func newRegisteredUDPUSSIService(t *testing.T) (*net.UDPConn, *Service) {
 	service.activateInitialSendAndReceive(&initialRegistrationTransport{
 		kind: "udp", remote: remote, packet: client, port: clientPort,
 	})
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	t.Cleanup(func() { _ = registrar.Close() })
 	return registrar, service
 }

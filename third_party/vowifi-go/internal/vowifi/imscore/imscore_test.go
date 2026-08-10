@@ -169,8 +169,8 @@ func TestNewAndRegister(t *testing.T) {
 	if !svc.IsRegistered() {
 		t.Error("should be registered after flow")
 	}
-	if svc.Status().RegState != regRegistered {
-		t.Errorf("reg state = %q", svc.Status().RegState)
+	if svc.StatusCurrent().RegState != regRegistered {
+		t.Errorf("reg state = %q", svc.StatusCurrent().RegState)
 	}
 }
 

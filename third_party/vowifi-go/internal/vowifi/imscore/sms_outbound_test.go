@@ -497,7 +497,7 @@ func newOutboundSMSTestService(t *testing.T) (*Service, *captureIMSEventSubscrib
 		security:     &securityAgreement{verifyHeader: "ipsec-3gpp;alg=hmac-sha-1-96"},
 	}
 	service.mu.Unlock()
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	return service, subscriber, store
 }
 

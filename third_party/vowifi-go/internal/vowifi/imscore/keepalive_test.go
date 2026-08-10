@@ -185,7 +185,7 @@ func TestInboundSIPTrafficDefersKeepaliveAndResetsFailures(t *testing.T) {
 	if lastTrafficAt.Before(before) {
 		t.Fatalf("last traffic = %s, want at or after %s", lastTrafficAt, before)
 	}
-	if status := service.Status(); status.PingFailCount != 0 || !status.LastPingOK {
+	if status := service.StatusCurrent(); status.PingFailCount != 0 || !status.LastPingOK {
 		t.Fatalf("ping status = count %d ok %v, want count 0 and ok", status.PingFailCount, status.LastPingOK)
 	}
 }
@@ -245,7 +245,7 @@ func newProtectedKeepaliveTestService(t *testing.T) *Service {
 	}
 	service.registrationRemote = &net.UDPAddr{IP: net.ParseIP("2001:db8::20"), Port: 5060}
 	service.mu.Unlock()
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	return service
 }
 

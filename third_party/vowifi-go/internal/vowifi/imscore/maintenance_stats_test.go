@@ -46,7 +46,7 @@ func TestInboundCountingConnRecordsTrafficBeforeSIPParsing(t *testing.T) {
 	if stats.TCPSocketReads != 1 || stats.TCPSocketBytes != uint64(len(payload)) {
 		t.Fatalf("TCP stats = reads %d bytes %d", stats.TCPSocketReads, stats.TCPSocketBytes)
 	}
-	status := service.Status()
+	status := service.StatusCurrent()
 	if status.PingFailCount != 0 || !status.LastPingOK {
 		t.Fatalf("ping status = count %d ok %v", status.PingFailCount, status.LastPingOK)
 	}
@@ -66,7 +66,7 @@ func TestDispatchInboundSIPProjectsParsedMessageStats(t *testing.T) {
 	if stats.SIPParsedMessages != 2 || stats.SIPParsedRequests != 1 || stats.SIPParsedResponses != 1 {
 		t.Fatalf("parsed stats = %+v", stats)
 	}
-	if got := service.Status().Diagnostics["inbound_sip_parsed_messages"]; got != uint64(2) {
+	if got := service.StatusCurrent().Diagnostics["inbound_sip_parsed_messages"]; got != uint64(2) {
 		t.Fatalf("status parsed messages = %#v, want 2", got)
 	}
 }
@@ -131,7 +131,7 @@ func TestServiceStopCancelsInboundStatsLogger(t *testing.T) {
 	service.inboundStatsMu.Lock()
 	done := service.inboundStatsDone
 	service.inboundStatsMu.Unlock()
-	service.Stop()
+	service.StopCurrent()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -148,7 +148,7 @@ func TestRegistrationPacketReadFailureMarksSignalingDead(t *testing.T) {
 	service.registrationRefreshAt = time.Now().Add(time.Hour)
 	service.mu.Unlock()
 	service.handleRegistrationPacketReadError(packet, errors.New("read failed"))
-	status := service.Status()
+	status := service.StatusCurrent()
 	if status.SignalingReady || status.RegState != regFailed {
 		t.Fatalf("status after packet read failure = ready %v state %s", status.SignalingReady, status.RegState)
 	}
@@ -220,7 +220,7 @@ func TestMORPErrorCause30WakesProductionRegistrationLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := service.Register(ctx); err != nil {

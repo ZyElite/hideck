@@ -50,7 +50,7 @@ func TestUSSIBridgeRejectsRegisteredFlagWithoutLiveSession(t *testing.T) {
 	service.externalTransport = true
 	service.mu.Unlock()
 	service.regStatus.Store(registrationRegistered)
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 
 	_, err = service.SendUSSD(context.Background(), "*100#")
 	if err == nil || !strings.Contains(err.Error(), "registered SIP session is unavailable") {
@@ -100,7 +100,7 @@ func newRegisteredTCPUSSIService(t *testing.T) (net.Conn, *Service) {
 	service.mu.Unlock()
 	service.regStatus.Store(registrationRegistered)
 	service.activateProtectedRegistrationTCP(client)
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	t.Cleanup(func() { _ = server.Close() })
 	return server, service
 }

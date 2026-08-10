@@ -48,21 +48,21 @@ func formatVoWiFiIncompleteSMSMessage(
 		device, number, at.Format(smsNotificationTimeLayout), content, received, total, missing)
 }
 
-func (s *Service) getIMSEventBus() *imsEventBus {
+func (s *Service) getRuntimeEventBus() *EventBus {
 	if s == nil {
 		return nil
 	}
 	return s.bus
 }
 
-func (s *Service) publishIMSEvent(event events.Event) {
+func (s *Service) publishRuntimeEvent(event events.Event) {
 	if event == nil {
 		return
 	}
 	if notification, ok := event.(events.EventLogNotify); ok && strings.TrimSpace(notification.Message) == "" {
 		return
 	}
-	if bus := s.getIMSEventBus(); bus != nil {
+	if bus := s.getRuntimeEventBus(); bus != nil {
 		bus.Publish(event)
 	}
 }
@@ -71,5 +71,5 @@ func (s *Service) publishLogNotification(message string) {
 	if s == nil || s.cfg == nil || strings.TrimSpace(message) == "" {
 		return
 	}
-	s.publishIMSEvent(events.EventLogNotify{DevID: s.cfg.DeviceID, Message: message})
+	s.publishRuntimeEvent(events.EventLogNotify{DevID: s.cfg.DeviceID, Message: message})
 }

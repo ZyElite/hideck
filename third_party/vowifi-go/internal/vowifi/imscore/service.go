@@ -34,7 +34,7 @@ func New(cfg *IMSConfig) (*Service, error) {
 	}
 	bus := cfg.EventBus
 	if bus == nil {
-		bus = newIMSEventBus()
+		bus = newRuntimeEventBus()
 	}
 	transport := newSIPTransport()
 	s := &Service{
@@ -101,8 +101,8 @@ func (s *Service) RegState() string {
 	return s.regState
 }
 
-// Status returns a status snapshot.
-func (s *Service) Status() *ServiceStatus {
+// StatusCurrent retains the additive typed status API.
+func (s *Service) StatusCurrent() *ServiceStatus {
 	status := s.captureStatusSnapshot()
 	return &status
 }
@@ -113,6 +113,7 @@ func (s *Service) captureStatusSnapshot() ServiceStatus {
 	}
 	lastSMSTrace, lastSMSAt, lastSMSErr := s.smsSendStatus()
 	inboundStats := s.captureInboundStats()
+	eventBusStatus := s.getIMSEventBus().statusSnapshot()
 	s.receiverMu.Lock()
 	rxRunning := s.activeReceivers > 0
 	s.receiverMu.Unlock()
@@ -149,6 +150,7 @@ func (s *Service) captureStatusSnapshot() ServiceStatus {
 		LastRegisterErr:    s.lastRegisterErr,
 		LastSMSSendTraceID: lastSMSTrace, LastSMSSendAt: lastSMSAt,
 		LastSMSSendErr: lastSMSErr, FragmentAudit: s.fragmentAuditSnapshot(),
+		IMSEventBus: eventBusStatus,
 		Diagnostics: inboundStats.diagnostics(),
 		State:       s.state, RegState: s.regState, IMPUs: identities,
 	}
@@ -167,9 +169,9 @@ func currentServiceRoute(session *registerSession) string {
 	return session.serviceRoute
 }
 
-// StatusSnapshot returns a status snapshot.
-func (s *Service) StatusSnapshot() *ServiceStatus {
-	return s.Status()
+// StatusSnapshotCurrent retains the additive pointer snapshot API.
+func (s *Service) StatusSnapshotCurrent() *ServiceStatus {
+	return s.StatusCurrent()
 }
 
 // DeviceID returns the device ID.
@@ -189,7 +191,7 @@ func (s *Service) GetIMSI() string {
 }
 
 // GetIMPU returns the IMPU list.
-func (s *Service) GetIMPU() []string {
+func (s *Service) GetIMPUs() []string {
 	if s == nil || s.cfg == nil {
 		return nil
 	}
@@ -212,6 +214,11 @@ func (s *Service) GetIMSServerAddr() string {
 	if s == nil || s.cfg == nil {
 		return ""
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if strings.TrimSpace(s.registrar) != "" {
+		return s.registrar
+	}
 	return s.cfg.Registrar
 }
 
@@ -224,7 +231,7 @@ func (s *Service) GetLocalIMSAddr() string {
 }
 
 // GetLocalPorts returns the local SIP ports.
-func (s *Service) GetLocalPorts() []int {
+func (s *Service) GetLocalPortList() []int {
 	if s == nil || s.cfg == nil {
 		return nil
 	}
@@ -241,7 +248,7 @@ func (s *Service) GetLocalPorts() []int {
 }
 
 // GetRemotePorts returns the remote SIP ports.
-func (s *Service) GetRemotePorts() []int {
+func (s *Service) GetRemotePortList() []int {
 	if s == nil {
 		return nil
 	}
@@ -281,15 +288,22 @@ func (s *Service) GetPAccessNetworkInfo() string {
 
 // GetPubGRUU returns the public GRUU.
 func (s *Service) GetPubGRUU() string {
-	if s == nil || s.cfg == nil {
+	if s == nil {
 		return ""
 	}
-	return "sip:" + s.cfg.IMPI + "@" + s.cfg.Domain
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.pubGRUU
 }
 
 // GetTempGRUU returns the temporary GRUU.
 func (s *Service) GetTempGRUU() string {
-	return ""
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tempGRUU
 }
 
 // GetRealm returns the digest realm.
@@ -304,7 +318,7 @@ func (s *Service) GetRealm() string {
 }
 
 // GetServiceRoute returns the service route.
-func (s *Service) GetServiceRoute() []string {
+func (s *Service) GetServiceRoutes() []string {
 	if s == nil {
 		return nil
 	}
@@ -317,7 +331,7 @@ func (s *Service) GetServiceRoute() []string {
 }
 
 // GetSpiPairs returns the IPsec SPI pairs.
-func (s *Service) GetSpiPairs() [][2]uint32 {
+func (s *Service) GetSPIPairs() [][2]uint32 {
 	if s == nil {
 		return nil
 	}
@@ -337,7 +351,7 @@ func (s *Service) GetSecurityVerify() string {
 }
 
 // GetIMSContextSnapshot returns a context snapshot.
-func (s *Service) GetIMSContextSnapshot() map[string]interface{} {
+func (s *Service) GetIMSContextMap() map[string]interface{} {
 	return map[string]interface{}{
 		"registered": s.IsRegistered(),
 		"reg_state":  s.RegState(),
@@ -347,15 +361,15 @@ func (s *Service) GetIMSContextSnapshot() map[string]interface{} {
 }
 
 // ListenPacket returns a UDP packet connection.
-func (s *Service) ListenPacket(network string, addr *net.UDPAddr) (net.PacketConn, error) {
+func (s *Service) ListenPacketCurrent(network string, addr *net.UDPAddr) (net.PacketConn, error) {
 	if s == nil || s.cfg == nil || s.cfg.IMSNetwork == nil {
 		return nil, errors.New("imscore: no network")
 	}
 	return s.cfg.IMSNetwork.ListenPacket(network, addr)
 }
 
-// Stop shuts the service down.
-func (s *Service) Stop() {
+// StopCurrent retains the additive context-free shutdown entrypoint.
+func (s *Service) StopCurrent() {
 	if s == nil {
 		return
 	}
@@ -371,6 +385,7 @@ func (s *Service) Stop() {
 	}
 	s.stopInboundStatsLogger()
 	s.clearPendingSMS()
+	s.getIMSEventBus().close()
 	s.mu.Lock()
 	registrationIO := s.registrationIO
 	registrationTCP := s.registrationTCP
@@ -422,6 +437,8 @@ func (s *Service) Stop() {
 	s.mu.Lock()
 	s.spiPairs = nil
 	s.securityVerify = ""
+	s.pubGRUU = ""
+	s.tempGRUU = ""
 	s.regState = regUnregister
 	s.mu.Unlock()
 	s.transitionRegStatus(registrationStopped)
@@ -438,7 +455,7 @@ func (s *Service) RegistrationErrors() <-chan error {
 
 // TriggerRegisterImmediate performs an immediate re-registration and exposes
 // the real result to its caller.
-func (s *Service) TriggerRegisterImmediate() error {
+func (s *Service) TriggerRegisterImmediateCurrent() error {
 	if s == nil {
 		return errors.New("imscore: nil service")
 	}

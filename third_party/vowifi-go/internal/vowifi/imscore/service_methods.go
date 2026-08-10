@@ -22,13 +22,13 @@ func (s *Service) Start(ctx context.Context) error {
 	return s.Register(ctx)
 }
 
-// Snapshot returns a map snapshot of the IMS context.
-func (s *Service) Snapshot() map[string]interface{} {
-	return s.GetIMSContextSnapshot()
+// SnapshotMap retains the additive map snapshot API.
+func (s *Service) SnapshotMap() map[string]interface{} {
+	return s.GetIMSContextMap()
 }
 
-// Session returns the IMS session state string.
-func (s *Service) Session() string {
+// SessionState retains the additive registration state string API.
+func (s *Service) SessionState() string {
 	if s == nil {
 		return ""
 	}
@@ -101,7 +101,7 @@ func (s *Service) InstallIPSec3GPP(policy ipsec3gpp.Policy) error {
 
 // VoiceProfile is the voice profile of a device (recovered from the binary's
 // imsendpoint.VoiceProfile).
-type VoiceProfile struct {
+type CurrentVoiceProfile struct {
 	DeviceID string
 	IMSI     string
 	IMPI     string
@@ -109,11 +109,11 @@ type VoiceProfile struct {
 }
 
 // VoiceProfile returns the voice profile for the device.
-func (s *Service) VoiceProfile() VoiceProfile {
+func (s *Service) CurrentVoiceProfile() CurrentVoiceProfile {
 	if s == nil || s.cfg == nil {
-		return VoiceProfile{}
+		return CurrentVoiceProfile{}
 	}
-	return VoiceProfile{
+	return CurrentVoiceProfile{
 		DeviceID: s.cfg.DeviceID,
 		IMSI:     s.cfg.IMSI,
 		IMPI:     s.cfg.IMPI,
@@ -185,8 +185,8 @@ func (s *Service) waitClientInviteHandle(
 	handle.markDone(confirmed)
 }
 
-// Subscribe sends a registration event SUBSCRIBE and waits for its final response.
-func (s *Service) Subscribe(uri string) error {
+// SendRegistrationSubscribe sends a registration event SUBSCRIBE.
+func (s *Service) SendRegistrationSubscribe(uri string) error {
 	if s == nil || s.cfg == nil {
 		return errors.New("imscore: not configured")
 	}
@@ -232,12 +232,12 @@ func (s *Service) SMSReceiverTransport() interface{} {
 }
 
 // TriggerFastReconnect triggers an immediate re-registration.
-func (s *Service) TriggerFastReconnect() error {
-	return s.TriggerRegisterImmediate()
+func (s *Service) TriggerFastReconnectCurrent() error {
+	return s.TriggerRegisterImmediateCurrent()
 }
 
 // UpdateLastPingAt records the last keepalive ping time.
-func (s *Service) UpdateLastPingAt(t time.Time) {
+func (s *Service) UpdateLastPingAtTime(t time.Time) {
 	if s == nil {
 		return
 	}
@@ -254,5 +254,5 @@ func (s *Service) UpdateLastPingAt(t time.Time) {
 }
 
 func (s *Service) handleTCPTraffic() {
-	s.UpdateLastPingAt(time.Now())
+	s.UpdateLastPingAt()
 }

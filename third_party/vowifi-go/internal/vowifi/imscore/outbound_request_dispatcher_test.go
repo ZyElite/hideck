@@ -15,7 +15,7 @@ func TestOutboundDispatcherFreezesSenderAtEnqueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	oldSent := make(chan string, 2)
 	newSent := make(chan string, 1)
 	service.transport.SetSendFn(func(raw string) error {
@@ -54,7 +54,7 @@ func TestOutboundDispatcherFreezesUDPRemoteAtEnqueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	service.mu.Lock()
 	service.registrationIO = client
 	service.registrationRemote = cloneUDPAddr(firstRemote.LocalAddr().(*net.UDPAddr))

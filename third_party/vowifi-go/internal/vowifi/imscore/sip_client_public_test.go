@@ -13,7 +13,7 @@ func TestServiceTransactionCallbacksExposeAcceptedRetransmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.transport.timers = newTimedTestTransport().timers
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	outbound := recordTransactionWrites(service.transport)
 	request := transactionRequestWithTransport("INVITE", "public-callback", "TCP")
 	retransmitted := make(chan int, 1)

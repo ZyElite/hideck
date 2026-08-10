@@ -49,7 +49,7 @@ func TestRegisterAutoSecAgreeFallsBackToPlainAfterMissingOffer(t *testing.T) {
 		rawSIPHeaderValue(authenticated, "Require") != "" {
 		t.Fatalf("plain fallback retained sec-agree headers: %q", authenticated)
 	}
-	status := svc.Status()
+	status := svc.StatusCurrent()
 	if status.EffectiveSecurityMode != securityModePlain || status.SecurityFallbackReason != securityAutoFallback ||
 		status.SecurityFallbackCount != 1 || !status.SignalingReady {
 		t.Fatalf("status after fallback = %+v", status)

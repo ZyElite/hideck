@@ -6,32 +6,30 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 )
 
-// imsEventSubscriber receives IMS events.
-type imsEventSubscriber interface {
+// runtimeEventSubscriber receives host-facing runtime events.
+type runtimeEventSubscriber interface {
 	OnIMSEvent(ev events.Event)
 }
 
-// EventBus is the exported IMS event bus used by the voice layer.
-type EventBus = imsEventBus
+// EventBus is the additive host-facing event bus used by runtime consumers.
+type EventBus = runtimeEventBus
 
-// imsEventBus is the in-process IMS event bus.
-type imsEventBus struct {
+type runtimeEventBus struct {
 	mu          sync.RWMutex
-	subscribers []imsEventSubscriber
+	subscribers []runtimeEventSubscriber
 }
 
-// newIMSEventBus creates an event bus.
-func newIMSEventBus() *imsEventBus {
-	return &imsEventBus{}
+func newRuntimeEventBus() *runtimeEventBus {
+	return &runtimeEventBus{}
 }
 
 // NewEventBus creates an exported event bus.
 func NewEventBus() *EventBus {
-	return newIMSEventBus()
+	return newRuntimeEventBus()
 }
 
 // Subscribe registers a subscriber.
-func (b *imsEventBus) Subscribe(sub imsEventSubscriber) {
+func (b *runtimeEventBus) Subscribe(sub runtimeEventSubscriber) {
 	if b == nil || sub == nil {
 		return
 	}
@@ -41,7 +39,7 @@ func (b *imsEventBus) Subscribe(sub imsEventSubscriber) {
 }
 
 // Unsubscribe removes a subscriber.
-func (b *imsEventBus) Unsubscribe(sub imsEventSubscriber) {
+func (b *runtimeEventBus) Unsubscribe(sub runtimeEventSubscriber) {
 	if b == nil {
 		return
 	}
@@ -56,12 +54,12 @@ func (b *imsEventBus) Unsubscribe(sub imsEventSubscriber) {
 }
 
 // Publish delivers an event to all subscribers.
-func (b *imsEventBus) Publish(ev events.Event) {
+func (b *runtimeEventBus) Publish(ev events.Event) {
 	if b == nil {
 		return
 	}
 	b.mu.RLock()
-	subs := append([]imsEventSubscriber{}, b.subscribers...)
+	subs := append([]runtimeEventSubscriber{}, b.subscribers...)
 	b.mu.RUnlock()
 	for _, sub := range subs {
 		if sub != nil {
@@ -71,7 +69,7 @@ func (b *imsEventBus) Publish(ev events.Event) {
 }
 
 // Snapshot returns the subscriber count.
-func (b *imsEventBus) Snapshot() int {
+func (b *runtimeEventBus) Snapshot() int {
 	if b == nil {
 		return 0
 	}

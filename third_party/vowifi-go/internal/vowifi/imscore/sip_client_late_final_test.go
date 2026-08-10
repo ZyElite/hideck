@@ -127,6 +127,6 @@ func TestServiceStopCleansRetainedLateFinalTransaction(t *testing.T) {
 		t.Fatalf("round trip error = %v", err)
 	}
 	assertTransactionCount(t, service.transport, 1)
-	service.Stop()
+	service.StopCurrent()
 	waitTransactionCount(t, service.transport, 0)
 }

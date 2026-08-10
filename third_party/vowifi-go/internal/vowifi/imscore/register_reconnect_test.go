@@ -32,7 +32,7 @@ func TestProtectedRegistrationReconnectsAndReusesAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	subscriber := &captureIMSEventSubscriber{events: make(chan events.Event, 1)}
 	svc.EventBus().Subscribe(subscriber)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -47,7 +47,7 @@ func TestProtectedRegistrationReconnectsAndReusesAuthorization(t *testing.T) {
 		t.Fatal("initial protected registration did not complete")
 	}
 	waitForRegistrationTCPClose(t, svc)
-	if err := svc.TriggerRegisterImmediate(); err != nil {
+	if err := svc.TriggerRegisterImmediateCurrent(); err != nil {
 		t.Fatalf("refresh Register: %v", err)
 	}
 	select {

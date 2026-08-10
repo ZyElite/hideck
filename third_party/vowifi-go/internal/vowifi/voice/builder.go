@@ -120,15 +120,15 @@ func writeVoiceOptionalHeader(out *strings.Builder, name, value string) {
 func fallbackVoiceDialog(agent *Agent, call *Call) voiceSIPDialog {
 	domain := agent.ims.GetRealm()
 	localURI := "sip:" + agent.ims.GetIMSI() + "@" + domain
-	if identities := agent.ims.GetIMPU(); len(identities) > 0 && strings.TrimSpace(identities[0]) != "" {
-		localURI = strings.TrimSpace(identities[0])
+	if identity := strings.TrimSpace(agent.ims.GetIMPU()); identity != "" {
+		localURI = identity
 	}
 	remoteURI := buildIMSCalledPartyURI(call.Peer(), localURI, domain)
 	return voiceSIPDialog{
 		localURI: localURI, remoteURI: remoteURI, remoteTarget: remoteURI,
 		contactURI: localURI, contactHeader: "<" + localURI + ">",
 		localAddress: agent.localAddr(), transport: "udp",
-		serviceRoute: agent.ims.GetServiceRoute(), securityVerify: agent.ims.GetSecurityVerify(),
+		serviceRoute: agent.ims.GetServiceRoutes(), securityVerify: agent.ims.GetSecurityVerify(),
 		pani: agent.ims.GetPAccessNetworkInfo(), localTag: voiceTag(), inviteBranch: voiceBranch(),
 		sessionID: voiceSessionID(), cseq: 1,
 		inviteCSeq: 1,
@@ -144,8 +144,11 @@ func (a *Agent) imsConfig() *imsConfigView {
 	if a == nil || a.ims == nil {
 		return &imsConfigView{}
 	}
-	profile := a.ims.VoiceProfile()
-	return &imsConfigView{Domain: profile.Domain, IMPI: profile.IMPI}
+	session := a.ims.Session()
+	if session == nil {
+		return &imsConfigView{Domain: a.ims.GetRealm()}
+	}
+	return &imsConfigView{Domain: session.Domain, IMPI: session.IMPI}
 }
 
 func generateBasicSDP(agent *Agent, call *Call) string {

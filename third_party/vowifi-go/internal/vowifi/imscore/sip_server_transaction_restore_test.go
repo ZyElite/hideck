@@ -271,7 +271,7 @@ func newServerTransactionTestService(t *testing.T) *Service {
 		j: 20 * time.Millisecond, l: 160 * time.Millisecond,
 		trying: 500 * time.Millisecond,
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	return service
 }
 

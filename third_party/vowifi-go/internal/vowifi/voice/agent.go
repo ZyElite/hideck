@@ -32,7 +32,7 @@ func NewAgent(deviceID string, ims *imscore.Service, bus *imscore.EventBus) *Age
 		calls:    make(map[string]*Call),
 	}
 	agent.newMediaRelay = func(localIP string) (*media.RTPRelay, error) {
-		return newVoiceMediaRelay(ims, localIP)
+		return newVoiceMediaRelay(imscorePacketListener{service: ims}, localIP)
 	}
 	return agent
 }

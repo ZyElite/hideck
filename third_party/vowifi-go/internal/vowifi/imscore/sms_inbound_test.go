@@ -131,7 +131,7 @@ func newInboundSMSTestService(t *testing.T) (*Service, *captureIMSEventSubscribe
 		service.transport.DeliverResponse(registerResponseForRequest(request, 200, nil))
 		return nil
 	})
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	return service, subscriber, outbound
 }
 

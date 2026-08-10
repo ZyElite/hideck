@@ -16,6 +16,15 @@ type imsPacketListener interface {
 	ListenPacket(network string, addr *net.UDPAddr) (net.PacketConn, error)
 }
 
+type imscorePacketListener struct{ service *imscore.Service }
+
+func (listener imscorePacketListener) ListenPacket(
+	network string,
+	address *net.UDPAddr,
+) (net.PacketConn, error) {
+	return listener.service.ListenPacketCurrent(network, address)
+}
+
 func newVoiceMediaRelay(imsNetwork imsPacketListener, imsLocalIP string) (*media.RTPRelay, error) {
 	if imsNetwork == nil {
 		return nil, errors.New("voice: IMS media network is unavailable")

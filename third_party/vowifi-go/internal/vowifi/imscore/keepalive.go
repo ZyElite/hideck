@@ -40,7 +40,7 @@ func (s *Service) startIMSKeepalive() {
 	if s == nil {
 		return
 	}
-	s.UpdateLastPingAt(time.Now())
+	s.UpdateLastPingAt()
 	s.keepaliveOnce.Do(func() {
 		s.networkDone.Add(1)
 		go s.keepaliveLoop()

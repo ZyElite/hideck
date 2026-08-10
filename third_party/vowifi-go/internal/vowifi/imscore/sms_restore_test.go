@@ -61,7 +61,7 @@ func TestOutboundDispatcherRejectsFullShard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	service.transport.SetSendFn(func(string) error { return nil })
 	request := parsedDispatchRequest(t, "full-call", 1)
 	shards := make([]chan outboundRequestTask, outboundRequestShardCount)
@@ -82,7 +82,7 @@ func TestPendingSMSMatchesNormalizedCallIDAndRPMR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	first := &smsPendingInfo{RPMR: 7, RespCh: make(chan smsSendResult, 1), CreatedAt: time.Now()}
 	service.registerPendingSMS(" <ABC@IMS.EXAMPLE> ", first)
 	if got := service.takePendingSMSByCallID("abc@ims.example"); got != first {
@@ -101,7 +101,7 @@ func TestMTSMSFingerprintReservationIsConcurrentAndBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	const callers = 64
 	var accepted int
 	var mu sync.Mutex
@@ -152,7 +152,7 @@ func TestFragmentStateCompletesOutOfOrderAndAuditsCollision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	second := &smsFragment{Ref: 4, Total: 2, Seq: 2, Content: "world", Time: time.Now()}
 	if _, complete, err := service.handleSMSFragment("+1234567", second); err != nil || complete {
 		t.Fatalf("second fragment complete=%v err=%v", complete, err)
@@ -218,7 +218,7 @@ func TestSMSReadyCallbackFiresOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	called := 0
 	service.SetOnSMSReady(func() { called++ })
 	service.setSMSReceiverReady(true)
@@ -284,7 +284,7 @@ func TestInboundFragmentTTLUsesLocalArrivalTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	carrierTimestamp := time.Now().Add(-time.Hour)
 	arrivedAfter := time.Now()
 	message := inboundSMS{
@@ -418,7 +418,7 @@ func TestAppendFragmentAuditFailurePreservesZeroTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	service.appendFragmentAuditFailure(fragmentAuditFailure{Key: "zero-time"})
 	failures := service.fragmentAuditSnapshot()["recent_failures"].([]fragmentAuditFailure)
 	if len(failures) != 1 || !failures[0].At.IsZero() {
@@ -449,7 +449,7 @@ func TestMarkFragmentAckedMatchesRecoveredKeyAndSequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	fragment := &smsFragment{Seq: 2, RpMr: 57, CallID: "fragment-ack-call"}
 	service.fragmentMu.Lock()
 	service.fragmentCache["first-key"] = []*smsFragment{{Seq: 2, RpMr: 57, CallID: "fragment-ack-call"}}
@@ -528,7 +528,7 @@ func newRealUDPSMSService(t *testing.T) (*net.UDPConn, *net.UDPConn, *Service) {
 	service.mu.Unlock()
 	service.regStatus.Store(registrationRegistered)
 	service.activateInitialSendAndReceive(&initialRegistrationTransport{kind: "udp", remote: remote, packet: client, port: client.LocalAddr().(*net.UDPAddr).Port})
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	t.Cleanup(func() { _ = registrar.Close() })
 	return registrar, client, service
 }

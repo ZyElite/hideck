@@ -289,7 +289,7 @@ func (a *serviceAdapter) Stop() {
 	if a == nil || a.svc == nil {
 		return
 	}
-	a.svc.Stop()
+	a.svc.StopCurrent()
 }
 
 // TriggerRegisterImmediate triggers an immediate re-registration.
@@ -297,7 +297,7 @@ func (a *serviceAdapter) TriggerRegisterImmediate() error {
 	if a == nil || a.svc == nil {
 		return errNoService
 	}
-	return a.svc.TriggerRegisterImmediate()
+	return a.svc.TriggerRegisterImmediateCurrent()
 }
 
 // regStatusOf maps the IMS registration state to a status code (1 = registered).

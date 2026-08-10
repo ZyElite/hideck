@@ -121,7 +121,7 @@ func TestRegisterUsesCarrierFixedPANI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	if got := service.GetPAccessNetworkInfo(); got != "3GPP-NR-FDD;fixed=1" {
 		t.Fatalf("GetPAccessNetworkInfo = %q", got)
 	}
@@ -194,7 +194,7 @@ func TestRegisterRetriesRejectedInitialRequestWithFallbackTemplate(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	requests := make(chan string, 2)
 	service.transport.SetSendFn(func(request string) error {
 		requests <- request
@@ -275,14 +275,14 @@ func TestServiceStatusRestoresRegistrationDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	service.registrar = "pcscf.example:5060"
 	service.registrarCandidates = []string{"pcscf.example:5060", "pcscf2.example:5060"}
 	service.registrarSource = "registrar"
 	service.lastSIPCode.Store(503)
 	service.lastSIPText = "Service Unavailable"
 	service.transitionRegStatus(registrationRejectedTemporary)
-	status := service.Status()
+	status := service.StatusCurrent()
 	if status.RegStatus != "RejectedTemporary" || status.IMPU != service.cfg.IMPU ||
 		status.LastSIPCode != 503 || status.RegistrarSource != "registrar" {
 		t.Fatalf("status = %+v", status)
@@ -303,7 +303,7 @@ func TestRegisterAPDUBusySchedulesThreeSecondRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	service.transport.SetSendFn(func(request string) error {
 		challenge := strings.TrimPrefix(strings.TrimSpace(digestChallengeHeader(0x11, 0x22)), "WWW-Authenticate: ")
 		service.transport.DeliverResponse(registerResponseForRequest(request, 401, map[string]string{
@@ -329,7 +329,7 @@ func TestRegisterFailureTriggersOneReconnectAtATime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	service.OnReconnectNeeded = func() {
@@ -354,7 +354,7 @@ func TestCanceledRegisterDoesNotTriggerFailureFSMOrReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	service.transport.SetSendFn(func(string) error { return nil })
 	reconnect := make(chan struct{}, 1)
 	service.OnReconnectNeeded = func() { reconnect <- struct{}{} }
@@ -384,7 +384,7 @@ func TestRegisterTCPDoesNotRetryUDPAfterAuthenticationChallenge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err = service.Register(ctx)
@@ -409,7 +409,7 @@ func TestRegisterRetries423WithMinExpiresOnSameTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := service.Register(ctx); err != nil {
@@ -442,7 +442,7 @@ func TestTemporaryFailureAdvancesRegistrarForNextRegister(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := service.Register(ctx); err == nil || !strings.Contains(err.Error(), "status 503") {
@@ -461,7 +461,7 @@ func TestRegisterNetworkFailureAdvancesRegistrar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	service.mu.Lock()
 	service.registrar = "pcscf-a.example:5060"
 	service.registrarCandidates = []string{"pcscf-a.example:5060", "pcscf-b.example:5060"}

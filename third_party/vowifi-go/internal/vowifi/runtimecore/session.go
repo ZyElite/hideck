@@ -70,7 +70,7 @@ func startIMS(ctx context.Context, cfg SessionConfig, result *SessionResult) err
 	})
 	result.IMSService = service
 	if err := service.Start(ctx); err != nil {
-		service.Stop()
+		_ = service.Stop(context.Background())
 		result.IMSService = nil
 		return fmt.Errorf("runtimecore: start IMS service: %w", err)
 	}

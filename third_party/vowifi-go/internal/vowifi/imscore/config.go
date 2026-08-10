@@ -51,7 +51,7 @@ type IMSConfig struct {
 	AKAProvider           AKAProvider
 	IMSNetwork            IMSNetwork
 	DeliveryStore         DeliveryStore
-	EventBus              *imsEventBus
+	EventBus              *EventBus
 	TraceID               string
 	PAccessNetworkCountry string
 	RegisterTemplate      IMSRegisterTemplate

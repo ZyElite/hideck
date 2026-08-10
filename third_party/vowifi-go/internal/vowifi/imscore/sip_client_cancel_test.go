@@ -88,7 +88,7 @@ func TestClientInviteHandleRetainsTransactionForCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	service.transport.timers = newTimedTestTransport().timers
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	outbound := recordTransactionWrites(service.transport)
 	request := transactionRequestWithTransport("INVITE", "handle-cancel", "TCP")
 	handle := &imscoreInviteHandle{id: "handle-cancel"}

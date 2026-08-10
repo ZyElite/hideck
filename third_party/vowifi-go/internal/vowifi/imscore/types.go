@@ -212,8 +212,11 @@ type Service struct {
 	serverTx       map[string]trackedServerTransaction
 	serverTimers   serverTransactionTimers
 
-	// Event bus.
-	bus *imsEventBus
+	// Event buses. The runtime bus carries host notifications; the IMS bus
+	// carries the original endpoint-level SIP events and is service-owned.
+	bus             *EventBus
+	imsEventBusOnce sync.Once
+	imsEventBus     *imsEventBus
 
 	// USSD.
 	ussd *ussi.Service
@@ -246,6 +249,8 @@ type Service struct {
 	lastError              string
 	serviceRoute           string
 	path                   string
+	pubGRUU                string
+	tempGRUU               string
 	assocMSISDN            string
 	learnedAOR             string
 	reginfoAOR             string

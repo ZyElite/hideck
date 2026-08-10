@@ -114,7 +114,7 @@ func TestInboundMultipartSMSRecoversAcrossServiceReplacement(t *testing.T) {
 	}
 	key := inboundSMSFragmentKey(first)
 	firstService.markFragmentAcked(key, 1)
-	firstService.Stop()
+	firstService.StopCurrent()
 
 	secondService, subscriber := newFragmentPersistenceService(t, store)
 	if err := secondService.restoreInboundFragments(); err != nil {
@@ -204,7 +204,7 @@ func TestInboundFragmentPersistenceRetainsDegradedSessionForLateCompletion(t *te
 		t.Fatal(err)
 	}
 	assertNoIMSEvent(t, subscriber, "duplicate degraded notification")
-	service.Stop()
+	service.StopCurrent()
 
 	restored, restoredSubscriber := newFragmentPersistenceService(t, store)
 	if err := restored.restoreInboundFragments(); err != nil {
@@ -383,7 +383,7 @@ func newFragmentPersistenceService(
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	return service, subscriber
 }
 

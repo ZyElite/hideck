@@ -13,8 +13,8 @@ func TestTriggerRegisterImmediateReturnsRegistrationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	service.Stop()
-	err = service.TriggerRegisterImmediate()
+	service.StopCurrent()
+	err = service.TriggerRegisterImmediateCurrent()
 	if err == nil || !strings.Contains(err.Error(), "service stopped") {
 		t.Fatalf("TriggerRegisterImmediate error = %v", err)
 	}

@@ -90,7 +90,7 @@ func TestRegisterSwitchesFromInitialUDPToProtectedTCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err != nil {
@@ -129,7 +129,7 @@ func TestRegisterKeepsInitialTCPUntilProtectedRegisterCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer svc.Stop()
+	defer svc.StopCurrent()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := svc.Register(ctx); err != nil {
@@ -342,7 +342,7 @@ func newSecurityAgreementTestService(t *testing.T, network IMSNetwork) *Service 
 	}
 	svc.protectedServerPort = 41001
 	svc.registrationRemote = &net.UDPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 5060}
-	t.Cleanup(svc.Stop)
+	t.Cleanup(svc.StopCurrent)
 	return svc
 }
 

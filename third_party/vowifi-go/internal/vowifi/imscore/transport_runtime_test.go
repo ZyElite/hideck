@@ -45,7 +45,7 @@ func TestReceiverRuntimeRespondsToUDPOptionsAndStops(t *testing.T) {
 	if status := service.SMSReceiverTransport().(SMSReceiverStatus); !status.Active {
 		t.Fatalf("receiver status = %+v", status)
 	}
-	service.Stop()
+	service.StopCurrent()
 	if status := service.SMSReceiverTransport().(SMSReceiverStatus); status.Active {
 		t.Fatalf("receiver remained active after Stop: %+v", status)
 	}
@@ -71,7 +71,7 @@ func TestReceiverRuntimeServesConcurrentTCPConnections(t *testing.T) {
 	defer second.Close()
 	assertOptionsRoundTrip(t, first, "first-call")
 	assertOptionsRoundTrip(t, second, "second-call")
-	service.Stop()
+	service.StopCurrent()
 }
 
 func serveRegisterAndOptions(conn *net.UDPConn, response chan<- string) {

@@ -641,7 +641,7 @@ func TestIMSServiceUsesSWuInnerNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("imscoreFromPrepared: %v", err)
 	}
-	t.Cleanup(svc.Stop)
+	t.Cleanup(svc.StopCurrent)
 	if got := svc.GetLocalIMSAddr(); got != "10.0.0.2" {
 		t.Fatalf("IMS local address = %q, want SWu inner address", got)
 	}

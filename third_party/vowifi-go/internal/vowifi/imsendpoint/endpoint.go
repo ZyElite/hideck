@@ -2,6 +2,7 @@ package imsendpoint
 
 import (
 	"context"
+	"net"
 
 	"github.com/emiago/sipgo/sip"
 )
@@ -25,6 +26,88 @@ type Endpoint interface {
 	RespondInboundRequest(context.Context, string, InboundRequestHandle, InboundResponseOptions) error
 	AnswerServerInvite(context.Context, string, ServerInviteHandle, ServerInviteAnswerOptions) (DialogHandle, error)
 	RejectServerInvite(context.Context, string, ServerInviteHandle, ServerInviteRejectOptions) error
+	Snapshot() Snapshot
+	Subscribe(EventSubscription, func(Event)) func()
+}
+
+// EventSubscription controls asynchronous IMS signaling event delivery.
+type EventSubscription struct {
+	Name      string
+	QueueSize int
+	Workers   int
+	Match     func(Event) bool
+}
+
+// Event projects one inbound SIP request or response.
+type Event struct {
+	DeviceID             string
+	Kind                 string
+	Method               string
+	CSeqMethod           string
+	CallID               string
+	StatusCode           int
+	Session              *Session
+	Request              *sip.Request
+	Response             *sip.Response
+	InboundRequest       InboundRequestHandle
+	ServerInvite         ServerInviteHandle
+	ResponseAcknowledged bool
+}
+
+// Session is the immutable registration state attached to signaling events.
+type Session struct {
+	SignalingConn net.Conn
+	LocalIP       string
+	LocalPortC    int
+	RemoteIP      string
+	RemotePortS   int
+	TransportMode string
+	ServiceRoute  string
+	Path          string
+	SecVerify     string
+	SecMode       string
+	RouteSet      []string
+	IMPU          string
+	IMPI          string
+	Domain        string
+	Realm         string
+	MSISDN        string
+	Registered    bool
+}
+
+// Snapshot is the public IMS endpoint state used by voice and runtime hosts.
+type Snapshot struct {
+	IMPU               string
+	Realm              string
+	ContactID          string
+	ServiceRoute       string
+	SecVerify          string
+	EffectiveSecMode   string
+	PAccessNetworkInfo string
+	UserAgent          string
+	LocalAddr          string
+	LocalPortC         int
+	LocalPortS         int
+	RemotePortC        int
+	RemotePortS        int
+	LocalSpiC          uint32
+	LocalSpiS          uint32
+	RemoteSpiC         uint32
+	RemoteSpiS         uint32
+	Transport          string
+	IMEI               string
+	PubGRUU            string
+	Voice              VoiceProfile
+}
+
+// VoiceProfile contains the carrier-specific voice request headers.
+type VoiceProfile struct {
+	SupportedHeader   string
+	AllowHeader       string
+	AcceptContact     string
+	PPreferredService string
+	AccessType        string
+	ContactParamOrder []string
 }
 
 // InviteHandle identifies a client INVITE transaction.

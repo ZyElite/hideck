@@ -80,7 +80,7 @@ func TestUSSIProductionStopWakesBlockedSend(t *testing.T) {
 	if err := <-serverReady; err != nil {
 		t.Fatal(err)
 	}
-	service.Stop()
+	service.StopCurrent()
 	select {
 	case err := <-sendResult:
 		if err == nil || !strings.Contains(err.Error(), "service stopped") {

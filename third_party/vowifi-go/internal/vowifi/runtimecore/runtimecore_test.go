@@ -452,6 +452,15 @@ type testEndpoint struct{ id string }
 func (endpoint *testEndpoint) DeviceID() string { return endpoint.id }
 func (*testEndpoint) IsRegistered() bool        { return true }
 func (*testEndpoint) NextCSeq() uint32          { return 1 }
+func (*testEndpoint) Snapshot() imsendpoint.Snapshot {
+	return imsendpoint.Snapshot{}
+}
+func (*testEndpoint) Subscribe(
+	imsendpoint.EventSubscription,
+	func(imsendpoint.Event),
+) func() {
+	return func() {}
+}
 func (*testEndpoint) StartClientInvite(
 	context.Context,
 	string,

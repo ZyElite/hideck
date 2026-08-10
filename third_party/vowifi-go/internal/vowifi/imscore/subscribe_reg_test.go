@@ -165,7 +165,7 @@ func TestRegistrationSubscriptionStopsWithService(t *testing.T) {
 	if err := <-requestRead; err != nil {
 		t.Fatal(err)
 	}
-	service.Stop()
+	service.StopCurrent()
 	if err := <-result; err == nil || !strings.Contains(err.Error(), "service stopped") {
 		t.Fatalf("sendSubscribeReg after Stop = %v", err)
 	}
@@ -208,7 +208,7 @@ func TestRegistrationNotifyDeduplicatesReRegistration(t *testing.T) {
 	if !service.notifyReconnectPending.Load() {
 		t.Fatal("terminated binding did not schedule re-registration")
 	}
-	service.Stop()
+	service.StopCurrent()
 	if service.notifyReconnectPending.Load() {
 		t.Fatal("Stop did not clear the pending reginfo re-registration")
 	}

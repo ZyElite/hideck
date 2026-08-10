@@ -247,6 +247,7 @@ func (s *Service) commitRegisterSuccess(resp *sipResponse, session *registerSess
 	expires := registrationExpires(resp, s.cfg.Expires)
 	session.expires = expires
 	s.recordRegisterSession(session)
+	s.recordRegisterGRUU(resp.Header("Contact"))
 	associatedURI := resp.Header("P-Associated-URI")
 	if publicID := associatedPublicIdentity(associatedURI); publicID != "" {
 		session.publicID = publicID

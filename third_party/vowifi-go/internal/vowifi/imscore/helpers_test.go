@@ -158,17 +158,17 @@ func TestServiceStartAndSnapshot(t *testing.T) {
 	if svc.IPSec3GPPEnabled() {
 		t.Error("IPsec should be disabled after toggle")
 	}
-	st := svc.Status()
+	st := svc.StatusCurrent()
 	m := st.ToMap()
 	if m["registered"] != true {
 		t.Errorf("ToMap = %+v", m)
 	}
-	snap := svc.Snapshot()
+	snap := svc.SnapshotMap()
 	if snap["reg_state"] != "registered" {
 		t.Errorf("snapshot = %+v", snap)
 	}
-	if svc.Session() != "idle" {
-		t.Errorf("session = %q", svc.Session())
+	if svc.SessionState() != "idle" {
+		t.Errorf("session = %q", svc.SessionState())
 	}
 }
 
@@ -203,7 +203,7 @@ func TestServiceMethods(t *testing.T) {
 		svc.transport.DeliverResponse(registerResponseForRequest(request, 200, nil))
 		return nil
 	})
-	if err := svc.Subscribe("reg.example.com"); err != nil {
+	if err := svc.SendRegistrationSubscribe("reg.example.com"); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 	h := &imscoreDialogHandle{id: "call-1", callID: "call-1", fromTag: "f", toTag: "t"}
@@ -217,10 +217,10 @@ func TestServiceMethods(t *testing.T) {
 	if err := svc.RejectServerInviteRaw(inv); err == nil {
 		t.Fatal("RejectServerInvite succeeded without inbound request context")
 	}
-	if err := svc.TriggerFastReconnect(); err != nil {
+	if err := svc.TriggerFastReconnectCurrent(); err != nil {
 		t.Fatalf("TriggerFastReconnect: %v", err)
 	}
-	svc.UpdateLastPingAt(time.Now())
+	svc.UpdateLastPingAtTime(time.Now())
 }
 
 func TestSubscribeReturnsNetworkRejection(t *testing.T) {
@@ -236,10 +236,10 @@ func TestSubscribeReturnsNetworkRejection(t *testing.T) {
 		svc.transport.DeliverResponse(registerResponseForRequest(request, 503, nil))
 		return nil
 	})
-	if err := svc.Subscribe("reg.example.com"); err == nil || !strings.Contains(err.Error(), "503") {
+	if err := svc.SendRegistrationSubscribe("reg.example.com"); err == nil || !strings.Contains(err.Error(), "503") {
 		t.Fatalf("Subscribe error = %v, want status 503", err)
 	}
-	if err := svc.Subscribe("reg.example.com\r\nX-Injected: yes"); err == nil {
+	if err := svc.SendRegistrationSubscribe("reg.example.com\r\nX-Injected: yes"); err == nil {
 		t.Fatal("Subscribe accepted a header-injection URI")
 	}
 }

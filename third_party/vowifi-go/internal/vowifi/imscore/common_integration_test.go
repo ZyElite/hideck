@@ -69,7 +69,7 @@ func TestRegisterPropagatesGeneratedTraceID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Stop()
+	defer service.StopCurrent()
 	if err := service.Register(nil); err != nil {
 		t.Fatal(err)
 	}

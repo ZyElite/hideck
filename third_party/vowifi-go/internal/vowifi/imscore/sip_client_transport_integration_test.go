@@ -41,7 +41,7 @@ func TestUDPClientTransactionRetransmitsThroughRegistrationSocket(t *testing.T) 
 	service.activateInitialSendAndReceive(&initialRegistrationTransport{
 		kind: "udp", remote: remote, packet: client, port: client.LocalAddr().(*net.UDPAddr).Port,
 	})
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 
 	serverResult := make(chan error, 1)
 	go serveTransactionAfterRetransmission(registrar, serverResult)
@@ -65,7 +65,7 @@ func TestFatalClientWriteMarksProductionSignalingDead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	service.mu.Lock()
 	service.regState = regRegistered
 	service.signalingReady = true
@@ -79,7 +79,7 @@ func TestFatalClientWriteMarksProductionSignalingDead(t *testing.T) {
 	if !errors.Is(err, sip.ErrTransactionTransport) || !errors.Is(err, syscall.EPIPE) {
 		t.Fatalf("RoundTrip error = %v", err)
 	}
-	status := service.Status()
+	status := service.StatusCurrent()
 	if status.SignalingReady || status.RegStatus != "RejectedTemporary" ||
 		!strings.Contains(status.SignalingFailureReason, "broken pipe") {
 		t.Fatalf("status after fatal write = %+v", status)
@@ -99,7 +99,7 @@ func TestTransactionTimeoutDoesNotMarkSignalingDead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	service.transport.timers = newTimedTestTransport().timers
 	service.mu.Lock()
 	service.regState = regRegistered
@@ -114,7 +114,7 @@ func TestTransactionTimeoutDoesNotMarkSignalingDead(t *testing.T) {
 	if !errors.Is(err, sip.ErrTransactionTimeout) {
 		t.Fatalf("RoundTrip error = %v", err)
 	}
-	status := service.Status()
+	status := service.StatusCurrent()
 	if !status.SignalingReady || status.RegStatus != "Registered" || status.SignalingFailureReason != "" {
 		t.Fatalf("status after ordinary timeout = %+v", status)
 	}
@@ -138,7 +138,7 @@ func TestTCPStreamClosureTerminatesProductionClientTransaction(t *testing.T) {
 	service.activateInitialSendAndReceive(&initialRegistrationTransport{
 		kind: "tcp", stream: client,
 	})
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	serverResult := make(chan error, 1)
 	go func() {
 		_, readErr := readSIPStreamMessage(bufio.NewReader(server))

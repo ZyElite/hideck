@@ -20,12 +20,12 @@ func StopSession(ctx context.Context, result *SessionResult) {
 	defaultStopSession(ctx, result)
 }
 
-func defaultStopSession(_ context.Context, result *SessionResult) {
+func defaultStopSession(ctx context.Context, result *SessionResult) {
 	if result == nil {
 		return
 	}
 	if result.IMSService != nil {
-		result.IMSService.Stop()
+		_ = result.IMSService.Stop(ctx)
 	}
 	if result.EPDGMgr != nil {
 		if err := result.EPDGMgr.Stop(result.DeviceID); err != nil && !strings.Contains(err.Error(), "session id") {

@@ -28,7 +28,7 @@ func TestDialogHandleRetainsOriginalFieldPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(service.Stop)
+	t.Cleanup(service.StopCurrent)
 	handle := &imscoreDialogHandle{id: "empty-dialog"}
 	service.dialogs().store(handle)
 	if err := service.CloseDialog(t.Context(), service.DeviceID(), handle); err != nil {
