@@ -126,7 +126,7 @@ func (a *Agent) cancelVoiceClientInvite(ctx context.Context, call *Call, reason 
 	if handle == nil {
 		return errors.New("voice: IMS INVITE handle is unavailable")
 	}
-	call.MarkLocalCancelSent()
+	call.MarkLocalCancelSent(reason)
 	return a.dialog.CancelClientInvite(ctx, a.deviceID, handle, imsendpoint.ClientInviteCancelOptions{
 		Reason: strings.TrimSpace(reason),
 	})

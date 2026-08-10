@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/client"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voiceclient"
@@ -22,28 +24,53 @@ func (c *Call) GetStartTime() time.Time { return c.StartTime() }
 func (c *Call) GetEndTime() time.Time { return c.EndTime() }
 
 // IMSDialogValue returns the IMS dialog handle.
-func (c *Call) IMSDialogValue() *imscore.DialogHandle { return c.IMSDialog() }
+func (c *Call) IMSDialogValue() imsendpoint.DialogHandle {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.DialogState.IMSDialog
+}
 
 // IMSInviteHandleValue returns the IMS invite handle.
-func (c *Call) IMSInviteHandleValue() *imscore.InviteHandle { return c.IMSInviteHandle() }
+func (c *Call) IMSInviteHandleValue() imsendpoint.InviteHandle {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.DialogState.IMSInviteHandle
+}
 
 // LocalCancelReasonValue returns the outbound cancel reason.
 func (c *Call) LocalCancelReasonValue() string { return c.OutboundCancelReason() }
 
-// SetOutboundCancel records the outbound cancel reason.
-func (c *Call) SetOutboundCancel(reason string) { c.SetOutboundCancelReason(reason) }
+// SetOutboundCancel retains the recovered cancel callback API.
+func (c *Call) SetOutboundCancel(cancel func()) { c.SetOutboundRuntimeCancel(cancel) }
 
-// SetOutboundRuntimeCancel records a runtime outbound cancel reason.
-func (c *Call) SetOutboundRuntimeCancel(reason string) { c.SetOutboundCancelReason(reason) }
-
-// MarkErrorACKSent records that an error ACK was sent.
-func (c *Call) MarkErrorACKSent() {
+// SetOutboundRuntimeCancel stores the recovered runtime cancel callback.
+func (c *Call) SetOutboundRuntimeCancel(cancel func()) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
-	c.ackSent = true
+	c.outboundRuntimeCancel = cancel
 	c.mu.Unlock()
+}
+
+// MarkErrorACKSent records that an error ACK was sent.
+func (c *Call) MarkErrorACKSent() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.DialogState.ErrorACKSent {
+		return false
+	}
+	c.DialogState.ErrorACKSent = true
+	return true
 }
 
 // CancelOutboundInviteTimer cancels the no-answer timer.
@@ -51,14 +78,26 @@ func (c *Call) CancelOutboundInviteTimer() error { return c.StopOutboundNoAnswer
 
 // --- Call constructors ---
 
-// NewOutboundCall creates an outbound call in the Dialing state.
-func NewOutboundCall(agent *Agent, number string) (*Call, error) {
+// NewOutboundCall retains the recovered call-ID/caller/callee constructor.
+func NewOutboundCall(callID, callerID, calleeID string) *Call {
+	call := newCall(callInit{
+		direction: callstate.DirectionOutbound, callID: callID,
+		peer: calleeID, traceID: strings.TrimSpace(callID),
+	})
+	call.DialogState.CallerID = callerID
+	call.DialogState.CalleeID = calleeID
+	call.startActor()
+	return call
+}
+
+// NewOutboundCallForAgent preserves the additive Agent-owned constructor.
+func NewOutboundCallForAgent(agent *Agent, number string) (*Call, error) {
 	if agent == nil {
 		return nil, errors.New("voice: nil agent")
 	}
 	call := NewCall(agent, callstate.DirectionOutbound, newVoiceCallID(), number)
 	call.SetStartTime(time.Now())
-	if err := call.Transition(callstate.StateDialing); err != nil {
+	if err := call.TransitionChecked(callstate.StateDialing); err != nil {
 		return nil, err
 	}
 	agent.mu.Lock()
@@ -68,10 +107,26 @@ func NewOutboundCall(agent *Agent, number string) (*Call, error) {
 	return call, nil
 }
 
-// NewCallFromRequest creates a call from an inbound request.
-func NewCallFromRequest(agent *Agent, peer, callID string) *Call {
+// NewCallFromRequest retains the recovered inbound SIP constructor.
+func NewCallFromRequest(deviceID string, request *sip.Request, session *imsendpoint.Session) *Call {
+	call := newCall(callInit{deviceID: deviceID, direction: callstate.DirectionInbound})
+	call.DialogState.IMSSession = session
+	if request != nil {
+		call.DialogState.OriginalRequest = request.Clone()
+		call.parseInviteRequest(request)
+	}
+	call.callID = call.DialogState.CallID
+	call.peer = call.DialogState.CallerID
+	call.callee = call.DialogState.CalleeID
+	call.TraceID = call.originalTraceID()
+	call.startActor()
+	return call
+}
+
+// NewCallFromRequestForAgent preserves the additive Agent-owned constructor.
+func NewCallFromRequestForAgent(agent *Agent, peer, callID string) *Call {
 	call := NewCall(agent, callstate.DirectionInbound, callID, peer)
-	_ = call.Transition(callstate.StateAlerting)
+	_ = call.TransitionChecked(callstate.StateAlerting)
 	if agent != nil {
 		agent.mu.Lock()
 		agent.calls[callID] = call
@@ -81,11 +136,20 @@ func NewCallFromRequest(agent *Agent, peer, callID string) *Call {
 	return call
 }
 
-// NewCallFromClientInvite creates a call from a client-side INVITE.
-func NewCallFromClientInvite(agent *Agent, peer, callID, clientCallID string) *Call {
+// NewCallFromClientInvite retains the recovered local SIP constructor.
+func NewCallFromClientInvite(deviceID string, request *sip.Request) *Call {
+	callID, callerID, calleeID := legacyRequestIdentity(request)
+	call := NewOutboundCall(callID, callerID, calleeID)
+	call.DeviceID = deviceID
+	call.parseLegacyClientInvite(request)
+	return call
+}
+
+// NewCallFromClientInviteForAgent preserves the additive Agent-owned constructor.
+func NewCallFromClientInviteForAgent(agent *Agent, peer, callID, clientCallID string) *Call {
 	call := NewCall(agent, callstate.DirectionOutbound, callID, peer)
 	call.SetClientCallID(clientCallID)
-	_ = call.Transition(callstate.StateDialing)
+	_ = call.TransitionChecked(callstate.StateDialing)
 	if agent != nil {
 		agent.mu.Lock()
 		agent.calls[callID] = call
@@ -152,7 +216,7 @@ func (a *Agent) HandleClientCancel(callID string) error {
 	if call == nil {
 		return errors.New("voice: call not found")
 	}
-	if call.GetState() == callstate.StateConnected {
+	if call.CallState() == callstate.StateConnected {
 		return errors.New("voice: connected call must be ended with BYE")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
@@ -160,15 +224,7 @@ func (a *Agent) HandleClientCancel(callID string) error {
 	if err := a.cancelVoiceClientInvite(ctx, call, "local_cancel"); err != nil {
 		return fmt.Errorf("voice: send CANCEL: %w", err)
 	}
-	call.MarkLocalCancelSent()
-	call.SetOutboundCancelReason("local_cancel")
-	if err := call.Transition(callstate.StateFailed); err != nil {
-		return err
-	}
-	_ = call.EnsureTimerStopped()
-	_ = call.CloseDone()
-	a.emitCallCanceled(call, call.OutboundCancelReason())
-	a.finalizeActiveCall(call)
+	a.finishLocalCancel(call, call.OutboundCancelReason())
 	return nil
 }
 
@@ -205,7 +261,7 @@ func (a *Agent) HandleClientPrack(callID string) error {
 
 // OnIMSInvite handles an incoming INVITE from the IMS network.
 func (a *Agent) OnIMSInvite(peer, callID string, sdp string) *Call {
-	call := NewCallFromRequest(a, peer, callID)
+	call := NewCallFromRequestForAgent(a, peer, callID)
 	_, _ = ProcessIncomingIMSSDP(sdp)
 	a.emitIncomingCall(call)
 	a.emitCallRinging(call)
@@ -232,12 +288,12 @@ func (a *Agent) OnIMSBye(callID string) error {
 }
 
 func (a *Agent) finishRemoteBye(call *Call) error {
-	_ = call.Transition(callstate.StateDisconnected)
-	_ = call.Transition(callstate.StateEnded)
+	_ = call.TransitionChecked(callstate.StateDisconnected)
+	_ = call.TransitionChecked(callstate.StateEnded)
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	call.SetIMSDialog(nil)
-	_ = call.CloseDone()
+	call.CloseDone()
 	a.emitCallEnded(call, "remote_bye")
 	a.finalizeActiveCall(call)
 	return nil
@@ -254,10 +310,10 @@ func (a *Agent) OnIMSCancel(callID string) error {
 	if call == nil {
 		return errors.New("voice: call not found")
 	}
-	_ = call.Transition(callstate.StateFailed)
+	_ = call.TransitionChecked(callstate.StateFailed)
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
-	_ = call.CloseDone()
+	call.CloseDone()
 	a.emitCallCanceled(call, "remote_cancel")
 	a.finalizeActiveCall(call)
 	return nil
@@ -280,13 +336,13 @@ func (a *Agent) OnIMSUpdate(callID string) error {
 }
 
 func (a *Agent) applyIMSUpdate(call *Call) error {
-	if call.GetState() != callstate.StateConnected {
+	if call.CallState() != callstate.StateConnected {
 		return errors.New("voice: call is not connected")
 	}
-	if err := call.Transition(callstate.StateConnecting); err != nil {
+	if err := call.TransitionChecked(callstate.StateConnecting); err != nil {
 		return err
 	}
-	if err := call.Transition(callstate.StateConnected); err != nil {
+	if err := call.TransitionChecked(callstate.StateConnected); err != nil {
 		return err
 	}
 	a.emitCallMediaUpdated(call)
@@ -391,18 +447,8 @@ func (a *Agent) SetEventDispatcher(dispatcher interface{ Dispatch(interface{}) }
 	a.mu.Unlock()
 }
 
-// BuildResponse builds a status response for the call.
-func (c *Call) BuildResponse() string {
-	return buildCallStatusResponse(c, 0, "")
-}
-
-// BuildResponseWithSDP builds a status response with an SDP body.
-func (c *Call) BuildResponseWithSDP(status int, sdp string) string {
-	return buildCallStatusResponse(c, status, sdp)
-}
-
-// buildCallStatusResponse builds a SIP status response for a call.
-func buildCallStatusResponse(c *Call, status int, sdp string) string {
+// BuildResponseText preserves the additive textual response helper.
+func (c *Call) BuildResponseText(status int, sdp string) string {
 	if c == nil {
 		return ""
 	}

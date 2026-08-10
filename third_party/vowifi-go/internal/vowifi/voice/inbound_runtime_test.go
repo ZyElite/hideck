@@ -97,8 +97,8 @@ func TestInboundCallAnswerRelaysRTPAndRemoteBYECleansUp(t *testing.T) {
 	if _, err := agent.HandleInboundVoiceRequest(imscore.InboundVoiceRequest{Method: "BYE", CallID: call.CallID()}); err != nil {
 		t.Fatal(err)
 	}
-	if call.GetState() != callstate.StateEnded || agent.IsBusy() {
-		t.Fatalf("BYE cleanup state=%s busy=%t", call.GetState(), agent.IsBusy())
+	if call.CallState() != callstate.StateEnded || agent.IsBusy() {
+		t.Fatalf("BYE cleanup state=%s busy=%t", call.CallState(), agent.IsBusy())
 	}
 	conn, _ := call.RTPRelay().GetIMSConnAndRemote()
 	if _, err := conn.WriteTo([]byte("closed"), imsPeer.LocalAddr()); err == nil {
@@ -197,8 +197,8 @@ func TestInboundBYEWaitsForConcurrentAnswerDecision(t *testing.T) {
 		t.Fatalf("BYE result=%+v err=%v", result.result, result.err)
 	}
 	call := agent.callByID(request.CallID)
-	if call.GetState() != callstate.StateEnded || agent.IsBusy() {
-		t.Fatalf("final state=%s busy=%t", call.GetState(), agent.IsBusy())
+	if call.CallState() != callstate.StateEnded || agent.IsBusy() {
+		t.Fatalf("final state=%s busy=%t", call.CallState(), agent.IsBusy())
 	}
 }
 

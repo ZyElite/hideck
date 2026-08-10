@@ -105,7 +105,7 @@ func (c *Call) StartOutboundNoAnswerTimer(timeout time.Duration) error {
 		c.noAnswerTimer.Stop()
 	}
 	c.noAnswerTimer = time.AfterFunc(timeout, func() {
-		if c.GetState() == callstate.StateDialing || c.GetState() == callstate.StateAlerting {
+		if c.CallState() == callstate.StateDialing || c.CallState() == callstate.StateAlerting {
 			cause := errors.New("voice: no answer")
 			if c.agent != nil {
 				if err := c.agent.cancelVoiceClientInvite(context.Background(), c, cause.Error()); err != nil {
@@ -116,8 +116,8 @@ func (c *Call) StartOutboundNoAnswerTimer(timeout time.Duration) error {
 				return
 			}
 			c.SetOutboundCancelReason(cause.Error())
-			_ = c.Transition(callstate.StateFailed)
-			_ = c.CloseDone()
+			_ = c.TransitionChecked(callstate.StateFailed)
+			c.CloseDone()
 		}
 	})
 	c.mu.Unlock()
@@ -156,17 +156,23 @@ func (c *Call) stopSessionTimer() error {
 	return nil
 }
 
-// CloseDone signals call teardown completion once.
-func (c *Call) CloseDone() error {
+// CloseDone retains the recovered idempotent completion signal.
+func (c *Call) CloseDone() {
 	if c == nil {
-		return nil
+		return
 	}
 	c.mu.Lock()
-	if c.done == nil {
-		c.done = make(chan struct{})
+	if c.Done == nil {
+		c.Done = make(chan struct{})
 	}
-	done := c.done
+	done := c.Done
 	c.mu.Unlock()
 	c.doneOnce.Do(func() { close(done) })
+	return
+}
+
+// CloseDoneChecked preserves the additive error-returning helper.
+func (c *Call) CloseDoneChecked() error {
+	c.CloseDone()
 	return nil
 }

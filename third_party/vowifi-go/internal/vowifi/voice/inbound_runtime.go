@@ -27,14 +27,14 @@ func (a *Agent) IncomingCalls() []IncomingCall {
 	a.mu.RLock()
 	calls := make([]*Call, 0, len(a.calls))
 	for _, call := range a.calls {
-		if call.Direction() == callstate.DirectionInbound && !call.IsTerminalState() {
+		if call.CallDirection() == callstate.DirectionInbound && !call.IsTerminalState() {
 			calls = append(calls, call)
 		}
 	}
 	a.mu.RUnlock()
 	result := make([]IncomingCall, 0, len(calls))
 	for _, call := range calls {
-		state := call.GetState()
+		state := call.CallState()
 		if state == callstate.StateAlerting || state == callstate.StateConnecting || state == callstate.StateConnected {
 			result = append(result, call.incomingSnapshot())
 		}
@@ -64,7 +64,7 @@ func (a *Agent) HandleInboundVoiceRequest(request imscore.InboundVoiceRequest) (
 		if call == nil {
 			return voiceResult(481), nil
 		}
-		call.MarkReliableProvisional()
+		call.MarkReliableProvisional(call.Timers.RSeq)
 		return voiceResult(200), nil
 	case "UPDATE":
 		return a.handleInboundUpdate(request, call)
@@ -130,7 +130,7 @@ func (a *Agent) handleInboundCancel(request imscore.InboundVoiceRequest, call *C
 	}
 	call.inboundDecisionMu.Lock()
 	defer call.inboundDecisionMu.Unlock()
-	if call.GetState() != callstate.StateAlerting {
+	if call.CallState() != callstate.StateAlerting {
 		return voiceResult(481), nil
 	}
 	responder := call.inboundResponseWriter()
@@ -160,7 +160,7 @@ func (a *Agent) handleInboundUpdate(request imscore.InboundVoiceRequest, call *C
 	}
 	call.inboundDecisionMu.Lock()
 	defer call.inboundDecisionMu.Unlock()
-	if call.GetState() != callstate.StateConnected {
+	if call.CallState() != callstate.StateConnected {
 		return voiceResult(491), nil
 	}
 	call.applyVoiceSessionExpires(request.SessionExpires)
@@ -173,7 +173,7 @@ func (a *Agent) handleInboundUpdate(request imscore.InboundVoiceRequest, call *C
 func (a *Agent) handleReinvite(request imscore.InboundVoiceRequest, call *Call) (imscore.InboundVoiceResult, error) {
 	call.inboundDecisionMu.Lock()
 	defer call.inboundDecisionMu.Unlock()
-	if call.GetState() != callstate.StateConnected {
+	if call.CallState() != callstate.StateConnected {
 		return voiceResult(491), nil
 	}
 	call.applyVoiceSessionExpires(request.SessionExpires)

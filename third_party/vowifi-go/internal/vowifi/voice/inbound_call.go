@@ -4,6 +4,7 @@ import (
 	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
 func (c *Call) setServerInvite(handle imsendpoint.ServerInviteHandle, request *sip.Request) {
@@ -77,7 +78,7 @@ func (c *Call) incomingSnapshot() IncomingCall {
 	return IncomingCall{
 		DeviceID: c.agent.DeviceID(), CallID: c.callID, Caller: c.peer,
 		Callee: c.callee, OfferSDP: c.clientRemoteSDP,
-		ReceivedAt: c.startTime, State: c.state.String(),
+		ReceivedAt: c.startTime, State: callstate.State(c.State).String(),
 	}
 }
 

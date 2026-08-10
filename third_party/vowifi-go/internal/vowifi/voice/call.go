@@ -1,24 +1,57 @@
 package voice
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"time"
 
-	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/media"
 )
 
 // NewCall creates a call owned by the agent.
 func NewCall(agent *Agent, direction callstate.Direction, callID, peer string) *Call {
-	return &Call{
-		agent:     agent,
-		state:     callstate.StateIdle,
-		direction: direction,
-		callID:    callID,
-		peer:      peer,
-		done:      make(chan struct{}),
+	deviceID := ""
+	if agent != nil {
+		deviceID = agent.DeviceID()
 	}
+	call := newCall(callInit{
+		agent: agent, deviceID: deviceID, direction: direction,
+		callID: callID, peer: peer, generateTrace: true,
+	})
+	call.startActor()
+	return call
+}
+
+type callInit struct {
+	agent         *Agent
+	deviceID      string
+	direction     callstate.Direction
+	callID        string
+	peer          string
+	traceID       string
+	generateTrace bool
+}
+
+func newCall(init callInit) *Call {
+	ctx, cancel := context.WithCancel(context.Background())
+	traceID := init.traceID
+	if init.generateTrace && strings.TrimSpace(traceID) == "" {
+		traceID = common.NewTraceID()
+	}
+	call := &Call{
+		DeviceID: init.deviceID, Direction: int(init.direction), State: int(callstate.StateIdle),
+		TraceID: traceID, Done: make(chan struct{}), Ctx: ctx, Cancel: cancel,
+		agent: init.agent, callID: init.callID, peer: init.peer,
+	}
+	call.DialogState.CallID = init.callID
+	if init.direction == callstate.DirectionInbound {
+		call.DialogState.CallerID = init.peer
+	} else {
+		call.DialogState.CalleeID = init.peer
+	}
+	return call
 }
 
 // CallID returns the call ID.
@@ -48,6 +81,7 @@ func (c *Call) SetClientCallID(id string) {
 	}
 	c.mu.Lock()
 	c.clientCallID = id
+	c.DialogState.ClientCallID = id
 	c.mu.Unlock()
 }
 
@@ -61,41 +95,83 @@ func (c *Call) Peer() string {
 	return c.peer
 }
 
-// Direction returns the call direction.
-func (c *Call) Direction() callstate.Direction {
+// CallDirection returns the call direction without shadowing the recovered
+// public Direction field.
+func (c *Call) CallDirection() callstate.Direction {
 	if c == nil {
 		return callstate.DirectionOutbound
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.direction
+	return callstate.Direction(c.Direction)
 }
 
-// GetState returns the current call state.
-func (c *Call) GetState() callstate.State {
+// GetState retains the recovered integer state API.
+func (c *Call) GetState() int {
 	if c == nil {
-		return callstate.StateIdle
+		return int(callstate.StateIdle)
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.state
+	return c.State
 }
 
-// Transition moves the call to the next state, validating the transition.
-func (c *Call) Transition(to callstate.State) error {
+// CallState returns the typed additive state view.
+func (c *Call) CallState() callstate.State { return callstate.State(c.GetState()) }
+
+// Transition retains the recovered boolean state transition API.
+func (c *Call) Transition(to int) bool {
 	if c == nil {
-		return errors.New("voice: nil call")
+		return false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !callstate.CanTransition(c.state, to) {
-		return &StateTransitionError{From: c.state, To: to}
+	return c.transitionLocked(to)
+}
+
+func (c *Call) transitionLocked(to int) bool {
+	from := callstate.State(c.State)
+	next := callstate.State(to)
+	if from == next {
+		return true
 	}
-	c.state = to
-	if callstate.IsTerminal(to) && c.endTime.IsZero() {
-		c.endTime = time.Now()
+	if !callstate.CanTransition(from, next) {
+		return false
 	}
-	return nil
+	c.State = to
+	return true
+}
+
+func (c *Call) startActor() {
+	if c == nil || c.Ctx == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.actor == nil {
+		c.actor = callstate.NewActorWithConfig(callstate.ActorConfig{DeviceID: c.DeviceID, TraceID: c.TraceID})
+	}
+	actor := c.actor
+	c.mu.Unlock()
+	actor.Start(c.Ctx)
+}
+
+// TransitionChecked preserves the additive error-returning transition API.
+func (c *Call) TransitionChecked(to callstate.State) error {
+	if c == nil {
+		return errors.New("voice: nil call")
+	}
+	from := c.CallState()
+	if c.Transition(int(to)) {
+		if callstate.IsTerminal(to) {
+			c.mu.Lock()
+			if c.endTime.IsZero() {
+				c.endTime = time.Now()
+			}
+			c.mu.Unlock()
+		}
+		return nil
+	}
+	return &StateTransitionError{From: from, To: to}
 }
 
 // StateTransitionError reports an invalid state transition.
@@ -111,12 +187,12 @@ func (e *StateTransitionError) Error() string {
 
 // IsTerminalState reports whether the call is in a terminal state.
 func (c *Call) IsTerminalState() bool {
-	return callstate.IsTerminal(c.GetState())
+	return callstate.IsTerminal(c.CallState())
 }
 
 // IsConnected reports whether the call is connected (media active).
 func (c *Call) IsConnected() bool {
-	return c.GetState() == callstate.StateConnected
+	return c.CallState() == callstate.StateConnected
 }
 
 // StartTime returns the call start time.
@@ -149,261 +225,28 @@ func (c *Call) EndTime() time.Time {
 	return c.endTime
 }
 
-// Duration returns the call duration.
-func (c *Call) Duration() time.Duration {
+// Duration retains the recovered nanosecond duration API.
+func (c *Call) Duration() int64 { return int64(c.CallDuration()) }
+
+// CallDuration returns the typed additive duration view.
+func (c *Call) CallDuration() time.Duration {
 	if c == nil {
 		return 0
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	return c.callDurationLocked(time.Now())
+}
+
+func (c *Call) callDurationLocked(now time.Time) time.Duration {
 	if c.startTime.IsZero() {
 		return 0
 	}
 	end := c.endTime
 	if end.IsZero() {
-		end = time.Now()
+		end = now
 	}
 	return end.Sub(c.startTime)
-}
-
-// SetIMSDialog attaches the IMS dialog handle.
-func (c *Call) SetIMSDialog(h *imscore.DialogHandle) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.imsDialog = h
-	c.mu.Unlock()
-}
-
-// IMSDialog returns the IMS dialog handle.
-func (c *Call) IMSDialog() *imscore.DialogHandle {
-	if c == nil {
-		return nil
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.imsDialog
-}
-
-// SetIMSInviteHandle attaches the IMS invite handle.
-func (c *Call) SetIMSInviteHandle(h *imscore.InviteHandle) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.imsInvite = h
-	c.mu.Unlock()
-}
-
-// IMSInviteHandle returns the IMS invite handle.
-func (c *Call) IMSInviteHandle() *imscore.InviteHandle {
-	if c == nil {
-		return nil
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.imsInvite
-}
-
-// SetRouteSet sets the dialog route set.
-func (c *Call) SetRouteSet(route []string) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.routeSet = append([]string{}, route...)
-	c.mu.Unlock()
-}
-
-// RouteSet returns the dialog route set.
-func (c *Call) RouteSet() []string {
-	if c == nil {
-		return nil
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return append([]string{}, c.routeSet...)
-}
-
-// SetRTPRelay attaches the media relay.
-func (c *Call) SetRTPRelay(r *media.RTPRelay) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.rtpRelay = r
-	c.mu.Unlock()
-}
-
-// RTPRelay returns the media relay.
-func (c *Call) RTPRelay() *media.RTPRelay {
-	if c == nil {
-		return nil
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.rtpRelay
-}
-
-func (c *Call) setComfortNoise(g *media.ComfortNoiseGenerator) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.comfortNoise = g
-	c.mu.Unlock()
-}
-
-// MediaErrors reports asynchronous media generation failures.
-func (c *Call) MediaErrors() <-chan error {
-	if c == nil {
-		return nil
-	}
-	c.mu.RLock()
-	generator := c.comfortNoise
-	c.mu.RUnlock()
-	if generator == nil {
-		return nil
-	}
-	return generator.Errors()
-}
-
-// MarkACKSent records that the ACK was sent.
-func (c *Call) MarkACKSent() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.ackSent = true
-	c.mu.Unlock()
-}
-
-// IsACKSent reports whether the ACK was sent.
-func (c *Call) IsACKSent() bool {
-	if c == nil {
-		return false
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.ackSent
-}
-
-// MarkInviteFinalSeen records that the INVITE final response was seen.
-func (c *Call) MarkInviteFinalSeen() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.inviteFinalSeen = true
-	c.mu.Unlock()
-}
-
-// HasInviteFinalSeen reports whether the INVITE final was seen.
-func (c *Call) HasInviteFinalSeen() bool {
-	if c == nil {
-		return false
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.inviteFinalSeen
-}
-
-// MarkInviteProvisional records that a provisional INVITE response was seen.
-func (c *Call) MarkInviteProvisional() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.inviteProvisional = true
-	c.mu.Unlock()
-}
-
-// HasInviteProvisional reports whether a provisional was seen.
-func (c *Call) HasInviteProvisional() bool {
-	if c == nil {
-		return false
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.inviteProvisional
-}
-
-// MarkLocalCancelSent records that a local CANCEL was sent.
-func (c *Call) MarkLocalCancelSent() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.localCancelSent = true
-	c.mu.Unlock()
-}
-
-// HasLocalCancelSent reports whether a local CANCEL was sent.
-func (c *Call) HasLocalCancelSent() bool {
-	if c == nil {
-		return false
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.localCancelSent
-}
-
-// MarkReliableProvisional records that a reliable provisional (100rel) was used.
-func (c *Call) MarkReliableProvisional() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.reliableProvisional = true
-	c.mu.Unlock()
-}
-
-// HasReliableProvisional reports whether this call negotiated 100rel.
-func (c *Call) HasReliableProvisional() bool {
-	if c == nil {
-		return false
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.reliableProvisional
-}
-
-func (c *Call) markReliableProvisionalRSeq(rseq uint32) bool {
-	if c == nil || rseq == 0 {
-		return false
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.reliableRSeq == nil {
-		c.reliableRSeq = make(map[uint32]struct{})
-	}
-	if _, exists := c.reliableRSeq[rseq]; exists {
-		return false
-	}
-	c.reliableRSeq[rseq] = struct{}{}
-	c.reliableProvisional = true
-	return true
-}
-
-// SetOutboundCancelReason records the outbound cancel reason.
-func (c *Call) SetOutboundCancelReason(reason string) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.outboundCancelReason = reason
-	c.mu.Unlock()
-}
-
-// OutboundCancelReason returns the outbound cancel reason.
-func (c *Call) OutboundCancelReason() string {
-	if c == nil {
-		return ""
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.outboundCancelReason
 }
 
 // Snapshot returns a point-in-time view of the call.
@@ -415,11 +258,11 @@ func (c *Call) Snapshot() *CallSnapshot {
 	defer c.mu.RUnlock()
 	return &CallSnapshot{
 		CallID:    c.callID,
-		State:     c.state.String(),
-		Direction: c.direction.String(),
+		State:     callstate.State(c.State).String(),
+		Direction: callstate.Direction(c.Direction).String(),
 		Peer:      c.peer,
 		StartTime: c.startTime,
 		EndTime:   c.endTime,
-		Duration:  c.Duration(),
+		Duration:  c.callDurationLocked(time.Now()),
 	}
 }

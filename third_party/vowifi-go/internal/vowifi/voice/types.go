@@ -33,6 +33,7 @@ type Agent struct {
 
 	calls           map[string]*Call // keyed by call ID
 	activeCall      *Call
+	notifierMu      sync.Mutex
 	notifier        func(events.Event)
 	incomingHandler func(IncomingCall)
 	newMediaRelay   func(string) (*media.RTPRelay, error)
@@ -47,20 +48,31 @@ type Agent struct {
 
 // Call is one voice call (inbound or outbound).
 type Call struct {
-	mu        sync.RWMutex
-	agent     *Agent
-	state     callstate.State
-	direction callstate.Direction
+	DeviceID  string
+	Direction int
+	State     int
+	TraceID   string
+	Done      chan struct{}
+	doneOnce  sync.Once
+	Ctx       context.Context
+	Cancel    func()
+
+	outboundRuntimeCancel func()
+	outboundNoAnswerStop  func()
+	mu                    sync.RWMutex
+	startTime             time.Time
+	endTime               time.Time
+	callstate.DialogState
+	callstate.MediaState
+	callstate.Timers
+	actor *callstate.Actor
+
+	agent *Agent
 
 	callID       string
 	clientCallID string
 	peer         string
 	callee       string
-
-	startTime time.Time
-	endTime   time.Time
-	done      chan struct{}
-	doneOnce  sync.Once
 
 	noAnswerTimer *time.Timer
 	sessionTimer  *time.Timer
@@ -92,7 +104,6 @@ type Call struct {
 	inviteProvisional    bool
 	localCancelSent      bool
 	reliableProvisional  bool
-	reliableRSeq         map[uint32]struct{}
 	outboundCancelReason string
 }
 

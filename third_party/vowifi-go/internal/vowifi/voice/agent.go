@@ -146,6 +146,10 @@ func (a *Agent) notifyIMSEvent(ev events.Event) {
 	a.mu.RLock()
 	started := a.started
 	a.mu.RUnlock()
+	if call := a.callForEvent(ev); call != nil && call.actor != nil &&
+		call.actor.Enqueue("voice_event_"+ev.Type(), func() { a.notify(ev) }) {
+		return
+	}
 	if a.actor != nil && a.actor.Enqueue("ims_event_"+ev.Type(), func() { a.notify(ev) }) {
 		return
 	}
@@ -156,6 +160,56 @@ func (a *Agent) notifyIMSEvent(ev events.Event) {
 	// Preserve delivery while the agent is stopped or the bounded queue rejects
 	// work. Rejection is surfaced above instead of silently losing the event.
 	a.notify(ev)
+}
+
+func (a *Agent) callForEvent(ev events.Event) *Call {
+	callID := voiceEventCallID(ev)
+	if callID == "" {
+		return nil
+	}
+	return a.callByID(callID)
+}
+
+func voiceEventCallID(ev events.Event) string {
+	switch typed := ev.(type) {
+	case *events.EventIncomingCall:
+		return typed.CallID
+	case *events.EventCallRinging:
+		return typed.CallID
+	case *events.EventCallAnswered:
+		return typed.CallID
+	case *events.EventCallEnded:
+		return typed.CallID
+	case *events.EventCallFailed:
+		return typed.CallID
+	case *events.EventCallCanceled:
+		return typed.CallID
+	case *events.EventCallMediaUpdated:
+		return typed.CallID
+	default:
+		return voiceValueEventCallID(ev)
+	}
+}
+
+func voiceValueEventCallID(ev events.Event) string {
+	switch typed := ev.(type) {
+	case events.EventIncomingCall:
+		return typed.CallID
+	case events.EventCallRinging:
+		return typed.CallID
+	case events.EventCallAnswered:
+		return typed.CallID
+	case events.EventCallEnded:
+		return typed.CallID
+	case events.EventCallFailed:
+		return typed.CallID
+	case events.EventCallCanceled:
+		return typed.CallID
+	case events.EventCallMediaUpdated:
+		return typed.CallID
+	default:
+		return ""
+	}
 }
 
 // Dial places an outbound call to the given number.
@@ -214,7 +268,7 @@ func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, err
 	if err := a.completeOutboundMedia(call, response); err != nil {
 		return nil, a.failEstablishedOutboundCall(ctx, call, err)
 	}
-	if err := call.Transition(callstate.StateConnected); err != nil {
+	if err := call.TransitionChecked(callstate.StateConnected); err != nil {
 		return nil, a.failEstablishedOutboundCall(ctx, call, err)
 	}
 	if err := call.StartSessionTimer(call.voiceSessionExpires()); err != nil {
@@ -230,7 +284,7 @@ func (a *Agent) startOutboundCall(number string) (*Call, error) {
 	if err := a.prepareVoiceDialog(call, number); err != nil {
 		return nil, err
 	}
-	if err := call.Transition(callstate.StateDialing); err != nil {
+	if err := call.TransitionChecked(callstate.StateDialing); err != nil {
 		return nil, err
 	}
 	a.mu.Lock()
@@ -244,7 +298,6 @@ func (a *Agent) startOutboundCall(number string) (*Call, error) {
 }
 
 func (a *Agent) completeOutboundInvite(ctx context.Context, call *Call, response imscore.SIPResponse) error {
-	call.MarkInviteFinalSeen()
 	call.learnVoiceDialog(response)
 	accepted := response.StatusCode >= 200 && response.StatusCode < 300
 	if accepted {
@@ -256,11 +309,12 @@ func (a *Agent) completeOutboundInvite(ctx context.Context, call *Call, response
 	}
 	call.MarkACKSent()
 	if !accepted {
+		call.MarkInviteFinalSeen()
 		return fmt.Errorf("voice: INVITE rejected: %d %s", response.StatusCode, response.Reason)
 	}
 	call.applyVoiceSessionExpires(voiceResponseHeader(response.Headers, "Session-Expires"))
-	if state := call.GetState(); state == callstate.StateDialing || state == callstate.StateAlerting {
-		if err := call.Transition(callstate.StateConnecting); err != nil {
+	if state := call.CallState(); state == callstate.StateDialing || state == callstate.StateAlerting {
+		if err := call.TransitionChecked(callstate.StateConnecting); err != nil {
 			return err
 		}
 	}
@@ -292,7 +346,7 @@ func (a *Agent) Answer(callID string) error {
 	if call == nil {
 		return errors.New("voice: call not found")
 	}
-	if call.Direction() != callstate.DirectionInbound {
+	if call.CallDirection() != callstate.DirectionInbound {
 		return errors.New("voice: not an inbound call")
 	}
 	return errors.New("voice: inbound answer requires client SDP")
@@ -327,15 +381,15 @@ func (a *Agent) hangupCall(ctx context.Context, call *Call) error {
 	if call == nil || call.IsTerminalState() {
 		return nil
 	}
-	if call.Direction() == callstate.DirectionInbound {
+	if call.CallDirection() == callstate.DirectionInbound {
 		return a.hangupInboundCall(ctx, call)
 	}
-	if call.GetState() != callstate.StateConnected {
+	if call.CallState() != callstate.StateConnected {
 		if err := a.cancelVoiceClientInvite(ctx, call, "local_hangup"); err != nil {
 			return fmt.Errorf("voice: send CANCEL: %w", err)
 		}
-		call.MarkLocalCancelSent()
-		return a.finishLocalHangup(call)
+		a.finishLocalCancel(call, "local_hangup")
+		return nil
 	}
 	response, err := a.sendCallDialogRequest(ctx, call, BuildIMSBye(a, call))
 	if err != nil {
@@ -356,7 +410,7 @@ func (a *Agent) hangupInboundCall(ctx context.Context, call *Call) error {
 	if call.IsTerminalState() {
 		return nil
 	}
-	if call.GetState() != callstate.StateConnected {
+	if call.CallState() != callstate.StateConnected {
 		return a.rejectInboundCall(call, 486)
 	}
 	response, err := a.sendCallDialogRequest(ctx, call, BuildIMSBye(a, call))
@@ -373,23 +427,31 @@ func (a *Agent) hangupInboundCall(ctx context.Context, call *Call) error {
 }
 
 func (a *Agent) finishLocalHangup(call *Call) error {
-	if err := call.Transition(callstate.StateDisconnected); err != nil {
+	if err := call.TransitionChecked(callstate.StateDisconnected); err != nil {
 		return err
 	}
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
-	_ = call.CloseDone()
+	call.CloseDone()
 	a.emitCallEnded(call, "local_hangup")
 	a.finalizeActiveCall(call)
 	return nil
 }
 
+func (a *Agent) finishLocalCancel(call *Call, reason string) {
+	_ = call.StopMedia()
+	_ = call.EnsureTimerStopped()
+	call.CloseDone()
+	a.emitCallCanceled(call, reason)
+	a.finalizeActiveCall(call)
+}
+
 func (a *Agent) failOutboundCall(call *Call, cause error) error {
-	_ = call.Transition(callstate.StateFailed)
+	_ = call.TransitionChecked(callstate.StateFailed)
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	_ = a.closeCallDialog(context.Background(), call)
-	_ = call.CloseDone()
+	call.CloseDone()
 	a.emitCallFailed(call, cause.Error())
 	a.finalizeActiveCall(call)
 	return cause
@@ -399,11 +461,11 @@ func (a *Agent) forceReleaseCall(call *Call, cause error) {
 	if call == nil {
 		return
 	}
-	_ = call.Transition(callstate.StateFailed)
+	_ = call.TransitionChecked(callstate.StateFailed)
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	_ = a.closeCallDialog(context.Background(), call)
-	_ = call.CloseDone()
+	call.CloseDone()
 	if cause != nil {
 		a.emitCallFailed(call, cause.Error())
 	}
@@ -550,8 +612,8 @@ func (a *Agent) emitCallMediaUpdated(c *Call) {
 		return
 	}
 	a.emit(events.EventCallMediaUpdated{
-		DevID: a.deviceID, CallID: c.CallID(), Direction: c.Direction().String(),
-		State: c.GetState().String(), Time: time.Now(),
+		DevID: a.deviceID, CallID: c.CallID(), Direction: c.CallDirection().String(),
+		State: c.CallState().String(), Time: time.Now(),
 	})
 }
 
@@ -575,7 +637,7 @@ func (a *Agent) emit(ev events.Event) {
 	if a.bus != nil {
 		a.bus.Publish(ev)
 	}
-	a.notify(ev)
+	a.notifyIMSEvent(ev)
 }
 
 func (a *Agent) notify(ev events.Event) {
@@ -586,6 +648,8 @@ func (a *Agent) notify(ev events.Event) {
 	fn := a.notifier
 	a.mu.RUnlock()
 	if fn != nil {
+		a.notifierMu.Lock()
+		defer a.notifierMu.Unlock()
 		fn(ev)
 	}
 }

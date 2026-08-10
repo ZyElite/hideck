@@ -84,8 +84,8 @@ type Direction int
 
 // Call directions.
 const (
-	DirectionOutbound Direction = iota
-	DirectionInbound
+	DirectionInbound Direction = iota
+	DirectionOutbound
 )
 
 // String returns the direction name.

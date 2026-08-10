@@ -37,7 +37,7 @@ func (a *Agent) prepareInboundVoiceDialog(call *Call, request imscore.InboundVoi
 func (a *Agent) reserveInboundCall(request imscore.InboundVoiceRequest) (*Call, error) {
 	call := NewCall(a, callstate.DirectionInbound, request.CallID, voiceHeaderURI(request.From))
 	call.callee = voiceHeaderURI(request.To)
-	if err := call.Transition(callstate.StateAlerting); err != nil {
+	if err := call.TransitionChecked(callstate.StateAlerting); err != nil {
 		return nil, err
 	}
 	a.mu.Lock()

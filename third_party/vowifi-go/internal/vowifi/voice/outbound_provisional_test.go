@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
@@ -146,8 +147,8 @@ func TestAgentPRACKsReliableProvisionalBeforeFinalInvite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dialContext: %v", err)
 	}
-	if call.GetState() != callstate.StateConnected || !call.HasReliableProvisional() {
-		t.Fatalf("state=%s reliable=%t", call.GetState(), call.HasReliableProvisional())
+	if call.CallState() != callstate.StateConnected || !call.HasReliableProvisional() {
+		t.Fatalf("state=%s reliable=%t", call.CallState(), call.HasReliableProvisional())
 	}
 	if call.sessionTimer != nil {
 		t.Fatal("call without Session-Expires installed a session timer")
@@ -157,6 +158,37 @@ func TestAgentPRACKsReliableProvisionalBeforeFinalInvite(t *testing.T) {
 	wantACKCSeq := fmt.Sprintf("%d ACK", inviteCSeq)
 	if ack := <-registrar.ack; voiceTestHeader(ack, "CSeq") != wantACKCSeq {
 		t.Fatalf("ACK CSeq = %q, want %s", voiceTestHeader(ack, "CSeq"), wantACKCSeq)
+	}
+}
+
+func TestAgentEmitsRingingAfterRecoveredProvisionalTransition(t *testing.T) {
+	agent := NewAgent("device-ringing", nil, nil)
+	call := NewCall(agent, callstate.DirectionOutbound, "call-ringing", "43430")
+	t.Cleanup(call.Cancel)
+	if err := call.TransitionChecked(callstate.StateDialing); err != nil {
+		t.Fatal(err)
+	}
+	agent.mu.Lock()
+	agent.calls[call.CallID()] = call
+	agent.mu.Unlock()
+	ringing := make(chan events.Event, 1)
+	agent.SetNotifier(func(event events.Event) { ringing <- event })
+	if err := agent.handleOutboundProvisional(context.Background(), call, imscore.SIPResponse{
+		StatusCode: 180,
+		Reason:     "Ringing",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if call.CallState() != callstate.StateAlerting {
+		t.Fatalf("state=%s, want Alerting", call.CallState())
+	}
+	select {
+	case event := <-ringing:
+		if event.Type() != "CallRinging" {
+			t.Fatalf("event=%s, want CallRinging", event.Type())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("180 response did not emit ringing event")
 	}
 }
 

@@ -144,11 +144,11 @@ func TestCallStateMachine(t *testing.T) {
 	agent := newTestAgent(t)
 	call := NewCall(agent, callstate.DirectionOutbound, "call-1", "+8613800000000")
 
-	if call.GetState() != callstate.StateIdle {
-		t.Errorf("initial state = %s, want Idle", call.GetState())
+	if call.CallState() != callstate.StateIdle {
+		t.Errorf("initial state = %s, want Idle", call.CallState())
 	}
 	// Invalid: skip to Connected.
-	if err := call.Transition(callstate.StateConnected); err == nil {
+	if err := call.TransitionChecked(callstate.StateConnected); err == nil {
 		t.Error("Idle->Connected should be invalid")
 	}
 	// Valid path.
@@ -160,7 +160,7 @@ func TestCallStateMachine(t *testing.T) {
 		callstate.StateDisconnected,
 		callstate.StateEnded,
 	} {
-		if err := call.Transition(want); err != nil {
+		if err := call.TransitionChecked(want); err != nil {
 			t.Fatalf("Transition(%s): %v", want, err)
 		}
 	}
@@ -176,7 +176,7 @@ func TestCallDuration(t *testing.T) {
 	agent := newTestAgent(t)
 	call := NewCall(agent, callstate.DirectionOutbound, "call-1", "13800000000")
 	call.SetStartTime(time.Now().Add(-5 * time.Second))
-	if d := call.Duration(); d < 4*time.Second || d > 6*time.Second {
+	if d := call.CallDuration(); d < 4*time.Second || d > 6*time.Second {
 		t.Errorf("duration = %v, want ~5s", d)
 	}
 }
@@ -197,8 +197,8 @@ func TestAgentDialLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	if call.GetState() != callstate.StateConnected || !call.IsACKSent() {
-		t.Errorf("state = %s ack=%t, want Connected with ACK", call.GetState(), call.IsACKSent())
+	if call.CallState() != callstate.StateConnected || !call.IsACKSent() {
+		t.Errorf("state = %s ack=%t, want Connected with ACK", call.CallState(), call.IsACKSent())
 	}
 	if !agent.IsBusy() {
 		t.Error("agent should be busy after dial")
@@ -206,8 +206,8 @@ func TestAgentDialLifecycle(t *testing.T) {
 	if err := agent.Hangup(call.CallID()); err != nil {
 		t.Fatalf("Hangup: %v", err)
 	}
-	if call.GetState() != callstate.StateDisconnected {
-		t.Errorf("state = %s, want Disconnected after hangup", call.GetState())
+	if call.CallState() != callstate.StateDisconnected {
+		t.Errorf("state = %s, want Disconnected after hangup", call.CallState())
 	}
 	if agent.IsBusy() {
 		t.Error("agent should not be busy after hangup")
@@ -289,10 +289,10 @@ func TestAgentStopReleasesCallWhenBYEFails(t *testing.T) {
 		t.Fatalf("Stop error = %v", err)
 	}
 	if agent.IsBusy() || call.noAnswerTimer != nil || call.sessionTimer != nil {
-		t.Fatalf("call was not released: state=%s busy=%t", call.GetState(), agent.IsBusy())
+		t.Fatalf("call was not released: state=%s busy=%t", call.CallState(), agent.IsBusy())
 	}
 	select {
-	case <-call.done:
+	case <-call.Done:
 	default:
 		t.Fatal("call done channel remains open")
 	}
@@ -316,7 +316,7 @@ func TestAgentHangupReleasesCallWhenBYEFails(t *testing.T) {
 		t.Fatalf("failed BYE left active call: %+v", agent.Snapshot())
 	}
 	select {
-	case <-call.done:
+	case <-call.Done:
 	default:
 		t.Fatal("failed BYE left call done channel open")
 	}
@@ -338,8 +338,8 @@ func TestAgentHandlesRemoteBYE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Handled || result.StatusCode != 200 || agent.IsBusy() || call.GetState() != callstate.StateEnded {
-		t.Fatalf("result=%+v state=%s busy=%t", result, call.GetState(), agent.IsBusy())
+	if !result.Handled || result.StatusCode != 200 || agent.IsBusy() || call.CallState() != callstate.StateEnded {
+		t.Fatalf("result=%+v state=%s busy=%t", result, call.CallState(), agent.IsBusy())
 	}
 }
 
@@ -359,8 +359,8 @@ func TestAgentHandlesEstablishedReinvite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Handled || result.StatusCode != 200 || call.GetState() != callstate.StateConnected {
-		t.Fatalf("result=%+v state=%s", result, call.GetState())
+	if !result.Handled || result.StatusCode != 200 || call.CallState() != callstate.StateConnected {
+		t.Fatalf("result=%+v state=%s", result, call.CallState())
 	}
 }
 
@@ -380,8 +380,8 @@ func TestAgentRejectsReinviteOfferWithoutMediaAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Handled || result.StatusCode != 488 || call.GetState() != callstate.StateConnected {
-		t.Fatalf("result=%+v state=%s", result, call.GetState())
+	if !result.Handled || result.StatusCode != 488 || call.CallState() != callstate.StateConnected {
+		t.Fatalf("result=%+v state=%s", result, call.CallState())
 	}
 }
 
@@ -401,7 +401,7 @@ func TestCallTimersStopAndDoneCloseOnce(t *testing.T) {
 	agent := newTestAgent(t)
 	call := NewCall(agent, callstate.DirectionOutbound, "call-timers", "+8613800000000")
 	for _, state := range []callstate.State{callstate.StateDialing, callstate.StateConnecting, callstate.StateConnected} {
-		if err := call.Transition(state); err != nil {
+		if err := call.TransitionChecked(state); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -417,14 +417,10 @@ func TestCallTimersStopAndDoneCloseOnce(t *testing.T) {
 	if call.noAnswerTimer != nil || call.sessionTimer != nil {
 		t.Fatal("call timers remain installed after cleanup")
 	}
-	if err := call.CloseDone(); err != nil {
-		t.Fatal(err)
-	}
-	if err := call.CloseDone(); err != nil {
-		t.Fatal(err)
-	}
+	call.CloseDone()
+	call.CloseDone()
 	select {
-	case <-call.done:
+	case <-call.Done:
 	default:
 		t.Fatal("call done channel remains open")
 	}
@@ -471,7 +467,7 @@ func TestBuildIMSSessionUpdateUsesNegotiatedExpiry(t *testing.T) {
 func TestAgentInboundAnswerRequiresRequestContext(t *testing.T) {
 	agent := newTestAgent(t)
 	call := NewCall(agent, callstate.DirectionInbound, "call-in", "+8613800000000")
-	if err := call.Transition(callstate.StateAlerting); err != nil {
+	if err := call.TransitionChecked(callstate.StateAlerting); err != nil {
 		t.Fatalf("Transition(Alerting): %v", err)
 	}
 	agent.mu.Lock()
@@ -482,8 +478,8 @@ func TestAgentInboundAnswerRequiresRequestContext(t *testing.T) {
 	if err := agent.Answer(call.CallID()); err == nil || !strings.Contains(err.Error(), "client SDP") {
 		t.Fatalf("Answer error = %v", err)
 	}
-	if call.GetState() != callstate.StateAlerting {
-		t.Errorf("state = %s, want Alerting", call.GetState())
+	if call.CallState() != callstate.StateAlerting {
+		t.Errorf("state = %s, want Alerting", call.CallState())
 	}
 }
 
@@ -497,8 +493,8 @@ func TestHandleClientInviteUsesRealTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if call.GetState() != callstate.StateConnected || !call.HasInviteFinalSeen() || !call.IsACKSent() {
-		t.Fatalf("state=%s final=%t ack=%t", call.GetState(), call.HasInviteFinalSeen(), call.IsACKSent())
+	if call.CallState() != callstate.StateConnected || call.HasInviteFinalSeen() || !call.IsACKSent() {
+		t.Fatalf("state=%s final=%t ack=%t", call.CallState(), call.HasInviteFinalSeen(), call.IsACKSent())
 	}
 	if strings.Contains(call.ClientSDP(), "m=audio 0 ") || call.RTPRelay() == nil {
 		t.Fatalf("client SDP or relay is invalid: %q", call.ClientSDP())

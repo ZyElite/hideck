@@ -116,7 +116,7 @@ func (a *Agent) applyInboundAnswer(call *Call, answer string) (InboundAnswer, er
 	relay.SetPTMapping(ExtractAndApplyPTMapping(remoteOffer, parsedAnswer))
 	imsAnswer := RewriteSDP(answer, a.localIP(), relay.IMSPort())
 	call.setLocalSDP(answer, imsAnswer)
-	return InboundAnswer{CallID: call.CallID(), OfferSDP: call.clientRemoteSDPValue(), State: call.GetState().String()}, nil
+	return InboundAnswer{CallID: call.CallID(), OfferSDP: call.clientRemoteSDPValue(), State: call.CallState().String()}, nil
 }
 
 func (a *Agent) prepareOutboundMedia(call *Call, clientOffer string) (string, error) {

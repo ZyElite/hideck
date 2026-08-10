@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
 type lateAcceptedRegistrar struct {
@@ -118,6 +119,47 @@ func TestAgentACKsAndBYEsInviteAcceptedAfterCancel(t *testing.T) {
 	if !call.HasLocalCancelSent() || !call.IsACKSent() || agent.IsBusy() || call.IMSDialog() != nil {
 		t.Fatalf("late 2xx cleanup: cancel=%t ack=%t busy=%t dialog=%v",
 			call.HasLocalCancelSent(), call.IsACKSent(), agent.IsBusy(), call.IMSDialog())
+	}
+}
+
+func TestAgentHangupPendingInviteUsesCancelTerminalState(t *testing.T) {
+	registrar := startLateAcceptedRegistrar(t)
+	agent := newVoiceTestAgent(t, registrar.conn)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = agent.Stop() })
+	dialResult := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_, err := agent.dialContext(ctx, "43430", testClientSDP)
+		dialResult <- err
+	}()
+	select {
+	case <-registrar.invite:
+	case <-time.After(time.Second):
+		t.Fatal("outbound INVITE was not observed")
+	}
+	call := waitForCancelableCall(t, agent)
+	if err := agent.Hangup(call.CallID()); err != nil {
+		t.Fatalf("Hangup pending INVITE: %v", err)
+	}
+	if call.CallState() != callstate.StateFailed || agent.IsBusy() {
+		t.Fatalf("pending hangup state=%s busy=%t", call.CallState(), agent.IsBusy())
+	}
+	select {
+	case <-call.Done:
+	default:
+		t.Fatal("pending hangup left call completion open")
+	}
+	select {
+	case err := <-dialResult:
+		if err == nil || !strings.Contains(err.Error(), "accepted after local CANCEL") {
+			t.Fatalf("dial result after pending hangup = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("dial did not finish after pending hangup")
 	}
 }
 

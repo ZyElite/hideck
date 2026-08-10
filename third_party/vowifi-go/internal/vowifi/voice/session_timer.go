@@ -94,7 +94,7 @@ func (c *Call) scheduleSessionRefresh(delay time.Duration) {
 }
 
 func (c *Call) runSessionRefresh() {
-	if c.GetState() != callstate.StateConnected {
+	if c.CallState() != callstate.StateConnected {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), voiceSessionRefreshTimeout)

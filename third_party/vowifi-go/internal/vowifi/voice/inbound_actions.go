@@ -19,7 +19,7 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 	}
 	call.inboundDecisionMu.Lock()
 	defer call.inboundDecisionMu.Unlock()
-	if call.Direction() != callstate.DirectionInbound || call.GetState() != callstate.StateAlerting {
+	if call.CallDirection() != callstate.DirectionInbound || call.CallState() != callstate.StateAlerting {
 		return InboundAnswer{}, errors.New("voice: inbound call is not alerting")
 	}
 	responder := call.inboundResponseWriter()
@@ -56,7 +56,7 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 		a.releaseInboundCall(call, err, false)
 		return InboundAnswer{}, err
 	}
-	answer.State = call.GetState().String()
+	answer.State = call.CallState().String()
 	a.emitCallAnswered(call)
 	return answer, nil
 }
@@ -76,10 +76,10 @@ func (a *Agent) Reject(callID string, statusCode int) error {
 }
 
 func (a *Agent) rejectInboundCall(call *Call, statusCode int) error {
-	if call.Direction() != callstate.DirectionInbound {
+	if call.CallDirection() != callstate.DirectionInbound {
 		return errors.New("voice: call is not inbound")
 	}
-	if call.GetState() != callstate.StateAlerting {
+	if call.CallState() != callstate.StateAlerting {
 		return errors.New("voice: inbound call is not alerting")
 	}
 	responder := call.inboundResponseWriter()
@@ -124,7 +124,7 @@ func (a *Agent) startInboundNoAnswerTimer(call *Call) {
 	call.noAnswerTimer = time.AfterFunc(voiceInviteTimeout, func() {
 		call.inboundDecisionMu.Lock()
 		defer call.inboundDecisionMu.Unlock()
-		if call.GetState() != callstate.StateAlerting {
+		if call.CallState() != callstate.StateAlerting {
 			return
 		}
 		cause := a.sendInboundTimeout(call)
@@ -152,11 +152,11 @@ func (a *Agent) sendInboundTimeout(call *Call) error {
 }
 
 func (a *Agent) releaseInboundCall(call *Call, cause error, canceled bool) {
-	_ = call.Transition(callstate.StateFailed)
+	_ = call.TransitionChecked(callstate.StateFailed)
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	_ = a.closeCallDialog(context.Background(), call)
-	_ = call.CloseDone()
+	call.CloseDone()
 	if canceled {
 		reason := "remote_cancel"
 		if cause != nil {
@@ -166,7 +166,7 @@ func (a *Agent) releaseInboundCall(call *Call, cause error, canceled bool) {
 	} else if cause != nil {
 		a.emitCallFailed(call, cause.Error())
 	}
-	_ = call.Transition(callstate.StateEnded)
+	_ = call.TransitionChecked(callstate.StateEnded)
 	a.finalizeActiveCall(call)
 }
 
@@ -176,17 +176,17 @@ func (a *Agent) handleInboundBye(call *Call) (imscore.InboundVoiceResult, error)
 	}
 	call.inboundDecisionMu.Lock()
 	defer call.inboundDecisionMu.Unlock()
-	if call.GetState() != callstate.StateConnected {
+	if call.CallState() != callstate.StateConnected {
 		return voiceResult(481), nil
 	}
 	return voiceResult(200), a.finishRemoteBye(call)
 }
 
 func transitionInboundConnected(call *Call) error {
-	if err := call.Transition(callstate.StateConnecting); err != nil {
+	if err := call.TransitionChecked(callstate.StateConnecting); err != nil {
 		return err
 	}
-	return call.Transition(callstate.StateConnected)
+	return call.TransitionChecked(callstate.StateConnected)
 }
 
 func voiceResult(status int) imscore.InboundVoiceResult {
