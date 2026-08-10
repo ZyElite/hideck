@@ -154,6 +154,9 @@ var ErrInboundFragmentCollision = smsdelivery.ErrInboundFragmentCollision
 // InboundFragmentStore optionally persists incomplete inbound multipart SMS.
 type InboundFragmentStore = smsdelivery.InboundFragmentStore
 
+// InboundFragmentLifecycleStore optionally persists the degraded notification state.
+type InboundFragmentLifecycleStore = smsdelivery.InboundFragmentLifecycleStore
+
 // ServiceStatus is the IMS service registration status.
 type ServiceStatus struct {
 	Registered bool

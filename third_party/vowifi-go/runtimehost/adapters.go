@@ -326,9 +326,19 @@ type inboundFragmentCapability struct {
 	store messaging.InboundFragmentStore
 }
 
+type inboundFragmentLifecycleCapability struct {
+	inboundFragmentCapability
+	lifecycle messaging.InboundFragmentLifecycleStore
+}
+
 type fragmentDeliveryStoreAdapter struct {
 	*deliveryStoreAdapter
 	inboundFragmentCapability
+}
+
+type lifecycleFragmentDeliveryStoreAdapter struct {
+	*deliveryStoreAdapter
+	inboundFragmentLifecycleCapability
 }
 
 type completeDeliveryStoreAdapter struct {
@@ -336,12 +346,27 @@ type completeDeliveryStoreAdapter struct {
 	inboundFragmentCapability
 }
 
+type completeLifecycleDeliveryStoreAdapter struct {
+	*sipResultDeliveryStoreAdapter
+	inboundFragmentLifecycleCapability
+}
+
 // newDeliveryStoreAdapter wraps a delivery store.
 func newDeliveryStoreAdapter(store messaging.DeliveryStore) imscore.DeliveryStore {
 	base := &deliveryStoreAdapter{store: store}
 	sipResults, hasSIPResults := store.(messaging.SIPResultStore)
 	fragments, hasFragments := store.(messaging.InboundFragmentStore)
+	lifecycle, hasLifecycle := store.(messaging.InboundFragmentLifecycleStore)
 	switch {
+	case hasSIPResults && hasFragments && hasLifecycle:
+		sipAdapter := &sipResultDeliveryStoreAdapter{deliveryStoreAdapter: base, store: sipResults}
+		return &completeLifecycleDeliveryStoreAdapter{
+			sipResultDeliveryStoreAdapter: sipAdapter,
+			inboundFragmentLifecycleCapability: inboundFragmentLifecycleCapability{
+				inboundFragmentCapability: inboundFragmentCapability{store: fragments},
+				lifecycle:                 lifecycle,
+			},
+		}
 	case hasSIPResults && hasFragments:
 		sipAdapter := &sipResultDeliveryStoreAdapter{deliveryStoreAdapter: base, store: sipResults}
 		return &completeDeliveryStoreAdapter{
@@ -350,6 +375,14 @@ func newDeliveryStoreAdapter(store messaging.DeliveryStore) imscore.DeliveryStor
 		}
 	case hasSIPResults:
 		return &sipResultDeliveryStoreAdapter{deliveryStoreAdapter: base, store: sipResults}
+	case hasFragments && hasLifecycle:
+		return &lifecycleFragmentDeliveryStoreAdapter{
+			deliveryStoreAdapter: base,
+			inboundFragmentLifecycleCapability: inboundFragmentLifecycleCapability{
+				inboundFragmentCapability: inboundFragmentCapability{store: fragments},
+				lifecycle:                 lifecycle,
+			},
+		}
 	case hasFragments:
 		return &fragmentDeliveryStoreAdapter{
 			deliveryStoreAdapter:      base,
@@ -358,6 +391,13 @@ func newDeliveryStoreAdapter(store messaging.DeliveryStore) imscore.DeliveryStor
 	default:
 		return base
 	}
+}
+
+func (a inboundFragmentLifecycleCapability) MarkInboundFragmentsDegraded(
+	scope messaging.InboundFragmentScope,
+	at time.Time,
+) error {
+	return a.lifecycle.MarkInboundFragmentsDegraded(scope, at)
 }
 
 func (a inboundFragmentCapability) LoadInboundFragments(

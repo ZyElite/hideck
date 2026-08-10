@@ -153,6 +153,7 @@ type smsFragment struct {
 	ServiceCenter string
 	AckSent       bool
 	AckSentAt     time.Time
+	DegradedAt    time.Time
 }
 
 type fragmentAuditFailure struct {
@@ -166,6 +167,17 @@ type fragmentAuditFailure struct {
 	Reason        string    `json:"reason"`
 	InterimKey    string    `json:"-"`
 	InterimReason string    `json:"-"`
+}
+
+type completedSMSFragment struct {
+	Content string
+	RPMR    uint8
+	Total   int
+}
+
+type completedSMSFragmentSession struct {
+	At    time.Time
+	Parts map[int]completedSMSFragment
 }
 
 type outboundSMSAudit struct {
@@ -187,6 +199,7 @@ type fragmentState struct {
 	fragmentOrphanLate     int64
 	fragmentDup            int64
 	fragmentRecentExpired  map[string]time.Time
+	fragmentRecentComplete map[string]completedSMSFragmentSession
 	fragmentAuditFailures  []fragmentAuditFailure
 	outboundSMSAudits      []outboundSMSAudit
 }

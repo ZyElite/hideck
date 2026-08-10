@@ -354,6 +354,9 @@ type SMSDeliverySIPResultStore = smsdelivery.SIPResultStore
 // SMSInboundFragmentStore persists incomplete inbound multipart SMS state.
 type SMSInboundFragmentStore = smsdelivery.InboundFragmentStore
 
+// SMSInboundFragmentLifecycleStore persists the one-shot degraded notification state.
+type SMSInboundFragmentLifecycleStore = smsdelivery.InboundFragmentLifecycleStore
+
 type smsInboundFragmentOwner = smsdelivery.InboundFragmentOwner
 type smsInboundFragmentScope = smsdelivery.InboundFragmentScope
 type smsInboundFragmentRecord = smsdelivery.InboundFragment

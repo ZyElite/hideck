@@ -3,6 +3,7 @@ package imscore
 import (
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -87,6 +88,22 @@ func (s *memoryInboundFragmentStore) MarkInboundFragmentAcked(
 	return nil
 }
 
+func (s *memoryInboundFragmentStore) MarkInboundFragmentsDegraded(
+	scope smsInboundFragmentScope,
+	at time.Time,
+) error {
+	s.fragmentMu.Lock()
+	defer s.fragmentMu.Unlock()
+	if len(s.fragments[scope]) == 0 {
+		return errors.New("fragment session not found")
+	}
+	for sequence, fragment := range s.fragments[scope] {
+		fragment.DegradedAt = at
+		s.fragments[scope][sequence] = fragment
+	}
+	return nil
+}
+
 func TestInboundMultipartSMSRecoversAcrossServiceReplacement(t *testing.T) {
 	store := newMemoryInboundFragmentStore()
 	firstService, _ := newFragmentPersistenceService(t, store)
@@ -120,6 +137,10 @@ func TestInboundMultipartSMSRecoversAcrossServiceReplacement(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	stored, err = store.LoadInboundFragments(secondService.inboundFragmentOwner())
+	if err != nil || len(stored) != 0 {
+		t.Fatalf("duplicate completion left fragments=%#v err=%v", stored, err)
+	}
 	select {
 	case event := <-subscriber.events:
 		t.Fatalf("duplicate completion published event %#v", event)
@@ -149,7 +170,7 @@ func TestInboundFragmentPersistenceRejectsCollision(t *testing.T) {
 	}
 }
 
-func TestInboundFragmentPersistenceDeletesExpiredSession(t *testing.T) {
+func TestInboundFragmentPersistenceRetainsDegradedSessionForLateCompletion(t *testing.T) {
 	store := newMemoryInboundFragmentStore()
 	service, subscriber := newFragmentPersistenceService(t, store)
 	message := persistedFragmentMessage(1, "stale")
@@ -166,10 +187,131 @@ func TestInboundFragmentPersistenceDeletesExpiredSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored, err := store.LoadInboundFragments(service.inboundFragmentOwner())
-	if err != nil || len(stored) != 0 {
-		t.Fatalf("stored expired fragments=%#v err=%v", stored, err)
+	if err != nil || len(stored) != 1 || stored[0].Fragment.DegradedAt.IsZero() {
+		t.Fatalf("stored degraded fragments=%#v err=%v", stored, err)
 	}
 	assertIMSEventTypes(t, subscriber, "LogNotify", "SMSReceived")
+	if _, err := service.finalizeInboundSMSData(
+		fragmentTestRequest("mt-stale-duplicate"), message, "SIP/2.0 200 OK\r\n\r\n",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.cleanupExpiredFragments(time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	assertNoIMSEvent(t, subscriber, "duplicate degraded notification")
+	service.Stop()
+
+	restored, restoredSubscriber := newFragmentPersistenceService(t, store)
+	if err := restored.restoreInboundFragments(); err != nil {
+		t.Fatal(err)
+	}
+	assertNoIMSEvent(t, restoredSubscriber, "degraded notification after restore")
+	second := persistedFragmentMessage(2, " complete")
+	if _, err := restored.finalizeInboundSMSData(
+		fragmentTestRequest("mt-late-part"), second, "SIP/2.0 200 OK\r\n\r\n",
+	); err != nil {
+		t.Fatal(err)
+	}
+	assertRecoveredSMS(t, restoredSubscriber, "stale complete")
+	stored, err = store.LoadInboundFragments(restored.inboundFragmentOwner())
+	if err != nil || len(stored) != 0 {
+		t.Fatalf("stored fragments after late completion=%#v err=%v", stored, err)
+	}
+}
+
+func TestInboundFragmentPersistenceDeletesAtLateWindowExpiry(t *testing.T) {
+	store := newMemoryInboundFragmentStore()
+	service, subscriber := newFragmentPersistenceService(t, store)
+	message := persistedFragmentMessage(1, "stale")
+	if _, err := service.finalizeInboundSMSData(
+		fragmentTestRequest("mt-expiry"), message, "SIP/2.0 200 OK\r\n\r\n",
+	); err != nil {
+		t.Fatal(err)
+	}
+	key := inboundSMSFragmentKey(message)
+	setRuntimeFragmentTimes(t, service, key, time.Now().Add(-time.Second), time.Time{})
+	if err := service.cleanupExpiredFragments(time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	assertIMSEventTypes(t, subscriber, "LogNotify", "SMSReceived")
+	expiredAt := time.Now().Add(-inboundSMSLateReassemblyTTL - time.Second)
+	if err := store.MarkInboundFragmentsDegraded(service.inboundFragmentScope(key), expiredAt); err != nil {
+		t.Fatal(err)
+	}
+	setRuntimeFragmentTimes(t, service, key, time.Time{}, expiredAt)
+	if err := service.cleanupExpiredFragments(time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.LoadInboundFragments(service.inboundFragmentOwner())
+	if err != nil || len(stored) != 0 {
+		t.Fatalf("stored fragments after late expiry=%#v err=%v", stored, err)
+	}
+	assertNoIMSEvent(t, subscriber, "notification at final expiry")
+}
+
+func TestInboundFragmentPersistenceRejectsArrivalAfterLateWindow(t *testing.T) {
+	store := newMemoryInboundFragmentStore()
+	service, subscriber := newFragmentPersistenceService(t, store)
+	first := persistedFragmentMessage(1, "stale")
+	if _, err := service.finalizeInboundSMSData(
+		fragmentTestRequest("mt-arrival-expiry"), first, "SIP/2.0 200 OK\r\n\r\n",
+	); err != nil {
+		t.Fatal(err)
+	}
+	key := inboundSMSFragmentKey(first)
+	setRuntimeFragmentTimes(t, service, key, time.Now().Add(-time.Second), time.Time{})
+	if err := service.cleanupExpiredFragments(time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	assertIMSEventTypes(t, subscriber, "LogNotify", "SMSReceived")
+	expiredAt := time.Now().Add(-inboundSMSLateReassemblyTTL - time.Second)
+	if err := store.MarkInboundFragmentsDegraded(service.inboundFragmentScope(key), expiredAt); err != nil {
+		t.Fatal(err)
+	}
+	setRuntimeFragmentTimes(t, service, key, time.Time{}, expiredAt)
+	second := persistedFragmentMessage(2, " complete")
+	_, err := service.finalizeInboundSMSData(
+		fragmentTestRequest("mt-too-late"), second, "SIP/2.0 200 OK\r\n\r\n",
+	)
+	if err == nil || !strings.Contains(err.Error(), "after reassembly window") {
+		t.Fatalf("late fragment error=%v", err)
+	}
+	stored, loadErr := store.LoadInboundFragments(service.inboundFragmentOwner())
+	if loadErr != nil || len(stored) != 0 {
+		t.Fatalf("stored fragments after rejected late arrival=%#v err=%v", stored, loadErr)
+	}
+}
+
+func setRuntimeFragmentTimes(
+	t *testing.T,
+	service *Service,
+	key string,
+	arrivedAt, degradedAt time.Time,
+) {
+	t.Helper()
+	service.fragmentMu.Lock()
+	defer service.fragmentMu.Unlock()
+	for _, fragment := range service.fragmentCache[key] {
+		if !arrivedAt.IsZero() {
+			fragment.Time = arrivedAt
+		}
+		if !degradedAt.IsZero() {
+			fragment.DegradedAt = degradedAt
+		}
+	}
+	if len(service.fragmentCache[key]) == 0 {
+		t.Fatalf("fragment session %q not found", key)
+	}
+}
+
+func assertNoIMSEvent(t *testing.T, subscriber *captureIMSEventSubscriber, context string) {
+	t.Helper()
+	select {
+	case event := <-subscriber.events:
+		t.Fatalf("%s: unexpected event %#v", context, event)
+	case <-time.After(20 * time.Millisecond):
+	}
 }
 
 func newFragmentPersistenceService(

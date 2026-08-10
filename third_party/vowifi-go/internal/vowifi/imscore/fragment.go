@@ -47,8 +47,12 @@ func (s *Service) handleSMSFragment(sender string, fragment *smsFragment) (strin
 	key := buildFragmentSessionKey(identity)
 	interimKey := buildInterimFragmentSessionKey(identity)
 	s.startFragmentCleanup()
-	if err := s.recordFragmentArrival(key); err != nil {
+	duplicate, err := s.recordFragmentArrival(key, fragment)
+	if err != nil {
 		return "", false, err
+	}
+	if duplicate {
+		return "", false, nil
 	}
 	handling := fragmentHandlingContext{
 		Sender: sender, Key: key, InterimKey: interimKey, Fragment: fragment,
@@ -61,18 +65,52 @@ func (s *Service) handleSMSFragment(sender string, fragment *smsFragment) (strin
 	return s.handleVolatileSMSFragment(handling)
 }
 
-func (s *Service) recordFragmentArrival(key string) error {
+func (s *Service) recordFragmentArrival(key string, fragment *smsFragment) (bool, error) {
 	s.fragmentMu.Lock()
 	defer s.fragmentMu.Unlock()
 	s.fragmentArrivedTotal++
+	if completed, found := s.fragmentRecentComplete[key]; found {
+		if time.Since(completed.At) <= 2*inboundSMSFragmentTTL &&
+			completedFragmentMatches(completed, fragment) {
+			s.fragmentDup++
+			return true, nil
+		}
+		delete(s.fragmentRecentComplete, key)
+	}
 	if expiredAt, expired := s.fragmentRecentExpired[key]; expired {
 		if time.Since(expiredAt) <= 2*inboundSMSFragmentTTL {
 			s.fragmentOrphanLate++
-			return errors.New("imscore: late SMS fragment for expired session")
+			return false, errors.New("imscore: late SMS fragment for expired session")
 		}
 		delete(s.fragmentRecentExpired, key)
 	}
-	return nil
+	return false, nil
+}
+
+func completedFragmentMatches(session completedSMSFragmentSession, candidate *smsFragment) bool {
+	if candidate == nil {
+		return false
+	}
+	part, found := session.Parts[candidate.Seq]
+	return found && part.Total == candidate.Total && part.RPMR == candidate.RpMr &&
+		strings.TrimSpace(part.Content) == strings.TrimSpace(candidate.Content)
+}
+
+func (s *Service) recordCompletedFragmentsLocked(key string, fragments []*smsFragment) {
+	parts := make(map[int]completedSMSFragment, len(fragments))
+	for _, fragment := range fragments {
+		if fragment != nil {
+			parts[fragment.Seq] = completedSMSFragment{
+				Content: fragment.Content, RPMR: fragment.RpMr, Total: fragment.Total,
+			}
+		}
+	}
+	if len(parts) > 0 {
+		if s.fragmentRecentComplete == nil {
+			s.fragmentRecentComplete = make(map[string]completedSMSFragmentSession)
+		}
+		s.fragmentRecentComplete[key] = completedSMSFragmentSession{At: time.Now(), Parts: parts}
+	}
 }
 
 func (s *Service) handleVolatileSMSFragment(ctx fragmentHandlingContext) (string, bool, error) {
@@ -98,6 +136,7 @@ func (s *Service) handleVolatileSMSFragment(ctx fragmentHandlingContext) (string
 		return "", false, nil
 	}
 	content := assembleFragmentText(fragments)
+	s.recordCompletedFragmentsLocked(ctx.Key, fragments)
 	delete(s.fragmentCache, ctx.Key)
 	s.fragmentAssembledOK++
 	return content, true, nil
@@ -127,16 +166,6 @@ func (s *Service) recordFragmentCollisionLocked(
 	})
 }
 
-func (s *Service) startFragmentCleanup() {
-	if s == nil {
-		return
-	}
-	s.fragmentCleanupOnce.Do(func() {
-		s.networkDone.Add(1)
-		go s.fragmentCacheCleanupLoop(inboundSMSFragmentTTL)
-	})
-}
-
 func detectFragmentKeyCollision(fragments []*smsFragment, candidate *smsFragment) (string, bool) {
 	if len(fragments) == 0 || candidate == nil {
 		return "", false
@@ -153,134 +182,6 @@ func detectFragmentKeyCollision(fragments []*smsFragment, candidate *smsFragment
 		}
 	}
 	return "", false
-}
-
-func (s *Service) fragmentCacheCleanupLoop(ttl time.Duration) {
-	defer s.networkDone.Done()
-	interval := fragmentCleanupInterval(ttl)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if err := s.cleanupExpiredFragments(ttl); err != nil {
-				logging.WarnRate("sms-fragment-cleanup:"+s.cfg.DeviceID, time.Minute,
-					"IMS SMS fragment cleanup failed", "device", s.cfg.DeviceID, "error", err)
-			}
-		case <-s.stop:
-			return
-		}
-	}
-}
-
-func fragmentCleanupInterval(ttl time.Duration) time.Duration {
-	switch {
-	case ttl < 30*time.Second:
-		return time.Second
-	case ttl < 2*time.Minute:
-		return 5 * time.Second
-	default:
-		return 30 * time.Second
-	}
-}
-
-func (s *Service) cleanupExpiredFragments(ttl time.Duration) error {
-	if s == nil || ttl <= 0 {
-		return nil
-	}
-	now := time.Now()
-	cutoff := now.Add(-ttl)
-	type degradedMessage struct {
-		message  inboundSMS
-		key      string
-		received int
-		total    int
-		missing  string
-		seqList  string
-		callIDs  string
-		ackedSeq string
-		first    time.Time
-		latest   time.Time
-	}
-	var degraded []degradedMessage
-	var failures []fragmentAuditFailure
-	s.fragmentPersistMu.Lock()
-	defer s.fragmentPersistMu.Unlock()
-	s.fragmentMu.Lock()
-	var cleanupErrors []error
-	for key, fragments := range s.fragmentCache {
-		firstSeen, latest := fragmentBounds(fragments)
-		if latest.IsZero() || !latest.Before(cutoff) {
-			continue
-		}
-		if err := s.deletePersistedFragments(key); err != nil {
-			cleanupErrors = append(cleanupErrors, err)
-			continue
-		}
-		delete(s.fragmentCache, key)
-		s.fragmentRecentExpired[key] = now
-		s.fragmentTimeoutDegrade++
-		total := fragmentTotal(fragments)
-		first := firstSMSFragment(fragments)
-		interimKey := ""
-		if first != nil {
-			interimKey = buildInterimFragmentSessionKey(fragmentSessionIdentity{
-				Sender: senderFromFragmentKey(key), ServiceCenter: first.ServiceCenter, Local: first.ToURI,
-				Reference: first.Ref, RefBits: first.RefBits, Total: total,
-			})
-		}
-		failures = append(failures, fragmentAuditFailure{
-			At: now, Key: key, InterimKey: interimKey, Sender: senderFromFragmentKey(key),
-			Received: len(fragments), Total: total,
-			MissingSeq: missingSMSSeqs(fragments, total),
-			SeqList:    fragmentSeqList(fragments), Reason: "timeout_degraded", InterimReason: "timeout",
-		})
-		if first != nil {
-			missing := missingSMSSeqs(fragments, total)
-			degraded = append(degraded, degradedMessage{
-				message: inboundSMS{
-					sender: senderFromFragmentKey(key), targetURI: first.ToURI,
-					content: formatIncompleteFragmentContent(
-						assembleFragmentText(fragments), len(fragments), total, missing,
-					),
-					timestamp: latest,
-				},
-				key: key, received: len(fragments), total: total, missing: missing,
-				seqList: fragmentSeqList(fragments), callIDs: fragmentCallIDList(fragments),
-				ackedSeq: ackedFragmentSeqs(fragments), first: firstSeen, latest: latest,
-			})
-		}
-	}
-	for key, expiredAt := range s.fragmentRecentExpired {
-		if expiredAt.Before(now.Add(-2 * ttl)) {
-			delete(s.fragmentRecentExpired, key)
-		}
-	}
-	s.fragmentMu.Unlock()
-	for _, failure := range failures {
-		s.appendFragmentAuditFailure(failure)
-	}
-	for _, item := range degraded {
-		logging.WarnRate("sms-fragment-timeout:"+item.key, time.Duration(0),
-			"IMS 长短信分片超时（审计模式，不发送 480）",
-			"device", s.cfg.DeviceID, "key", item.key, "fragments", item.received,
-			"expected_total", item.total, "received_seq", item.seqList,
-			"missing_seq", item.missing, "first_seen", item.first, "last_seen", item.latest,
-			"age_ms", time.Since(item.latest).Milliseconds(), "acked_seq", item.ackedSeq)
-		if strings.TrimSpace(item.message.content) != "" {
-			logging.WarnRate("sms-fragment-degraded:"+item.key, time.Duration(0),
-				"IMS 长短信超时降级拼接并入库",
-				"device", s.cfg.DeviceID, "sender", item.message.sender, "key", item.key,
-				"received", item.received, "total", item.total, "missing_seq", item.missing,
-				"seq_list", item.seqList, "call_ids", item.callIDs, "acked_seq", item.ackedSeq)
-			s.publishLogNotification(formatVoWiFiIncompleteSMSMessage(
-				s.cfg.DeviceID, item.message.sender, item.message.content,
-				item.message.timestamp, item.received, item.total, item.missing,
-			))
-			s.publishInboundSMS(item.message)
-		}
-	}
-	return errors.Join(cleanupErrors...)
 }
 
 func (s *Service) markFragmentAcked(key string, sequence int) {

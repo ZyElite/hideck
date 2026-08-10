@@ -101,6 +101,7 @@ type InboundFragment struct {
 	ServiceCenter string
 	AckSent       bool
 	AckSentAt     time.Time
+	DegradedAt    time.Time
 }
 
 // StoredInboundFragment associates a fragment with its persisted session.
@@ -123,4 +124,10 @@ type InboundFragmentStore interface {
 	SaveInboundFragment(scope InboundFragmentScope, fragment InboundFragment) (InboundFragmentSaveResult, error)
 	DeleteInboundFragments(scope InboundFragmentScope) error
 	MarkInboundFragmentAcked(scope InboundFragmentScope, sequence int, at time.Time) error
+}
+
+// InboundFragmentLifecycleStore is an optional extension used when a durable
+// store can remember that an incomplete message was already published.
+type InboundFragmentLifecycleStore interface {
+	MarkInboundFragmentsDegraded(scope InboundFragmentScope, at time.Time) error
 }

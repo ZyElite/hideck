@@ -54,14 +54,29 @@ type runtimeCoreFragmentCapability struct {
 	store messaging.InboundFragmentStore
 }
 
+type runtimeCoreFragmentLifecycleCapability struct {
+	runtimeCoreFragmentCapability
+	lifecycle messaging.InboundFragmentLifecycleStore
+}
+
 type runtimeCoreFragmentStoreAdapter struct {
 	runtimeCoreDeliveryStoreAdapter
 	runtimeCoreFragmentCapability
 }
 
+type runtimeCoreLifecycleStoreAdapter struct {
+	runtimeCoreDeliveryStoreAdapter
+	runtimeCoreFragmentLifecycleCapability
+}
+
 type runtimeCoreCompleteStoreAdapter struct {
 	runtimeCoreSIPDeliveryStoreAdapter
 	runtimeCoreFragmentCapability
+}
+
+type runtimeCoreCompleteLifecycleStoreAdapter struct {
+	runtimeCoreSIPDeliveryStoreAdapter
+	runtimeCoreFragmentLifecycleCapability
 }
 
 func runtimeCoreDeliveryStore(store messaging.DeliveryStore) smsdelivery.Store {
@@ -71,7 +86,18 @@ func runtimeCoreDeliveryStore(store messaging.DeliveryStore) smsdelivery.Store {
 	base := runtimeCoreDeliveryStoreAdapter{store: store}
 	sipResults, hasSIPResults := store.(messaging.SIPResultStore)
 	fragments, hasFragments := store.(messaging.InboundFragmentStore)
+	lifecycle, hasLifecycle := store.(messaging.InboundFragmentLifecycleStore)
 	switch {
+	case hasSIPResults && hasFragments && hasLifecycle:
+		return runtimeCoreCompleteLifecycleStoreAdapter{
+			runtimeCoreSIPDeliveryStoreAdapter: runtimeCoreSIPDeliveryStoreAdapter{
+				runtimeCoreDeliveryStoreAdapter: base, store: sipResults,
+			},
+			runtimeCoreFragmentLifecycleCapability: runtimeCoreFragmentLifecycleCapability{
+				runtimeCoreFragmentCapability: runtimeCoreFragmentCapability{store: fragments},
+				lifecycle:                     lifecycle,
+			},
+		}
 	case hasSIPResults && hasFragments:
 		return runtimeCoreCompleteStoreAdapter{
 			runtimeCoreSIPDeliveryStoreAdapter: runtimeCoreSIPDeliveryStoreAdapter{
@@ -83,6 +109,14 @@ func runtimeCoreDeliveryStore(store messaging.DeliveryStore) smsdelivery.Store {
 		return runtimeCoreSIPDeliveryStoreAdapter{
 			runtimeCoreDeliveryStoreAdapter: base, store: sipResults,
 		}
+	case hasFragments && hasLifecycle:
+		return runtimeCoreLifecycleStoreAdapter{
+			runtimeCoreDeliveryStoreAdapter: base,
+			runtimeCoreFragmentLifecycleCapability: runtimeCoreFragmentLifecycleCapability{
+				runtimeCoreFragmentCapability: runtimeCoreFragmentCapability{store: fragments},
+				lifecycle:                     lifecycle,
+			},
+		}
 	case hasFragments:
 		return runtimeCoreFragmentStoreAdapter{
 			runtimeCoreDeliveryStoreAdapter: base,
@@ -91,6 +125,13 @@ func runtimeCoreDeliveryStore(store messaging.DeliveryStore) smsdelivery.Store {
 	default:
 		return base
 	}
+}
+
+func (adapter runtimeCoreFragmentLifecycleCapability) MarkInboundFragmentsDegraded(
+	scope smsdelivery.InboundFragmentScope,
+	at time.Time,
+) error {
+	return adapter.lifecycle.MarkInboundFragmentsDegraded(scope, at)
 }
 
 func (adapter runtimeCoreFragmentCapability) LoadInboundFragments(

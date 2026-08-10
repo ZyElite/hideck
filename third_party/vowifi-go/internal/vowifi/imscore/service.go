@@ -61,8 +61,9 @@ func New(cfg *IMSConfig) (*Service, error) {
 			mtSMSSeen:      make(map[string]time.Time),
 		},
 		fragmentState: fragmentState{
-			fragmentCache:         make(map[string][]*smsFragment),
-			fragmentRecentExpired: make(map[string]time.Time),
+			fragmentCache:          make(map[string][]*smsFragment),
+			fragmentRecentExpired:  make(map[string]time.Time),
+			fragmentRecentComplete: make(map[string]completedSMSFragmentSession),
 		},
 		keepaliveInterval:     keepaliveInterval,
 		keepaliveTimeout:      keepaliveTimeout,

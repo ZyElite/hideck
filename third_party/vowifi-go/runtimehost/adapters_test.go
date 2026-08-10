@@ -301,6 +301,39 @@ type memDeliveryStore struct {
 	status        *messaging.DeliveryStatus
 	sipCode       int
 	inboundStored bool
+	degraded      bool
+}
+
+type fragmentOnlyDeliveryStore struct {
+	messaging.DeliveryStore
+	fragments messaging.InboundFragmentStore
+}
+
+func (store fragmentOnlyDeliveryStore) LoadInboundFragments(
+	owner messaging.InboundFragmentOwner,
+) ([]messaging.StoredInboundFragment, error) {
+	return store.fragments.LoadInboundFragments(owner)
+}
+
+func (store fragmentOnlyDeliveryStore) SaveInboundFragment(
+	scope messaging.InboundFragmentScope,
+	fragment messaging.InboundFragment,
+) (messaging.InboundFragmentSaveResult, error) {
+	return store.fragments.SaveInboundFragment(scope, fragment)
+}
+
+func (store fragmentOnlyDeliveryStore) DeleteInboundFragments(
+	scope messaging.InboundFragmentScope,
+) error {
+	return store.fragments.DeleteInboundFragments(scope)
+}
+
+func (store fragmentOnlyDeliveryStore) MarkInboundFragmentAcked(
+	scope messaging.InboundFragmentScope,
+	sequence int,
+	at time.Time,
+) error {
+	return store.fragments.MarkInboundFragmentAcked(scope, sequence, at)
 }
 
 func (m *memDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, at time.Time) error {
@@ -345,6 +378,13 @@ func (m *memDeliveryStore) MarkInboundFragmentAcked(
 ) error {
 	return nil
 }
+func (m *memDeliveryStore) MarkInboundFragmentsDegraded(
+	messaging.InboundFragmentScope,
+	time.Time,
+) error {
+	m.degraded = true
+	return nil
+}
 
 func TestDeliveryStoreAdapter(t *testing.T) {
 	store := &memDeliveryStore{}
@@ -378,6 +418,13 @@ func TestDeliveryStoreAdapter(t *testing.T) {
 	); err != nil || !store.inboundStored {
 		t.Fatalf("SaveInboundFragment err=%v stored=%v", err, store.inboundStored)
 	}
+	lifecycle, ok := adapter.(imscore.SMSInboundFragmentLifecycleStore)
+	if !ok {
+		t.Fatal("adapter did not preserve inbound fragment lifecycle capability")
+	}
+	if err := lifecycle.MarkInboundFragmentsDegraded(messaging.InboundFragmentScope{}, time.Now()); err != nil || !store.degraded {
+		t.Fatalf("MarkInboundFragmentsDegraded err=%v degraded=%v", err, store.degraded)
+	}
 }
 
 func TestRuntimeCoreDeliveryStorePreservesOptionalSIPResults(t *testing.T) {
@@ -403,6 +450,27 @@ func TestRuntimeCoreDeliveryStorePreservesOptionalSIPResults(t *testing.T) {
 		smsdelivery.InboundFragmentScope{}, smsdelivery.InboundFragment{},
 	); err != nil || !store.inboundStored {
 		t.Fatalf("SaveInboundFragment err=%v stored=%v", err, store.inboundStored)
+	}
+	lifecycle, ok := adapter.(smsdelivery.InboundFragmentLifecycleStore)
+	if !ok {
+		t.Fatal("runtimehost runtimecore adapter lost fragment lifecycle capability")
+	}
+	if err := lifecycle.MarkInboundFragmentsDegraded(smsdelivery.InboundFragmentScope{}, time.Now()); err != nil || !store.degraded {
+		t.Fatalf("MarkInboundFragmentsDegraded err=%v degraded=%v", err, store.degraded)
+	}
+}
+
+func TestDeliveryStoreAdaptersDoNotInventFragmentLifecycleCapability(t *testing.T) {
+	underlying := &memDeliveryStore{}
+	store := fragmentOnlyDeliveryStore{DeliveryStore: underlying, fragments: underlying}
+	adapters := []any{newDeliveryStoreAdapter(store), runtimeCoreDeliveryStore(store)}
+	for _, adapter := range adapters {
+		if _, ok := adapter.(smsdelivery.InboundFragmentStore); !ok {
+			t.Fatalf("adapter %T lost fragment capability", adapter)
+		}
+		if _, ok := adapter.(smsdelivery.InboundFragmentLifecycleStore); ok {
+			t.Fatalf("adapter %T invented lifecycle capability", adapter)
+		}
 	}
 }
 

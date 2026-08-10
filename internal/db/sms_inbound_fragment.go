@@ -33,6 +33,7 @@ type SMSInboundFragment struct {
 	ServiceCenter string    `gorm:"column:service_center"`
 	AckSent       bool      `gorm:"column:ack_sent"`
 	AckSentAt     time.Time `gorm:"column:ack_sent_at"`
+	DegradedAt    time.Time `gorm:"column:degraded_at;index"`
 	CreatedAt     time.Time `gorm:"column:created_at"`
 	UpdatedAt     time.Time `gorm:"column:updated_at"`
 }
@@ -134,6 +135,25 @@ func MarkSMSInboundFragmentAcked(
 		Where("sequence = ?", sequence).Updates(map[string]any{
 		"ack_sent": true, "ack_sent_at": at, "updated_at": at,
 	}).Error
+}
+
+func MarkSMSInboundFragmentsDegraded(scope SMSInboundFragmentScope, at time.Time) error {
+	if DB == nil {
+		return errors.New("database not initialized")
+	}
+	if at.IsZero() {
+		return errors.New("missing SMS inbound fragment degraded time")
+	}
+	scope = normalizeSMSInboundFragmentScope(scope)
+	result := fragmentScopeQuery(DB.Model(&SMSInboundFragment{}), scope).
+		Updates(map[string]any{"degraded_at": at, "updated_at": at})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("SMS inbound fragment session not found")
+	}
+	return nil
 }
 
 func loadSMSInboundFragmentSession(

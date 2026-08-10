@@ -10,6 +10,7 @@ import (
 )
 
 var _ messaging.InboundFragmentStore = vowifiDeliveryStore{}
+var _ messaging.InboundFragmentLifecycleStore = vowifiDeliveryStore{}
 
 func TestVoWiFiDeliveryStoreReportsMatchedPart(t *testing.T) {
 	previousDB := db.DB
@@ -84,6 +85,14 @@ func assertInboundFragmentStoreRoundTrip(t *testing.T, store vowifiDeliveryStore
 	rows, err := store.LoadInboundFragments(scope.Owner)
 	if err != nil || len(rows) != 1 || rows[0].Scope != scope || rows[0].Fragment.Content != "first" {
 		t.Fatalf("fragment load=%#v err=%v", rows, err)
+	}
+	degradedAt := at.Add(time.Second)
+	if err := store.MarkInboundFragmentsDegraded(scope, degradedAt); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = store.LoadInboundFragments(scope.Owner)
+	if err != nil || len(rows) != 1 || !rows[0].Fragment.DegradedAt.Equal(degradedAt) {
+		t.Fatalf("fragment degraded state=%#v err=%v", rows, err)
 	}
 	if err := store.DeleteInboundFragments(scope); err != nil {
 		t.Fatal(err)

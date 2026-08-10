@@ -49,6 +49,18 @@ func TestSMSInboundFragmentPersistsAcrossDatabaseReopen(t *testing.T) {
 	if err != nil || len(rows) != 1 || !rows[0].AckSent || rows[0].AckSentAt.Before(ackedAt) {
 		t.Fatalf("acked rows=%#v err=%v", rows, err)
 	}
+	degradedAt := ackedAt.Add(time.Second)
+	if err := MarkSMSInboundFragmentsDegraded(scope, degradedAt); err != nil {
+		t.Fatal(err)
+	}
+	closeSMSFragmentTestDB(t)
+	if err := Init(path); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = LoadSMSInboundFragments(scope)
+	if err != nil || len(rows) != 1 || !rows[0].DegradedAt.Equal(degradedAt) {
+		t.Fatalf("degraded rows after reopen=%#v err=%v", rows, err)
+	}
 	if err := DeleteSMSInboundFragments(scope); err != nil {
 		t.Fatal(err)
 	}

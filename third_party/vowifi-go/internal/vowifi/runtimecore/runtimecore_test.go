@@ -710,6 +710,14 @@ func (store *testSIPResultStore) MarkInboundFragmentAcked(
 	return nil
 }
 
+func (store *testSIPResultStore) MarkInboundFragmentsDegraded(
+	smsdelivery.InboundFragmentScope,
+	time.Time,
+) error {
+	store.inboundStored = true
+	return nil
+}
+
 func TestDeliveryStoreAdapterPreservesOptionalSIPResults(t *testing.T) {
 	store := &testSIPResultStore{}
 	adapter := adaptDeliveryStore(store)
@@ -733,6 +741,14 @@ func TestDeliveryStoreAdapterPreservesOptionalSIPResults(t *testing.T) {
 		smsdelivery.InboundFragmentScope{}, smsdelivery.InboundFragment{},
 	); err != nil || !store.inboundStored {
 		t.Fatalf("SaveInboundFragment err=%v stored=%v", err, store.inboundStored)
+	}
+	store.inboundStored = false
+	lifecycle, ok := adapter.(imscore.SMSInboundFragmentLifecycleStore)
+	if !ok {
+		t.Fatal("runtimecore delivery adapter lost fragment lifecycle capability")
+	}
+	if err := lifecycle.MarkInboundFragmentsDegraded(smsdelivery.InboundFragmentScope{}, time.Now()); err != nil || !store.inboundStored {
+		t.Fatalf("MarkInboundFragmentsDegraded err=%v stored=%v", err, store.inboundStored)
 	}
 }
 

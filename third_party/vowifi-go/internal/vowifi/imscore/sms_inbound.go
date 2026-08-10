@@ -19,6 +19,9 @@ const (
 	rpCauseTemporaryFailure = byte(41)
 	inboundSMSAckTimeout    = 10 * time.Second
 	inboundSMSFragmentTTL   = 3 * time.Minute
+	// A carrier response arrived 35m37s late in production. One hour keeps a
+	// bounded recovery margin without delaying the 3-minute user notification.
+	inboundSMSLateReassemblyTTL = time.Hour
 )
 
 type inboundSMS struct {

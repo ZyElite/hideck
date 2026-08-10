@@ -22,6 +22,14 @@ func (s *Service) inboundFragmentStore() SMSInboundFragmentStore {
 	return store
 }
 
+func (s *Service) inboundFragmentLifecycleStore() SMSInboundFragmentLifecycleStore {
+	if s == nil || s.delivery == nil || s.inboundFragmentStore() == nil {
+		return nil
+	}
+	store, _ := s.delivery.(SMSInboundFragmentLifecycleStore)
+	return store
+}
+
 func (s *Service) inboundFragmentOwner() smsInboundFragmentOwner {
 	owner := smsInboundFragmentOwner{}
 	if s != nil && s.cfg != nil {
@@ -50,6 +58,17 @@ func (s *Service) handlePersistedSMSFragment(ctx persistedFragmentContext) (stri
 		result.CollisionReason = reason
 		return s.handleFragmentStoreError(ctx, result, smsdelivery.ErrInboundFragmentCollision)
 	}
+	if fragmentLateWindowExpired(fragments, time.Now()) {
+		deleteErr := ctx.Store.DeleteInboundFragments(scope)
+		s.fragmentMu.Lock()
+		delete(s.fragmentCache, ctx.Key)
+		s.fragmentRecentExpired[ctx.Key] = time.Now()
+		s.fragmentOrphanLate++
+		s.fragmentMu.Unlock()
+		return "", false, errors.Join(
+			errors.New("imscore: late SMS fragment after reassembly window"), deleteErr,
+		)
+	}
 	return s.acceptPersistedFragment(ctx, fragments, result.Inserted)
 }
 
@@ -76,6 +95,7 @@ func (s *Service) acceptPersistedFragment(
 	}
 	content := assembleFragmentText(fragments)
 	s.fragmentMu.Lock()
+	s.recordCompletedFragmentsLocked(ctx.Key, fragments)
 	delete(s.fragmentCache, ctx.Key)
 	s.fragmentAssembledOK++
 	s.fragmentMu.Unlock()
@@ -166,6 +186,9 @@ func (s *Service) installStoredFragmentGroup(
 		return fmt.Errorf("imscore: delete restored complete SMS fragments: %w", err)
 	}
 	first := firstSMSFragment(fragments)
+	s.fragmentMu.Lock()
+	s.recordCompletedFragmentsLocked(key, fragments)
+	s.fragmentMu.Unlock()
 	if first != nil {
 		s.publishInboundSMS(inboundSMS{
 			sender: senderFromFragmentKey(key), targetURI: first.ToURI,
@@ -206,6 +229,7 @@ func storedFragmentFromRuntime(fragment *smsFragment) smsInboundFragmentRecord {
 		ArrivedAt: fragment.Time, RPMR: int(fragment.RpMr), CallID: fragment.CallID,
 		ToURI: fragment.ToURI, ServiceCenter: fragment.ServiceCenter,
 		AckSent: fragment.AckSent, AckSentAt: fragment.AckSentAt,
+		DegradedAt: fragment.DegradedAt,
 	}
 }
 
@@ -224,7 +248,26 @@ func runtimeFragmentFromStored(record smsInboundFragmentRecord) *smsFragment {
 		Time: record.ArrivedAt, RpMr: uint8(record.RPMR), CallID: record.CallID,
 		ToURI: record.ToURI, ServiceCenter: record.ServiceCenter,
 		AckSent: record.AckSent, AckSentAt: record.AckSentAt,
+		DegradedAt: record.DegradedAt,
 	}
+}
+
+func fragmentLateWindowExpired(fragments []*smsFragment, now time.Time) bool {
+	degradedAt := fragmentDegradedAt(fragments)
+	return !degradedAt.IsZero() && !now.Before(degradedAt.Add(inboundSMSLateReassemblyTTL))
+}
+
+func fragmentDegradedAt(fragments []*smsFragment) time.Time {
+	var earliest time.Time
+	for _, fragment := range fragments {
+		if fragment == nil || fragment.DegradedAt.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || fragment.DegradedAt.Before(earliest) {
+			earliest = fragment.DegradedAt
+		}
+	}
+	return earliest
 }
 
 func latestFragmentTime(fragments []*smsFragment) time.Time {

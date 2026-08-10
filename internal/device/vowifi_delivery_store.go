@@ -74,6 +74,13 @@ func (vowifiDeliveryStore) MarkInboundFragmentAcked(
 	return db.MarkSMSInboundFragmentAcked(fragmentScopeToDB(scope), sequence, at)
 }
 
+func (vowifiDeliveryStore) MarkInboundFragmentsDegraded(
+	scope messaging.InboundFragmentScope,
+	at time.Time,
+) error {
+	return db.MarkSMSInboundFragmentsDegraded(fragmentScopeToDB(scope), at)
+}
+
 func fragmentScopeToDB(scope messaging.InboundFragmentScope) db.SMSInboundFragmentScope {
 	return db.SMSInboundFragmentScope{
 		DeviceID: scope.Owner.DeviceID, IMSI: scope.Owner.IMSI, SessionKey: scope.SessionKey,
@@ -87,6 +94,7 @@ func inboundFragmentToDB(fragment messaging.InboundFragment) db.SMSInboundFragme
 		ArrivedAt: fragment.ArrivedAt, RPMR: fragment.RPMR, CallID: fragment.CallID,
 		ToURI: fragment.ToURI, ServiceCenter: fragment.ServiceCenter,
 		AckSent: fragment.AckSent, AckSentAt: fragment.AckSentAt,
+		DegradedAt: fragment.DegradedAt,
 	}
 }
 
@@ -107,6 +115,7 @@ func inboundFragmentValueFromDB(row db.SMSInboundFragment) messaging.InboundFrag
 		ArrivedAt: row.ArrivedAt, RPMR: row.RPMR, CallID: row.CallID,
 		ToURI: row.ToURI, ServiceCenter: row.ServiceCenter,
 		AckSent: row.AckSent, AckSentAt: row.AckSentAt,
+		DegradedAt: row.DegradedAt,
 	}
 }
 
