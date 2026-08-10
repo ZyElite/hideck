@@ -113,13 +113,7 @@ func (s *Service) sendRpAck(inbound string, body []byte, rpMR byte, fingerprint 
 	}
 	s.mtAckSendOK.Add(1)
 	s.recordMTAckAudit(audit, nil)
-	s.markFragmentAckedByRequest(inbound, rpMR, time.Now())
 	return nil
-}
-
-func (s *Service) markFragmentAckedByRequest(inbound string, rpMR byte, at time.Time) {
-	callID := strings.TrimSpace(rawSIPHeaderValue(inbound, "Call-ID"))
-	s.markFragmentAcked("", callID, rpMR, at)
 }
 
 func resolveRpAckTarget(contact, from string) (string, error) {

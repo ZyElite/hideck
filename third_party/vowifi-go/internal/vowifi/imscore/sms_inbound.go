@@ -173,12 +173,26 @@ func (s *Service) finalizeInboundSMSData(
 		s.publishInboundSMS(message)
 	}
 	fingerprint := buildMTSMSFingerprint(message, raw)
+	fragmentKey := inboundSMSFragmentKey(message)
 	return inboundSIPResult{
 		response: response,
 		afterReply: func() {
+			if fragmentKey != "" {
+				s.markFragmentAcked(fragmentKey, message.partNo)
+			}
 			s.sendRpAckWithRetry(raw, smscodec.BuildRPAck(message.rpMR), message.rpMR, fingerprint)
 		},
 	}, nil
+}
+
+func inboundSMSFragmentKey(message inboundSMS) string {
+	if message.total <= 1 {
+		return ""
+	}
+	return buildFragmentSessionKey(fragmentSessionIdentity{
+		Sender: message.sender, ServiceCenter: message.serviceCenter, Local: message.targetURI,
+		Reference: message.concatRef, RefBits: message.refBits, Total: message.total,
+	})
 }
 
 func fragmentLifecycleLogFields(ctx fragmentLifecycleContext) []interface{} {
@@ -233,10 +247,6 @@ func (s *Service) assembleInboundSMS(raw string, message *inboundSMS) (bool, err
 	if message.total <= 1 {
 		return s.shouldDispatchMTSMS(*message, raw), nil
 	}
-	identity := fragmentSessionIdentity{
-		Sender: message.sender, ServiceCenter: message.serviceCenter, Local: message.targetURI,
-		Reference: message.concatRef, RefBits: message.refBits, Total: message.total,
-	}
 	traceID, device, transport := "", "", ""
 	if s != nil && s.cfg != nil {
 		traceID, device = s.cfg.TraceID, s.cfg.DeviceID
@@ -245,7 +255,7 @@ func (s *Service) assembleInboundSMS(raw string, message *inboundSMS) (bool, err
 	logging.RunDebug("IMS SMS fragment received", fragmentLifecycleLogFields(fragmentLifecycleContext{
 		TraceID: traceID, Device: device, Transport: transport,
 		CallID: strings.TrimSpace(rawSIPHeaderValue(raw, "Call-ID")),
-		Key:    buildFragmentSessionKey(identity), ArrivedAt: time.Now(), Message: *message,
+		Key:    inboundSMSFragmentKey(*message), ArrivedAt: time.Now(), Message: *message,
 	})...)
 	content, complete, err := s.handleSMSFragment(message.sender, &smsFragment{
 		Ref: message.concatRef, RefBits: message.refBits,

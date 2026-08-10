@@ -423,21 +423,43 @@ func TestRPCauseTextMatchesRecoveredValues(t *testing.T) {
 	}
 }
 
-func TestMarkFragmentAckedByRequestMatchesAcrossCacheKeys(t *testing.T) {
+func TestMarkFragmentAckedMatchesRecoveredKeyAndSequence(t *testing.T) {
 	service, err := New(&IMSConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(service.Stop)
-	fragment := &smsFragment{RpMr: 57, CallID: "fragment-ack-call"}
+	fragment := &smsFragment{Seq: 2, RpMr: 57, CallID: "fragment-ack-call"}
 	service.fragmentMu.Lock()
-	service.fragmentCache["first-key"] = []*smsFragment{{RpMr: 9, CallID: "other"}}
+	service.fragmentCache["first-key"] = []*smsFragment{{Seq: 2, RpMr: 57, CallID: "fragment-ack-call"}}
 	service.fragmentCache["matching-key"] = []*smsFragment{fragment}
 	service.fragmentMu.Unlock()
-	ackedAt := time.Now()
-	service.markFragmentAckedByRequest("Call-ID: fragment-ack-call\r\n", 57, ackedAt)
-	if !fragment.AckSent || !fragment.AckSentAt.Equal(ackedAt) {
+	before := time.Now()
+	service.markFragmentAcked("matching-key", 2)
+	if !fragment.AckSent || fragment.AckSentAt.Before(before) {
 		t.Fatalf("fragment ack state = %v at %v", fragment.AckSent, fragment.AckSentAt)
+	}
+}
+
+func TestFinalizeInboundFragmentMarksScheduledAckByKeyAndSequence(t *testing.T) {
+	service, _, _ := newInboundSMSTestService(t)
+	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 59, "+447700900123", "part"))
+	message := inboundSMS{
+		sender: "+447700900123", serviceCenter: "+447802002606",
+		targetURI: "sip:234102356143376@ims.example", content: "part",
+		timestamp: time.Now(), rpMR: 59, concatRef: 8, refBits: 8, total: 2, partNo: 1,
+	}
+	result, err := service.finalizeInboundSMSData(raw, message, "SIP/2.0 200 OK\r\n\r\n")
+	if err != nil || result.afterReply == nil {
+		t.Fatalf("finalize result = %#v, err = %v", result, err)
+	}
+	result.afterReply()
+	key := inboundSMSFragmentKey(message)
+	service.fragmentMu.Lock()
+	fragments := append([]*smsFragment(nil), service.fragmentCache[key]...)
+	service.fragmentMu.Unlock()
+	if len(fragments) != 1 || !fragments[0].AckSent || fragments[0].Seq != 1 {
+		t.Fatalf("fragments = %#v", fragments)
 	}
 }
 

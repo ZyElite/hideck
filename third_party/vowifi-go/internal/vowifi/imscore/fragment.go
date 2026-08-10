@@ -232,27 +232,21 @@ func (s *Service) cleanupExpiredFragments(ttl time.Duration) {
 	}
 }
 
-func (s *Service) markFragmentAcked(key, callID string, rpMR byte, at time.Time) bool {
-	if s == nil {
-		return false
+func (s *Service) markFragmentAcked(key string, sequence int) {
+	key = strings.TrimSpace(key)
+	if s == nil || key == "" || sequence < 1 {
+		return
 	}
 	s.fragmentMu.Lock()
 	defer s.fragmentMu.Unlock()
-	for cacheKey, fragments := range s.fragmentCache {
-		if key != "" && cacheKey != key {
+	for _, fragment := range s.fragmentCache[key] {
+		if fragment == nil || fragment.Seq != sequence {
 			continue
 		}
-		for _, fragment := range fragments {
-			if fragment == nil || fragment.RpMr != rpMR ||
-				(strings.TrimSpace(callID) != "" && !strings.EqualFold(fragment.CallID, callID)) {
-				continue
-			}
-			fragment.AckSent = true
-			fragment.AckSentAt = at
-			return true
-		}
+		fragment.AckSent = true
+		fragment.AckSentAt = time.Now()
+		return
 	}
-	return false
 }
 
 func missingSMSSeqs(fragments []*smsFragment, total int) string {
