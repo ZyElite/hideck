@@ -168,6 +168,41 @@ func TestValidateChildSAResponseAcceptsExactProposalAndNarrowing(t *testing.T) {
 	}
 }
 
+func TestValidateFinalChildSAAcceptsOriginalMultiProposalSelection(t *testing.T) {
+	innerIP := net.IPv4(10, 0, 0, 2)
+	payloads := validChildSAResponsePayloads(innerIP)
+	proposal := childProposal(payloads)
+	proposal.ProposalNum = 2
+	proposal.NumTransforms = 2
+	proposal.Transforms = []*ikev2.Transform{
+		{Type: ikev2.TransformTypeEncr, ID: ikev2.AlgorithmType(enginecrypto.EncrAESGCM16), Attributes: []*ikev2.TransformAttribute{{Type: 14, Val: 128}}},
+		{Type: ikev2.TransformTypeESN, ID: 0},
+	}
+	offer := testChildSAOffer(innerIP)
+	offer.acceptNegotiatedAlgorithms = true
+	offer.offeredProposals = ikev2.CreateMultiProposalESP([]byte{1, 2, 3, 4})
+
+	selection, err := validateChildSAResponse(payloads, offer)
+	if err != nil {
+		t.Fatalf("validate original multi-proposal selection: %v", err)
+	}
+	if selection.encryption != enginecrypto.EncrAESGCM16 || selection.encryptionKeyBits != 128 ||
+		selection.integrity != 0 || selection.esn {
+		t.Fatalf("selection = %+v", selection)
+	}
+
+	session := NewSession(&Config{})
+	if err := session.applySelectedESPAlgorithms(selection); err != nil {
+		t.Fatalf("apply selected ESP algorithms: %v", err)
+	}
+	if session.espCipher != enginecrypto.EncrAESGCM16 || session.espEncKeyBits != 128 ||
+		session.espEncKeyLen != 20 || session.espIntegKeyLen != 0 || !session.espAEAD {
+		t.Fatalf("applied ESP parameters = cipher:%d bits:%d enc:%d integ:%d aead:%t",
+			session.espCipher, session.espEncKeyBits, session.espEncKeyLen,
+			session.espIntegKeyLen, session.espAEAD)
+	}
+}
+
 func TestValidateChildSAResponseRejectsInvalidSelections(t *testing.T) {
 	innerIP := net.IPv4(10, 0, 0, 2)
 	tests := map[string]struct {

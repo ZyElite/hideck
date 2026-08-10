@@ -11,52 +11,113 @@ import (
 
 const transformAttributeKeyLength uint16 = 14
 
-func validateESPSelection(proposal *ikev2.Proposal, offer childSAOffer) (uint32, uint16, uint16, uint16, bool, error) {
-	if proposal == nil || proposal.ProposalNum != 1 || proposal.ProtocolID != ikev2.ProtoESP {
-		return 0, 0, 0, 0, false, errors.New("swu: CHILD_SA response selected an invalid ESP proposal")
+func validateESPSelection(proposal *ikev2.Proposal, offer childSAOffer) (uint32, selectedAlgorithms, uint16, bool, error) {
+	if proposal == nil || proposal.ProtocolID != ikev2.ProtoESP ||
+		(!offer.acceptNegotiatedAlgorithms && proposal.ProposalNum != 1) {
+		return 0, selectedAlgorithms{}, 0, false, errors.New("swu: CHILD_SA response selected an invalid ESP proposal")
 	}
 	if len(proposal.SPI) != 4 {
-		return 0, 0, 0, 0, false, errors.New("swu: CHILD_SA response SPI must be four bytes")
+		return 0, selectedAlgorithms{}, 0, false, errors.New("swu: CHILD_SA response SPI must be four bytes")
 	}
 	spi := binary.BigEndian.Uint32(proposal.SPI)
 	if spi == 0 {
-		return 0, 0, 0, 0, false, errors.New("swu: CHILD_SA response SPI is zero")
+		return 0, selectedAlgorithms{}, 0, false, errors.New("swu: CHILD_SA response SPI is zero")
 	}
 	transforms, err := indexESPTransforms(proposal.Transforms)
 	if err != nil {
-		return 0, 0, 0, 0, false, err
+		return 0, selectedAlgorithms{}, 0, false, err
 	}
-	encryption, integrity, err := validateESPAlgorithms(transforms, offer)
+	algorithms, err := validateESPAlgorithms(proposal, transforms, offer)
 	if err != nil {
-		return 0, 0, 0, 0, false, err
+		return 0, selectedAlgorithms{}, 0, false, err
 	}
 	esn, err := validateESPPFSAndESN(transforms, offer.dhGroup, offer.esn)
 	if err != nil {
-		return 0, 0, 0, 0, false, err
+		return 0, selectedAlgorithms{}, 0, false, err
 	}
-	return spi, encryption, integrity, offer.dhGroup, esn, nil
+	return spi, algorithms, offer.dhGroup, esn, nil
 }
 
 func validateESPAlgorithms(
+	proposal *ikev2.Proposal,
 	transforms map[ikev2.TransformType]*ikev2.Transform,
 	offer childSAOffer,
-) (uint16, uint16, error) {
+) (selectedAlgorithms, error) {
+	if offer.acceptNegotiatedAlgorithms {
+		return validateNegotiatedESPAlgorithms(proposal, offer.offeredProposals)
+	}
 	encryption := transforms[ikev2.TypeEncryption]
 	if encryption == nil || uint16(encryption.ID) != offer.encryption {
-		return 0, 0, fmt.Errorf("swu: CHILD_SA encryption selection %v does not match offer %d", transformID(encryption), offer.encryption)
+		return selectedAlgorithms{}, fmt.Errorf("swu: CHILD_SA encryption selection %v does not match offer %d", transformID(encryption), offer.encryption)
 	}
 	if err := validateEncryptionKeyLength(encryption, offer.encryptionKeyBits); err != nil {
-		return 0, 0, err
+		return selectedAlgorithms{}, err
 	}
 	integrity := transforms[ikev2.TypeIntegrity]
 	if offer.integrity == 0 {
 		if integrity != nil {
-			return 0, 0, errors.New("swu: AEAD CHILD_SA response selected a separate integrity transform")
+			return selectedAlgorithms{}, errors.New("swu: AEAD CHILD_SA response selected a separate integrity transform")
 		}
 	} else if integrity == nil || uint16(integrity.ID) != offer.integrity {
-		return 0, 0, fmt.Errorf("swu: CHILD_SA integrity selection %v does not match offer %d", transformID(integrity), offer.integrity)
+		return selectedAlgorithms{}, fmt.Errorf("swu: CHILD_SA integrity selection %v does not match offer %d", transformID(integrity), offer.integrity)
 	}
-	return uint16(encryption.ID), offer.integrity, nil
+	return selectedAlgorithms{
+		encryption: uint16(encryption.ID), keyBits: offer.encryptionKeyBits, integrity: offer.integrity,
+	}, nil
+}
+
+func validateNegotiatedESPAlgorithms(
+	proposal *ikev2.Proposal,
+	offered []*ikev2.Proposal,
+) (selectedAlgorithms, error) {
+	selection, err := firstESPAlgorithmSelection(proposal)
+	if err != nil {
+		return selectedAlgorithms{}, fmt.Errorf("swu: invalid selected ESP algorithms: %w", err)
+	}
+	if selection.keyBits == 0 {
+		selection.keyBits = offeredESPKeyBitsForProposal(offered, proposal.ProposalNum, selection.encryption)
+		if selection.keyBits == 0 {
+			selection.keyBits = offeredESPKeyBits(offered, selection.encryption)
+		}
+	}
+	encryption, err := supportedEncryption(selection.encryption, selection.keyBits)
+	if err != nil {
+		return selectedAlgorithms{}, capabilityNegotiationError("ESP Encr", selection.encryption, err)
+	}
+	integrity, err := crypto.GetIntegrityAlgorithm(selection.integrity)
+	if err != nil {
+		return selectedAlgorithms{}, capabilityNegotiationError("ESP Integ", selection.integrity, err)
+	}
+	if err := validateIntegrityMode("ESP", encryption.aead, selection.integrity); err != nil {
+		return selectedAlgorithms{}, err
+	}
+	if integrity.KeySize() == 0 && !encryption.aead {
+		return selectedAlgorithms{}, errors.New("swu: non-AEAD ESP selection has no integrity key")
+	}
+	return selection, nil
+}
+
+func offeredESPKeyBits(proposals []*ikev2.Proposal, encryption uint16) uint16 {
+	for _, proposal := range proposals {
+		selection := firstAlgorithmSelection(proposal)
+		if selection.encryption == encryption && selection.keyBits != 0 {
+			return selection.keyBits
+		}
+	}
+	return 0
+}
+
+func offeredESPKeyBitsForProposal(proposals []*ikev2.Proposal, number uint8, encryption uint16) uint16 {
+	for _, proposal := range proposals {
+		if proposal == nil || proposal.ProposalNum != number {
+			continue
+		}
+		selection := firstAlgorithmSelection(proposal)
+		if selection.encryption == encryption && selection.keyBits != 0 {
+			return selection.keyBits
+		}
+	}
+	return 0
 }
 
 func validateESPPFSAndESN(

@@ -399,6 +399,7 @@ type Session struct {
 	ikeProfileOffset         int
 	offeredIKEProfiles       []string
 	offeredIKEProposals      []*ikev2.Proposal
+	offeredESPProposals      []*ikev2.Proposal
 	effectiveCipherPolicy    string
 	negotiationFallbackCount int
 	sendCookie               bool

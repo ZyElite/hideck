@@ -326,6 +326,7 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.offeredESPProposals = cloneProposals(espProposals)
 	sa2 := &ikev2.EncryptedPayloadSA{Proposals: espProposals}
 	childKE, err := s.prepareInitialChildDH(espProposals)
 	if err != nil {
@@ -572,6 +573,7 @@ func (s *Session) applyFinalIKEAuthPayloads(payloads []ikev2.Payload) error {
 		encryption: s.espCipher, encryptionKeyBits: s.espEncKeyBits, integrity: s.espInteg,
 		dhGroup: childDHGroup(s.childDH), esn: s.espESN,
 		tsi: offerTSi, tsr: offerTSr, localIPs: assigned.ips(),
+		acceptNegotiatedAlgorithms: true, offeredProposals: s.offeredESPProposals,
 	})
 	if err != nil {
 		return err
@@ -584,8 +586,10 @@ func (s *Session) applyFinalIKEAuthPayloads(payloads []ikev2.Payload) error {
 		if err != nil {
 			return err
 		}
+		if err := s.applySelectedESPAlgorithms(selection); err != nil {
+			return err
+		}
 		s.espRemoteSPI = selection.remoteSPI
-		s.espCipher, s.espInteg, s.espESN = selection.encryption, selection.integrity, selection.esn
 		s.childNi, s.childNr = append([]byte(nil), s.Ni...), s.Nr()
 		s.childDHSecret = append([]byte(nil), sharedSecret...)
 		s.childTSi, s.childTSr = selection.tsi, selection.tsr

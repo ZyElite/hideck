@@ -250,3 +250,28 @@ func validateIntegrityMode(layer string, aead bool, integrity uint16) error {
 	}
 	return nil
 }
+
+func (s *Session) applySelectedESPAlgorithms(selection *childSASelection) error {
+	encryption, err := supportedEncryption(selection.encryption, selection.encryptionKeyBits)
+	if err != nil {
+		return capabilityNegotiationError("ESP Encr", selection.encryption, err)
+	}
+	integrity, err := crypto.GetIntegrityAlgorithm(selection.integrity)
+	if err != nil {
+		return capabilityNegotiationError("ESP Integ", selection.integrity, err)
+	}
+	if err := validateIntegrityMode("ESP", encryption.aead, selection.integrity); err != nil {
+		return err
+	}
+	plan := &AlgorithmPlan{
+		ESPEncryption: selection.encryption, ESPEncryptionKeyBits: selection.encryptionKeyBits,
+		ESPIntegrity: selection.integrity,
+	}
+	if err := validateDriverAlgorithms(plan, encryption.aead, s.cfg); err != nil {
+		return err
+	}
+	s.espCipher, s.espEncKeyBits = selection.encryption, selection.encryptionKeyBits
+	s.espInteg, s.espESN = selection.integrity, selection.esn
+	s.espEncKeyLen, s.espIntegKeyLen, s.espAEAD = encryption.keyLen, integrity.KeySize(), encryption.aead
+	return nil
+}
