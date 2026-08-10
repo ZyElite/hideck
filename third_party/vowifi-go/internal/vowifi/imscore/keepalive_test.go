@@ -83,13 +83,21 @@ func TestIMSKeepaliveUsesRegisteredProtectedProfile(t *testing.T) {
 			done <- err
 			return
 		}
-		if !strings.HasPrefix(request, "OPTIONS sip:+447840844894@o2.co.uk SIP/2.0") {
+		if !strings.HasPrefix(request, "OPTIONS sip:+447840844894@o2.co.uk;transport=tcp SIP/2.0") {
 			done <- errors.New("keepalive did not target the registered public identity")
 			return
 		}
 		if rawSIPHeaderValue(request, "Security-Verify") == "" ||
-			rawSIPHeaderValue(request, "Route") == "" {
+			rawSIPHeaderValue(request, "Route") == "" ||
+			rawSIPHeaderValue(request, "Contact") == "" ||
+			rawSIPHeaderValue(request, "P-Access-Network-Info") == "" ||
+			rawSIPHeaderValue(request, "P-Preferred-Identity") == "" {
 			done <- errors.New("keepalive omitted registered security routing")
+			return
+		}
+		if rawSIPHeaderValue(request, "Require") != "sec-agree" ||
+			rawSIPHeaderValue(request, "Proxy-Require") != "sec-agree" {
+			done <- errors.New("keepalive omitted negotiated sec-agree requirements")
 			return
 		}
 		_, err = io.WriteString(server, registerWireResponse(request, 200, ""))
