@@ -91,23 +91,25 @@ func (s *Service) sendRpAck(inbound string, body []byte, rpMR byte, fingerprint 
 		s.mtAckSendErr.Add(1)
 		return err
 	}
-	traceID := common.NewTraceID()
-	audit := mtAckAudit{
-		traceID: traceID, target: request.Recipient.String(), destination: request.Destination(),
-		transport: request.Transport(), callID: request.CallID().Value(), rpMR: int(rpMR),
-		fingerprint: fingerprint, at: time.Now(),
-	}
-	ctx, cancel := context.WithTimeout(common.WithTraceID(context.Background(), traceID), inboundSMSAckTimeout)
-	defer cancel()
-	result, err := s.dispatchOutboundMESSAGE(ctx, "mt-rp-ack", request, inboundSMSAckTimeout)
+	modeCtx, err := s.resolveOutboundModeContext("mt-rp-ack", request)
 	if err != nil {
 		s.mtAckSendErr.Add(1)
-		s.recordMTAckAudit(audit, err)
 		return err
 	}
-	if result.SIPCode < 200 || result.SIPCode >= 300 {
-		s.mtAckSIPNon2xx.Add(1)
-		err = fmt.Errorf("IMS RP control rejected with SIP %d", result.SIPCode)
+	traceID := common.NewTraceID()
+	audit := mtAckAudit{
+		traceID: traceID, target: request.Recipient.String(), destination: destinationFromContext(modeCtx),
+		transport: modeCtx.Transport, callID: request.CallID().Value(), rpMR: int(rpMR),
+		fingerprint: fingerprint, at: time.Now(),
+	}
+	logging.RunDebug("IMS RP ACK send",
+		"trace_id", traceID, "target", audit.target, "destination", audit.destination,
+		"transport", audit.transport, "call_id", audit.callID, "rp_mr", audit.rpMR)
+	ctx, cancel := context.WithTimeout(common.WithTraceID(context.Background(), traceID), inboundSMSAckTimeout)
+	defer cancel()
+	err = s.sendOutOfDialogRequest(ctx, modeCtx, request)
+	if err != nil {
+		s.mtAckSendErr.Add(1)
 		s.recordMTAckAudit(audit, err)
 		return err
 	}

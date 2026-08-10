@@ -190,6 +190,36 @@ func TestRPAckRetriesAndRecordsSuccess(t *testing.T) {
 	}
 }
 
+func TestRPAckUsesRecoveredStatelessOutOfDialogWrite(t *testing.T) {
+	service, _, _ := newInboundSMSTestService(t)
+	outbound := make(chan string, 1)
+	service.transport.SetSendFn(func(raw string) error {
+		outbound <- raw
+		return nil
+	})
+	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 0x32, "+447700900123", "ack"))
+	done := make(chan error, 1)
+	go func() {
+		done <- service.sendRpAck(raw, smscodec.BuildRPAck(0x32), 0x32, "fingerprint")
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("RP-ACK waited for a SIP final response")
+	}
+	request := waitForOutboundSMSControl(t, outbound)
+	if body, err := rawSIPBody(request); err != nil || string(body) != string(smscodec.BuildRPAck(0x32)) {
+		t.Fatalf("RP-ACK body = %x, err = %v", body, err)
+	}
+	if service.mtAckSendOK.Load() != 1 || service.mtAckSendErr.Load() != 0 {
+		t.Fatalf("ok=%d err=%d", service.mtAckSendOK.Load(), service.mtAckSendErr.Load())
+	}
+}
+
 func TestOutboundSMSUsesProductionUDPSocket(t *testing.T) {
 	registrar, client, service := newRealUDPSMSService(t)
 	serverErr := make(chan error, 1)

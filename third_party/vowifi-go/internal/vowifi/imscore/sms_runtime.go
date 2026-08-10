@@ -117,7 +117,6 @@ type observability struct {
 	outboundDispatchSeq     atomic.Uint64
 	mtAckSendOK             atomic.Int64
 	mtAckSendErr            atomic.Int64
-	mtAckSIPNon2xx          atomic.Int64
 	moRPErrorCause28        atomic.Int64
 	moRPErrorCause30        atomic.Int64
 	moRPErrorCause38        atomic.Int64
