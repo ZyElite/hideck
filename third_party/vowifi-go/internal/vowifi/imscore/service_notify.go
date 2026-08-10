@@ -38,16 +38,6 @@ func formatVoWiFiSMSSentMessage(device, number, content string, at time.Time, pa
 		device, number, at.Format(smsNotificationTimeLayout), content, parts)
 }
 
-func formatVoWiFiIncompleteSMSMessage(
-	device, number, content string,
-	at time.Time,
-	received, total int,
-	missing string,
-) string {
-	return fmt.Sprintf("收到新短信 / VoWiFi\n设备  %s\n号码  %s\n时间  %s\n内容  %s\n状态  分片不完整 %d/%d，已降级拼接\n缺失  %s",
-		device, number, at.Format(smsNotificationTimeLayout), content, received, total, missing)
-}
-
 func (s *Service) getRuntimeEventBus() *EventBus {
 	if s == nil {
 		return nil

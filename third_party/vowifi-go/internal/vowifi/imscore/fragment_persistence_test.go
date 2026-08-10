@@ -179,7 +179,6 @@ func TestInboundFragmentPersistenceRetainsDegradedSessionForLateCompletion(t *te
 	); err != nil {
 		t.Fatal(err)
 	}
-	key := inboundSMSFragmentKey(message)
 	time.Sleep(5 * time.Millisecond)
 	if err := service.cleanupExpiredFragments(time.Millisecond); err != nil {
 		t.Fatal(err)
@@ -188,13 +187,7 @@ func TestInboundFragmentPersistenceRetainsDegradedSessionForLateCompletion(t *te
 	if err != nil || len(stored) != 1 || stored[0].Fragment.DegradedAt.IsZero() {
 		t.Fatalf("stored degraded fragments=%#v err=%v", stored, err)
 	}
-	assertIMSEventTypes(t, subscriber, "LogNotify")
-	degradedSessionID := assertFragmentSMS(t, subscriber, expectedFragmentSMS{
-		Content: "[incomplete 1/2 missing=2] stale", Incomplete: true,
-	})
-	if degradedSessionID == key {
-		t.Fatal("fragment event exposed the reusable raw fragment key")
-	}
+	assertNoIMSEvent(t, subscriber, "incomplete fragment timeout")
 	if _, err := service.finalizeInboundSMSData(
 		fragmentTestRequest("mt-stale-duplicate"), message, "SIP/2.0 200 OK\r\n\r\n",
 	); err != nil {
@@ -218,7 +211,7 @@ func TestInboundFragmentPersistenceRetainsDegradedSessionForLateCompletion(t *te
 		t.Fatal(err)
 	}
 	assertFragmentSMS(t, restoredSubscriber, expectedFragmentSMS{
-		Content: "stale complete", SessionKey: degradedSessionID,
+		Content: "stale complete",
 	})
 	stored, err = store.LoadInboundFragments(restored.inboundFragmentOwner())
 	if err != nil || len(stored) != 0 {
@@ -289,7 +282,7 @@ func TestInboundFragmentPersistenceDeletesAtLateWindowExpiry(t *testing.T) {
 	if err := service.cleanupExpiredFragments(time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
-	assertIMSEventTypes(t, subscriber, "LogNotify", "SMSReceived")
+	assertNoIMSEvent(t, subscriber, "incomplete fragment timeout")
 	expiredAt := time.Now().Add(-inboundSMSLateReassemblyTTL - time.Second)
 	if err := store.MarkInboundFragmentsDegraded(service.inboundFragmentScope(key), expiredAt); err != nil {
 		t.Fatal(err)
@@ -319,7 +312,7 @@ func TestInboundFragmentPersistenceRejectsArrivalAfterLateWindow(t *testing.T) {
 	if err := service.cleanupExpiredFragments(time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
-	assertIMSEventTypes(t, subscriber, "LogNotify", "SMSReceived")
+	assertNoIMSEvent(t, subscriber, "incomplete fragment timeout")
 	expiredAt := time.Now().Add(-inboundSMSLateReassemblyTTL - time.Second)
 	if err := store.MarkInboundFragmentsDegraded(service.inboundFragmentScope(key), expiredAt); err != nil {
 		t.Fatal(err)

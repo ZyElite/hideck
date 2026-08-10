@@ -12,11 +12,12 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
-const (
-	rpAckInitialDelay = 100 * time.Millisecond
-	rpAckRetryDelay   = time.Second
-	rpAckMaxAttempts  = 4
-)
+type rpReportRequest struct {
+	Inbound     string
+	Body        []byte
+	RPMR        byte
+	Fingerprint string
+}
 
 type mtAckAudit struct {
 	traceID, target, destination, transport, callID, fingerprint string
@@ -44,49 +45,8 @@ func (s *Service) recordMTAckAudit(audit mtAckAudit, err error) {
 	s.lastMTAckMu.Unlock()
 }
 
-func (s *Service) sendRpAckWithRetry(inbound string, body []byte, rpMR byte, fingerprint string) {
-	s.sendRpAckWithRetryPolicy(inbound, body, rpMR, fingerprint, rpAckInitialDelay, rpAckRetryDelay)
-}
-
-func (s *Service) sendRpAckWithRetryPolicy(
-	inbound string,
-	body []byte,
-	rpMR byte,
-	fingerprint string,
-	initialDelay, retryDelay time.Duration,
-) {
-	if !s.waitSMSRetryDelay(initialDelay) {
-		return
-	}
-	delay := retryDelay
-	var lastErr error
-	for attempt := 0; attempt < rpAckMaxAttempts; attempt++ {
-		if attempt > 0 && !s.waitSMSRetryDelay(delay) {
-			return
-		}
-		lastErr = s.sendRpAck(inbound, body, rpMR, fingerprint)
-		if lastErr == nil {
-			return
-		}
-		delay *= 2
-	}
-	logging.WarnRate("smsip_rp_ack_retry_exhausted", "IMS RP-ACK retries exhausted",
-		"attempts", rpAckMaxAttempts, "err", lastErr)
-}
-
-func (s *Service) waitSMSRetryDelay(delay time.Duration) bool {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return true
-	case <-s.stop:
-		return false
-	}
-}
-
-func (s *Service) sendRpAck(inbound string, body []byte, rpMR byte, fingerprint string) error {
-	request, err := s.buildRPAckMESSAGE(inbound, body)
+func (s *Service) sendRPReport(report rpReportRequest) error {
+	request, err := s.buildRPAckMESSAGE(report.Inbound, report.Body)
 	if err != nil {
 		s.mtAckSendErr.Add(1)
 		return err
@@ -99,15 +59,23 @@ func (s *Service) sendRpAck(inbound string, body []byte, rpMR byte, fingerprint 
 	traceID := common.NewTraceID()
 	audit := mtAckAudit{
 		traceID: traceID, target: request.Recipient.String(), destination: destinationFromContext(modeCtx),
-		transport: modeCtx.Transport, callID: request.CallID().Value(), rpMR: int(rpMR),
-		fingerprint: fingerprint, at: time.Now(),
+		transport: modeCtx.Transport, callID: request.CallID().Value(), rpMR: int(report.RPMR),
+		fingerprint: report.Fingerprint, at: time.Now(),
 	}
-	logging.RunDebug("IMS RP ACK send",
+	logging.RunDebug("IMS RP report send",
 		"trace_id", traceID, "target", audit.target, "destination", audit.destination,
 		"transport", audit.transport, "call_id", audit.callID, "rp_mr", audit.rpMR)
 	ctx, cancel := context.WithTimeout(common.WithTraceID(context.Background(), traceID), inboundSMSAckTimeout)
 	defer cancel()
-	err = s.sendOutOfDialogRequest(ctx, modeCtx, request)
+	response, err := s.sendByMode(outboundSendOperation{
+		Context: ctx,
+		Mode:    modeCtx,
+		Request: request,
+		Timeout: inboundSMSAckTimeout,
+	})
+	if err == nil {
+		err = validateRPReportResponse(response)
+	}
 	if err != nil {
 		s.mtAckSendErr.Add(1)
 		s.recordMTAckAudit(audit, err)
@@ -118,8 +86,18 @@ func (s *Service) sendRpAck(inbound string, body []byte, rpMR byte, fingerprint 
 	return nil
 }
 
-func resolveRpAckTarget(contact, from string) (string, error) {
-	if target := firstSIPHeaderURI(contact); target != "" {
+func validateRPReportResponse(response *sipResponse) error {
+	if response == nil {
+		return errors.New("IMS RP report returned no SIP response")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("IMS RP report rejected: SIP %d %s", response.StatusCode, strings.TrimSpace(response.Reason))
+	}
+	return nil
+}
+
+func resolveRpAckTarget(assertedIdentity, from string) (string, error) {
+	if target := firstSIPHeaderURI(assertedIdentity); target != "" {
 		return target, nil
 	}
 	if target := firstSIPHeaderURI(from); target != "" {

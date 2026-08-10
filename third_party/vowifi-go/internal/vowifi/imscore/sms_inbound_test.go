@@ -53,6 +53,30 @@ func TestInboundSMSDeliversEventAndSendsRPAck(t *testing.T) {
 	if string(body) != string(smscodec.BuildRPAck(rpMR)) {
 		t.Fatalf("RP-ACK body = %x", body)
 	}
+	if !strings.HasPrefix(request, "MESSAGE sip:+447802002606@ims.example SIP/2.0") {
+		t.Fatalf("RP-ACK request target = %q", strings.SplitN(request, "\r\n", 2)[0])
+	}
+	if got := rawSIPHeaderValue(request, "In-Reply-To"); got != "inbound-sms" {
+		t.Fatalf("RP-ACK In-Reply-To = %q", got)
+	}
+}
+
+func TestInboundRPAckTargetsAssertedIPSMGW(t *testing.T) {
+	service, _, outbound := newInboundSMSTestService(t)
+	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 0x35, "+447700900123", "hello"))
+	raw = strings.Replace(raw, "From: <sip:+447802002606@ims.example>;tag=remote\r\n",
+		"P-Asserted-Identity: <sip:ipsmgw@ims.example>\r\n"+
+			"From: <sip:+447802002606@ims.example>;tag=remote\r\n", 1)
+	if err := service.dispatchInboundSIP(raw, func(string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	request := waitForOutboundSMSControl(t, outbound)
+	if !strings.HasPrefix(request, "MESSAGE sip:ipsmgw@ims.example SIP/2.0") {
+		t.Fatalf("RP-ACK request target = %q", strings.SplitN(request, "\r\n", 2)[0])
+	}
+	if got := rawSIPHeaderValue(request, "To"); got != "<sip:ipsmgw@ims.example>" {
+		t.Fatalf("RP-ACK To = %q", got)
+	}
 }
 
 func TestInboundMalformedSMSReturnsProtocolErrorWithoutEvent(t *testing.T) {

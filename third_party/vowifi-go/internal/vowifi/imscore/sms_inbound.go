@@ -180,10 +180,13 @@ func (s *Service) finalizeInboundSMSData(
 	return inboundSIPResult{
 		response: response,
 		afterReply: func() {
-			if fragmentKey != "" {
+			ackErr := s.sendRPReport(rpReportRequest{
+				Inbound: raw, Body: smscodec.BuildRPAck(message.rpMR),
+				RPMR: message.rpMR, Fingerprint: fingerprint,
+			})
+			if ackErr == nil && fragmentKey != "" {
 				s.markFragmentAcked(fragmentKey, message.partNo)
 			}
-			s.sendRpAckWithRetry(raw, smscodec.BuildRPAck(message.rpMR), message.rpMR, fingerprint)
 		},
 	}, nil
 }
@@ -282,7 +285,13 @@ func (s *Service) inboundSMSProtocolError(raw string, status int, rpMR byte, sen
 	result := inboundSIPResult{response: response}
 	if sendRPError {
 		result.afterReply = func() {
-			s.sendRpAckWithRetry(raw, smscodec.BuildRPError(rpMR, rpCauseTemporaryFailure), rpMR, "")
+			err := s.sendRPReport(rpReportRequest{
+				Inbound: raw, Body: smscodec.BuildRPError(rpMR, rpCauseTemporaryFailure), RPMR: rpMR,
+			})
+			if err != nil {
+				logging.WarnRate("ims-inbound-rp-error:"+s.cfg.DeviceID, time.Minute,
+					"IMS RP-ERROR delivery failed", "device", s.cfg.DeviceID, "rp_mr", int(rpMR), "error", err)
+			}
 		}
 	}
 	return result, protocolErr
@@ -307,18 +316,22 @@ func (s *Service) publishInboundSMSWithFragment(
 	})
 }
 
-func (s *Service) sendInboundSMSControl(inbound string, body []byte) {
-	s.sendRpAckWithRetry(inbound, body, 0, "")
-}
-
 func (s *Service) buildInboundSMSControlRequest(inbound string, body []byte) (string, error) {
 	remoteURI, err := resolveRpAckTarget(
-		rawSIPHeaderValue(inbound, "Contact"), rawSIPHeaderValue(inbound, "From"),
+		rawSIPHeaderValue(inbound, "P-Asserted-Identity"), rawSIPHeaderValue(inbound, "From"),
 	)
 	if err != nil {
 		return "", err
 	}
-	return s.buildSMSMESSAGE(remoteURI, body)
+	callID := strings.TrimSpace(rawSIPHeaderValue(inbound, "Call-ID"))
+	if callID == "" || strings.ContainsAny(callID, "\r\n") {
+		return "", errors.New("IMS RP-ACK In-Reply-To is unavailable")
+	}
+	return s.buildSMSMESSAGEWithOptions(smsMESSAGEOptions{
+		RemoteURI: remoteURI,
+		Body:      body,
+		InReplyTo: callID,
+	})
 }
 
 func normalizedContentType(value string) string {

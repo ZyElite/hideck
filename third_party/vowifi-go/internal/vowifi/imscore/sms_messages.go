@@ -12,12 +12,29 @@ import (
 const smsSupportedHeader = "path, 100rel, replaces, gruu"
 
 func (s *Service) buildSMSMESSAGE(remoteURI string, body []byte) (string, error) {
+	return s.buildSMSMESSAGEWithOptions(smsMESSAGEOptions{
+		RemoteURI: remoteURI,
+		Body:      body,
+	})
+}
+
+type smsMESSAGEOptions struct {
+	RemoteURI string
+	Body      []byte
+	InReplyTo string
+}
+
+func (s *Service) buildSMSMESSAGEWithOptions(options smsMESSAGEOptions) (string, error) {
 	if s == nil || s.cfg == nil {
 		return "", errors.New("imscore: SMS service is not configured")
 	}
-	remoteURI = strings.TrimSpace(remoteURI)
+	remoteURI := strings.TrimSpace(options.RemoteURI)
 	if remoteURI == "" || strings.ContainsAny(remoteURI, "\r\n") {
 		return "", errors.New("imscore: invalid SMS remote URI")
+	}
+	inReplyTo := strings.TrimSpace(options.InReplyTo)
+	if strings.ContainsAny(inReplyTo, "\r\n") {
+		return "", errors.New("imscore: invalid SMS In-Reply-To")
 	}
 	profile, err := s.reserveRegisteredSIPProfile()
 	if err != nil {
@@ -33,7 +50,11 @@ func (s *Service) buildSMSMESSAGE(remoteURI string, body []byte) (string, error)
 	}
 	fmt.Fprintf(&request, "From: <%s>;tag=%s\r\n", profile.LocalURI, newTag())
 	fmt.Fprintf(&request, "To: <%s>\r\n", remoteURI)
-	fmt.Fprintf(&request, "Call-ID: %s\r\nCSeq: %d MESSAGE\r\n", callID, profile.InitialCSeq)
+	fmt.Fprintf(&request, "Call-ID: %s\r\n", callID)
+	if inReplyTo != "" {
+		request.WriteString("In-Reply-To: " + inReplyTo + "\r\n")
+	}
+	fmt.Fprintf(&request, "CSeq: %d MESSAGE\r\n", profile.InitialCSeq)
 	request.WriteString("Contact: " + profile.ContactHeader + "\r\n")
 	request.WriteString("Max-Forwards: 70\r\n")
 	request.WriteString("P-Preferred-Identity: <" + profile.LocalURI + ">\r\n")
@@ -54,8 +75,8 @@ func (s *Service) buildSMSMESSAGE(remoteURI string, body []byte) (string, error)
 	}
 	request.WriteString("Content-Type: " + imsSMSContentType + "\r\n")
 	request.WriteString("Content-Transfer-Encoding: binary\r\n")
-	fmt.Fprintf(&request, "Content-Length: %d\r\n\r\n", len(body))
-	request.Write(body)
+	fmt.Fprintf(&request, "Content-Length: %d\r\n\r\n", len(options.Body))
+	request.Write(options.Body)
 	return request.String(), nil
 }
 

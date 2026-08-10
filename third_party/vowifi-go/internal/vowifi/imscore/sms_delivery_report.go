@@ -55,7 +55,14 @@ func (s *Service) handleInboundTPStatusReport(raw string, rpMR byte, payload []b
 	return inboundSIPResult{
 		response: response,
 		afterReply: func() {
-			s.sendRpAckWithRetry(raw, smscodec.BuildRPAck(rpMR), rpMR, "")
+			err := s.sendRPReport(rpReportRequest{
+				Inbound: raw, Body: smscodec.BuildRPAck(rpMR), RPMR: rpMR,
+			})
+			if err != nil {
+				logging.WarnRate("ims-status-report-rp-ack:"+s.cfg.DeviceID, time.Minute,
+					"IMS status report RP-ACK delivery failed",
+					"device", s.cfg.DeviceID, "rp_mr", int(rpMR), "error", err)
+			}
 		},
 	}, recordErr
 }

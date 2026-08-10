@@ -351,10 +351,6 @@ func normalizeFragmentIdentity(value string) string {
 	return strings.TrimSpace(value)
 }
 
-func formatIncompleteFragmentContent(content string, received, total int, missing string) string {
-	return fmt.Sprintf("[incomplete %d/%d missing=%s] %s", received, total, missing, content)
-}
-
 func assembleFragmentText(fragments []*smsFragment) string {
 	ordered := append([]*smsFragment(nil), fragments...)
 	sort.SliceStable(ordered, func(left, right int) bool {

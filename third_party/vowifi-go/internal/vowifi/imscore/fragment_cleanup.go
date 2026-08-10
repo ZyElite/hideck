@@ -3,24 +3,20 @@ package imscore
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 type degradedFragmentMessage struct {
-	message   inboundSMS
-	key       string
-	sessionID string
-	received  int
-	total     int
-	missing   string
-	seqList   string
-	callIDs   string
-	ackedSeq  string
-	first     time.Time
-	latest    time.Time
+	key      string
+	received int
+	total    int
+	missing  string
+	seqList  string
+	ackedSeq string
+	first    time.Time
+	latest   time.Time
 }
 
 func (s *Service) startFragmentCleanup() {
@@ -197,16 +193,9 @@ func buildDegradedFragmentMessage(key string, fragments []*smsFragment) *degrade
 	total := fragmentTotal(fragments)
 	missing := missingSMSSeqs(fragments, total)
 	return &degradedFragmentMessage{
-		message: inboundSMS{
-			sender: senderFromFragmentKey(key), targetURI: first.ToURI,
-			content: formatIncompleteFragmentContent(
-				assembleFragmentText(fragments), len(fragments), total, missing,
-			),
-			timestamp: latest,
-		},
-		key: key, sessionID: buildFragmentSessionInstanceID(key, fragments),
+		key:      key,
 		received: len(fragments), total: total, missing: missing,
-		seqList: fragmentSeqList(fragments), callIDs: fragmentCallIDList(fragments),
+		seqList:  fragmentSeqList(fragments),
 		ackedSeq: ackedFragmentSeqs(fragments), first: firstSeen, latest: latest,
 	}
 }
@@ -220,23 +209,10 @@ func (s *Service) publishFragmentCleanupResults(
 	}
 	for _, item := range degraded {
 		logging.WarnRate("sms-fragment-timeout:"+item.key, time.Duration(0),
-			"IMS 长短信分片超时（审计模式，不发送 480）",
+			"IMS 长短信分片超时（保留等待晚到分片，不发布残缺短信）",
 			"device", s.cfg.DeviceID, "key", item.key, "fragments", item.received,
 			"expected_total", item.total, "received_seq", item.seqList,
 			"missing_seq", item.missing, "first_seen", item.first, "last_seen", item.latest,
 			"age_ms", time.Since(item.latest).Milliseconds(), "acked_seq", item.ackedSeq)
-		if strings.TrimSpace(item.message.content) == "" {
-			continue
-		}
-		logging.WarnRate("sms-fragment-degraded:"+item.key, time.Duration(0),
-			"IMS 长短信超时降级拼接并入库",
-			"device", s.cfg.DeviceID, "sender", item.message.sender, "key", item.key,
-			"received", item.received, "total", item.total, "missing_seq", item.missing,
-			"seq_list", item.seqList, "call_ids", item.callIDs, "acked_seq", item.ackedSeq)
-		s.publishLogNotification(formatVoWiFiIncompleteSMSMessage(
-			s.cfg.DeviceID, item.message.sender, item.message.content,
-			item.message.timestamp, item.received, item.total, item.missing,
-		))
-		s.publishInboundSMSWithFragment(item.message, item.sessionID, true)
 	}
 }

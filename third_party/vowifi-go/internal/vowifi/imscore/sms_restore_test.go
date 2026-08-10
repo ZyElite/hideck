@@ -170,27 +170,23 @@ func TestFragmentStateCompletesOutOfOrderAndAuditsCollision(t *testing.T) {
 	}
 }
 
-func TestRPAckRetriesAndRecordsSuccess(t *testing.T) {
+func TestRPReportDoesNotRetryAfterTransportFailure(t *testing.T) {
 	service, _, _ := newInboundSMSTestService(t)
 	attempts := 0
-	outbound := make(chan string, 1)
-	service.transport.SetSendFn(func(raw string) error {
+	service.transport.SetSendFn(func(string) error {
 		attempts++
-		if attempts < 3 {
-			return syscall.EAGAIN
-		}
-		outbound <- raw
-		service.transport.DeliverResponse(registerResponseForRequest(raw, 200, nil))
-		return nil
+		return syscall.EAGAIN
 	})
 	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 0x31, "+447700900123", "ack"))
-	service.sendRpAckWithRetryPolicy(raw, smscodec.BuildRPAck(0x31), 0x31, "fingerprint", time.Millisecond, time.Millisecond)
-	if attempts != 3 || service.mtAckSendOK.Load() != 1 || service.mtAckSendErr.Load() != 2 {
+	err := service.sendRPReport(rpReportRequest{
+		Inbound: raw, Body: smscodec.BuildRPAck(0x31), RPMR: 0x31, Fingerprint: "fingerprint",
+	})
+	if err == nil || attempts != 1 || service.mtAckSendOK.Load() != 0 || service.mtAckSendErr.Load() != 1 {
 		t.Fatalf("attempts=%d ok=%d err=%d", attempts, service.mtAckSendOK.Load(), service.mtAckSendErr.Load())
 	}
 }
 
-func TestRPAckUsesRecoveredStatelessOutOfDialogWrite(t *testing.T) {
+func TestRPReportWaitsForSIPAcceptance(t *testing.T) {
 	service, _, _ := newInboundSMSTestService(t)
 	outbound := make(chan string, 1)
 	service.transport.SetSendFn(func(raw string) error {
@@ -200,22 +196,45 @@ func TestRPAckUsesRecoveredStatelessOutOfDialogWrite(t *testing.T) {
 	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 0x32, "+447700900123", "ack"))
 	done := make(chan error, 1)
 	go func() {
-		done <- service.sendRpAck(raw, smscodec.BuildRPAck(0x32), 0x32, "fingerprint")
+		done <- service.sendRPReport(rpReportRequest{
+			Inbound: raw, Body: smscodec.BuildRPAck(0x32), RPMR: 0x32, Fingerprint: "fingerprint",
+		})
 	}()
-
+	request := waitForOutboundSMSControl(t, outbound)
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("RP-ACK waited for a SIP final response")
+		t.Fatalf("RP report completed before SIP response: %v", err)
+	case <-time.After(20 * time.Millisecond):
 	}
-	request := waitForOutboundSMSControl(t, outbound)
+	service.transport.DeliverResponse(registerResponseForRequest(request, 202, nil))
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 	if body, err := rawSIPBody(request); err != nil || string(body) != string(smscodec.BuildRPAck(0x32)) {
 		t.Fatalf("RP-ACK body = %x, err = %v", body, err)
 	}
+	if got := rawSIPHeaderValue(request, "In-Reply-To"); got != "inbound-sms" {
+		t.Fatalf("In-Reply-To = %q", got)
+	}
 	if service.mtAckSendOK.Load() != 1 || service.mtAckSendErr.Load() != 0 {
+		t.Fatalf("ok=%d err=%d", service.mtAckSendOK.Load(), service.mtAckSendErr.Load())
+	}
+}
+
+func TestRPReportRejectsNon2xxResponse(t *testing.T) {
+	service, _, _ := newInboundSMSTestService(t)
+	service.transport.SetSendFn(func(raw string) error {
+		service.transport.DeliverResponse(registerResponseForRequest(raw, 403, nil))
+		return nil
+	})
+	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 0x33, "+447700900123", "ack"))
+	err := service.sendRPReport(rpReportRequest{
+		Inbound: raw, Body: smscodec.BuildRPAck(0x33), RPMR: 0x33,
+	})
+	if err == nil || !strings.Contains(err.Error(), "SIP 403") {
+		t.Fatalf("RP report error = %v", err)
+	}
+	if service.mtAckSendOK.Load() != 0 || service.mtAckSendErr.Load() != 1 {
 		t.Fatalf("ok=%d err=%d", service.mtAckSendOK.Load(), service.mtAckSendErr.Load())
 	}
 }
@@ -264,23 +283,16 @@ func TestSMSReadyCallbackFiresOnce(t *testing.T) {
 	}
 }
 
-func TestRecoveredSMSNotificationFormats(t *testing.T) {
+func TestRecoveredSMSSentNotificationFormat(t *testing.T) {
 	at := time.Date(2026, time.August, 9, 12, 34, 56, 0, time.UTC)
 	sent := formatVoWiFiSMSSentMessage("wwan0", "+447700900123", "hello", at, 2)
 	wantSent := "发送短信 / 完成\n设备    wwan0\n号码    +447700900123\n通道    VoWiFi\n时间    2026-08-09 12:34:56\n内容    hello\n分片    2"
 	if sent != wantSent {
 		t.Fatalf("sent notification = %q", sent)
 	}
-	incomplete := formatVoWiFiIncompleteSMSMessage(
-		"wwan0", "+447700900123", "part", at, 1, 3, "2,3",
-	)
-	wantIncomplete := "收到新短信 / VoWiFi\n设备  wwan0\n号码  +447700900123\n时间  2026-08-09 12:34:56\n内容  part\n状态  分片不完整 1/3，已降级拼接\n缺失  2,3"
-	if incomplete != wantIncomplete {
-		t.Fatalf("incomplete notification = %q", incomplete)
-	}
 }
 
-func TestFragmentTimeoutDegradesAndAudits(t *testing.T) {
+func TestFragmentTimeoutAuditsWithoutPublishingIncompleteSMS(t *testing.T) {
 	service, subscriber, _, _ := newDeliveryReportTestService(t)
 	fragment := &smsFragment{
 		Ref: 7, Total: 2, Seq: 1, Content: "first", RpMr: 4,
@@ -294,7 +306,7 @@ func TestFragmentTimeoutDegradesAndAudits(t *testing.T) {
 	fragment.Time = time.Now().Add(-time.Second)
 	service.fragmentMu.Unlock()
 	service.cleanupExpiredFragments(time.Millisecond)
-	assertIMSEventTypes(t, subscriber, "LogNotify", "SMSReceived")
+	assertNoIMSEvent(t, subscriber, "incomplete fragment")
 	snapshot := service.fragmentAuditSnapshot()
 	failures, ok := snapshot["audit_failures"].([]fragmentAuditFailure)
 	recent, recentOK := snapshot["recent_failures"].([]fragmentAuditFailure)
@@ -303,9 +315,6 @@ func TestFragmentTimeoutDegradesAndAudits(t *testing.T) {
 		failures[0].Reason != "timeout" || recent[0].Reason != "timeout_degraded" ||
 		failures[0].MissingSeq != "2" {
 		t.Fatalf("fragment audit = %#v", snapshot)
-	}
-	if got := formatIncompleteFragmentContent("first", 1, 2, "2"); got != "[incomplete 1/2 missing=2] first" {
-		t.Fatalf("incomplete content=%q", got)
 	}
 }
 
