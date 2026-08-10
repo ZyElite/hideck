@@ -2,6 +2,7 @@ package imscore
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -58,6 +59,18 @@ func unfoldSIPHeaders(data []byte) []byte {
 	if len(data) == 0 {
 		return nil
 	}
+	headerEnd := bytes.Index(data, []byte("\r\n\r\n"))
+	if headerEnd < 0 {
+		return unfoldSIPHeaderSection(data)
+	}
+	headerEnd += len("\r\n\r\n")
+	header := unfoldSIPHeaderSection(data[:headerEnd])
+	message := make([]byte, 0, len(header)+len(data)-headerEnd)
+	message = append(message, header...)
+	return append(message, data[headerEnd:]...)
+}
+
+func unfoldSIPHeaderSection(data []byte) []byte {
 	unfolded := make([]byte, 0, len(data))
 	for offset := 0; offset < len(data); {
 		next, continuation := sipHeaderContinuation(data, offset)
@@ -128,55 +141,26 @@ func newSIPResponse(response *sip.Response) *sipResponse {
 }
 
 type sipStreamDecoder struct {
-	reader  io.Reader
-	stream  *sip.ParserStream
-	pending error
-	buffer  [sipParserReadBufferSize]byte
+	reader    *bufio.Reader
+	keepalive io.Writer
 }
 
 func newSIPStreamDecoder(reader io.Reader) *sipStreamDecoder {
-	return &sipStreamDecoder{reader: reader, stream: sip.NewParser().NewSIPStream()}
+	decoder := &sipStreamDecoder{reader: bufio.NewReaderSize(reader, sipParserReadBufferSize)}
+	if writer, ok := reader.(io.Writer); ok {
+		decoder.keepalive = writer
+	}
+	return decoder
 }
 
-func (d *sipStreamDecoder) Close() {
-	if d != nil && d.stream != nil {
-		d.stream.Close()
-	}
-}
+func (d *sipStreamDecoder) Close() {}
 
 func (d *sipStreamDecoder) ReadMessage() (sip.Message, error) {
-	if d == nil || d.reader == nil || d.stream == nil {
+	if d == nil || d.reader == nil {
 		return nil, errors.New("imscore: nil SIP stream decoder")
 	}
-	for {
-		message, _, err := d.stream.ParseNext()
-		if err == nil {
-			return message, nil
-		}
-		if !isPartialSIPParseError(err) {
-			return nil, err
-		}
-		if d.pending != nil {
-			return nil, d.pending
-		}
-		read, readErr := d.reader.Read(d.buffer[:])
-		if read > 0 {
-			_, _ = d.stream.Write(unfoldSIPHeaders(d.buffer[:read]))
-		}
-		if readErr != nil {
-			d.pending = readErr
-		}
-		if read == 0 && readErr == nil {
-			return nil, io.ErrNoProgress
-		}
-	}
-}
-
-func isPartialSIPParseError(err error) bool {
-	return errors.Is(err, io.EOF) ||
-		errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.Is(err, sip.ErrParseSipPartial) ||
-		errors.Is(err, sip.ErrParseReadBodyIncomplete)
+	message, _, err := readSIPStreamFrame(d.reader, d.keepalive)
+	return message, err
 }
 
 func readSIPResponse(reader io.Reader) (*sip.Response, error) {
@@ -194,39 +178,74 @@ func readSIPResponse(reader io.Reader) (*sip.Response, error) {
 }
 
 func readSIPStreamMessage(reader *bufio.Reader) (string, error) {
+	return readSIPStreamMessageWithKeepalive(reader, nil)
+}
+
+func readSIPStreamMessageWithKeepalive(reader *bufio.Reader, keepalive io.Writer) (string, error) {
+	_, wire, err := readSIPStreamFrame(reader, keepalive)
+	return wire, err
+}
+
+func readSIPStreamFrame(reader *bufio.Reader, keepalive io.Writer) (sip.Message, string, error) {
 	if reader == nil {
-		return "", errors.New("imscore: nil SIP stream reader")
+		return nil, "", errors.New("imscore: nil SIP stream reader")
 	}
-	header, err := readSIPStreamHeader(reader)
+	header, err := readSIPStreamHeaderWithKeepalive(reader, keepalive)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	unfolded := unfoldSIPHeaders(header)
 	message, _, err := sip.NewParser().ParseHeaders(unfolded, true)
 	if err != nil {
-		return "", err
+		if errors.Is(err, sip.ErrParseReadBodyIncomplete) {
+			return nil, "", fmt.Errorf("%w: %s", err, summarizeSIPHeaderFrame(unfolded))
+		}
+		return nil, "", err
 	}
 	contentLength := message.ContentLength()
 	if contentLength == nil {
-		return "", sip.ErrParseReadBodyIncomplete
+		return nil, "", fmt.Errorf("%w: %s", sip.ErrParseReadBodyIncomplete,
+			summarizeSIPHeaderFrame(unfolded))
 	}
 	bodyLength := int64(*contentLength)
 	if bodyLength > int64(sip.ParseMaxMessageLength-len(unfolded)) {
-		return "", sip.ErrMessageTooLarge
+		return nil, "", sip.ErrMessageTooLarge
 	}
 	body := make([]byte, int(bodyLength))
 	if _, err := io.ReadFull(reader, body); err != nil {
-		return "", err
+		return nil, "", err
 	}
-	wire := append(unfolded, body...)
-	if _, err := sip.NewParser().ParseSIP(wire); err != nil {
-		return "", err
+	wire := make([]byte, 0, len(unfolded)+len(body))
+	wire = append(wire, unfolded...)
+	wire = append(wire, body...)
+	message.SetBody(body)
+	return message, string(wire), nil
+}
+
+func summarizeSIPHeaderFrame(header []byte) string {
+	lines := strings.Split(string(header), "\r\n")
+	startFields := strings.Fields(lines[0])
+	startToken := "unknown"
+	if len(startFields) > 0 {
+		startToken = startFields[0]
 	}
-	return string(wire), nil
+	names := make([]string, 0, len(lines))
+	for _, line := range lines[1:] {
+		name, _, found := strings.Cut(line, ":")
+		if found {
+			names = append(names, strings.TrimSpace(name))
+		}
+	}
+	return fmt.Sprintf("start_token=%q headers=%s", startToken, strings.Join(names, ","))
 }
 
 func readSIPStreamHeader(reader *bufio.Reader) ([]byte, error) {
+	return readSIPStreamHeaderWithKeepalive(reader, nil)
+}
+
+func readSIPStreamHeaderWithKeepalive(reader *bufio.Reader, keepalive io.Writer) ([]byte, error) {
 	var header []byte
+	blankLines := 0
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
@@ -236,6 +255,15 @@ func readSIPStreamHeader(reader *bufio.Reader) ([]byte, error) {
 			return nil, sip.ErrParseLineNoCRLF
 		}
 		if len(header) == 0 && len(line) == 2 {
+			blankLines++
+			if blankLines == 2 && keepalive != nil {
+				if _, err := io.WriteString(keepalive, "\r\n"); err != nil {
+					return nil, fmt.Errorf("imscore: write SIP keepalive pong: %w", err)
+				}
+			}
+			if blankLines == 2 {
+				blankLines = 0
+			}
 			continue
 		}
 		header = append(header, line...)

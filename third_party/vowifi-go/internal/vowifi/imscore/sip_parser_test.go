@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -83,6 +84,21 @@ func TestParseSIPResponsePreservesStructuredHeaders(t *testing.T) {
 	}
 }
 
+func TestParseSIPMessagePreservesIndentedBody(t *testing.T) {
+	body := []byte("<reginfo>\r\n  <registration state=\"active\"/>\r\n</reginfo>")
+	wire := fmt.Sprintf("NOTIFY sip:user@ims.example SIP/2.0\r\n"+
+		"Call-ID: indented-body\r\nCSeq: 1 NOTIFY\r\n"+
+		"Content-Type: application/reginfo+xml\r\nContent-Length: %d\r\n\r\n%s",
+		len(body), body)
+	message, err := parseSIPMessage(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := message.Body(); !bytes.Equal(got, body) {
+		t.Fatalf("body = %q, want %q", got, body)
+	}
+}
+
 func TestParseSIPResponseRejectsRequestAndMalformedStatus(t *testing.T) {
 	request := "OPTIONS sip:user@ims.example SIP/2.0\r\nContent-Length: 0\r\n\r\n"
 	if _, err := parseSIPResponse(request); !errors.Is(err, errExpectedSIPResponse) {
@@ -122,6 +138,66 @@ func TestSIPStreamDecoderHandlesFragmentationAndPipelining(t *testing.T) {
 	}
 }
 
+func TestSIPStreamDecoderPreservesFragmentedRequestLine(t *testing.T) {
+	chunks := &chunkReader{chunks: [][]byte{
+		[]byte("NOTIFY sip:+447840844894"),
+		[]byte("@[2a03:dd00:1184:37f7:83c:d3ac:c65f:d50d]:55606;transport=tcp SIP/2.0\r\n" +
+			"Via: SIP/2.0/TCP pcscf.example;branch=z9hG4bK-push\r\n" +
+			"Call-ID: push-request\r\nCSeq: 1 NOTIFY\r\nContent-Length: 0\r\n\r\n"),
+	}}
+	decoder := newSIPStreamDecoder(chunks)
+	defer decoder.Close()
+	message, err := decoder.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, ok := message.(*sip.Request)
+	if !ok || request.Method != sip.NOTIFY {
+		t.Fatalf("fragmented request line parsed as %T %#v", message, message)
+	}
+	if method := sipRequestMethod(message.String()); method != "NOTIFY" {
+		t.Fatalf("serialized fragmented request method = %q\n%s", method, message.String())
+	}
+}
+
+func TestSIPStreamDecoderAnswersTCPKeepaliveBeforeRequest(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	serverErr := make(chan error, 1)
+	go func() {
+		if _, err := io.WriteString(server, "\r\n\r\n"); err != nil {
+			serverErr <- err
+			return
+		}
+		pong := make([]byte, 2)
+		if _, err := io.ReadFull(server, pong); err != nil {
+			serverErr <- err
+			return
+		}
+		if string(pong) != "\r\n" {
+			serverErr <- errors.New("unexpected SIP keepalive pong")
+			return
+		}
+		_, err := io.WriteString(server,
+			"NOTIFY sip:user@ims.example SIP/2.0\r\nCall-ID: keepalive\r\n"+
+				"CSeq: 1 NOTIFY\r\nContent-Length: 0\r\n\r\n")
+		serverErr <- err
+	}()
+	decoder := newSIPStreamDecoder(client)
+	message, err := decoder.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, ok := message.(*sip.Request)
+	if !ok || request.Method != sip.NOTIFY {
+		t.Fatalf("keepalive request parsed as %T %#v", message, message)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReadSIPResponseUsesRecoveredTypeCheck(t *testing.T) {
 	responseWire := "SIP/2.0 486 Busy Here\r\nContent-Length: 0\r\n\r\n"
 	response, err := readSIPResponse(stringsReader(responseWire))
@@ -136,7 +212,8 @@ func TestReadSIPResponseUsesRecoveredTypeCheck(t *testing.T) {
 
 func TestReadSIPStreamMessageRequiresReliableLength(t *testing.T) {
 	missingLength := "OPTIONS sip:user@ims.example SIP/2.0\r\nCall-ID: missing\r\n\r\n"
-	if _, err := readSIPStreamMessage(bufio.NewReader(stringsReader(missingLength))); !errors.Is(err, sip.ErrParseReadBodyIncomplete) {
+	if _, err := readSIPStreamMessage(bufio.NewReader(stringsReader(missingLength))); !errors.Is(err, sip.ErrParseReadBodyIncomplete) ||
+		!strings.Contains(err.Error(), `start_token="OPTIONS" headers=Call-ID`) {
 		t.Fatalf("missing Content-Length error = %v", err)
 	}
 	wire := "\r\nOPTIONS sip:user@ims.example SIP/2.0\r\ni: compact\r\nCSeq: 1 OPTIONS\r\nl: 0\r\n\r\n"
