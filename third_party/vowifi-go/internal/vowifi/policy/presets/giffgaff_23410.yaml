@@ -6,7 +6,6 @@ ike_proposals:
   - aes256-sha512-prfsha512-modp2048
 esp_proposals:
   - aes256-sha512
-reauth_interval_seconds: 180
 ims_register_template:
   id: giffgaff
   include_pani_authenticated: true
