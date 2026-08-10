@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// ErrDeliveryNotFound reports a missing persisted SMS delivery.
+var ErrDeliveryNotFound = errors.New("sms delivery not found")
+
 // SendOutcome is returned after IMS accepts all SMS parts for delivery.
 type SendOutcome struct {
 	MessageID     string `json:"message_id"`

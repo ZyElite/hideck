@@ -7,6 +7,7 @@ import (
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
@@ -254,7 +255,7 @@ func (a *serviceAdapter) GetSMSDeliveryStatus(ctx context.Context, ref string) (
 	}
 	st, err := a.svc.GetSMSDeliveryStatusContext(ctx, ref)
 	if err != nil {
-		return nil, err
+		return nil, deliveryStoreErrorFromInternal(err)
 	}
 	return deliveryStatusFromInternal(st), nil
 }
@@ -289,7 +290,7 @@ func messagingUSSDResult(result *imscore.USSDResult) *messaging.USSDResult {
 	}
 	return &messaging.USSDResult{
 		SessionID: result.SessionID, Status: result.Status, Text: result.Text,
-		RawText: result.RawXML, DCS: result.DCS, Message: result.Text,
+		RawXML: result.RawXML, RawText: result.RawXML, DCS: result.DCS, Message: result.Text,
 	}
 }
 
@@ -306,16 +307,39 @@ func (a *serviceAdapter) Status() Status {
 	if a == nil || a.svc == nil {
 		return Status{}
 	}
+	status := a.messagingStatusSnapshot()
 	sms := a.svc.SMSReadiness()
 	return Status{State: State{
 		SessionState:   "established",
-		IMSState:       a.svc.RegState(),
-		RegStatus:      regStatusOf(a.svc),
-		DeviceID:       a.svc.DeviceID(),
-		IMSReady:       a.svc.IsRegistered(),
+		IMSState:       status.RegState,
+		RegStatus:      boolStatus(status.IsRegistered()),
+		DeviceID:       status.DeviceID,
+		IMSReady:       status.IsRegistered(),
 		SMSReady:       sms.Ready,
 		SMSReadyReason: sms.Reason,
 	}}
+}
+
+func (a *serviceAdapter) messagingStatusSnapshot() messaging.ServiceStatus {
+	if a == nil || a.svc == nil {
+		return messaging.ServiceStatus{}
+	}
+	status := a.svc.StatusSnapshot()
+	return messaging.ServiceStatus{
+		Enabled: status.Enabled, DeviceID: status.DeviceID, Registered: status.Registered,
+		RegStatus: status.RegStatus, Registrar: status.Registrar, LocalAddr: status.LocalAddr,
+		AssociatedMSISDN: status.AssociatedMSISDN, LastSIPCode: status.LastSIPCode,
+		LastSIPText: status.LastSIPText, PingFailCount: status.PingFailCount,
+		LastSMSAt: status.LastSMSSendAt, LastSMSError: status.LastSMSSendErr,
+		State: status.State, RegState: status.RegState,
+	}
+}
+
+func boolStatus(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // StatusSnapshot returns the runtime status snapshot.
@@ -337,17 +361,6 @@ func (a *serviceAdapter) TriggerRegisterImmediate() error {
 		return errNoService
 	}
 	return a.svc.TriggerRegisterImmediateCurrent()
-}
-
-// regStatusOf maps the IMS registration state to a status code (1 = registered).
-func regStatusOf(svc *imscore.Service) int {
-	if svc == nil {
-		return 0
-	}
-	if svc.IsRegistered() {
-		return 1
-	}
-	return 0
 }
 
 // deliveryStoreAdapter adapts a messaging.DeliveryStore to the imscore
@@ -481,7 +494,9 @@ func (a *deliveryStoreAdapter) CreateSMSDelivery(messageID, imsi, deviceID, peer
 	if a == nil || a.store == nil {
 		return errors.New("runtimehost: no delivery store")
 	}
-	return a.store.CreateSMSDelivery(messageID, imsi, deviceID, peer, content, partsTotal, at)
+	return deliveryStoreErrorToInternal(
+		a.store.CreateSMSDelivery(messageID, imsi, deviceID, peer, content, partsTotal, at),
+	)
 }
 
 // UpsertSMSDeliveryPart upserts a delivery part.
@@ -489,7 +504,9 @@ func (a *deliveryStoreAdapter) UpsertSMSDeliveryPart(messageID string, partNo in
 	if a == nil || a.store == nil {
 		return errors.New("runtimehost: no delivery store")
 	}
-	return a.store.UpsertSMSDeliveryPart(messageID, partNo, callID, rpMR, state, sentAt)
+	return deliveryStoreErrorToInternal(
+		a.store.UpsertSMSDeliveryPart(messageID, partNo, callID, rpMR, state, sentAt),
+	)
 }
 
 // MarkSMSDeliveryPartReport records a delivery report.
@@ -502,8 +519,8 @@ func (a *deliveryStoreAdapter) MarkSMSDeliveryPartReport(inReplyTo, callID, devi
 		MessageID: m.MessageID,
 		PartNo:    m.PartNo,
 		State:     m.State,
-		Matched:   m.Matched,
-	}, err
+		Matched:   m.Matched || m.MessageID != "",
+	}, deliveryStoreErrorToInternal(err)
 }
 
 // RecomputeSMSDelivery recomputes the delivery state.
@@ -511,7 +528,7 @@ func (a *deliveryStoreAdapter) RecomputeSMSDelivery(messageID string, at time.Ti
 	if a == nil || a.store == nil {
 		return errors.New("runtimehost: no delivery store")
 	}
-	return a.store.RecomputeSMSDelivery(messageID, at)
+	return deliveryStoreErrorToInternal(a.store.RecomputeSMSDelivery(messageID, at))
 }
 
 // UpdateSMSDeliveryState updates the delivery state.
@@ -519,7 +536,9 @@ func (a *deliveryStoreAdapter) UpdateSMSDeliveryState(messageID, state, lastErro
 	if a == nil || a.store == nil {
 		return errors.New("runtimehost: no delivery store")
 	}
-	return a.store.UpdateSMSDeliveryState(messageID, state, lastError, acks, at)
+	return deliveryStoreErrorToInternal(
+		a.store.UpdateSMSDeliveryState(messageID, state, lastError, acks, at),
+	)
 }
 
 // GetSMSDeliveryStatus returns the delivery status.
@@ -529,7 +548,7 @@ func (a *deliveryStoreAdapter) GetSMSDeliveryStatus(messageID string) (*imscore.
 	}
 	st, err := a.store.GetSMSDeliveryStatus(messageID)
 	if err != nil {
-		return nil, err
+		return nil, deliveryStoreErrorToInternal(err)
 	}
 	return deliveryStatusToInternal(st), nil
 }
@@ -590,20 +609,6 @@ func deliveryStatusToInternal(st *messaging.DeliveryStatus) *imscore.DeliverySta
 		})
 	}
 	return out
-}
-
-// eventDispatcherAdapter adapts an eventhost.Dispatcher to the EventDispatcher
-// surface.
-type eventDispatcherAdapter struct {
-	dispatch func(Event)
-}
-
-// Dispatch delivers an event.
-func (a *eventDispatcherAdapter) Dispatch(ev Event) {
-	if a == nil || a.dispatch == nil {
-		return
-	}
-	a.dispatch(ev)
 }
 
 // instanceObserver observes runtime events.
@@ -672,17 +677,18 @@ func defaultReaderReconnectDelay() time.Duration {
 
 // deliveryStoreErrorFromInternal converts an internal delivery error.
 func deliveryStoreErrorFromInternal(err error) error {
+	if errors.Is(err, smsdelivery.ErrDeliveryNotFound) && !errors.Is(err, messaging.ErrDeliveryNotFound) {
+		return errors.Join(messaging.ErrDeliveryNotFound, err)
+	}
 	return err
 }
 
 // deliveryStoreErrorToInternal converts an external delivery error.
 func deliveryStoreErrorToInternal(err error) error {
+	if errors.Is(err, messaging.ErrDeliveryNotFound) && !errors.Is(err, smsdelivery.ErrDeliveryNotFound) {
+		return errors.Join(smsdelivery.ErrDeliveryNotFound, err)
+	}
 	return err
-}
-
-// moduleEventFromInternal converts an internal module event.
-func moduleEventFromInternal(ev Event) Event {
-	return ev
 }
 
 // preparedSessionFromInternal converts an internal prepared session.

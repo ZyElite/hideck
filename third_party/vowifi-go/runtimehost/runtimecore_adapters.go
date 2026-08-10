@@ -1,7 +1,6 @@
 package runtimehost
 
 import (
-	"context"
 	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
@@ -25,22 +24,11 @@ func (adapter runtimeCoreSIMAdapter) IMSAKAProvider(profile.AuthPlan) simauth.AK
 
 func (runtimeCoreSIMAdapter) IMSIdentityProvider() profile.Provider { return nil }
 
-type runtimeCoreEventDispatcher struct{ dispatcher eventhost.Dispatcher }
-
 func runtimeCoreDispatcher(dispatcher eventhost.Dispatcher) events.EventDispatcher {
 	if dispatcher == nil {
 		return nil
 	}
-	return runtimeCoreEventDispatcher{dispatcher: dispatcher}
-}
-
-func (adapter runtimeCoreEventDispatcher) Dispatch(ctx context.Context, event events.Event) {
-	if event == nil {
-		return
-	}
-	if publicEvent := publicRuntimeEvent(event); publicEvent != nil {
-		adapter.dispatcher.Dispatch(ctx, publicEvent)
-	}
+	return eventDispatcherAdapter{dispatch: dispatcher}
 }
 
 type runtimeCoreDeliveryStoreAdapter struct{ store messaging.DeliveryStore }
@@ -177,7 +165,9 @@ func (adapter runtimeCoreDeliveryStoreAdapter) CreateSMSDelivery(
 	partsTotal int,
 	at time.Time,
 ) error {
-	return adapter.store.CreateSMSDelivery(messageID, imsi, deviceID, peer, content, partsTotal, at)
+	return deliveryStoreErrorToInternal(
+		adapter.store.CreateSMSDelivery(messageID, imsi, deviceID, peer, content, partsTotal, at),
+	)
 }
 
 func (adapter runtimeCoreDeliveryStoreAdapter) UpsertSMSDeliveryPart(
@@ -188,7 +178,9 @@ func (adapter runtimeCoreDeliveryStoreAdapter) UpsertSMSDeliveryPart(
 	state string,
 	sentAt time.Time,
 ) error {
-	return adapter.store.UpsertSMSDeliveryPart(messageID, partNo, callID, rpMR, state, sentAt)
+	return deliveryStoreErrorToInternal(
+		adapter.store.UpsertSMSDeliveryPart(messageID, partNo, callID, rpMR, state, sentAt),
+	)
 }
 
 func (adapter runtimeCoreDeliveryStoreAdapter) MarkSMSDeliveryPartReport(
@@ -203,15 +195,16 @@ func (adapter runtimeCoreDeliveryStoreAdapter) MarkSMSDeliveryPartReport(
 		inReplyTo, callID, deviceID, rpMR, state, sipCode, rpCause, errText, at,
 	)
 	return smsdelivery.DeliveryPartMatch{
-		MessageID: match.MessageID, PartNo: match.PartNo, State: match.State, Matched: match.Matched,
-	}, err
+		MessageID: match.MessageID, PartNo: match.PartNo, State: match.State,
+		Matched: match.Matched || match.MessageID != "",
+	}, deliveryStoreErrorToInternal(err)
 }
 
 func (adapter runtimeCoreDeliveryStoreAdapter) RecomputeSMSDelivery(
 	messageID string,
 	at time.Time,
 ) error {
-	return adapter.store.RecomputeSMSDelivery(messageID, at)
+	return deliveryStoreErrorToInternal(adapter.store.RecomputeSMSDelivery(messageID, at))
 }
 
 func (adapter runtimeCoreDeliveryStoreAdapter) UpdateSMSDeliveryState(
@@ -219,7 +212,9 @@ func (adapter runtimeCoreDeliveryStoreAdapter) UpdateSMSDeliveryState(
 	acks int,
 	at time.Time,
 ) error {
-	return adapter.store.UpdateSMSDeliveryState(messageID, state, lastError, acks, at)
+	return deliveryStoreErrorToInternal(
+		adapter.store.UpdateSMSDeliveryState(messageID, state, lastError, acks, at),
+	)
 }
 
 func (adapter runtimeCoreDeliveryStoreAdapter) GetSMSDeliveryStatus(
@@ -227,7 +222,7 @@ func (adapter runtimeCoreDeliveryStoreAdapter) GetSMSDeliveryStatus(
 ) (*smsdelivery.DeliveryStatus, error) {
 	status, err := adapter.store.GetSMSDeliveryStatus(messageID)
 	if err != nil || status == nil {
-		return nil, err
+		return nil, deliveryStoreErrorToInternal(err)
 	}
 	return runtimeCoreDeliveryStatus(status), nil
 }

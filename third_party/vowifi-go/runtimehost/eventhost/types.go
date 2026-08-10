@@ -15,22 +15,25 @@ type Event interface {
 	Type() string
 	// DeviceID returns the device the event belongs to.
 	DeviceID() string
-	event()
 }
 
 // Generic is a generic runtime event.
 type Generic struct {
-	DevID    string
+	EventType string
+	DevID     string
+
+	// TypeName preserves the current generic-event projection.
 	TypeName string
 }
 
 // SMSReceived is published when an SMS is received.
 type SMSReceived struct {
-	DevID              string
-	Sender             string
+	DevID   string
+	Sender  string
+	Content string
+	Time    time.Time
+
 	TargetURI          string
-	Content            string
-	Time               time.Time
 	FragmentSessionKey string
 	Incomplete         bool
 }
@@ -50,18 +53,14 @@ type LocalNumberLearned struct {
 	IMSI   string
 	Number string
 	Source string
+	Time   time.Time
 }
 
 // LogNotify is a log notification event.
 type LogNotify struct {
+	DevID   string
 	Message string
 }
-
-func (SMSReceived) event()        {}
-func (SMSSent) event()            {}
-func (LocalNumberLearned) event() {}
-func (LogNotify) event()          {}
-func (Generic) event()            {}
 
 // Type returns "SMSReceived".
 func (e SMSReceived) Type() string { return "SMSReceived" }
@@ -84,15 +83,15 @@ func (e LocalNumberLearned) DeviceID() string { return e.DevID }
 // Type returns "LogNotify".
 func (e LogNotify) Type() string { return "LogNotify" }
 
-// DeviceID returns an empty device ID for log events.
-func (e LogNotify) DeviceID() string { return "" }
+// DeviceID returns the device ID.
+func (e LogNotify) DeviceID() string { return e.DevID }
 
 // Type returns the generic event type.
 func (e Generic) Type() string {
-	if e.TypeName != "" {
-		return e.TypeName
+	if e.EventType != "" {
+		return e.EventType
 	}
-	return "Generic"
+	return e.TypeName
 }
 
 // DeviceID returns the device ID.

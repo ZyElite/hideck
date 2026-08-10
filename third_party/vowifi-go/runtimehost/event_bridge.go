@@ -12,46 +12,48 @@ type imsEventBridge struct {
 }
 
 func (b *imsEventBridge) OnIMSEvent(event events.Event) {
-	if b == nil || b.dispatcher == nil || event == nil {
+	if b == nil || b.dispatcher == nil {
 		return
 	}
-	if publicEvent := publicRuntimeEvent(event); publicEvent != nil {
-		b.dispatcher.Dispatch(context.Background(), publicEvent)
-	}
+	eventDispatcherAdapter{dispatch: b.dispatcher}.Dispatch(context.Background(), event)
 }
 
-func publicRuntimeEvent(event events.Event) eventhost.Event {
+type eventDispatcherAdapter struct {
+	dispatch eventhost.Dispatcher
+}
+
+func (adapter eventDispatcherAdapter) Dispatch(ctx context.Context, event events.Event) {
+	if adapter.dispatch == nil {
+		return
+	}
+	adapter.dispatch.Dispatch(ctx, moduleEventFromInternal(event))
+}
+
+func moduleEventFromInternal(event events.Event) eventhost.Event {
 	switch value := event.(type) {
 	case events.EventSMSReceived:
 		return publicSMSReceived(value)
 	case *events.EventSMSReceived:
-		if value == nil {
-			return nil
-		}
 		return publicSMSReceived(*value)
 	case events.EventSMSSent:
 		return publicSMSSent(value)
 	case *events.EventSMSSent:
-		if value == nil {
-			return nil
-		}
 		return publicSMSSent(*value)
 	case events.EventLocalNumberLearned:
 		return publicLocalNumberLearned(value)
 	case *events.EventLocalNumberLearned:
-		if value == nil {
-			return nil
-		}
 		return publicLocalNumberLearned(*value)
 	case events.EventLogNotify:
-		return eventhost.LogNotify{Message: value.Message}
+		return eventhost.LogNotify{DevID: value.DevID, Message: value.Message}
 	case *events.EventLogNotify:
-		if value == nil {
-			return nil
-		}
-		return eventhost.LogNotify{Message: value.Message}
+		return eventhost.LogNotify{DevID: value.DevID, Message: value.Message}
 	default:
-		return eventhost.Generic{DevID: event.DeviceID(), TypeName: event.Type()}
+		if event == nil {
+			return eventhost.Generic{}
+		}
+		return eventhost.Generic{
+			EventType: event.Type(), DevID: event.DeviceID(), TypeName: event.Type(),
+		}
 	}
 }
 
@@ -73,5 +75,6 @@ func publicSMSSent(value events.EventSMSSent) eventhost.SMSSent {
 func publicLocalNumberLearned(value events.EventLocalNumberLearned) eventhost.LocalNumberLearned {
 	return eventhost.LocalNumberLearned{
 		DevID: value.DevID, IMSI: value.IMSI, Number: value.Number, Source: value.Source,
+		Time: value.Time,
 	}
 }
