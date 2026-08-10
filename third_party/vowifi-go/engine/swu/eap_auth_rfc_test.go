@@ -321,6 +321,15 @@ func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
 	if err := session.verifyEAPResponderAuth(final); err == nil {
 		t.Fatal("accepted invalid final EAP-only AUTH")
 	}
+	invalidProofs := []ikev2.Payload{
+		&ikev2.EncryptedPayloadAuth{AuthMethod: ikev2.AuthMethodRSA, AuthData: []byte{0x01}},
+		&ikev2.EncryptedPayloadAuth{AuthMethod: ikev2.AuthMethodSharedKey},
+	}
+	for _, invalid := range invalidProofs {
+		if err := session.verifyEAPResponderAuth([]ikev2.Payload{invalid}); err == nil {
+			t.Fatalf("accepted invalid responder AUTH: %#v", invalid)
+		}
+	}
 }
 
 func TestEAPOnlyResponderMayOmitFinalAuthAfterMutualAKA(t *testing.T) {
