@@ -59,6 +59,7 @@ func publicSMSReceived(value events.EventSMSReceived) eventhost.SMSReceived {
 	return eventhost.SMSReceived{
 		DevID: value.DevID, Sender: value.Sender, TargetURI: value.TargetURI,
 		Content: value.Content, Time: value.Time,
+		FragmentSessionKey: value.FragmentSessionKey, Incomplete: value.Incomplete,
 	}
 }
 

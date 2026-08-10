@@ -37,7 +37,8 @@ func TestSMSInboundFragmentPersistsAcrossDatabaseReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows, err := LoadSMSInboundFragments(scope)
-	if err != nil || len(rows) != 1 || rows[0].Content != "first " {
+	if err != nil || len(rows) != 1 || rows[0].Content != "first " ||
+		!rows[0].ArrivedAt.Equal(fragment.ArrivedAt) {
 		t.Fatalf("reopened rows=%#v err=%v", rows, err)
 	}
 	assertSMSInboundFragmentDuplicateAndCollision(t, scope, fragment)

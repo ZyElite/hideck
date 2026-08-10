@@ -10,16 +10,17 @@ import (
 )
 
 type degradedFragmentMessage struct {
-	message  inboundSMS
-	key      string
-	received int
-	total    int
-	missing  string
-	seqList  string
-	callIDs  string
-	ackedSeq string
-	first    time.Time
-	latest   time.Time
+	message   inboundSMS
+	key       string
+	sessionID string
+	received  int
+	total     int
+	missing   string
+	seqList   string
+	callIDs   string
+	ackedSeq  string
+	first     time.Time
+	latest    time.Time
 }
 
 func (s *Service) startFragmentCleanup() {
@@ -203,7 +204,8 @@ func buildDegradedFragmentMessage(key string, fragments []*smsFragment) *degrade
 			),
 			timestamp: latest,
 		},
-		key: key, received: len(fragments), total: total, missing: missing,
+		key: key, sessionID: buildFragmentSessionInstanceID(key, fragments),
+		received: len(fragments), total: total, missing: missing,
 		seqList: fragmentSeqList(fragments), callIDs: fragmentCallIDList(fragments),
 		ackedSeq: ackedFragmentSeqs(fragments), first: firstSeen, latest: latest,
 	}
@@ -235,6 +237,6 @@ func (s *Service) publishFragmentCleanupResults(
 			s.cfg.DeviceID, item.message.sender, item.message.content,
 			item.message.timestamp, item.received, item.total, item.missing,
 		))
-		s.publishInboundSMS(item.message)
+		s.publishInboundSMSWithFragment(item.message, item.sessionID, true)
 	}
 }

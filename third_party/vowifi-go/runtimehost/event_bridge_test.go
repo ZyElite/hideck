@@ -24,6 +24,7 @@ func TestIMSEventBridgeDispatchesInboundSMS(t *testing.T) {
 	bridge.OnIMSEvent(&events.EventSMSReceived{
 		DevID: "wwan0", Sender: "+447700900123", TargetURI: "sip:user@ims.example",
 		Content: "hello", Time: receivedAt,
+		FragmentSessionKey: "fragment-session", Incomplete: true,
 	})
 
 	if len(dispatcher.events) != 1 {
@@ -33,7 +34,8 @@ func TestIMSEventBridgeDispatchesInboundSMS(t *testing.T) {
 	if !ok {
 		t.Fatalf("event type = %T, want SMSReceived", dispatcher.events[0])
 	}
-	if received.DevID != "wwan0" || received.Sender != "+447700900123" || received.Content != "hello" || !received.Time.Equal(receivedAt) {
+	if received.DevID != "wwan0" || received.Sender != "+447700900123" || received.Content != "hello" ||
+		!received.Time.Equal(receivedAt) || received.FragmentSessionKey != "fragment-session" || !received.Incomplete {
 		t.Fatalf("received event = %+v", received)
 	}
 }

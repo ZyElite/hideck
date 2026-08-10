@@ -25,16 +25,17 @@ const (
 )
 
 type inboundSMS struct {
-	sender        string
-	serviceCenter string
-	targetURI     string
-	content       string
-	timestamp     time.Time
-	rpMR          byte
-	concatRef     int
-	refBits       int
-	total         int
-	partNo        int
+	sender            string
+	serviceCenter     string
+	targetURI         string
+	content           string
+	timestamp         time.Time
+	rpMR              byte
+	concatRef         int
+	refBits           int
+	total             int
+	partNo            int
+	fragmentSessionID string
 }
 
 type decodedInboundSMSRequest struct {
@@ -168,15 +169,15 @@ func (s *Service) finalizeInboundSMSData(
 	message inboundSMS,
 	response string,
 ) (inboundSIPResult, error) {
+	fragmentKey := inboundSMSFragmentKey(message)
 	shouldDispatch, assembleErr := s.assembleInboundSMS(raw, &message)
 	if assembleErr != nil {
 		return s.inboundSMSProtocolError(raw, 400, message.rpMR, true, assembleErr)
 	}
 	if shouldDispatch {
-		s.publishInboundSMS(message)
+		s.publishInboundSMSWithFragment(message, message.fragmentSessionID, false)
 	}
 	fingerprint := buildMTSMSFingerprint(message, raw)
-	fragmentKey := inboundSMSFragmentKey(message)
 	return inboundSIPResult{
 		response: response,
 		afterReply: func() {
@@ -260,16 +261,17 @@ func (s *Service) assembleInboundSMS(raw string, message *inboundSMS) (bool, err
 		CallID: strings.TrimSpace(rawSIPHeaderValue(raw, "Call-ID")),
 		Key:    inboundSMSFragmentKey(*message), ArrivedAt: time.Now(), Message: *message,
 	})...)
-	content, complete, err := s.handleSMSFragment(message.sender, &smsFragment{
+	assembly, err := s.handleSMSFragmentAssembly(message.sender, &smsFragment{
 		Ref: message.concatRef, RefBits: message.refBits,
 		Total: message.total, Seq: message.partNo, Content: message.content,
 		RpMr: message.rpMR, CallID: rawSIPHeaderValue(raw, "Call-ID"),
 		ToURI: message.targetURI, ServiceCenter: message.serviceCenter,
 	})
-	if err != nil || !complete {
+	if err != nil || !assembly.Complete {
 		return false, err
 	}
-	message.content = content
+	message.content = assembly.Content
+	message.fragmentSessionID = assembly.SessionID
 	return s.shouldDispatchMTSMS(*message, raw), nil
 }
 
@@ -288,12 +290,21 @@ func (s *Service) inboundSMSProtocolError(raw string, status int, rpMR byte, sen
 }
 
 func (s *Service) publishInboundSMS(message inboundSMS) {
+	s.publishInboundSMSWithFragment(message, "", false)
+}
+
+func (s *Service) publishInboundSMSWithFragment(
+	message inboundSMS,
+	fragmentSessionKey string,
+	incomplete bool,
+) {
 	if message.timestamp.IsZero() {
 		message.timestamp = time.Now()
 	}
 	s.bus.Publish(&events.EventSMSReceived{
 		DevID: s.cfg.DeviceID, Sender: message.sender, TargetURI: message.targetURI,
 		Content: message.content, Time: message.timestamp,
+		FragmentSessionKey: strings.TrimSpace(fragmentSessionKey), Incomplete: incomplete,
 	})
 }
 

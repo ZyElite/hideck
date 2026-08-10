@@ -1,6 +1,7 @@
 package imscore
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
@@ -33,11 +34,25 @@ type fragmentHandlingContext struct {
 }
 
 func (s *Service) handleSMSFragment(sender string, fragment *smsFragment) (string, bool, error) {
+	result, err := s.handleSMSFragmentAssembly(sender, fragment)
+	return result.Content, result.Complete, err
+}
+
+type fragmentAssemblyResult struct {
+	Content   string
+	SessionID string
+	Complete  bool
+}
+
+func (s *Service) handleSMSFragmentAssembly(
+	sender string,
+	fragment *smsFragment,
+) (fragmentAssemblyResult, error) {
 	if s == nil || fragment == nil {
-		return "", false, errors.New("imscore: nil SMS fragment")
+		return fragmentAssemblyResult{}, errors.New("imscore: nil SMS fragment")
 	}
 	if fragment.Total < 2 || fragment.Seq < 1 || fragment.Seq > fragment.Total {
-		return "", false, errors.New("imscore: invalid SMS fragment bounds")
+		return fragmentAssemblyResult{}, errors.New("imscore: invalid SMS fragment bounds")
 	}
 	fragment.Time = time.Now()
 	identity := fragmentSessionIdentity{
@@ -49,10 +64,10 @@ func (s *Service) handleSMSFragment(sender string, fragment *smsFragment) (strin
 	s.startFragmentCleanup()
 	duplicate, err := s.recordFragmentArrival(key, fragment)
 	if err != nil {
-		return "", false, err
+		return fragmentAssemblyResult{}, err
 	}
 	if duplicate {
-		return "", false, nil
+		return fragmentAssemblyResult{}, nil
 	}
 	handling := fragmentHandlingContext{
 		Sender: sender, Key: key, InterimKey: interimKey, Fragment: fragment,
@@ -62,7 +77,7 @@ func (s *Service) handleSMSFragment(sender string, fragment *smsFragment) (strin
 			fragmentHandlingContext: handling, Store: store,
 		})
 	}
-	return s.handleVolatileSMSFragment(handling)
+	return s.handleVolatileSMSFragmentAssembly(handling)
 }
 
 func (s *Service) recordFragmentArrival(key string, fragment *smsFragment) (bool, error) {
@@ -113,7 +128,9 @@ func (s *Service) recordCompletedFragmentsLocked(key string, fragments []*smsFra
 	}
 }
 
-func (s *Service) handleVolatileSMSFragment(ctx fragmentHandlingContext) (string, bool, error) {
+func (s *Service) handleVolatileSMSFragmentAssembly(
+	ctx fragmentHandlingContext,
+) (fragmentAssemblyResult, error) {
 	s.fragmentMu.Lock()
 	defer s.fragmentMu.Unlock()
 	fragments := s.fragmentCache[ctx.Key]
@@ -122,24 +139,35 @@ func (s *Service) handleVolatileSMSFragment(ctx fragmentHandlingContext) (string
 	}
 	if reason, collision := detectFragmentKeyCollision(fragments, ctx.Fragment); collision {
 		s.recordFragmentCollisionLocked(ctx, reason, fragments)
-		return "", false, fmt.Errorf("imscore: SMS fragment key collision: %s", reason)
+		return fragmentAssemblyResult{}, fmt.Errorf("imscore: SMS fragment key collision: %s", reason)
 	}
 	for _, existing := range fragments {
 		if existing != nil && existing.Seq == ctx.Fragment.Seq {
 			s.fragmentDup++
-			return "", false, nil
+			return fragmentAssemblyResult{}, nil
 		}
 	}
 	s.fragmentCache[ctx.Key] = append(fragments, ctx.Fragment)
 	fragments = s.fragmentCache[ctx.Key]
 	if len(fragments) != ctx.Fragment.Total || len(missingSMSSeqs(fragments, ctx.Fragment.Total)) != 0 {
-		return "", false, nil
+		return fragmentAssemblyResult{}, nil
 	}
 	content := assembleFragmentText(fragments)
+	sessionID := buildFragmentSessionInstanceID(ctx.Key, fragments)
 	s.recordCompletedFragmentsLocked(ctx.Key, fragments)
 	delete(s.fragmentCache, ctx.Key)
 	s.fragmentAssembledOK++
-	return content, true, nil
+	return fragmentAssemblyResult{Content: content, SessionID: sessionID, Complete: true}, nil
+}
+
+func buildFragmentSessionInstanceID(key string, fragments []*smsFragment) string {
+	first, _ := fragmentBounds(fragments)
+	if strings.TrimSpace(key) == "" || first.IsZero() {
+		return ""
+	}
+	source := key + fragmentKeySep + strconv.FormatInt(first.UnixNano(), 10)
+	digest := sha256.Sum256([]byte(source))
+	return fmt.Sprintf("%x", digest[:])
 }
 
 func (s *Service) logOutOfOrderFirst(sender string, fragment *smsFragment) {

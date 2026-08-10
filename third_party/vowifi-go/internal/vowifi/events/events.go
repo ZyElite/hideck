@@ -23,6 +23,10 @@ type EventSMSReceived struct {
 
 	// TargetURI is an additive projection used by the current inbound SMS path.
 	TargetURI string
+	// FragmentSessionKey is an opaque per-instance identifier that correlates a
+	// degraded multipart notification with its eventual complete message.
+	FragmentSessionKey string
+	Incomplete         bool
 }
 
 // EventSMSSent is published when an SMS is sent.

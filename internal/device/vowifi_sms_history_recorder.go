@@ -19,6 +19,13 @@ type vowifiSMSRecordResult struct {
 	Stored     bool
 	Duplicate  bool
 	Suppressed bool
+	Reconciled bool
+}
+
+type receivedMultipartContext struct {
+	IMSI       string
+	LocalPhone string
+	Timestamp  time.Time
 }
 
 func RecordVoWiFiSMSSendFailure(p *Pool, deviceID, target, content string, at time.Time) error {
@@ -76,6 +83,11 @@ func (r vowifiSMSHistoryRecorder) RecordReceived(e eventhost.SMSReceived) (vowif
 	}
 	localPhone := r.localPhone(imsi)
 	ts := r.eventTime(e.Time)
+	if strings.TrimSpace(e.FragmentSessionKey) != "" {
+		return r.recordReceivedMultipart(e, receivedMultipartContext{
+			IMSI: imsi, LocalPhone: localPhone, Timestamp: ts,
+		})
+	}
 
 	dup, err := db.HasDuplicateReceivedSMS(imsi, localPhone, e.Sender, localPhone, e.Content, ts, vowifiReceivedSMSDuplicateWindow)
 	if err != nil {
@@ -90,6 +102,25 @@ func (r vowifiSMSHistoryRecorder) RecordReceived(e eventhost.SMSReceived) (vowif
 		return vowifiSMSRecordResult{}, err
 	}
 	return vowifiSMSRecordResult{Stored: true}, nil
+}
+
+func (r vowifiSMSHistoryRecorder) recordReceivedMultipart(
+	e eventhost.SMSReceived,
+	ctx receivedMultipartContext,
+) (vowifiSMSRecordResult, error) {
+	result, err := db.SaveReceivedMultipartSMS(db.ReceivedMultipartSMS{
+		IMSI: ctx.IMSI, LocalPhone: ctx.LocalPhone, Sender: strings.TrimSpace(e.Sender),
+		Recipient: ctx.LocalPhone, Content: e.Content, Timestamp: ctx.Timestamp,
+		FragmentSessionKey: strings.TrimSpace(e.FragmentSessionKey),
+		Incomplete:         e.Incomplete,
+	})
+	if err != nil {
+		return vowifiSMSRecordResult{}, err
+	}
+	return vowifiSMSRecordResult{
+		Stored:    result.Created || result.Reconciled,
+		Duplicate: result.Duplicate, Reconciled: result.Reconciled,
+	}, nil
 }
 
 func (r vowifiSMSHistoryRecorder) RecordSent(e eventhost.SMSSent) error {

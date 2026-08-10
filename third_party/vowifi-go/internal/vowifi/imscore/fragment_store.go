@@ -45,7 +45,7 @@ func (s *Service) inboundFragmentScope(key string) smsInboundFragmentScope {
 	}
 }
 
-func (s *Service) handlePersistedSMSFragment(ctx persistedFragmentContext) (string, bool, error) {
+func (s *Service) handlePersistedSMSFragment(ctx persistedFragmentContext) (fragmentAssemblyResult, error) {
 	s.fragmentPersistMu.Lock()
 	defer s.fragmentPersistMu.Unlock()
 	scope := s.inboundFragmentScope(ctx.Key)
@@ -65,7 +65,7 @@ func (s *Service) handlePersistedSMSFragment(ctx persistedFragmentContext) (stri
 		s.fragmentRecentExpired[ctx.Key] = time.Now()
 		s.fragmentOrphanLate++
 		s.fragmentMu.Unlock()
-		return "", false, errors.Join(
+		return fragmentAssemblyResult{}, errors.Join(
 			errors.New("imscore: late SMS fragment after reassembly window"), deleteErr,
 		)
 	}
@@ -76,7 +76,7 @@ func (s *Service) acceptPersistedFragment(
 	ctx persistedFragmentContext,
 	fragments []*smsFragment,
 	inserted bool,
-) (string, bool, error) {
+) (fragmentAssemblyResult, error) {
 	s.fragmentMu.Lock()
 	if len(fragments) == 1 && ctx.Fragment.Seq != 1 && inserted {
 		s.logOutOfOrderFirst(ctx.Sender, ctx.Fragment)
@@ -88,27 +88,28 @@ func (s *Service) acceptPersistedFragment(
 	complete := len(fragments) == ctx.Fragment.Total && len(missingSMSSeqs(fragments, ctx.Fragment.Total)) == 0
 	s.fragmentMu.Unlock()
 	if !complete {
-		return "", false, nil
+		return fragmentAssemblyResult{}, nil
 	}
 	if err := ctx.Store.DeleteInboundFragments(s.inboundFragmentScope(ctx.Key)); err != nil {
-		return "", false, fmt.Errorf("imscore: delete completed SMS fragments: %w", err)
+		return fragmentAssemblyResult{}, fmt.Errorf("imscore: delete completed SMS fragments: %w", err)
 	}
 	content := assembleFragmentText(fragments)
+	sessionID := buildFragmentSessionInstanceID(ctx.Key, fragments)
 	s.fragmentMu.Lock()
 	s.recordCompletedFragmentsLocked(ctx.Key, fragments)
 	delete(s.fragmentCache, ctx.Key)
 	s.fragmentAssembledOK++
 	s.fragmentMu.Unlock()
-	return content, true, nil
+	return fragmentAssemblyResult{Content: content, SessionID: sessionID, Complete: true}, nil
 }
 
 func (s *Service) handleFragmentStoreError(
 	ctx persistedFragmentContext,
 	result smsInboundFragmentSaveResult,
 	storeErr error,
-) (string, bool, error) {
+) (fragmentAssemblyResult, error) {
 	if !errors.Is(storeErr, smsdelivery.ErrInboundFragmentCollision) {
-		return "", false, fmt.Errorf("imscore: persist inbound SMS fragment: %w", storeErr)
+		return fragmentAssemblyResult{}, fmt.Errorf("imscore: persist inbound SMS fragment: %w", storeErr)
 	}
 	reason := strings.TrimSpace(result.CollisionReason)
 	if reason == "" {
@@ -119,7 +120,7 @@ func (s *Service) handleFragmentStoreError(
 	s.fragmentMu.Lock()
 	s.recordFragmentCollisionLocked(ctx.fragmentHandlingContext, reason, fragments)
 	s.fragmentMu.Unlock()
-	return "", false, errors.Join(
+	return fragmentAssemblyResult{}, errors.Join(
 		fmt.Errorf("imscore: SMS fragment key collision: %s", reason), storeErr, deleteErr,
 	)
 }
@@ -190,10 +191,10 @@ func (s *Service) installStoredFragmentGroup(
 	s.recordCompletedFragmentsLocked(key, fragments)
 	s.fragmentMu.Unlock()
 	if first != nil {
-		s.publishInboundSMS(inboundSMS{
+		s.publishInboundSMSWithFragment(inboundSMS{
 			sender: senderFromFragmentKey(key), targetURI: first.ToURI,
 			content: assembleFragmentText(fragments), timestamp: latestFragmentTime(fragments),
-		})
+		}, buildFragmentSessionInstanceID(key, fragments), false)
 	}
 	return nil
 }

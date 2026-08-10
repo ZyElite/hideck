@@ -26,11 +26,13 @@ type Generic struct {
 
 // SMSReceived is published when an SMS is received.
 type SMSReceived struct {
-	DevID     string
-	Sender    string
-	TargetURI string
-	Content   string
-	Time      time.Time
+	DevID              string
+	Sender             string
+	TargetURI          string
+	Content            string
+	Time               time.Time
+	FragmentSessionKey string
+	Incomplete         bool
 }
 
 // SMSSent is published when an SMS is sent.

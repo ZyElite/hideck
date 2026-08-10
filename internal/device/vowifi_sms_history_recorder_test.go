@@ -66,6 +66,50 @@ func TestVoWiFiSMSHistoryRecorderPersistsReceivedSMS(t *testing.T) {
 	}
 }
 
+func TestVoWiFiSMSHistoryRecorderReconcilesDegradedMultipartSMS(t *testing.T) {
+	initDevicePhoneNumberTestDB(t)
+	const imsi = "imsi-vowifi-fragment"
+	if err := db.UpdateSIMCardVoWiFiPhoneNumberByIMSI(imsi, "+447840844894"); err != nil {
+		t.Fatalf("UpdateSIMCardVoWiFiPhoneNumberByIMSI() error=%v", err)
+	}
+	p := NewPool(nil)
+	p.workers["dev-fragment"] = &Worker{
+		ID: "dev-fragment", Backend: &workerPhoneBackendStub{imsi: imsi},
+	}
+	recorder := vowifiSMSHistoryRecorder{pool: p}
+	event := eventhost.SMSReceived{
+		DevID: "dev-fragment", Sender: "giffgaff", Content: "[incomplete] first",
+		Time:               time.Date(2026, 8, 10, 14, 30, 5, 0, time.UTC),
+		FragmentSessionKey: "sender=giffgaff|ref=212", Incomplete: true,
+	}
+	degraded, err := recorder.RecordReceived(event)
+	if err != nil || !degraded.Stored || degraded.Reconciled {
+		t.Fatalf("degraded result=%+v err=%v", degraded, err)
+	}
+	event.Content = "complete message"
+	event.Time = event.Time.Add(3 * time.Minute)
+	event.Incomplete = false
+	complete, err := recorder.RecordReceived(event)
+	if err != nil || !complete.Stored || !complete.Reconciled || complete.Duplicate {
+		t.Fatalf("complete result=%+v err=%v", complete, err)
+	}
+
+	var messages []db.SMS
+	if err := db.DB.Where("imsi = ? AND type = ?", imsi, 1).Find(&messages).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || messages[0].Content != "complete message" || messages[0].Incomplete {
+		t.Fatalf("messages=%+v", messages)
+	}
+	var contact db.SMSContact
+	if err := db.DB.Where("imsi = ? AND peer = ?", imsi, "giffgaff").First(&contact).Error; err != nil {
+		t.Fatal(err)
+	}
+	if contact.LastContent != "complete message" || contact.UnreadCount != 1 {
+		t.Fatalf("contact=%+v", contact)
+	}
+}
+
 func TestVoWiFiSMSHistoryRecorderSkipsSuppressedReceivedSMS(t *testing.T) {
 	initDevicePhoneNumberTestDB(t)
 	p := NewPool(nil)

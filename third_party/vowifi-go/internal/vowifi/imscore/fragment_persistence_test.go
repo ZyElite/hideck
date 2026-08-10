@@ -180,9 +180,7 @@ func TestInboundFragmentPersistenceRetainsDegradedSessionForLateCompletion(t *te
 		t.Fatal(err)
 	}
 	key := inboundSMSFragmentKey(message)
-	service.fragmentMu.Lock()
-	service.fragmentCache[key][0].Time = time.Now().Add(-time.Second)
-	service.fragmentMu.Unlock()
+	time.Sleep(5 * time.Millisecond)
 	if err := service.cleanupExpiredFragments(time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +188,13 @@ func TestInboundFragmentPersistenceRetainsDegradedSessionForLateCompletion(t *te
 	if err != nil || len(stored) != 1 || stored[0].Fragment.DegradedAt.IsZero() {
 		t.Fatalf("stored degraded fragments=%#v err=%v", stored, err)
 	}
-	assertIMSEventTypes(t, subscriber, "LogNotify", "SMSReceived")
+	assertIMSEventTypes(t, subscriber, "LogNotify")
+	degradedSessionID := assertFragmentSMS(t, subscriber, expectedFragmentSMS{
+		Content: "[incomplete 1/2 missing=2] stale", Incomplete: true,
+	})
+	if degradedSessionID == key {
+		t.Fatal("fragment event exposed the reusable raw fragment key")
+	}
 	if _, err := service.finalizeInboundSMSData(
 		fragmentTestRequest("mt-stale-duplicate"), message, "SIP/2.0 200 OK\r\n\r\n",
 	); err != nil {
@@ -213,10 +217,61 @@ func TestInboundFragmentPersistenceRetainsDegradedSessionForLateCompletion(t *te
 	); err != nil {
 		t.Fatal(err)
 	}
-	assertRecoveredSMS(t, restoredSubscriber, "stale complete")
+	assertFragmentSMS(t, restoredSubscriber, expectedFragmentSMS{
+		Content: "stale complete", SessionKey: degradedSessionID,
+	})
 	stored, err = store.LoadInboundFragments(restored.inboundFragmentOwner())
 	if err != nil || len(stored) != 0 {
 		t.Fatalf("stored fragments after late completion=%#v err=%v", stored, err)
+	}
+}
+
+type expectedFragmentSMS struct {
+	Content    string
+	SessionKey string
+	Incomplete bool
+}
+
+func assertFragmentSMS(
+	t *testing.T,
+	subscriber *captureIMSEventSubscriber,
+	expected expectedFragmentSMS,
+) string {
+	t.Helper()
+	select {
+	case event := <-subscriber.events:
+		received, ok := event.(*events.EventSMSReceived)
+		if !ok || received.Content != expected.Content || received.Sender != "giffgaff" ||
+			received.Incomplete != expected.Incomplete {
+			t.Fatalf("fragment SMS event=%#v", event)
+		}
+		if expected.SessionKey == "" && received.FragmentSessionKey == "" {
+			t.Fatalf("fragment SMS event has no session ID: %#v", event)
+		}
+		if expected.SessionKey != "" && expected.SessionKey != received.FragmentSessionKey {
+			t.Fatalf("fragment session ID=%q want %q", received.FragmentSessionKey, expected.SessionKey)
+		}
+		return received.FragmentSessionKey
+	case <-time.After(time.Second):
+		t.Fatal("fragment SMS event was not published")
+	}
+	return ""
+}
+
+func TestFragmentSessionInstanceIDSeparatesReusedReferences(t *testing.T) {
+	key := "sender=giffgaff|ref=7|bits=8"
+	first := []*smsFragment{
+		{Seq: 2, Time: time.Unix(200, 0)},
+		{Seq: 1, Time: time.Unix(100, 0)},
+	}
+	reordered := []*smsFragment{first[1], first[0]}
+	reused := []*smsFragment{{Seq: 1, Time: time.Unix(300, 0)}}
+	firstID := buildFragmentSessionInstanceID(key, first)
+	if firstID == "" || firstID != buildFragmentSessionInstanceID(key, reordered) {
+		t.Fatalf("session ID is empty or order-dependent: %q", firstID)
+	}
+	if firstID == buildFragmentSessionInstanceID(key, reused) {
+		t.Fatal("reused concatenation reference shared a session ID")
 	}
 }
 
