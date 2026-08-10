@@ -9,9 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/dialog"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/media"
 )
 
@@ -23,6 +26,7 @@ type Agent struct {
 	ims      *imscore.Service
 	bus      *imscore.EventBus
 	actor    *callstate.Actor
+	dialog   *dialog.Controller
 
 	calls           map[string]*Call // keyed by call ID
 	activeCall      *Call
@@ -63,6 +67,8 @@ type Call struct {
 
 	imsDialog         *imscore.DialogHandle
 	imsInvite         *imscore.InviteHandle
+	imsServerInvite   imsendpoint.ServerInviteHandle
+	imsInviteRequest  *sip.Request
 	routeSet          []string
 	rtpRelay          *media.RTPRelay
 	comfortNoise      *media.ComfortNoiseGenerator

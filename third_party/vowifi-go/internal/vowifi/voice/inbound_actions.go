@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -34,9 +35,16 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 		return InboundAnswer{}, err
 	}
 	_, imsAnswer := call.localSDPs()
-	if err := responder.Respond(a.voiceSDPResponse(call, 200, imsAnswer)); err != nil {
+	structured, err := a.answerStoredServerInvite(call, imsAnswer)
+	if err != nil {
 		a.releaseInboundCall(call, err, false)
 		return InboundAnswer{}, err
+	}
+	if !structured {
+		if err := responder.Respond(a.voiceSDPResponse(call, 200, imsAnswer)); err != nil {
+			a.releaseInboundCall(call, err, false)
+			return InboundAnswer{}, err
+		}
 	}
 	_ = call.StopOutboundNoAnswerTimer()
 	if err := transitionInboundConnected(call); err != nil {
@@ -77,8 +85,14 @@ func (a *Agent) rejectInboundCall(call *Call, statusCode int) error {
 	if responder == nil {
 		return errors.New("voice: inbound INVITE response context is unavailable")
 	}
-	if err := responder.Respond(imscore.InboundVoiceResponse{StatusCode: statusCode}); err != nil {
+	structured, err := a.rejectStoredServerInvite(call, statusCode)
+	if err != nil {
 		return err
+	}
+	if !structured {
+		if err := responder.Respond(imscore.InboundVoiceResponse{StatusCode: statusCode}); err != nil {
+			return err
+		}
 	}
 	a.releaseInboundCall(call, fmt.Errorf("voice: inbound call rejected with %d", statusCode), false)
 	return nil
@@ -124,8 +138,14 @@ func (a *Agent) sendInboundTimeout(call *Call) error {
 	if responder == nil {
 		return cause
 	}
-	if err := responder.Respond(imscore.InboundVoiceResponse{StatusCode: 480}); err != nil {
-		return errors.Join(cause, fmt.Errorf("send 480 response: %w", err))
+	structured, err := a.rejectStoredServerInvite(call, 480)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	if !structured {
+		if err := responder.Respond(imscore.InboundVoiceResponse{StatusCode: 480}); err != nil {
+			return errors.Join(cause, fmt.Errorf("send 480 response: %w", err))
+		}
 	}
 	return cause
 }
@@ -134,6 +154,7 @@ func (a *Agent) releaseInboundCall(call *Call, cause error, canceled bool) {
 	_ = call.Transition(callstate.StateFailed)
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
+	_ = a.closeCallDialog(context.Background(), call)
 	_ = call.CloseDone()
 	if canceled {
 		reason := "remote_cancel"

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsdialog"
 )
 
 type voiceSIPDialog struct {
@@ -35,6 +36,10 @@ func (a *Agent) prepareVoiceDialog(call *Call, number string) error {
 	if err != nil {
 		return err
 	}
+	if a.dialog != nil {
+		ctx := a.dialog.Context()
+		profile = applyControllerDialogContext(profile, ctx)
+	}
 	remoteURI := buildIMSCalledPartyURI(number, profile.LocalURI, profile.Domain)
 	if remoteURI == "" {
 		return errors.New("voice: callee is empty")
@@ -53,6 +58,25 @@ func (a *Agent) prepareVoiceDialog(call *Call, number string) error {
 		cseq: initialCSeq, inviteCSeq: initialCSeq,
 	})
 	return nil
+}
+
+func applyControllerDialogContext(profile imscore.SIPDialogProfile, ctx imsdialog.Context) imscore.SIPDialogProfile {
+	if value := strings.TrimSpace(ctx.IMPU); value != "" {
+		profile.LocalURI = value
+	}
+	if value := strings.TrimSpace(ctx.ServiceRoute); value != "" {
+		profile.ServiceRoute = value
+	}
+	if value := strings.TrimSpace(ctx.SecVerify); value != "" {
+		profile.SecurityVerify = value
+	}
+	if value := strings.TrimSpace(ctx.PAccessNetworkInfo); value != "" {
+		profile.PANI = value
+	}
+	if value := strings.TrimSpace(ctx.UserAgent); value != "" {
+		profile.UserAgent = value
+	}
+	return profile
 }
 
 func (c *Call) setVoiceDialog(dialog *voiceSIPDialog) {

@@ -153,11 +153,9 @@ func (a *Agent) HandleClientCancel(callID string) error {
 	if call.GetState() == callstate.StateConnected {
 		return errors.New("voice: connected call must be ended with BYE")
 	}
-	cancel, err := buildIMSCancel(a, call)
-	if err != nil {
-		return fmt.Errorf("voice: build CANCEL: %w", err)
-	}
-	if err := a.sendIMSDialogRequest(cancel); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
+	defer cancel()
+	if err := a.cancelVoiceClientInvite(ctx, call, "local_cancel"); err != nil {
 		return fmt.Errorf("voice: send CANCEL: %w", err)
 	}
 	call.MarkLocalCancelSent()
@@ -236,6 +234,7 @@ func (a *Agent) finishRemoteBye(call *Call) error {
 	_ = call.Transition(callstate.StateEnded)
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
+	call.SetIMSDialog(nil)
 	_ = call.CloseDone()
 	a.emitCallEnded(call, "remote_bye")
 	a.finalizeActiveCall(call)

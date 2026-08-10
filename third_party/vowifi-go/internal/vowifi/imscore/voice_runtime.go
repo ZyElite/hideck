@@ -39,6 +39,7 @@ type InboundVoiceRequest struct {
 	ContentType      string
 	SessionExpires   string
 	Body             []byte
+	Request          *sip.Request
 	Responder        InboundVoiceResponder
 	InboundRequest   imsendpoint.InboundRequestHandle
 	ServerInvite     imsendpoint.ServerInviteHandle
@@ -207,7 +208,8 @@ func (s *Service) handleInboundVoice(
 		Dialog: dialogRead.handle, DialogMatched: dialogRead.matched,
 		DialogResponded: dialogRead.responded, DialogTerminated: dialogRead.terminated,
 	}
-	if transaction != nil {
+	if transaction != nil && transaction.request != nil {
+		request.Request = transaction.request.Clone()
 		request.InboundRequest = newInboundRequestHandle(transaction.request, transaction)
 		if transaction.request.IsInvite() {
 			request.ServerInvite = newServerInviteHandle(transaction.request, transaction)

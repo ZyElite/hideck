@@ -2,7 +2,6 @@ package voice
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -285,7 +284,7 @@ func TestAgentStopReleasesCallWhenBYEFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent.ims.Transport().SetSendFn(func(string) error { return errors.New("forced write failure") })
+	installDialogFailure(agent, "forced write failure")
 	if err := agent.Stop(); err == nil || !strings.Contains(err.Error(), "forced write failure") {
 		t.Fatalf("Stop error = %v", err)
 	}
@@ -309,7 +308,7 @@ func TestAgentHangupReleasesCallWhenBYEFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent.ims.Transport().SetSendFn(func(string) error { return errors.New("forced BYE write failure") })
+	installDialogFailure(agent, "forced BYE write failure")
 	if err := agent.Hangup(call.CallID()); err == nil || !strings.Contains(err.Error(), "forced BYE write failure") {
 		t.Fatalf("Hangup error = %v", err)
 	}

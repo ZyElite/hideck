@@ -106,6 +106,7 @@ func (a *Agent) beginInboundInvite(call *Call, request imscore.InboundVoiceReque
 	defer call.inboundDecisionMu.Unlock()
 	call.SetStartTime(time.Now())
 	call.setInboundRequest(request.Responder)
+	call.setServerInvite(request.ServerInvite, request.Request)
 	call.applyVoiceSessionExpires(request.SessionExpires)
 	if err := a.prepareInboundVoiceDialog(call, request); err != nil {
 		a.releaseInboundCall(call, err, false)
@@ -142,7 +143,10 @@ func (a *Agent) handleInboundCancel(request imscore.InboundVoiceRequest, call *C
 	cancelErr := request.Responder.Respond(imscore.InboundVoiceResponse{
 		StatusCode: 200, ToTag: responder.LocalTag(),
 	})
-	inviteErr := responder.Respond(imscore.InboundVoiceResponse{StatusCode: 487})
+	structured, inviteErr := a.rejectStoredServerInvite(call, 487)
+	if !structured {
+		inviteErr = responder.Respond(imscore.InboundVoiceResponse{StatusCode: 487})
+	}
 	a.releaseInboundCall(call, errors.New("voice: call canceled by IMS"), true)
 	return voiceResult(0), errors.Join(cancelErr, inviteErr)
 }

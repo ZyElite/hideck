@@ -1,158 +1,82 @@
-// Package dialog implements the SIP dialog controller used by the voice
-// layer to send requests and manage dialog state (RFC 3261 §12).
-//
-// Reconstructed from the decompiled internal/vowifi/voice/dialog.
+// Package dialog adapts the voice layer to the retained IMS dialog endpoint.
 package dialog
 
 import (
-	"context"
-	"errors"
-	"net"
+	"strings"
 	"sync"
+
+	"github.com/emiago/sipgo/sip"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsdialog"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 )
 
-// Controller manages one SIP dialog.
+// Controller owns the registration-derived headers shared by voice dialogs.
 type Controller struct {
-	mu       sync.RWMutex
-	ctx      context.Context
-	endpoint interface {
-		SendRawSIP(req string) error
-	}
-	userAgent string
-	callID    string
-	fromTag   string
-	toTag     string
-	cseq      int
+	deviceID string
+	endpoint imsendpoint.ClientDialogEndpoint
+
+	mu               sync.Mutex
+	cachedFromURI    sip.Uri
+	cachedContactHdr *sip.ContactHeader
+	cachedRouteHdr   sip.Header
+	lastSessionHash  string
 }
 
-// NewController creates a dialog controller.
-func NewController(ctx context.Context, endpoint interface {
-	SendRawSIP(req string) error
-}, userAgent, callID, fromTag string) *Controller {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return &Controller{
-		ctx:       ctx,
-		endpoint:  endpoint,
-		userAgent: userAgent,
-		callID:    callID,
-		fromTag:   fromTag,
-		cseq:      1,
-	}
+// NewController creates a controller bound to an IMS endpoint.
+func NewController(deviceID string, endpoint imsendpoint.ClientDialogEndpoint) *Controller {
+	controller := &Controller{deviceID: strings.TrimSpace(deviceID)}
+	controller.SetEndpoint(endpoint)
+	return controller
 }
 
-// SetEndpoint replaces the SIP endpoint.
-func (c *Controller) SetEndpoint(ep interface {
-	SendRawSIP(req string) error
-}) {
+// SetEndpoint replaces the IMS endpoint and invalidates registration caches.
+func (c *Controller) SetEndpoint(endpoint imsendpoint.ClientDialogEndpoint) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
-	c.endpoint = ep
+	c.endpoint = endpoint
+	c.cachedFromURI = sip.Uri{}
+	c.cachedContactHdr = nil
+	c.cachedRouteHdr = nil
+	c.lastSessionHash = ""
 	c.mu.Unlock()
 }
 
-// Context returns the dialog context.
-func (c *Controller) Context() context.Context {
+// Context returns the current immutable dialog-building context.
+func (c *Controller) Context() imsdialog.Context {
 	if c == nil {
-		return context.Background()
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.ctx
-}
-
-// contextLocked returns the context without locking (internal use).
-func (c *Controller) contextLocked() context.Context {
-	if c == nil {
-		return context.Background()
-	}
-	return c.ctx
-}
-
-// UserAgent returns the user agent string.
-func (c *Controller) UserAgent() string {
-	if c == nil {
-		return ""
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.userAgent
-}
-
-// NextCSeq returns and increments the dialog CSeq.
-func (c *Controller) NextCSeq() int {
-	if c == nil {
-		return 1
+		return imsdialog.Context{}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.cseq++
-	return c.cseq
+	return c.contextLocked()
 }
 
-// SendDialogRequestWithHandle sends a request within the dialog.
-func (c *Controller) SendDialogRequestWithHandle(req string) error {
-	if c == nil {
-		return errors.New("dialog: nil controller")
+// UserAgent returns the endpoint's current User-Agent value.
+func (c *Controller) UserAgent() string {
+	endpoint := c.currentEndpoint()
+	if endpoint == nil {
+		return ""
 	}
-	c.mu.RLock()
-	ep := c.endpoint
-	c.mu.RUnlock()
-	if ep == nil {
-		return errors.New("dialog: no endpoint")
+	return strings.TrimSpace(endpoint.Snapshot().UserAgent)
+}
+
+// NextCSeq reserves the next endpoint-wide SIP sequence number.
+func (c *Controller) NextCSeq() uint32 {
+	endpoint := c.currentEndpoint()
+	if endpoint == nil {
+		return 0
 	}
-	return ep.SendRawSIP(req)
+	return endpoint.NextCSeq()
 }
 
-// AnswerServerInvite answers a server-side INVITE.
-func (c *Controller) AnswerServerInvite() error {
-	return errors.New("dialog: inbound INVITE request context is unavailable")
-}
-
-// RejectServerInvite rejects a server-side INVITE.
-func (c *Controller) RejectServerInvite() error {
-	return errors.New("dialog: inbound INVITE request context is unavailable")
-}
-
-// CancelClientInvite cancels a client-side INVITE.
-func (c *Controller) CancelClientInvite() error {
-	return errors.New("dialog: client INVITE transaction context is unavailable")
-}
-
-// CloseDialog closes the dialog.
-func (c *Controller) CloseDialog() error {
+func (c *Controller) currentEndpoint() imsendpoint.ClientDialogEndpoint {
 	if c == nil {
-		return errors.New("dialog: nil controller")
+		return nil
 	}
 	c.mu.Lock()
-	c.endpoint = nil
-	c.toTag = ""
+	endpoint := c.endpoint
 	c.mu.Unlock()
-	return nil
-}
-
-// SendReliableProvisionalPRACK sends a PRACK for a reliable provisional.
-func (c *Controller) SendReliableProvisionalPRACK() error {
-	return errors.New("dialog: reliable provisional response context is unavailable")
-}
-
-// endpointLocalIP returns the local IP of a SIP endpoint.
-func endpointLocalIP(ep interface {
-	SendRawSIP(req string) error
-}) net.IP {
-	if ep == nil {
-		return nil
-	}
-	provider, ok := ep.(interface{ GetLocalIMSAddr() string })
-	if !ok {
-		return nil
-	}
-	host, _, err := net.SplitHostPort(provider.GetLocalIMSAddr())
-	if err != nil {
-		return net.ParseIP(provider.GetLocalIMSAddr())
-	}
-	return net.ParseIP(host)
+	return endpoint
 }

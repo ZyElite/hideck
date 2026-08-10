@@ -2,11 +2,13 @@ package voice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
@@ -64,15 +66,21 @@ func (a *Agent) applyProvisionalState(call *Call, status int) {
 }
 
 func (a *Agent) sendReliableProvisionalPRACK(ctx context.Context, call *Call, rseq uint32) error {
-	request := buildIMSPrack(a, call, rseq)
-	response, err := a.ims.RoundTripSIP(ctx, request)
+	if a == nil || a.dialog == nil || call == nil {
+		return errors.New("voice: dialog controller is unavailable")
+	}
+	invite := call.IMSInviteHandle()
+	if invite == nil {
+		return errors.New("voice: IMS INVITE handle is unavailable")
+	}
+	err := a.dialog.SendReliableProvisionalPRACK(ctx, a.deviceID, imsendpoint.ReliableProvisionalOptions{
+		Invite: invite,
+		RSeq:   strconv.FormatUint(uint64(rseq), 10),
+	})
 	if err != nil {
 		return fmt.Errorf("voice: PRACK transaction failed: %w", err)
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("voice: PRACK rejected: %d %s", response.StatusCode, response.Reason)
-	}
-	logging.Info("IMS PRACK 成功", "rseq", rseq, "status", response.StatusCode)
+	logging.Info("IMS PRACK 成功", "rseq", rseq, "status", 200)
 	return nil
 }
 

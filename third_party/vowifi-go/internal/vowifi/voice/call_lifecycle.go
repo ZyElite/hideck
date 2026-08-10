@@ -1,6 +1,7 @@
 package voice
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -112,10 +113,7 @@ func (c *Call) StartOutboundNoAnswerTimer(timeout time.Duration) error {
 		if c.GetState() == callstate.StateDialing || c.GetState() == callstate.StateAlerting {
 			cause := errors.New("voice: no answer")
 			if c.agent != nil {
-				cancel, err := buildIMSCancel(c.agent, c)
-				if err != nil {
-					cause = errors.Join(cause, fmt.Errorf("build CANCEL: %w", err))
-				} else if err := c.agent.sendIMSDialogRequest(cancel); err != nil {
+				if err := c.agent.cancelVoiceClientInvite(context.Background(), c, cause.Error()); err != nil {
 					cause = errors.Join(cause, fmt.Errorf("send CANCEL: %w", err))
 				}
 				c.SetOutboundCancelReason(cause.Error())

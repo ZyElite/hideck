@@ -1,8 +1,31 @@
 package voice
 
 import (
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 )
+
+func (c *Call) setServerInvite(handle imsendpoint.ServerInviteHandle, request *sip.Request) {
+	c.mu.Lock()
+	c.imsServerInvite = handle
+	if request != nil {
+		c.imsInviteRequest = request.Clone()
+	} else {
+		c.imsInviteRequest = nil
+	}
+	c.mu.Unlock()
+}
+
+func (c *Call) serverInviteContext() (imsendpoint.ServerInviteHandle, *sip.Request) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	request := c.imsInviteRequest
+	if request != nil {
+		request = request.Clone()
+	}
+	return c.imsServerInvite, request
+}
 
 func (c *Call) setInboundRequest(responder imscore.InboundVoiceResponder) {
 	c.mu.Lock()
