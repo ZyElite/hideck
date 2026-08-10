@@ -72,11 +72,22 @@ type RTPRelay struct {
 	imsRemote      *net.UDPAddr
 	lanRemote      *net.UDPAddr
 
-	dtmfMu          sync.Mutex
-	dtmfPayloadType int
-	dtmfSequence    uint16
-	dtmfTimestamp   uint32
-	dtmfSSRC        uint32
+	dtmfMu              sync.Mutex
+	dtmfSendMu          sync.Mutex
+	dtmfWriteMu         sync.Mutex
+	dtmfWG              sync.WaitGroup
+	dtmfPayloadType     int
+	dtmfClockRate       int
+	dtmfEventMask       uint16
+	dtmfSequence        uint16
+	dtmfTimestamp       uint32
+	dtmfSSRC            uint32
+	dtmfSeedErr         error
+	dtmfSourceObserved  bool
+	dtmfSending         bool
+	dtmfRewritePending  bool
+	dtmfSequenceOffset  uint16
+	dtmfLastRTPPacketAt time.Time
 }
 
 // RTPMonitor stores monotonic media activity timestamps as Unix nanoseconds.

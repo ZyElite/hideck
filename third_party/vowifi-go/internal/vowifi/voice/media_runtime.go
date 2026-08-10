@@ -224,14 +224,15 @@ func (a *Agent) updateRemoteMedia(call *Call, response imscore.SIPResponse) erro
 	return nil
 }
 
-func configureRelayDTMF(relay *media.RTPRelay, info *SDPInfo) {
+func configureRelayDTMF(relay *media.RTPRelay, info *SDPInfo) error {
 	if relay == nil || info == nil {
-		return
+		return nil
 	}
 	for _, codec := range info.Codecs {
 		if strings.EqualFold(codec.Name, sdpTelephoneEvent) {
-			_ = relay.SetDTMFPayloadType(codec.PayloadType)
-			return
+			return relay.ConfigureDTMF(codec.PayloadType, codec.ClockRate, codec.Fmtp)
 		}
 	}
+	relay.DisableDTMF()
+	return nil
 }

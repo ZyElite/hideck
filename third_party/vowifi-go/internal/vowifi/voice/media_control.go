@@ -24,6 +24,9 @@ func (c *Call) SendDTMF(digit string) error {
 	if len(runes) != 1 {
 		return errors.New("voice: DTMF must contain exactly one digit")
 	}
+	if !c.IsConnected() {
+		return errors.New("voice: call is not connected")
+	}
 	relay := c.RTPRelay()
 	if relay == nil {
 		return errors.New("voice: no media relay")
@@ -36,11 +39,25 @@ func (a *Agent) SendDTMF(callID, digit string) error {
 	if a == nil {
 		return errors.New("voice: nil agent")
 	}
-	call := a.callByID(strings.TrimSpace(callID))
+	call := a.activeCallByHandle(callID)
 	if call == nil {
-		return errors.New("voice: call not found")
+		return errors.New("voice: active call not found")
 	}
 	return call.SendDTMF(digit)
+}
+
+func (a *Agent) activeCallByHandle(callID string) *Call {
+	if a == nil {
+		return nil
+	}
+	callID = strings.TrimSpace(callID)
+	a.mu.RLock()
+	call := a.activeCall
+	a.mu.RUnlock()
+	if !callMatchesID(call, callID) {
+		return nil
+	}
+	return call
 }
 
 // StartPCAP starts capture on the active call.
@@ -106,7 +123,7 @@ func (g *Gateway) SendDTMF(callID, digit string) error {
 	}
 	g.mu.RUnlock()
 	for _, agent := range agents {
-		if agent.callByID(callID) != nil {
+		if agent.activeCallByHandle(callID) != nil {
 			return agent.SendDTMF(callID, digit)
 		}
 	}

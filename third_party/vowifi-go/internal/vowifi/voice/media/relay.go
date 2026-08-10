@@ -1,6 +1,7 @@
 package media
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
@@ -36,9 +37,10 @@ func newRTPRelay(
 	relay := &RTPRelay{
 		connIMS: imsRTP, connIMSRTCP: imsRTCP, connLANRTCP: lanRTCP,
 		lanPacket: lanRTP, stopCh: make(chan struct{}), dtmfPayloadType: -1,
+		dtmfClockRate: dtmfDefaultClockRate, dtmfEventMask: dtmfDefaultEventMask,
 	}
 	relay.ptMap.Store(&ptMapping{imsToLan: map[int]int{}, lanToIms: map[int]int{}})
-	relay.seedDTMF()
+	relay.seedDTMF(rand.Reader)
 	return relay
 }
 
@@ -339,6 +341,7 @@ func (r *RTPRelay) StopCurrent() error {
 		}
 		stopErr := closePacketConns(connections...)
 		r.wg.Wait()
+		r.dtmfWG.Wait()
 		stopErr = errors.Join(stopErr, r.StopPCAP())
 		r.mu.Lock()
 		r.stopErr = stopErr

@@ -161,6 +161,12 @@ func TestRecoveredSDPFlowErrorSurface(t *testing.T) {
 	if rewritten, err := ProcessOutgoingClientSDP(call, []byte("v=0"), "127.0.0.1"); err != nil || string(rewritten) != "v=0" {
 		t.Fatalf("permissive nonempty client SDP=%q err=%v", rewritten, err)
 	}
+	invalidDTMF := []byte("v=0\r\nc=IN IP4 127.0.0.1\r\nm=audio 23000 RTP/AVP 97\r\n" +
+		"a=rtpmap:97 telephone-event/not-a-rate\r\n")
+	if _, err := ProcessIncomingIMSSDP(call, invalidDTMF, "127.0.0.1"); err == nil ||
+		!strings.Contains(err.Error(), "invalid DTMF clock rate") {
+		t.Fatalf("invalid negotiated DTMF error=%v", err)
+	}
 }
 
 func TestRecoveredSDPFlowDrivesRelayAndPayloadMapping(t *testing.T) {

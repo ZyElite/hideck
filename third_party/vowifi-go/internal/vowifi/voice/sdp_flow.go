@@ -26,9 +26,11 @@ func ProcessIncomingIMSSDP(call *Call, raw []byte, localIP string) ([]byte, erro
 	if err != nil || info == nil {
 		return nil, fmt.Errorf("解析 IMS SDP 失败: %w", err)
 	}
+	if err := configureRelayDTMF(relay, info); err != nil {
+		return nil, fmt.Errorf("配置 IMS DTMF 失败: %w", err)
+	}
 	_ = relay.SetRemoteAddr(info.ConnectionIP, info.MediaPort)
 	relay.Start()
-	configureRelayDTMF(relay, info)
 	clientSDP := callClientSDP(call)
 	if len(clientSDP) == 0 {
 		return RewriteSDP(raw, localIP, relay.LANPort()), nil

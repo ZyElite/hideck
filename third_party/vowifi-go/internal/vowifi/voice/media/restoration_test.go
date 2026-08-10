@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -230,12 +231,20 @@ func TestRTPRelaySendsRFC4733EndPackets(t *testing.T) {
 	if err := relay.SetDTMFPayloadType(101); err != nil {
 		t.Fatal(err)
 	}
-	if err := relay.SendDTMF('2', 40*time.Millisecond); err != nil {
+	if err := relay.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(relay.Stop)
+	sendResult := make(chan error, 1)
+	go func() { sendResult <- relay.SendDTMF('2', 40*time.Millisecond) }()
 	packets := make([][]byte, 5)
+	arrivals := make([]time.Time, len(packets))
 	for index := range packets {
 		packets[index] = readUDP(t, imsPeer)
+		arrivals[index] = time.Now()
+	}
+	if err := <-sendResult; err != nil {
+		t.Fatal(err)
 	}
 	timestamp := binary.BigEndian.Uint32(packets[0][4:8])
 	for index, packet := range packets {
@@ -257,6 +266,13 @@ func TestRTPRelaySendsRFC4733EndPackets(t *testing.T) {
 	if got := binary.BigEndian.Uint16(packets[4][14:16]); got != 320 {
 		t.Fatalf("final event duration=%d want 320", got)
 	}
+	if elapsed := arrivals[len(arrivals)-1].Sub(arrivals[0]); elapsed < 60*time.Millisecond {
+		t.Fatalf("final retransmissions were not paced: %s", elapsed)
+	}
+	_, lanBytes, _, _ := relay.Stats()
+	if lanBytes != uint64(len(packets)*16) {
+		t.Fatalf("DTMF RTP bytes=%d want %d", lanBytes, len(packets)*16)
+	}
 }
 
 func TestRTPRelayRejectsDTMFWithoutNegotiatedPayload(t *testing.T) {
@@ -264,10 +280,296 @@ func TestRTPRelayRejectsDTMFWithoutNegotiatedPayload(t *testing.T) {
 	if err := relay.SetRemoteAddr(listenMediaUDP(t).LocalAddr().(*net.UDPAddr)); err != nil {
 		t.Fatal(err)
 	}
+	if err := relay.StartCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(relay.Stop)
 	if err := relay.SendDTMF('2', 40*time.Millisecond); err == nil {
 		t.Fatal("expected missing telephone-event negotiation error")
 	}
 }
+
+func TestRTPRelayDTMFUsesAudioSourceAndPreservesSequenceContinuity(t *testing.T) {
+	imsRelay := listenMediaUDP(t)
+	lanRelay := listenMediaUDP(t)
+	imsPeer := listenMediaUDP(t)
+	lanPeer := listenMediaUDP(t)
+	relay := NewRTPRelay(imsRelay, lanRelay)
+	if err := relay.SetRemoteAddr(imsPeer.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.ConfigureDTMF(101, dtmfDefaultClockRate, "0-15"); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.StartCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(relay.Stop)
+
+	const sourceSSRC = uint32(0x12345678)
+	writeUDPTo(t, lanPeer, lanRelay.LocalAddr().(*net.UDPAddr), makeRTPPacket(1000, 32000, sourceSSRC))
+	baseline := readUDP(t, imsPeer)
+	if binary.BigEndian.Uint16(baseline[2:4]) != 1000 {
+		t.Fatalf("baseline sequence=%d", binary.BigEndian.Uint16(baseline[2:4]))
+	}
+
+	sendResult := make(chan error, 1)
+	go func() { sendResult <- relay.SendDTMF('2', 40*time.Millisecond) }()
+	events := make([][]byte, 5)
+	events[0] = readUDP(t, imsPeer)
+	writeUDPTo(t, lanPeer, lanRelay.LocalAddr().(*net.UDPAddr), makeRTPPacket(1001, 32160, sourceSSRC))
+	writeUDPTo(t, lanPeer, lanRelay.LocalAddr().(*net.UDPAddr), makeRTPPacket(1002, 32320, sourceSSRC))
+	for index := 1; index < len(events); index++ {
+		events[index] = readUDP(t, imsPeer)
+	}
+	if err := <-sendResult; err != nil {
+		t.Fatal(err)
+	}
+	for index, packet := range events {
+		if got := binary.BigEndian.Uint16(packet[2:4]); got != uint16(1001+index) {
+			t.Fatalf("DTMF packet %d sequence=%d", index, got)
+		}
+		if got := binary.BigEndian.Uint32(packet[8:12]); got != sourceSSRC {
+			t.Fatalf("DTMF packet %d SSRC=%x", index, got)
+		}
+	}
+
+	writeUDPTo(t, lanPeer, lanRelay.LocalAddr().(*net.UDPAddr), makeRTPPacket(1003, 32640, sourceSSRC))
+	resumed := readUDP(t, imsPeer)
+	if got := binary.BigEndian.Uint16(resumed[2:4]); got != 1006 {
+		t.Fatalf("resumed audio sequence=%d want 1006", got)
+	}
+	if got := binary.BigEndian.Uint32(resumed[4:8]); got != 32640 {
+		t.Fatalf("resumed audio timestamp=%d", got)
+	}
+}
+
+func TestRTPRelayDTMFNegotiationAndInitializationErrorsAreExplicit(t *testing.T) {
+	relay := NewRTPRelay(listenMediaUDP(t), nil)
+	if err := relay.SetRemoteAddr(listenMediaUDP(t).LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.StartCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(relay.Stop)
+	if err := relay.ConfigureDTMF(101, dtmfDefaultClockRate, "0-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.SendDTMF('2', dtmfMinimum); err == nil {
+		t.Fatal("expected unnegotiated event error")
+	}
+	if err := relay.ConfigureDTMF(101, dtmfDefaultClockRate, "0-15,broken"); err == nil {
+		t.Fatal("expected malformed event range error")
+	}
+	relay.dtmfMu.Lock()
+	payloadType, eventMask := relay.dtmfPayloadType, relay.dtmfEventMask
+	relay.dtmfMu.Unlock()
+	if payloadType != 101 || eventMask != 0x0003 {
+		t.Fatalf("failed negotiation changed active DTMF config: PT=%d mask=%04x", payloadType, eventMask)
+	}
+	if err := relay.ConfigureDTMF(101, dtmfDefaultClockRate, "0-15"); err != nil {
+		t.Fatal(err)
+	}
+	maxDuration := time.Duration(dtmfMaximumDurationUnits) * time.Second / dtmfDefaultClockRate
+	if err := relay.SendDTMF('2', maxDuration); err == nil {
+		t.Fatal("expected packetized duration overflow error")
+	}
+	relay.seedDTMF(failingSeedReader{})
+	if err := relay.SendDTMF('2', dtmfMinimum); err == nil {
+		t.Fatal("expected random source initialization error")
+	}
+}
+
+func TestRTPRelaySerializesAudioAndDTMFWrites(t *testing.T) {
+	conn := newOrderedPacketConn()
+	relay := NewRTPRelay(conn, nil)
+	if err := relay.SetRemoteAddr(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 25000}); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.SetDTMFPayloadType(101); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.StartCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(relay.Stop)
+	audioDone := make(chan struct{})
+	go func() {
+		relay.handleLANPacket(makeRTPPacket(100, 32000, 0x12345678),
+			&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 26000})
+		close(audioDone)
+	}()
+	<-conn.firstWriteStarted
+	sendResult := make(chan error, 1)
+	go func() { sendResult <- relay.SendDTMF('2', dtmfMinimum) }()
+	waitForDTMFSending(t, relay)
+	conn.releaseFirst()
+	<-audioDone
+	if err := <-sendResult; err != nil {
+		t.Fatal(err)
+	}
+	packets := conn.packetSnapshot()
+	if len(packets) != 6 {
+		t.Fatalf("ordered writes=%d want 6", len(packets))
+	}
+	for index, packet := range packets {
+		if got := binary.BigEndian.Uint16(packet[2:4]); got != uint16(100+index) {
+			t.Fatalf("write %d sequence=%d", index, got)
+		}
+	}
+}
+
+func TestRTPRelayConsecutiveDTMFUsesPriorEventEndAsTimestampAnchor(t *testing.T) {
+	imsRelay := listenMediaUDP(t)
+	imsPeer := listenMediaUDP(t)
+	relay := NewRTPRelay(imsRelay, nil)
+	if err := relay.SetRemoteAddr(imsPeer.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.SetDTMFPayloadType(101); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.StartCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(relay.Stop)
+	relay.dtmfMu.Lock()
+	relay.dtmfSourceObserved = true
+	relay.dtmfSSRC = 0x12345678
+	relay.dtmfSequence = 100
+	relay.dtmfTimestamp = 32000
+	relay.dtmfLastRTPPacketAt = time.Now().Add(-time.Second)
+	relay.dtmfMu.Unlock()
+
+	if err := relay.SendDTMF('1', dtmfMinimum); err != nil {
+		t.Fatal(err)
+	}
+	firstTimestamp := binary.BigEndian.Uint32(readUDP(t, imsPeer)[4:8])
+	for packet := 1; packet < 5; packet++ {
+		_ = readUDP(t, imsPeer)
+	}
+	if err := relay.SendDTMF('2', dtmfMinimum); err != nil {
+		t.Fatal(err)
+	}
+	secondTimestamp := binary.BigEndian.Uint32(readUDP(t, imsPeer)[4:8])
+	if delta := secondTimestamp - firstTimestamp; delta < 320 || delta > 1000 {
+		t.Fatalf("consecutive DTMF timestamp delta=%d", delta)
+	}
+}
+
+func waitForDTMFSending(t *testing.T, relay *RTPRelay) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		relay.dtmfMu.Lock()
+		sending := relay.dtmfSending
+		relay.dtmfMu.Unlock()
+		if sending {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("DTMF sender did not reach active state")
+}
+
+func TestRTPRelayStopCancelsAndJoinsDTMF(t *testing.T) {
+	imsRelay := listenMediaUDP(t)
+	imsPeer := listenMediaUDP(t)
+	relay := NewRTPRelay(imsRelay, nil)
+	if err := relay.SetRemoteAddr(imsPeer.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.SetDTMFPayloadType(101); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.StartCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	sendResult := make(chan error, 1)
+	go func() { sendResult <- relay.SendDTMF('2', 200*time.Millisecond) }()
+	_ = readUDP(t, imsPeer)
+	if err := relay.StopCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-sendResult:
+		if err == nil {
+			t.Fatal("stopped DTMF sender returned success")
+		}
+	default:
+		t.Fatal("relay Stop returned before the DTMF sender exited")
+	}
+}
+
+func makeRTPPacket(sequence uint16, timestamp, ssrc uint32) []byte {
+	packet := make([]byte, 12)
+	packet[0] = 0x80
+	packet[1] = 8
+	binary.BigEndian.PutUint16(packet[2:4], sequence)
+	binary.BigEndian.PutUint32(packet[4:8], timestamp)
+	binary.BigEndian.PutUint32(packet[8:12], ssrc)
+	return packet
+}
+
+type failingSeedReader struct{}
+
+func (failingSeedReader) Read([]byte) (int, error) {
+	return 0, errors.New("forced random source failure")
+}
+
+type orderedPacketConn struct {
+	mu                sync.Mutex
+	packets           [][]byte
+	writes            int
+	firstWriteStarted chan struct{}
+	releaseFirstWrite chan struct{}
+	releaseOnce       sync.Once
+}
+
+func newOrderedPacketConn() *orderedPacketConn {
+	return &orderedPacketConn{
+		firstWriteStarted: make(chan struct{}),
+		releaseFirstWrite: make(chan struct{}),
+	}
+}
+
+func (c *orderedPacketConn) ReadFrom([]byte) (int, net.Addr, error) {
+	return 0, nil, net.ErrClosed
+}
+
+func (c *orderedPacketConn) WriteTo(packet []byte, _ net.Addr) (int, error) {
+	c.mu.Lock()
+	c.writes++
+	first := c.writes == 1
+	if first {
+		close(c.firstWriteStarted)
+	}
+	c.mu.Unlock()
+	if first {
+		<-c.releaseFirstWrite
+	}
+	c.mu.Lock()
+	c.packets = append(c.packets, append([]byte(nil), packet...))
+	c.mu.Unlock()
+	return len(packet), nil
+}
+
+func (c *orderedPacketConn) packetSnapshot() [][]byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([][]byte(nil), c.packets...)
+}
+
+func (c *orderedPacketConn) releaseFirst() {
+	c.releaseOnce.Do(func() { close(c.releaseFirstWrite) })
+}
+
+func (c *orderedPacketConn) Close() error                   { c.releaseFirst(); return nil }
+func (*orderedPacketConn) LocalAddr() net.Addr              { return &net.UDPAddr{} }
+func (*orderedPacketConn) SetDeadline(time.Time) error      { return nil }
+func (*orderedPacketConn) SetReadDeadline(time.Time) error  { return nil }
+func (*orderedPacketConn) SetWriteDeadline(time.Time) error { return nil }
 
 func listenConsecutivePair(t *testing.T) (*net.UDPConn, *net.UDPConn) {
 	t.Helper()

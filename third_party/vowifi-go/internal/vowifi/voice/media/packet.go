@@ -55,8 +55,15 @@ func (r *RTPRelay) handleLANPacket(packet []byte, source *net.UDPAddr) {
 			"RTP packet arrived before IMS address was set", "source", source)
 		return
 	}
+	r.dtmfWriteMu.Lock()
 	r.applyLANPayloadTypeMapping(packet)
-	if err := writePacket(r.connIMS, packet, remote); err != nil {
+	if !r.prepareLANRTPPacket(packet) {
+		r.dtmfWriteMu.Unlock()
+		return
+	}
+	err := writePacket(r.connIMS, packet, remote)
+	r.dtmfWriteMu.Unlock()
+	if err != nil {
 		r.logWriteError("IMS", err)
 		return
 	}

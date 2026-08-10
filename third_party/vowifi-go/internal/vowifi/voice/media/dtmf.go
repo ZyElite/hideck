@@ -1,50 +1,144 @@
 package media
 
 import (
-	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 )
 
 const (
-	dtmfPacketInterval = 20 * time.Millisecond
-	dtmfMinimum        = 40 * time.Millisecond
-	dtmfClockRate      = 8000
-	dtmfEndRepeats     = 3
-	dtmfVolume         = 10
+	dtmfPacketInterval       = 20 * time.Millisecond
+	dtmfMinimum              = 40 * time.Millisecond
+	dtmfDefaultClockRate     = 8000
+	dtmfEndPacketCount       = 3
+	dtmfVolume               = 10
+	dtmfDefaultEventMask     = uint16(0xffff)
+	dtmfMaximumDurationUnits = uint64(1<<16 - 1)
 )
 
-var dtmfEvents = map[rune]byte{
-	'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7,
-	'8': 8, '9': 9, '*': 10, '#': 11, 'A': 12, 'B': 13, 'C': 14, 'D': 15,
+const dtmfDigits = "0123456789*#ABCD"
+
+type dtmfSendPlan struct {
+	remote        *net.UDPAddr
+	event         byte
+	steps         int
+	finalDuration uint16
+	payloadType   int
+	clockRate     int
+	timestamp     uint32
+	ssrc          uint32
+	eventEndAt    time.Time
 }
 
-func (r *RTPRelay) seedDTMF() {
+type dtmfPacket struct {
+	plan     dtmfSendPlan
+	duration uint16
+	marker   bool
+	end      bool
+}
+
+func (r *RTPRelay) seedDTMF(source io.Reader) {
+	if source == nil {
+		r.dtmfMu.Lock()
+		r.dtmfSeedErr = errors.New("media: initialize DTMF RTP source: nil random reader")
+		r.dtmfMu.Unlock()
+		return
+	}
 	seed := make([]byte, 10)
-	if _, err := rand.Read(seed); err != nil {
-		now := uint64(time.Now().UnixNano())
-		binary.BigEndian.PutUint64(seed[:8], now)
+	_, err := io.ReadFull(source, seed)
+	r.dtmfMu.Lock()
+	defer r.dtmfMu.Unlock()
+	if err != nil {
+		r.dtmfSeedErr = fmt.Errorf("media: initialize DTMF RTP source: %w", err)
+		return
 	}
 	r.dtmfSequence = binary.BigEndian.Uint16(seed[:2])
 	r.dtmfTimestamp = binary.BigEndian.Uint32(seed[2:6])
 	r.dtmfSSRC = binary.BigEndian.Uint32(seed[6:10])
+	r.dtmfSeedErr = nil
 }
 
-// SetDTMFPayloadType stores the negotiated IMS telephone-event payload type.
+// SetDTMFPayloadType configures the common telephone-event/8000 form.
 func (r *RTPRelay) SetDTMFPayloadType(payloadType int) error {
+	return r.ConfigureDTMF(payloadType, dtmfDefaultClockRate, "")
+}
+
+// ConfigureDTMF stores the negotiated telephone-event format and event set.
+func (r *RTPRelay) ConfigureDTMF(payloadType, clockRate int, events string) error {
 	if r == nil {
 		return errors.New("media: nil relay")
 	}
 	if payloadType < 0 || payloadType > 127 {
 		return fmt.Errorf("media: invalid DTMF payload type %d", payloadType)
 	}
+	if clockRate <= 0 {
+		return fmt.Errorf("media: invalid DTMF clock rate %d", clockRate)
+	}
+	eventMask, err := parseDTMFEventMask(events)
+	if err != nil {
+		return err
+	}
 	r.dtmfMu.Lock()
 	r.dtmfPayloadType = payloadType
+	r.dtmfClockRate = clockRate
+	r.dtmfEventMask = eventMask
 	r.dtmfMu.Unlock()
 	return nil
+}
+
+// DisableDTMF clears a prior telephone-event negotiation.
+func (r *RTPRelay) DisableDTMF() {
+	if r == nil {
+		return
+	}
+	r.dtmfMu.Lock()
+	r.dtmfPayloadType = -1
+	r.dtmfMu.Unlock()
+}
+
+func parseDTMFEventMask(events string) (uint16, error) {
+	events = strings.TrimSpace(events)
+	if events == "" {
+		return dtmfDefaultEventMask, nil
+	}
+	if strings.ContainsAny(events, " \t\r\n") {
+		return 0, errors.New("media: DTMF event list contains whitespace")
+	}
+	var mask uint16
+	for _, token := range strings.Split(events, ",") {
+		start, end, err := parseDTMFEventRange(token)
+		if err != nil {
+			return 0, err
+		}
+		for event := start; event <= end && event < 16; event++ {
+			mask |= uint16(1) << event
+		}
+	}
+	return mask, nil
+}
+
+func parseDTMFEventRange(token string) (int, int, error) {
+	parts := strings.Split(token, "-")
+	if len(parts) < 1 || len(parts) > 2 || parts[0] == "" {
+		return 0, 0, fmt.Errorf("media: invalid DTMF event range %q", token)
+	}
+	start, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("media: invalid DTMF event range %q", token)
+	}
+	end := start
+	if len(parts) == 2 {
+		end, err = strconv.Atoi(parts[1])
+	}
+	if err != nil || start < 0 || end < start || end > 255 {
+		return 0, 0, fmt.Errorf("media: invalid DTMF event range %q", token)
+	}
+	return start, end, nil
 }
 
 // SendDTMF sends one RFC 4733 event to the negotiated IMS RTP peer.
@@ -52,75 +146,69 @@ func (r *RTPRelay) SendDTMF(digit rune, duration time.Duration) error {
 	if r == nil {
 		return errors.New("media: nil relay")
 	}
-	event, exists := dtmfEvents[digit]
-	if !exists {
-		return fmt.Errorf("media: unsupported DTMF digit %q", digit)
+	if err := r.beginDTMFSend(); err != nil {
+		return err
 	}
-	if duration < dtmfMinimum {
-		duration = dtmfMinimum
+	defer r.dtmfWG.Done()
+	r.dtmfSendMu.Lock()
+	defer r.dtmfSendMu.Unlock()
+	plan, err := r.prepareDTMFSend(digit, duration)
+	if err != nil {
+		return err
 	}
-	maxDuration := time.Duration(^uint16(0)) * time.Second / dtmfClockRate
-	if duration > maxDuration {
-		return fmt.Errorf("media: DTMF duration %s exceeds RFC4733 field capacity", duration)
+	plan = r.startDTMFEvent(plan)
+	defer r.finishDTMFSend(plan)
+	return r.sendDTMFEvent(plan)
+}
+
+func (r *RTPRelay) beginDTMFSend() error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if !r.active || r.isStopped() {
+		return errors.New("media: RTP relay is not active")
 	}
-	r.dtmfMu.Lock()
-	defer r.dtmfMu.Unlock()
-	if r.dtmfPayloadType < 0 {
-		return errors.New("media: telephone-event payload type was not negotiated")
+	r.dtmfWG.Add(1)
+	return nil
+}
+
+func (r *RTPRelay) prepareDTMFSend(digit rune, duration time.Duration) (dtmfSendPlan, error) {
+	eventIndex := strings.IndexRune(dtmfDigits, digit)
+	if eventIndex < 0 {
+		return dtmfSendPlan{}, fmt.Errorf("media: unsupported DTMF digit %q", digit)
+	}
+	if r.isStopped() {
+		return dtmfSendPlan{}, errors.New("media: RTP relay is not active")
 	}
 	remote := r.remoteAddr.Load()
 	if r.connIMS == nil || remote == nil {
-		return errors.New("media: IMS RTP destination is unavailable")
+		return dtmfSendPlan{}, errors.New("media: IMS RTP destination is unavailable")
 	}
-	return r.sendDTMFLocked(remote, event, duration)
+	return r.prepareNegotiatedDTMF(remote, byte(eventIndex), duration)
 }
 
-func (r *RTPRelay) sendDTMFLocked(remote *net.UDPAddr, event byte, duration time.Duration) error {
-	steps := int((duration + dtmfPacketInterval - 1) / dtmfPacketInterval)
-	for step := 1; step <= steps; step++ {
-		eventDuration := uint16(step * dtmfClockRate / int(time.Second/dtmfPacketInterval))
-		if err := r.writeDTMFPacket(remote, event, eventDuration, step == 1, false); err != nil {
-			return err
-		}
-		if step < steps {
-			time.Sleep(dtmfPacketInterval)
-		}
-	}
-	finalDuration := uint16(steps * dtmfClockRate / int(time.Second/dtmfPacketInterval))
-	for repeat := 0; repeat < dtmfEndRepeats; repeat++ {
-		if err := r.writeDTMFPacket(remote, event, finalDuration, false, true); err != nil {
-			return err
-		}
-	}
-	r.dtmfTimestamp += uint32(finalDuration)
-	return nil
-}
-
-func (r *RTPRelay) writeDTMFPacket(
+func (r *RTPRelay) prepareNegotiatedDTMF(
 	remote *net.UDPAddr,
 	event byte,
-	duration uint16,
-	marker, end bool,
-) error {
-	packet := make([]byte, 16)
-	packet[0] = 0x80
-	packet[1] = byte(r.dtmfPayloadType)
-	if marker {
-		packet[1] |= 0x80
+	duration time.Duration,
+) (dtmfSendPlan, error) {
+	r.dtmfMu.Lock()
+	defer r.dtmfMu.Unlock()
+	if r.dtmfPayloadType < 0 {
+		return dtmfSendPlan{}, errors.New("media: telephone-event payload type was not negotiated")
 	}
-	binary.BigEndian.PutUint16(packet[2:4], r.dtmfSequence)
-	binary.BigEndian.PutUint32(packet[4:8], r.dtmfTimestamp)
-	binary.BigEndian.PutUint32(packet[8:12], r.dtmfSSRC)
-	packet[12] = event
-	packet[13] = dtmfVolume
-	if end {
-		packet[13] |= 0x80
+	if r.dtmfEventMask&(uint16(1)<<event) == 0 {
+		return dtmfSendPlan{}, fmt.Errorf("media: DTMF event %d was not negotiated", event)
 	}
-	binary.BigEndian.PutUint16(packet[14:16], duration)
-	if err := writePacket(r.connIMS, packet, remote); err != nil {
-		return fmt.Errorf("media: send RFC4733 event: %w", err)
+	steps, finalDuration, err := normalizeDTMFDuration(duration, r.dtmfClockRate)
+	if err != nil {
+		return dtmfSendPlan{}, err
 	}
-	r.writePCAPPacket(packet, pcapDirectionLANToIMS)
-	r.dtmfSequence++
-	return nil
+	if r.dtmfSeedErr != nil && !r.dtmfSourceObserved {
+		return dtmfSendPlan{}, r.dtmfSeedErr
+	}
+	r.dtmfSending = true
+	return dtmfSendPlan{
+		remote: cloneUDPAddr(remote), event: event, steps: steps, finalDuration: finalDuration,
+		payloadType: r.dtmfPayloadType, clockRate: r.dtmfClockRate,
+	}, nil
 }

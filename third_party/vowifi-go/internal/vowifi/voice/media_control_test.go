@@ -22,19 +22,29 @@ func TestAgentSendDTMFUsesCallRegistryAndNegotiatedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configureRelayDTMF(relay, answer)
+	if err := configureRelayDTMF(relay, answer); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.StartCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(relay.Stop)
 	agent := NewAgent("device-30", nil, nil)
 	call := NewCall(agent, callstate.DirectionOutbound, "call-30", "43430")
+	t.Cleanup(func() { call.Cancel(); call.CloseDone() })
+	call.SetClientCallID("client-call-30")
 	call.SetRTPRelay(relay)
+	call.StartMedia()
 	agent.mu.Lock()
 	agent.calls[call.CallID()] = call
 	agent.activeCall = call
 	agent.mu.Unlock()
+	gateway := NewGateway(agent)
 	captureDirectory := t.TempDir()
 	if err := agent.StartPCAP(captureDirectory); err != nil {
 		t.Fatal(err)
 	}
-	if err := agent.SendDTMF("call-30", "2"); err != nil {
+	if err := gateway.SendDTMF("client-call-30", "2"); err != nil {
 		t.Fatal(err)
 	}
 	if err := agent.StopPCAP(); err != nil {
@@ -52,8 +62,46 @@ func TestAgentSendDTMFUsesCallRegistryAndNegotiatedPayload(t *testing.T) {
 	if n != 16 || packet[1]&0x7f != 97 || packet[12] != 2 {
 		t.Fatalf("DTMF packet=%x", packet[:n])
 	}
+	invalid, err := ParseSDP([]byte("v=0\r\nm=audio 25000 RTP/AVP 98\r\n" +
+		"a=rtpmap:98 telephone-event/not-a-rate\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := configureRelayDTMF(relay, invalid); err == nil {
+		t.Fatal("expected invalid re-negotiation error")
+	}
+	if err := gateway.SendDTMF("client-call-30", "2"); err != nil {
+		t.Fatalf("failed re-negotiation replaced active DTMF config: %v", err)
+	}
+	withoutEvents, err := ParseSDP([]byte("v=0\r\nm=audio 25000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := configureRelayDTMF(relay, withoutEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SendDTMF("client-call-30", "2"); err == nil {
+		t.Fatal("expected removed telephone-event negotiation error")
+	}
 	if err := agent.SendDTMF("missing-call", "2"); err == nil {
 		t.Fatal("expected missing call registry error")
+	}
+	registered := NewCall(agent, callstate.DirectionOutbound, "registered-not-active", "43430")
+	t.Cleanup(func() { registered.Cancel(); registered.CloseDone() })
+	registered.StartMedia()
+	agent.mu.Lock()
+	agent.calls[registered.CallID()] = registered
+	agent.mu.Unlock()
+	if err := agent.SendDTMF(registered.CallID(), "2"); err == nil {
+		t.Fatal("expected registered but inactive call error")
+	}
+}
+
+func TestCallSendDTMFRequiresConnectedState(t *testing.T) {
+	call := NewCall(nil, callstate.DirectionOutbound, "not-connected", "43430")
+	t.Cleanup(func() { call.Cancel(); call.CloseDone() })
+	if err := call.SendDTMF("2"); err == nil {
+		t.Fatal("expected disconnected call error")
 	}
 }
 
