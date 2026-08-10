@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	voiceInviteTimeout = 45 * time.Second
-	voiceHangupTimeout = 10 * time.Second
+	voiceInviteTimeout         = 45 * time.Second
+	voiceHangupTimeout         = 10 * time.Second
+	voiceActorEventLogInterval = 10 * time.Second
 )
 
 // NewAgent creates a voice agent for a device.
@@ -28,8 +29,10 @@ func NewAgent(deviceID string, ims *imscore.Service, bus *imscore.EventBus) *Age
 		deviceID: deviceID,
 		ims:      ims,
 		bus:      bus,
-		actor:    callstate.NewActor(),
-		calls:    make(map[string]*Call),
+		actor: callstate.NewActorWithConfig(callstate.ActorConfig{
+			DeviceID: deviceID,
+		}),
+		calls: make(map[string]*Call),
 	}
 	agent.newMediaRelay = func(localIP string) (*media.RTPRelay, error) {
 		return newVoiceMediaRelay(imscorePacketListener{service: ims}, localIP)
@@ -55,9 +58,9 @@ func (a *Agent) Start() error {
 		a.mu.Unlock()
 		return nil
 	}
+	a.actor.Start(context.Background())
 	a.started = true
 	a.mu.Unlock()
-	a.actor.Start(context.Background())
 	return nil
 }
 
@@ -110,8 +113,24 @@ func (a *Agent) OnIMSEvent(ev events.Event) {
 		*events.EventCallAnswered, *events.EventCallEnded,
 		*events.EventCallFailed, *events.EventCallCanceled,
 		*events.EventCallMediaUpdated:
-		a.notify(ev)
+		a.notifyIMSEvent(ev)
 	}
+}
+
+func (a *Agent) notifyIMSEvent(ev events.Event) {
+	a.mu.RLock()
+	started := a.started
+	a.mu.RUnlock()
+	if a.actor != nil && a.actor.Enqueue("ims_event_"+ev.Type(), func() { a.notify(ev) }) {
+		return
+	}
+	if started {
+		logging.WarnRate("voice-actor-event-rejected:"+a.deviceID, voiceActorEventLogInterval,
+			"voice actor rejected IMS event", "device", a.deviceID, "event", ev.Type())
+	}
+	// Preserve delivery while the agent is stopped or the bounded queue rejects
+	// work. Rejection is surfaced above instead of silently losing the event.
+	a.notify(ev)
 }
 
 // Dial places an outbound call to the given number.

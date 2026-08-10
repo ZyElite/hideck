@@ -2,8 +2,8 @@
 // (single-goroutine task queue) that serializes call transitions.
 //
 // Reconstructed from the decompiled internal/vowifi/voice/callstate
-// (actor.go, state.go). The state machine has 8 states (0-7) with strictly
-// forward transitions recovered from the binary's transition map.
+// (actor.go, state.go). The state machine has 8 states (0-7) with transitions
+// recovered from the binary's transition map.
 package callstate
 
 import "fmt"
@@ -72,9 +72,11 @@ func CanTransition(from, to State) bool {
 	return next[to]
 }
 
-// IsTerminal reports whether the state is terminal (no further transitions).
+// IsTerminal reports whether call teardown has reached a terminal outcome.
+// The original runtime treats Failed as terminal even though Failed -> Ended
+// remains a valid bookkeeping transition.
 func IsTerminal(s State) bool {
-	return len(transitionMap[s]) == 0
+	return s == StateFailed || s == StateEnded
 }
 
 // Direction is the call direction.
@@ -98,19 +100,21 @@ func (d Direction) String() string {
 	}
 }
 
-// MediaState is the media plane state.
-type MediaState int
+// MediaPhase is the current media-plane phase. It retains the phase constants
+// added by the restored implementation without shadowing the original
+// MediaState resource structure.
+type MediaPhase int
 
 // Media states.
 const (
-	MediaNone MediaState = iota
+	MediaNone MediaPhase = iota
 	MediaActive
 	MediaHeld
 	MediaMuted
 )
 
 // String returns the media state name.
-func (m MediaState) String() string {
+func (m MediaPhase) String() string {
 	switch m {
 	case MediaNone:
 		return "none"
@@ -125,19 +129,20 @@ func (m MediaState) String() string {
 	}
 }
 
-// DialogState is the SIP dialog state.
-type DialogState int
+// DialogPhase is the current SIP dialog phase. The original DialogState is a
+// resource-bearing structure restored in context.go.
+type DialogPhase int
 
 // Dialog states.
 const (
-	DialogNone DialogState = iota
+	DialogNone DialogPhase = iota
 	DialogEarly
 	DialogConfirmed
 	DialogTerminated
 )
 
 // String returns the dialog state name.
-func (d DialogState) String() string {
+func (d DialogPhase) String() string {
 	switch d {
 	case DialogNone:
 		return "none"
@@ -150,14 +155,4 @@ func (d DialogState) String() string {
 	default:
 		return fmt.Sprintf("DialogState(%d)", int(d))
 	}
-}
-
-// Timers holds the call timer configuration.
-type Timers struct {
-	// NoAnswerTimeout is how long to wait for an answer before failing.
-	NoAnswerTimeout int64
-	// SessionTimer is the RFC 4028 session refresh interval.
-	SessionTimer int64
-	// OneWayTimeout is how long to wait for RTP before failing.
-	OneWayTimeout int64
 }

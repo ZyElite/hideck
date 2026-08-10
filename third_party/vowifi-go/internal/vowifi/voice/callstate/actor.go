@@ -2,113 +2,182 @@ package callstate
 
 import (
 	"context"
+	"log/slog"
+	"runtime"
 	"sync"
+	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
-// Task is a unit of work executed on the actor's single goroutine.
+const (
+	DefaultQueueCapacity = 128
+	actorLogRateInterval = 10 * time.Second
+)
+
+// Task is one named unit of call work retained by the actor queue.
 type Task struct {
-	// Fn is the work to run.
-	Fn func()
+	Name       string
+	EnqueuedAt time.Time
+	Fn         func()
 }
 
-// Actor serializes call work on a single goroutine. All call state
-// transitions must be enqueued on the actor so they never race.
+// ActorConfig supplies the immutable identity and capacity of an Actor.
+type ActorConfig struct {
+	DeviceID      string
+	TraceID       string
+	QueueCapacity int
+}
+
+// Actor serializes call work on one goroutine.
 type Actor struct {
-	mu      sync.Mutex
-	queue   chan Task
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	started bool
+	deviceID string
+	traceID  string
+	queueCap int
+
+	mu     sync.RWMutex
+	ctx    context.Context
+	cancel context.CancelFunc
+	queue  chan Task
+	done   sync.WaitGroup
+
+	lifecycle sync.Mutex
 }
 
-// NewActor creates a stopped actor.
+// NewActor retains the current zero-argument constructor with the original
+// per-call queue capacity.
 func NewActor() *Actor {
-	return &Actor{}
+	return NewActorWithConfig(ActorConfig{})
 }
 
-// Start launches the actor's worker goroutine. It is idempotent.
+// NewActorWithConfig creates a stopped actor with call logging context.
+func NewActorWithConfig(config ActorConfig) *Actor {
+	queueCapacity := config.QueueCapacity
+	if queueCapacity == 0 {
+		queueCapacity = DefaultQueueCapacity
+	}
+	return &Actor{
+		deviceID: config.DeviceID,
+		traceID:  config.TraceID,
+		queueCap: queueCapacity,
+	}
+}
+
+// Start launches the worker once. Stop must complete before the actor can be
+// started again.
 func (a *Actor) Start(ctx context.Context) {
 	if a == nil {
 		return
 	}
+	a.lifecycle.Lock()
+	defer a.lifecycle.Unlock()
+
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.started {
+	if a.queue != nil {
+		a.mu.Unlock()
 		return
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	a.ctx, a.cancel = context.WithCancel(ctx)
-	a.queue = make(chan Task, 64)
-	a.started = true
-	a.wg.Add(1)
-	go a.run()
+	workerCtx, cancel := context.WithCancel(ctx)
+	queue := make(chan Task, a.queueCap)
+	a.ctx, a.cancel, a.queue = workerCtx, cancel, queue
+	a.done.Add(1)
+	a.mu.Unlock()
+	go a.run(workerCtx, queue)
 }
 
-// Stop cancels the actor and waits for the worker to exit.
+// Stop cancels the worker, clears the active queue, and waits for exit.
 func (a *Actor) Stop() {
 	if a == nil {
 		return
 	}
+	a.lifecycle.Lock()
+	defer a.lifecycle.Unlock()
+
 	a.mu.Lock()
-	if !a.started {
-		a.mu.Unlock()
-		return
-	}
-	a.started = false
-	a.cancel()
+	cancel := a.cancel
+	a.ctx, a.cancel, a.queue = nil, nil, nil
 	a.mu.Unlock()
-	a.wg.Wait()
+	if cancel != nil {
+		cancel()
+	}
+	a.done.Wait()
 }
 
-// Enqueue schedules fn on the actor's goroutine. It is a no-op if the
-// actor is not running.
-func (a *Actor) Enqueue(fn func()) {
+// Enqueue submits named work without blocking. It returns false when the
+// actor is stopped, canceled, or full; work is never run on the caller.
+func (a *Actor) Enqueue(name string, fn func()) bool {
 	if a == nil || fn == nil {
-		return
+		return false
 	}
-	a.mu.Lock()
-	if !a.started {
-		a.mu.Unlock()
-		return
+	ctx, queue := a.snapshot()
+	if ctx == nil || queue == nil || ctx.Err() != nil {
+		return false
 	}
+	task := Task{Name: name, EnqueuedAt: time.Now(), Fn: fn}
 	select {
-	case a.queue <- Task{Fn: fn}:
+	case queue <- task:
+		return true
 	default:
-		// Queue full: run synchronously to avoid dropping work.
-		a.mu.Unlock()
-		fn()
-		return
+		a.logQueueFull(name, cap(queue))
+		return false
 	}
-	a.mu.Unlock()
 }
 
-// QueueLen returns the number of pending tasks.
+// QueueLen returns the number of queued tasks not yet accepted by the worker.
 func (a *Actor) QueueLen() int {
 	if a == nil {
 		return 0
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	if a.queue == nil {
 		return 0
 	}
 	return len(a.queue)
 }
 
-// run drains the task queue until the context is canceled.
-func (a *Actor) run() {
-	defer a.wg.Done()
+func (a *Actor) snapshot() (context.Context, chan Task) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.ctx, a.queue
+}
+
+func (a *Actor) run(ctx context.Context, queue <-chan Task) {
+	defer a.done.Done()
 	for {
 		select {
-		case <-a.ctx.Done():
+		case <-ctx.Done():
 			return
-		case t := <-a.queue:
-			if t.Fn != nil {
-				t.Fn()
-			}
+		case task := <-queue:
+			a.runTask(task)
 		}
 	}
+}
+
+func (a *Actor) runTask(task Task) {
+	if task.Fn == nil {
+		return
+	}
+	waitTime := time.Since(task.EnqueuedAt).Milliseconds()
+	logging.RunDebug("Voice call-actor 任务执行",
+		"trace_id", a.traceID, "device", a.deviceID, "task", task.Name,
+		"queue_wait_ms", waitTime, "goroutine_inflight", runtime.NumGoroutine())
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("Voice call-actor 任务异常",
+				"trace_id", a.traceID, "device", a.deviceID,
+				"task", task.Name, "panic", recovered)
+		}
+	}()
+	task.Fn()
+}
+
+func (a *Actor) logQueueFull(taskName string, queueCapacity int) {
+	key := "voice_call_actor_queue_full:" + a.deviceID + ":" + taskName
+	logging.WarnRate(key, actorLogRateInterval, "Voice call-actor 入队失败：队列已满",
+		"trace_id", a.traceID, "device", a.deviceID, "task", taskName,
+		"queue_cap", queueCapacity, "goroutine_inflight", runtime.NumGoroutine())
 }
