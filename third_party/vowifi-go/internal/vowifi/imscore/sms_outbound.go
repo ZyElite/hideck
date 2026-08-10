@@ -13,6 +13,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 const (
@@ -439,6 +440,11 @@ func (s *Service) recordOutboundSMSFailure(messageID string, part outboundSMSPar
 }
 
 func (s *Service) completeFailure(messageID string, part outboundSMSPart, sendErr error) error {
+	fields := []interface{}{
+		"message_id", messageID, "part", part.number, "call_id", part.callID,
+		"rp_mr", part.rpMR, "err", sendErr,
+	}
+	logging.RunDebug("IMS SMS delivery failed", appendRPErrorFields(fields, sendErr.Error())...)
 	if s.delivery == nil {
 		return fmt.Errorf("imscore: send SMS part %d: %w", part.number, sendErr)
 	}

@@ -3,9 +3,11 @@ package imscore
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 func (s *Service) runOutboundMessageDispatcher() {
@@ -18,6 +20,9 @@ func (s *Service) runOutboundMessageDispatcher() {
 			if !ok {
 				return
 			}
+			logging.RunDebug("IMS outbound MESSAGE",
+				"flow", task.flow, "call_id", outboundRequestCallID(task.req),
+				"sip", outboundRequestDebugText(task.req))
 			response, seq, err := s.dispatchOutboundRequest(
 				task.ctx, task.flow, task.req, time.Duration(task.timeout), true,
 			)
@@ -31,6 +36,20 @@ func (s *Service) runOutboundMessageDispatcher() {
 			}
 		}
 	}
+}
+
+func outboundRequestDebugText(request *sip.Request) string {
+	if request == nil {
+		return ""
+	}
+	return sipDebugRawText(request.String())
+}
+
+func outboundRequestCallID(request *sip.Request) string {
+	if request == nil || request.CallID() == nil {
+		return ""
+	}
+	return strings.TrimSpace(request.CallID().Value())
 }
 
 func (s *Service) dispatchOutboundMESSAGE(

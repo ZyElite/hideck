@@ -141,6 +141,28 @@ func TestSetOutboundDestinationUsesSnapshotWithoutMutatingEmptyDestination(t *te
 	}
 }
 
+func TestOutboundModeSnapshotFallsBackToRemoteRoute(t *testing.T) {
+	packet, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(&IMSConfig{Transport: "udp"})
+	if err != nil {
+		_ = packet.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Stop)
+	request := parsedDispatchRequest(t, "route-fallback", 1)
+	service.mu.Lock()
+	service.registrationIO = packet
+	service.registrationRemote = &net.UDPAddr{IP: net.IPv4(192, 0, 2, 50), Port: 5070}
+	modeCtx := service.outboundModeSnapshotLocked("mo-submit", request, "")
+	service.mu.Unlock()
+	if modeCtx.ServiceRoute != "" || modeCtx.RouteHeader != "<sip:192.0.2.50:5070;lr>" {
+		t.Fatalf("service route = %q, route header = %q", modeCtx.ServiceRoute, modeCtx.RouteHeader)
+	}
+}
+
 type writeDeadlineConn struct {
 	net.Conn
 	mu        sync.Mutex

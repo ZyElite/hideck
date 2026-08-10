@@ -118,6 +118,9 @@ func (s *Service) outboundModeSnapshotLocked(
 		modeCtx.AOR = firstNonBlank(cfg.publicIdentities()...)
 	}
 	s.populateOutboundRemoteLocked(&modeCtx)
+	if strings.TrimSpace(modeCtx.RouteHeader) == "" {
+		modeCtx.RouteHeader = routeFromRemoteEndpoint(modeCtx.RemoteIP, modeCtx.RemotePortS)
+	}
 	return modeCtx
 }
 

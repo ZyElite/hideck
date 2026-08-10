@@ -334,6 +334,40 @@ func TestDecodeInboundRPDataPreservesFragmentIdentities(t *testing.T) {
 	}
 }
 
+func TestDecodeInboundRPDataFallsBackToFromWhenToIsMissing(t *testing.T) {
+	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 56, "+447700900123", "fallback"))
+	raw = strings.Replace(raw, "To: <sip:234102356143376@ims.example>\r\n", "", 1)
+	body, err := rawSIPBody(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := decodeInboundRPData(raw, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.targetURI != "sip:+447802002606@ims.example" {
+		t.Fatalf("target URI = %q", message.targetURI)
+	}
+}
+
+func TestMarkFragmentAckedByRequestMatchesAcrossCacheKeys(t *testing.T) {
+	service, err := New(&IMSConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Stop)
+	fragment := &smsFragment{RpMr: 57, CallID: "fragment-ack-call"}
+	service.fragmentMu.Lock()
+	service.fragmentCache["first-key"] = []*smsFragment{{RpMr: 9, CallID: "other"}}
+	service.fragmentCache["matching-key"] = []*smsFragment{fragment}
+	service.fragmentMu.Unlock()
+	ackedAt := time.Now()
+	service.markFragmentAckedByRequest("Call-ID: fragment-ack-call\r\n", 57, ackedAt)
+	if !fragment.AckSent || !fragment.AckSentAt.Equal(ackedAt) {
+		t.Fatalf("fragment ack state = %v at %v", fragment.AckSent, fragment.AckSentAt)
+	}
+}
+
 func parsedDispatchRequest(t *testing.T, callID string, sequence int) *sip.Request {
 	t.Helper()
 	raw := strings.Replace(transactionRequest("MESSAGE", callID), "CSeq: 1 MESSAGE", fmt.Sprintf("CSeq: %d MESSAGE", sequence), 1)

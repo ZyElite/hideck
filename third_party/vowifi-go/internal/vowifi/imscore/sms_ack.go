@@ -119,18 +119,7 @@ func (s *Service) sendRpAck(inbound string, body []byte, rpMR byte, fingerprint 
 
 func (s *Service) markFragmentAckedByRequest(inbound string, rpMR byte, at time.Time) {
 	callID := strings.TrimSpace(rawSIPHeaderValue(inbound, "Call-ID"))
-	s.fragmentMu.Lock()
-	defer s.fragmentMu.Unlock()
-	for _, fragments := range s.fragmentCache {
-		for _, fragment := range fragments {
-			if fragment == nil || fragment.RpMr != rpMR || !strings.EqualFold(fragment.CallID, callID) {
-				continue
-			}
-			fragment.AckSent = true
-			fragment.AckSentAt = at
-			return
-		}
-	}
+	s.markFragmentAcked("", callID, rpMR, at)
 }
 
 func resolveRpAckTarget(contact, from string) (string, error) {

@@ -10,6 +10,7 @@ import (
 	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/sipkit"
 )
 
@@ -133,11 +134,24 @@ func (s *Service) handleInboundRPData(raw string, rpdu []byte, rpMR byte) (inbou
 	if err != nil {
 		return s.inboundSMSProtocolError(raw, 400, rpMR, true, err)
 	}
+	s.logInboundSMSCorrelation(raw, message)
 	response, err := buildSIPRequestResponse(raw, 200)
 	if err != nil {
 		return inboundSIPResult{}, err
 	}
 	return s.finalizeInboundSMSData(raw, message, response)
+}
+
+func (s *Service) logInboundSMSCorrelation(raw string, message inboundSMS) {
+	audit, ok := s.latestOutboundSMSAudit(2 * time.Minute)
+	if !ok {
+		return
+	}
+	logging.RunDebug("IMS inbound SMS follows recent outbound",
+		"call_id", strings.TrimSpace(rawSIPHeaderValue(raw, "Call-ID")),
+		"mo_trace_id", audit.TraceID, "mo_call_id", audit.CallID,
+		"mo_to", audit.To, "mo_age_ms", time.Since(audit.At).Milliseconds(),
+		"sender", normalizeFragmentIdentity(message.sender), "rp_mr", message.rpMR)
 }
 
 func (s *Service) finalizeInboundSMSData(
@@ -185,9 +199,16 @@ func decodeInboundRPData(raw string, rpdu []byte) (inboundSMS, error) {
 	if sender == "" {
 		sender = strings.TrimSpace(originator)
 	}
+	targetURI := firstSIPHeaderURI(rawSIPHeaderValue(raw, "To"))
+	if parsed, parseErr := parseSIPMessage(raw); parseErr == nil {
+		if request, ok := parsed.(*sip.Request); ok {
+			_, _, _, to := inboundAckHeaders(request)
+			targetURI = firstSIPHeaderURI(to)
+		}
+	}
 	return inboundSMS{
 		sender: sender, serviceCenter: strings.TrimSpace(originator),
-		targetURI: firstSIPHeaderURI(rawSIPHeaderValue(raw, "To")),
+		targetURI: targetURI,
 		content:   content, timestamp: timestamp, rpMR: rpMR,
 		concatRef: concat.Ref, refBits: concat.RefBits,
 		total: concat.Total, partNo: concat.Seq,
@@ -201,6 +222,7 @@ func (s *Service) assembleInboundSMS(raw string, message *inboundSMS) (bool, err
 	if message.total <= 1 {
 		return s.shouldDispatchMTSMS(*message, raw), nil
 	}
+	logging.RunDebug("IMS SMS fragment received", fragmentLifecycleLogFields(*message)...)
 	content, complete, err := s.handleSMSFragment(message.sender, &smsFragment{
 		Ref: message.concatRef, RefBits: message.refBits,
 		Total: message.total, Seq: message.partNo, Content: message.content,

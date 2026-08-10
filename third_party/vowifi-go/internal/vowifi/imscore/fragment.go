@@ -160,6 +160,7 @@ func (s *Service) cleanupExpiredFragments(ttl time.Duration) {
 		latest   time.Time
 	}
 	var degraded []degradedMessage
+	var failures []fragmentAuditFailure
 	s.fragmentMu.Lock()
 	for key, fragments := range s.fragmentCache {
 		firstSeen, latest := fragmentBounds(fragments)
@@ -178,7 +179,7 @@ func (s *Service) cleanupExpiredFragments(ttl time.Duration) {
 				Reference: first.Ref, RefBits: first.RefBits, Total: total,
 			})
 		}
-		s.appendFragmentAuditFailureLocked(fragmentAuditFailure{
+		failures = append(failures, fragmentAuditFailure{
 			At: now, Key: key, InterimKey: interimKey, Sender: senderFromFragmentKey(key),
 			Received: len(fragments), Total: total,
 			MissingSeq: missingSMSSeqs(fragments, total),
@@ -206,6 +207,9 @@ func (s *Service) cleanupExpiredFragments(ttl time.Duration) {
 		}
 	}
 	s.fragmentMu.Unlock()
+	for _, failure := range failures {
+		s.appendFragmentAuditFailure(failure)
+	}
 	for _, item := range degraded {
 		logging.WarnRate("sms-fragment-timeout:"+item.key, time.Duration(0),
 			"IMS 长短信分片超时（审计模式，不发送 480）",
@@ -234,14 +238,19 @@ func (s *Service) markFragmentAcked(key, callID string, rpMR byte, at time.Time)
 	}
 	s.fragmentMu.Lock()
 	defer s.fragmentMu.Unlock()
-	for _, fragment := range s.fragmentCache[key] {
-		if fragment == nil || fragment.RpMr != rpMR ||
-			(strings.TrimSpace(callID) != "" && !strings.EqualFold(fragment.CallID, callID)) {
+	for cacheKey, fragments := range s.fragmentCache {
+		if key != "" && cacheKey != key {
 			continue
 		}
-		fragment.AckSent = true
-		fragment.AckSentAt = at
-		return true
+		for _, fragment := range fragments {
+			if fragment == nil || fragment.RpMr != rpMR ||
+				(strings.TrimSpace(callID) != "" && !strings.EqualFold(fragment.CallID, callID)) {
+				continue
+			}
+			fragment.AckSent = true
+			fragment.AckSentAt = at
+			return true
+		}
 	}
 	return false
 }
