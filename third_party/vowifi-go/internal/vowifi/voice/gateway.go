@@ -83,7 +83,7 @@ func (g *Gateway) Stop() error {
 	g.cancel = nil
 	g.mu.Unlock()
 	for _, worker := range workers {
-		worker.cancel()
+		stopGatewayEntryWorkerChain(worker)
 	}
 	var stopErr error
 	for _, agent := range agents {

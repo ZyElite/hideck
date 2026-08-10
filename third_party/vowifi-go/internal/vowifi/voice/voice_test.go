@@ -202,7 +202,7 @@ func TestAgentDialLifecycle(t *testing.T) {
 	if !agent.IsBusy() {
 		t.Error("agent should be busy after dial")
 	}
-	if err := agent.Hangup(call.CallID()); err != nil {
+	if err := agent.HangupCurrent(call.CallID()); err != nil {
 		t.Fatalf("Hangup: %v", err)
 	}
 	if call.CallState() != callstate.StateTerminated {
@@ -255,7 +255,7 @@ func TestAgentSimulateCall(t *testing.T) {
 	if err := agent.updateRemoteMedia(call, refresh); err != nil {
 		t.Fatalf("simulated media refresh: %v", err)
 	}
-	if err := agent.Hangup(call.CallID()); err != nil {
+	if err := agent.HangupCurrent(call.CallID()); err != nil {
 		t.Fatalf("Hangup: %v", err)
 	}
 }
@@ -308,7 +308,7 @@ func TestAgentHangupReleasesCallWhenBYEFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	installDialogFailure(agent, "forced BYE write failure")
-	if err := agent.Hangup(call.CallID()); err == nil || !strings.Contains(err.Error(), "forced BYE write failure") {
+	if err := agent.HangupCurrent(call.CallID()); err == nil || !strings.Contains(err.Error(), "forced BYE write failure") {
 		t.Fatalf("Hangup error = %v", err)
 	}
 	if agent.IsBusy() || agent.SnapshotCurrent().ActiveCall != nil {
@@ -404,12 +404,12 @@ func TestCallTimersStopAndDoneCloseOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := call.StartOutboundNoAnswerTimer(time.Hour); err != nil {
+	if err := call.StartOutboundNoAnswerTimerCurrent(time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	call.applyVoiceSessionExpires("3600")
 	call.StartSessionTimer(func() {})
-	if err := call.EnsureTimerStopped(); err != nil {
+	if err := call.EnsureTimerStoppedCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	if call.noAnswerTimer != nil || call.Timers.SessionTimer != nil {
@@ -682,7 +682,7 @@ func TestGatewayLifecycle(t *testing.T) {
 	if call.RTPRelay() == nil || call.RTPRelay().IMSPort() <= 0 {
 		t.Fatalf("SimulateCall relay = %+v", call.RTPRelay())
 	}
-	if err := call.Hangup(); err != nil {
+	if err := call.HangupCurrent(); err != nil {
 		t.Fatalf("Hangup: %v", err)
 	}
 }

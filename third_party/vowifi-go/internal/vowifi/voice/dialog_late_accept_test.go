@@ -158,7 +158,7 @@ func TestAgentHangupPendingInviteUsesCancelTerminalState(t *testing.T) {
 		t.Fatal("outbound INVITE was not observed")
 	}
 	call := waitForCancelableCall(t, agent)
-	if err := agent.Hangup(call.CallID()); err != nil {
+	if err := agent.HangupCurrent(call.CallID()); err != nil {
 		t.Fatalf("Hangup pending INVITE: %v", err)
 	}
 	if call.CallState() != callstate.StateTerminated || agent.IsBusy() {

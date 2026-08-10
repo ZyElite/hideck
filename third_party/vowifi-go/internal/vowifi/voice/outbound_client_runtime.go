@@ -67,10 +67,7 @@ func (a *Agent) validateAndCleanExistingCall(
 }
 
 func (a *Agent) releaseStaleOutboundCall(call *Call) {
-	call.StopMedia()
-	_ = call.EnsureTimerStopped()
-	call.CloseDone()
-	a.finalizeActiveCall(call)
+	a.reportCallCleanupError(call, a.finalizeActiveCall(call))
 }
 
 func (a *Agent) newClientOutboundCall(
@@ -82,12 +79,10 @@ func (a *Agent) newClientOutboundCall(
 	call.SetStartTime(time.Now())
 	call.DialogState.ClientTx = transaction
 	if err := a.prepareVoiceDialog(call, call.Peer()); err != nil {
-		call.Cancel()
-		return nil, err
+		return nil, errors.Join(err, releaseUnregisteredCall(call))
 	}
 	if err := call.TransitionChecked(callstate.StateCalling); err != nil {
-		call.Cancel()
-		return nil, err
+		return nil, errors.Join(err, releaseUnregisteredCall(call))
 	}
 	a.mu.Lock()
 	a.calls[call.CallID()] = call
@@ -149,7 +144,7 @@ func (a *Agent) startIMSOutboundDialog(call *Call) {
 		if call.HasLocalCancelSent() {
 			a.respondOutboundCancellationFinal(call, response)
 			if !callDone(call) {
-				a.finishLocalCancel(call, call.OutboundCancelReason())
+				err = errors.Join(err, a.finishLocalCancel(call, call.OutboundCancelReason()))
 			}
 		} else if response.StatusCode >= 200 {
 			err = errors.Join(err, a.forwardResponseToClient(call, response))

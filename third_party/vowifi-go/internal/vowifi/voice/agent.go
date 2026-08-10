@@ -146,47 +146,7 @@ func (a *Agent) Stop() error {
 	if a == nil {
 		return nil
 	}
-	a.mu.Lock()
-	if !a.started {
-		a.mu.Unlock()
-		return nil
-	}
-	a.started = false
-	cancel := a.cancel
-	a.cancel = nil
-	a.ctx = nil
-	clientBridge := a.clientBridge
-	unsubscribe := a.imsUnsubscribe
-	ims := a.ims
-	a.imsUnsubscribe = nil
-	var activeCall *Call
-	if a.activeCall != nil && !a.activeCall.IsTerminalState() {
-		activeCall = a.activeCall
-	}
-	a.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	if unsubscribe != nil {
-		unsubscribe()
-	}
-	if clientBridge != nil {
-		clientBridge.Stop()
-	}
-	var stopErr error
-	if activeCall != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
-		if err := a.hangupCall(ctx, activeCall); err != nil {
-			stopErr = errors.Join(stopErr, err)
-			a.forceReleaseCall(activeCall, err)
-		}
-		cancel()
-	}
-	a.actor.Stop()
-	if ims != nil {
-		ims.SetVoiceRequestHandler(nil)
-	}
-	return stopErr
+	return a.stopAndRelease()
 }
 
 // SetNotifier wires the event notifier callback.
@@ -342,12 +302,12 @@ func (a *Agent) executeOutboundCall(
 		return imscore.SIPResponse{}, a.handleOutboundInviteRuntimeError(call, err)
 	}
 	call.setOutboundInvite(invite)
-	if err := call.StartOutboundNoAnswerTimer(voiceInviteTimeout); err != nil {
+	if err := call.StartOutboundNoAnswerTimerCurrent(voiceInviteTimeout); err != nil {
 		return imscore.SIPResponse{}, a.handleOutboundInviteRuntimeError(call, err)
 	}
 	logging.RunDebug("IMS INVITE outbound", "sip", logging.RedactSIPRaw(invite))
 	response, err := a.startVoiceClientInvite(ctx, call, invite)
-	_ = call.StopOutboundNoAnswerTimer()
+	call.StopOutboundNoAnswerTimer()
 	if response.StatusCode >= 200 {
 		logOutboundInviteResponse("IMS INVITE 最终响应", response)
 		return response, errors.Join(
@@ -368,18 +328,19 @@ func (a *Agent) startOutboundCall(number string) (*Call, error) {
 	call := NewCall(a, callstate.DirectionOutbound, newVoiceCallID(), number)
 	call.SetStartTime(time.Now())
 	if err := a.prepareVoiceDialog(call, number); err != nil {
-		return nil, err
+		return nil, errors.Join(err, releaseUnregisteredCall(call))
 	}
 	if err := call.TransitionChecked(callstate.StateCalling); err != nil {
-		return nil, err
+		return nil, errors.Join(err, releaseUnregisteredCall(call))
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.activeCall != nil && !a.activeCall.IsTerminalState() {
-		return nil, errors.New("voice: busy")
+		a.mu.Unlock()
+		return nil, errors.Join(errors.New("voice: busy"), releaseUnregisteredCall(call))
 	}
 	a.calls[call.CallID()] = call
 	a.activeCall = call
+	a.mu.Unlock()
 	return call, nil
 }
 
@@ -438,8 +399,22 @@ func (a *Agent) Answer(callID string) error {
 	return errors.New("voice: inbound answer requires client SDP")
 }
 
-// Hangup ends a call.
-func (a *Agent) Hangup(callID string) error {
+// Hangup preserves the recovered active-call API.
+func (a *Agent) Hangup() {
+	if a == nil {
+		return
+	}
+	call := a.ActiveCall()
+	if call == nil {
+		return
+	}
+	if err := a.HangupCurrent(call.CallID()); err != nil && !call.IsTerminalState() {
+		a.forceReleaseCall(call, err)
+	}
+}
+
+// HangupCurrent retains the additive Call-ID error API.
+func (a *Agent) HangupCurrent(callID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
 	defer cancel()
 	return a.HangupContext(ctx, callID)
@@ -458,7 +433,7 @@ func (a *Agent) HangupContext(ctx context.Context, callID string) error {
 	}
 	err := a.hangupCall(ctx, call)
 	if err != nil {
-		a.forceReleaseCall(call, err)
+		err = errors.Join(err, a.forceReleaseCall(call, err))
 	}
 	return err
 }
@@ -474,8 +449,7 @@ func (a *Agent) hangupCall(ctx context.Context, call *Call) error {
 		if err := a.cancelVoiceClientInvite(ctx, call, "local_hangup"); err != nil {
 			return fmt.Errorf("voice: send CANCEL: %w", err)
 		}
-		a.finishLocalCancel(call, "local_hangup")
-		return nil
+		return a.finishLocalCancel(call, "local_hangup")
 	}
 	response, err := a.sendCallDialogRequest(ctx, call, BuildIMSBye(a, call))
 	if err != nil {
@@ -519,23 +493,16 @@ func (a *Agent) finishLocalHangup(call *Call) error {
 	if !call.claimTerminalFinalization() {
 		return nil
 	}
-	call.StopMedia()
-	_ = call.EnsureTimerStopped()
-	call.CloseDone()
 	a.emitCallEnded(call, "local_hangup")
-	a.finalizeActiveCall(call)
-	return nil
+	return a.finalizeActiveCall(call)
 }
 
-func (a *Agent) finishLocalCancel(call *Call, reason string) {
+func (a *Agent) finishLocalCancel(call *Call, reason string) error {
 	if call == nil || !call.claimTerminalFinalization() {
-		return
+		return nil
 	}
-	call.StopMedia()
-	_ = call.EnsureTimerStopped()
-	call.CloseDone()
 	a.emitCallCanceled(call, reason)
-	a.finalizeActiveCall(call)
+	return a.finalizeActiveCall(call)
 }
 
 func (a *Agent) failOutboundCall(call *Call, cause error) error {
@@ -543,28 +510,27 @@ func (a *Agent) failOutboundCall(call *Call, cause error) error {
 		return cause
 	}
 	_ = call.TransitionChecked(callstate.StateTerminating)
-	call.StopMedia()
-	_ = call.EnsureTimerStopped()
-	_ = a.closeCallDialog(context.Background(), call)
-	call.CloseDone()
+	cause = errors.Join(cause, a.closeCallDialogForCleanup(call))
+	if cause == nil {
+		cause = errors.New("voice: outbound call failed without cause")
+	}
 	a.emitCallFailed(call, cause.Error())
-	a.finalizeActiveCall(call)
+	cause = errors.Join(cause, a.finalizeActiveCall(call))
 	return cause
 }
 
-func (a *Agent) forceReleaseCall(call *Call, cause error) {
+func (a *Agent) forceReleaseCall(call *Call, cause error) error {
 	if call == nil || !call.claimTerminalFinalization() {
-		return
+		return nil
 	}
 	_ = call.TransitionChecked(callstate.StateTerminating)
-	call.StopMedia()
-	_ = call.EnsureTimerStopped()
-	_ = a.closeCallDialog(context.Background(), call)
-	call.CloseDone()
+	cleanupErr := a.closeCallDialogForCleanup(call)
 	if cause != nil {
 		a.emitCallFailed(call, cause.Error())
 	}
-	a.finalizeActiveCall(call)
+	cleanupErr = errors.Join(cleanupErr, a.finalizeActiveCall(call))
+	a.reportCallCleanupError(call, cleanupErr)
+	return cleanupErr
 }
 
 func (a *Agent) refreshVoiceSession(ctx context.Context, call *Call) error {
@@ -775,7 +741,9 @@ func (a *Agent) emit(ev events.Event) {
 	if a.bus != nil {
 		a.bus.Publish(ev)
 	}
-	a.notifyIMSEvent(ev)
+	// Recovered Agent emitters dispatch synchronously. In particular, a
+	// terminal event must be delivered before finalization cancels its Call.
+	a.notify(ev)
 }
 
 func (a *Agent) notify(ev events.Event) {
@@ -792,16 +760,24 @@ func (a *Agent) notify(ev events.Event) {
 	}
 }
 
-// finalizeActiveCall clears the active call when it reaches a terminal state.
-func (a *Agent) finalizeActiveCall(call *Call) {
+// finalizeActiveCall releases the call and removes every registry alias.
+func (a *Agent) finalizeActiveCall(call *Call) error {
 	if a == nil || call == nil {
-		return
+		return nil
 	}
+	call.claimTerminalFinalization()
+	err := call.finalizeResourcesCurrent()
 	a.mu.Lock()
 	if a.activeCall == call {
 		a.activeCall = nil
 	}
+	for callID, registered := range a.calls {
+		if registered == call {
+			delete(a.calls, callID)
+		}
+	}
 	a.mu.Unlock()
+	return err
 }
 
 // register registers the device with the IMS network.

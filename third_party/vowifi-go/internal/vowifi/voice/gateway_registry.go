@@ -88,7 +88,7 @@ func (g *Gateway) UnregisterDevice(deviceID string) {
 	delete(g.entryWorkers, deviceID)
 	g.mu.Unlock()
 	if worker != nil {
-		worker.cancel()
+		stopGatewayEntryWorkerChain(worker)
 	}
 	if agent != nil {
 		_ = agent.Stop()

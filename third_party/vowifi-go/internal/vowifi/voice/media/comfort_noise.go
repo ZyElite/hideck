@@ -37,6 +37,12 @@ func (g *ComfortNoiseGenerator) Start(args ...any) error {
 		return errors.New("media: nil noise generator")
 	}
 	g.mu.Lock()
+	select {
+	case <-g.stopCh:
+		g.mu.Unlock()
+		return errors.New("media: comfort-noise generator stopped")
+	default:
+	}
 	if len(args) == 2 {
 		g.conn, _ = args[0].(net.PacketConn)
 		g.remoteAddr, _ = args[1].(*net.UDPAddr)
@@ -75,7 +81,12 @@ func (g *ComfortNoiseGenerator) Errors() <-chan error {
 }
 
 func (g *ComfortNoiseGenerator) sendLoop() {
-	defer g.wg.Done()
+	defer func() {
+		g.mu.Lock()
+		g.started = false
+		g.mu.Unlock()
+		g.wg.Done()
+	}()
 	ticker := time.NewTicker(comfortNoisePacketInterval)
 	defer ticker.Stop()
 	for {
@@ -84,6 +95,7 @@ func (g *ComfortNoiseGenerator) sendLoop() {
 			return
 		case <-ticker.C:
 			if err := g.sendOnePacket(); err != nil {
+				g.stopOnce.Do(func() { close(g.stopCh) })
 				g.reportError(err)
 				return
 			}

@@ -75,19 +75,14 @@ func (a *Agent) settleOutboundCancel(call *Call, reason string) {
 		a.finishOutboundNoAnswer(call)
 		return
 	}
-	a.finishLocalCancel(call, reason)
+	a.reportCallCleanupError(call, a.finishLocalCancel(call, reason))
 }
 
 func (c *Call) cancelOutboundRuntime() {
 	if c == nil {
 		return
 	}
-	c.mu.RLock()
-	cancel := c.outboundRuntimeCancel
-	c.mu.RUnlock()
-	if cancel != nil {
-		cancel()
-	}
+	c.CancelOutboundInviteTimer()
 }
 
 // HandleOutboundACK consumes the local ACK after the final client response.

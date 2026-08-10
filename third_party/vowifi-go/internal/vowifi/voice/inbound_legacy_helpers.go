@@ -29,6 +29,7 @@ func (a *Agent) rejectBusy(
 	call.agent = a
 	call.setServerInvite(handle, request)
 	call.DialogState.ToTag = voiceTag()
+	defer func() { _ = releaseUnregisteredCall(call) }()
 	a.sendStatusResponse(486, "Busy Here", call)
 }
 

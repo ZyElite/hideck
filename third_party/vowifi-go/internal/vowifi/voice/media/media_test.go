@@ -122,6 +122,9 @@ func TestComfortNoiseGeneratorReportsWriteFailure(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for RTP write error")
 	}
+	if err := generator.Start(conn, remote); err == nil {
+		t.Fatal("failed comfort-noise generator reported a successful restart")
+	}
 }
 
 func TestLinearToUlaw(t *testing.T) {
@@ -227,10 +230,87 @@ func TestMediaSessionManager(t *testing.T) {
 	if m.GetRelay("call-1") != r {
 		t.Error("GetRelay mismatch")
 	}
-	if err := m.Release("call-1"); err != nil {
+	m.Start()
+	if err := m.ReleaseCurrent("call-1"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 	if m.GetRelay("call-1") != nil {
 		t.Error("relay should be released")
 	}
+}
+
+func TestMediaSessionManagerReplacementStopsPreviousRelay(t *testing.T) {
+	m := NewMediaSessionManager()
+	first, err := m.CreateRelay("call-1", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.CreateRelay("call-1", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || m.GetRelay("call-1") != second {
+		t.Fatal("replacement relay was not installed")
+	}
+	if err := first.StartCurrent(); err == nil {
+		t.Fatal("replaced relay remained usable")
+	}
+	if err := m.ReleaseCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.StartCurrent(); err == nil {
+		t.Fatal("released manager reported a successful start")
+	}
+}
+
+func TestMediaSessionManagerLegacyReplacementRemovesCallAlias(t *testing.T) {
+	m := NewMediaSessionManager()
+	additive, err := m.CreateRelay("call-1", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := m.CreateRelay("127.0.0.1", "127.0.0.1", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.GetRelay("call-1") != nil || m.GetRelay() != legacy {
+		t.Fatal("legacy replacement retained an additive relay alias")
+	}
+	if err := additive.StartCurrent(); err == nil {
+		t.Fatal("legacy replacement left additive relay usable")
+	}
+	m.Release()
+}
+
+func TestComfortNoiseCannotRestartAfterStop(t *testing.T) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	remote := conn.LocalAddr().(*net.UDPAddr)
+	generator := NewComfortNoiseGenerator(conn, remote, "device", "trace")
+	if err := generator.Start(); err != nil {
+		t.Fatal(err)
+	}
+	generator.Stop()
+	if err := generator.Start(); err == nil {
+		t.Fatal("stopped comfort-noise generator reported a successful restart")
+	}
+}
+
+func TestBridgeReplacementStopsPreviousRelay(t *testing.T) {
+	bridge := NewBridge("device")
+	first := NewRTPRelay(nil, nil)
+	second := NewRTPRelay(nil, nil)
+	if _, err := bridge.SetupRelay(first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bridge.SetupRelay(second); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.StartCurrent(); err == nil {
+		t.Fatal("replaced bridge relay remained usable")
+	}
+	second.Stop()
 }

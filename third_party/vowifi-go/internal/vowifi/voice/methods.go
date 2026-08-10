@@ -74,7 +74,25 @@ func (c *Call) MarkErrorACKSent() bool {
 }
 
 // CancelOutboundInviteTimer cancels the no-answer timer.
-func (c *Call) CancelOutboundInviteTimer() error { return c.StopOutboundNoAnswerTimer() }
+func (c *Call) CancelOutboundInviteTimer() {
+	_ = c.CancelOutboundInviteTimerCurrent()
+}
+
+// CancelOutboundInviteTimerCurrent retains the additive error-returning form.
+func (c *Call) CancelOutboundInviteTimerCurrent() error {
+	if c == nil {
+		return nil
+	}
+	c.StopOutboundNoAnswerTimer()
+	c.mu.Lock()
+	cancel := c.outboundRuntimeCancel
+	c.outboundRuntimeCancel = nil
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return nil
+}
 
 // --- Call constructors ---
 
@@ -98,7 +116,7 @@ func NewOutboundCallForAgent(agent *Agent, number string) (*Call, error) {
 	call := NewCall(agent, callstate.DirectionOutbound, newVoiceCallID(), number)
 	call.SetStartTime(time.Now())
 	if err := call.TransitionChecked(callstate.StateCalling); err != nil {
-		return nil, err
+		return nil, errors.Join(err, releaseUnregisteredCall(call))
 	}
 	agent.mu.Lock()
 	agent.calls[call.CallID()] = call
@@ -185,7 +203,7 @@ func (a *Agent) HandleClientByeByID(callID string) error {
 	if call == nil {
 		return errors.New("voice: call not found")
 	}
-	return call.Hangup()
+	return call.HangupCurrent()
 }
 
 // HandleClientCancel handles a client CANCEL.
@@ -207,8 +225,7 @@ func (a *Agent) HandleClientCancel(callID string) error {
 	if err := a.cancelVoiceClientInvite(ctx, call, "local_cancel"); err != nil {
 		return fmt.Errorf("voice: send CANCEL: %w", err)
 	}
-	a.finishLocalCancel(call, call.OutboundCancelReason())
-	return nil
+	return a.finishLocalCancel(call, call.OutboundCancelReason())
 }
 
 // HandleClientAck handles a client ACK.
@@ -265,13 +282,10 @@ func (a *Agent) finishRemoteBye(call *Call) error {
 	}
 	clientErr := a.sendClientBye(call)
 	_ = call.TransitionChecked(callstate.StateTerminating)
-	call.StopMedia()
-	_ = call.EnsureTimerStopped()
-	closeErr := a.closeCallDialog(context.Background(), call)
-	call.CloseDone()
+	closeErr := a.closeCallDialogForCleanup(call)
 	a.emitCallEnded(call, "remote_bye")
-	a.finalizeActiveCall(call)
-	return errors.Join(clientErr, closeErr)
+	cleanupErr := a.finalizeActiveCall(call)
+	return errors.Join(clientErr, closeErr, cleanupErr)
 }
 
 // OnIMSCancel handles a CANCEL from the IMS network.

@@ -8,16 +8,28 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
-// Hangup ends the call: it transitions to Disconnected and emits the
-// CallEnded event.
-func (c *Call) Hangup() error {
+// Hangup preserves the recovered local resource-release method.
+func (c *Call) Hangup() {
+	if c == nil {
+		return
+	}
+	if c.Cancel != nil {
+		c.Cancel()
+	}
+	c.StopMedia()
+	c.EnsureTimerStopped()
+	c.StopPrackTimer()
+}
+
+// HangupCurrent retains the additive network-aware error API.
+func (c *Call) HangupCurrent() error {
 	if c == nil {
 		return errors.New("voice: nil call")
 	}
 	if c.agent == nil {
 		return errors.New("voice: call has no agent")
 	}
-	return c.agent.Hangup(c.CallID())
+	return c.agent.HangupCurrent(c.CallID())
 }
 
 // StartMedia records media establishment and enters the recovered Connected state.
@@ -145,8 +157,13 @@ func (c *Call) StopPCAPCurrent() error {
 	return relay.StopPCAPCurrent()
 }
 
-// StartOutboundNoAnswerTimer schedules the no-answer timeout.
-func (c *Call) StartOutboundNoAnswerTimer(timeout time.Duration) error {
+// StartOutboundNoAnswerTimer preserves the recovered void timer API.
+func (c *Call) StartOutboundNoAnswerTimer(timeout time.Duration) {
+	_ = c.StartOutboundNoAnswerTimerCurrent(timeout)
+}
+
+// StartOutboundNoAnswerTimerCurrent retains explicit nil-call validation.
+func (c *Call) StartOutboundNoAnswerTimerCurrent(timeout time.Duration) error {
 	if c == nil {
 		return errors.New("voice: nil call")
 	}
@@ -157,7 +174,7 @@ func (c *Call) StartOutboundNoAnswerTimer(timeout time.Duration) error {
 	if c.noAnswerTimer != nil {
 		c.noAnswerTimer.Stop()
 	}
-	c.noAnswerTimer = time.AfterFunc(timeout, func() {
+	timer := time.AfterFunc(timeout, func() {
 		if c.CallState() == callstate.StateCalling || c.CallState() == callstate.StateRinging {
 			if c.agent != nil {
 				c.agent.handleOutboundInviteNoAnswerTimeout(c)
@@ -168,28 +185,49 @@ func (c *Call) StartOutboundNoAnswerTimer(timeout time.Duration) error {
 			c.CloseDone()
 		}
 	})
+	c.noAnswerTimer = timer
+	c.outboundNoAnswerStop = func() { timer.Stop() }
 	c.mu.Unlock()
 	return nil
 }
 
-// StopOutboundNoAnswerTimer cancels the pending no-answer timer.
-func (c *Call) StopOutboundNoAnswerTimer() error {
+// StopOutboundNoAnswerTimer preserves the recovered void callback API.
+func (c *Call) StopOutboundNoAnswerTimer() {
+	_ = c.StopOutboundNoAnswerTimerCurrent()
+}
+
+// StopOutboundNoAnswerTimerCurrent clears and executes the owned stop callback.
+func (c *Call) StopOutboundNoAnswerTimerCurrent() error {
 	if c == nil {
 		return nil
 	}
 	c.mu.Lock()
-	if c.noAnswerTimer != nil {
-		c.noAnswerTimer.Stop()
-		c.noAnswerTimer = nil
-	}
+	stop := c.outboundNoAnswerStop
+	timer := c.noAnswerTimer
+	c.outboundNoAnswerStop = nil
+	c.noAnswerTimer = nil
 	c.mu.Unlock()
+	if stop != nil {
+		stop()
+	} else if timer != nil {
+		timer.Stop()
+	}
 	return nil
 }
 
-// EnsureTimerStopped cancels every call-owned timer.
-func (c *Call) EnsureTimerStopped() error {
+// EnsureTimerStopped preserves the recovered session-timer cleanup API.
+func (c *Call) EnsureTimerStopped() {
+	_ = c.stopSessionTimer()
+}
+
+// EnsureTimerStoppedCurrent cancels every call-owned timer.
+func (c *Call) EnsureTimerStoppedCurrent() error {
+	if c == nil {
+		return nil
+	}
 	c.StopPrackTimer()
-	return errors.Join(c.StopOutboundNoAnswerTimer(), c.stopSessionTimer())
+	c.CancelOutboundInviteTimer()
+	return c.stopSessionTimer()
 }
 
 func (c *Call) stopSessionTimer() error {

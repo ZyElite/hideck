@@ -89,7 +89,7 @@ func (a *Agent) sendMarkedOutboundInviteCancel(
 	if !call.MarkLocalCancelSent(markerReason) {
 		return false, nil
 	}
-	_ = call.StopOutboundNoAnswerTimer()
+	call.StopOutboundNoAnswerTimer()
 	return true, a.sendOutboundInviteCancel(ctx, call, wireReason)
 }
 
@@ -129,9 +129,6 @@ func (a *Agent) finishOutboundNoAnswer(call *Call) {
 	if call == nil || !call.claimTerminalFinalization() {
 		return
 	}
-	call.StopMedia()
-	_ = call.EnsureTimerStopped()
-	call.CloseDone()
 	a.emitCallEnded(call, "no_answer")
-	a.finalizeActiveCall(call)
+	a.reportCallCleanupError(call, a.finalizeActiveCall(call))
 }

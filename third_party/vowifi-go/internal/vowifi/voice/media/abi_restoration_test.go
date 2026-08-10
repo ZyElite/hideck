@@ -14,7 +14,13 @@ type originalRTPRelayLifecycle interface {
 	StopPCAP()
 }
 
+type originalMediaSessionManagerLifecycle interface {
+	Start()
+	Release()
+}
+
 var _ originalRTPRelayLifecycle = (*RTPRelay)(nil)
+var _ originalMediaSessionManagerLifecycle = (*MediaSessionManager)(nil)
 
 func TestOriginalMediaStructPrefixes(t *testing.T) {
 	assertFieldPrefix(t, reflect.TypeOf(RTPRelay{}), []string{
@@ -72,9 +78,7 @@ func TestOriginalMediaCallForms(t *testing.T) {
 	if manager.GetRelay() != managed {
 		t.Fatal("original manager relay was not retained")
 	}
-	if err := manager.Release(); err != nil {
-		t.Fatal(err)
-	}
+	manager.Release()
 
 	conn := listenMediaUDP(t)
 	noise := NewComfortNoiseGenerator(conn, conn.LocalAddr().(*net.UDPAddr), "device-30", "trace-30")

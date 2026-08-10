@@ -13,7 +13,8 @@ func (g *Gateway) startEntryWorkerLocked(deviceID string, agent *Agent) {
 	if !g.running || agent == nil {
 		return
 	}
-	if previous := g.entryWorkers[deviceID]; previous != nil {
+	previous := g.entryWorkers[deviceID]
+	if previous != nil {
 		previous.cancel()
 		delete(g.entryWorkers, deviceID)
 	}
@@ -25,17 +26,31 @@ func (g *Gateway) startEntryWorkerLocked(deviceID string, agent *Agent) {
 	worker := &gatewayEntryWorker{
 		deviceID: deviceID, agent: agent,
 		ch: make(chan gatewayEntryTask, gatewayEntryQueueSize), cancel: cancel,
+		done: make(chan struct{}), previous: previous,
 	}
 	g.entryWorkers[deviceID] = worker
 	go g.runEntryWorker(ctx, worker)
 }
 
+func stopGatewayEntryWorkerChain(worker *gatewayEntryWorker) {
+	for current := worker; current != nil; current = current.previous {
+		current.cancel()
+	}
+	for current := worker; current != nil; current = current.previous {
+		<-current.done
+	}
+}
+
 func (g *Gateway) runEntryWorker(ctx context.Context, worker *gatewayEntryWorker) {
+	defer close(worker.done)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case task := <-worker.ch:
+			if ctx.Err() != nil {
+				return
+			}
 			if task.fn == nil {
 				continue
 			}

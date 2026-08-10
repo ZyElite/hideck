@@ -117,6 +117,8 @@ type Call struct {
 	clientByeSent        bool
 	clientFinalSent      bool
 	terminalFinalized    bool
+	cleanupOnce          sync.Once
+	cleanupErr           error
 }
 
 // Gateway bridges the local client (LAN side) to the IMS network. It owns
@@ -150,6 +152,8 @@ type gatewayEntryWorker struct {
 	agent    *Agent
 	ch       chan gatewayEntryTask
 	cancel   context.CancelFunc
+	done     chan struct{}
+	previous *gatewayEntryWorker
 }
 
 // SDPInfo is the recovered v1.5.5 audio-session projection.

@@ -197,8 +197,8 @@ func TestInboundBYEWaitsForConcurrentAnswerDecision(t *testing.T) {
 		t.Fatalf("BYE result=%+v err=%v", result.result, result.err)
 	}
 	call := agent.callByID(request.CallID)
-	if call.CallState() != callstate.StateTerminated || agent.IsBusy() {
-		t.Fatalf("final state=%s busy=%t", call.CallState(), agent.IsBusy())
+	if call != nil || agent.IsBusy() {
+		t.Fatalf("terminal call retained=%t busy=%t", call != nil, agent.IsBusy())
 	}
 }
 

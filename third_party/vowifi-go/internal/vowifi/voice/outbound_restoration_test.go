@@ -53,7 +53,7 @@ func TestStructuredOutboundInviteUsesIMSAndClientTransactions(t *testing.T) {
 		strings.Contains(string(response.Body()), "m=audio 33000 ") {
 		t.Fatalf("client response SDP was not relayed: %q", response.Body())
 	}
-	if err := agent.Hangup(call.CallID()); err != nil {
+	if err := agent.HangupCurrent(call.CallID()); err != nil {
 		t.Fatal(err)
 	}
 }

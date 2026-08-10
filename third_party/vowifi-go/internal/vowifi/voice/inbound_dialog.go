@@ -37,20 +37,20 @@ func (a *Agent) prepareInboundVoiceDialog(call *Call, request imscore.InboundVoi
 func (a *Agent) reserveInboundCall(request imscore.InboundVoiceRequest) (*Call, bool, error) {
 	call := a.newInboundCall(request)
 	if err := call.TransitionChecked(callstate.StateRinging); err != nil {
-		return nil, false, err
+		return nil, false, errors.Join(err, releaseUnregisteredCall(call))
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if existing := a.calls[request.CallID]; existing != nil && !existing.IsTerminalState() {
-		call.CloseDone()
-		return existing, false, nil
+		a.mu.Unlock()
+		return existing, false, releaseUnregisteredCall(call)
 	}
 	if a.activeCall != nil && !a.activeCall.IsTerminalState() {
-		call.CloseDone()
-		return nil, false, errors.New("voice: busy")
+		a.mu.Unlock()
+		return nil, false, errors.Join(errors.New("voice: busy"), releaseUnregisteredCall(call))
 	}
 	a.calls[request.CallID] = call
 	a.activeCall = call
+	a.mu.Unlock()
 	return call, true, nil
 }
 

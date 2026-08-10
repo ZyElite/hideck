@@ -226,7 +226,7 @@ func (a *Agent) rejectUnownedServerInvite(
 		return
 	}
 	call := NewCallFromRequest(a.deviceID, request, session)
-	defer call.CloseDone()
+	defer func() { _ = releaseUnregisteredCall(call) }()
 	response := call.BuildResponse(status, imscore.SIPStatusText(status))
 	err := a.dialog.RejectServerInvite(context.Background(), a.deviceID, handle,
 		imsendpoint.ServerInviteRejectOptions{Response: response})

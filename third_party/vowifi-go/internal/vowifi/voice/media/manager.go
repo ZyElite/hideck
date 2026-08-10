@@ -43,7 +43,12 @@ func (m *MediaSessionManager) CreateRelay(first string, second any, rest ...any)
 		return nil, errors.New("media: invalid media timeout")
 	}
 	if m.relay != nil {
-		m.relay.Stop()
+		previous := m.relay
+		if err := previous.StopCurrent(); err != nil {
+			return nil, err
+		}
+		m.relay = nil
+		m.removeRelayAliasesLocked(previous)
 	}
 	relay, err := NewRTPRelayWithListener(nil, first, lanAddress, 0, 0)
 	if err != nil {
@@ -54,7 +59,24 @@ func (m *MediaSessionManager) CreateRelay(first string, second any, rest ...any)
 	return relay, nil
 }
 
+func (m *MediaSessionManager) removeRelayAliasesLocked(target *RTPRelay) {
+	for callID, relay := range m.relays {
+		if relay == target {
+			delete(m.relays, callID)
+		}
+	}
+}
+
 func (m *MediaSessionManager) createAdditiveRelay(callID string, address *net.UDPAddr) (*RTPRelay, error) {
+	if previous := m.relays[callID]; previous != nil {
+		if err := previous.StopCurrent(); err != nil {
+			return nil, err
+		}
+		delete(m.relays, callID)
+		if m.relay == previous {
+			m.relay = nil
+		}
+	}
 	relay, err := NewRTPRelayWithListener(address)
 	if err != nil {
 		return nil, err
@@ -102,24 +124,43 @@ func (m *MediaSessionManager) GetRelay(callID ...string) *RTPRelay {
 	return m.relay
 }
 
-// Start starts the current relay(s).
-func (m *MediaSessionManager) Start() error {
+// Start preserves the recovered void lifecycle API.
+func (m *MediaSessionManager) Start() {
+	_ = m.StartCurrent()
+}
+
+// StartCurrent starts the current relays and exposes lifecycle errors.
+func (m *MediaSessionManager) StartCurrent() error {
 	if m == nil {
-		return nil
+		return errors.New("media: nil manager")
 	}
 	m.mu.Lock()
+	if m.released {
+		m.mu.Unlock()
+		return errors.New("media: manager released")
+	}
 	relays := m.relaySnapshotLocked()
 	m.mu.Unlock()
+	started := make([]*RTPRelay, 0, len(relays))
 	for _, relay := range relays {
 		if err := relay.StartCurrent(); err != nil {
+			for _, active := range started {
+				err = errors.Join(err, active.StopCurrent())
+			}
 			return err
 		}
+		started = append(started, relay)
 	}
 	return nil
 }
 
-// Release stops one call relay or all relays when no call ID is supplied.
-func (m *MediaSessionManager) Release(callID ...string) error {
+// Release preserves the recovered void full-release API.
+func (m *MediaSessionManager) Release() {
+	_ = m.ReleaseCurrent()
+}
+
+// ReleaseCurrent stops one call relay or all relays and exposes errors.
+func (m *MediaSessionManager) ReleaseCurrent(callID ...string) error {
 	if m == nil {
 		return nil
 	}
@@ -223,9 +264,9 @@ func (b *Bridge) SetupRelay(args ...any) (*RTPRelay, error) {
 		if !ok || relay == nil {
 			return nil, errors.New("media: invalid relay")
 		}
-		b.mu.Lock()
-		b.relay = relay
-		b.mu.Unlock()
+		if err := b.replaceRelay(relay); err != nil {
+			return nil, err
+		}
 		return relay, nil
 	}
 	if len(args) != 3 {
@@ -251,8 +292,8 @@ func (b *Bridge) SetupRelay(args ...any) (*RTPRelay, error) {
 		relay.Stop()
 		return nil, err
 	}
-	b.mu.Lock()
-	b.relay = relay
-	b.mu.Unlock()
+	if err := b.replaceRelay(relay); err != nil {
+		return nil, errors.Join(err, relay.StopCurrent())
+	}
 	return relay, nil
 }

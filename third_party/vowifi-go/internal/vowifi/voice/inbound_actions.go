@@ -1,7 +1,6 @@
 package voice
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -47,7 +46,7 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 			return InboundAnswer{}, err
 		}
 	}
-	_ = call.StopOutboundNoAnswerTimer()
+	call.StopOutboundNoAnswerTimer()
 	a.startVoiceSessionTimer(call)
 	answer.State = call.CallState().String()
 	a.emitCallAnswered(call)
@@ -149,10 +148,7 @@ func (a *Agent) releaseInboundCall(call *Call, cause error, canceled bool) {
 		return
 	}
 	_ = call.TransitionChecked(callstate.StateTerminating)
-	call.StopMedia()
-	_ = call.EnsureTimerStopped()
-	_ = a.closeCallDialog(context.Background(), call)
-	call.CloseDone()
+	cleanupErr := a.closeCallDialogForCleanup(call)
 	if canceled {
 		reason := "remote_cancel"
 		if cause != nil {
@@ -163,7 +159,8 @@ func (a *Agent) releaseInboundCall(call *Call, cause error, canceled bool) {
 		a.emitCallFailed(call, cause.Error())
 	}
 	_ = call.TransitionChecked(callstate.StateTerminated)
-	a.finalizeActiveCall(call)
+	cleanupErr = errors.Join(cleanupErr, a.finalizeActiveCall(call))
+	a.reportCallCleanupError(call, cleanupErr)
 }
 
 func (a *Agent) handleInboundBye(call *Call) (imscore.InboundVoiceResult, error) {
