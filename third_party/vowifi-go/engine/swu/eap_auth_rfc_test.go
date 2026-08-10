@@ -340,6 +340,10 @@ func TestEAPOnlyResponderMayOmitFinalAuthAfterMutualAKA(t *testing.T) {
 	if err := session.verifyEAPResponderAuth(nil); err != nil {
 		t.Fatalf("original mutual EAP-AKA compatibility rejected missing responder AUTH: %v", err)
 	}
+	malformed := []ikev2.Payload{&ikev2.RawPayload{PType: ikev2.PayloadAuth}}
+	if err := session.verifyEAPResponderAuth(malformed); err == nil {
+		t.Fatal("accepted malformed responder AUTH as an omitted payload")
+	}
 }
 
 func TestMissingResponderAuthCompatibilityRejectsUnsafeState(t *testing.T) {

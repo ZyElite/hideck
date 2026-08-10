@@ -154,6 +154,9 @@ func configuredEPDGIdentity(address string) (byte, []byte, bool) {
 func (s *Session) verifyEAPResponderAuth(payloads []ikev2.Payload) error {
 	auth := responderAuthPayload(payloads)
 	if auth == nil {
+		if hasPayloadType(payloads, ikev2.PayloadAuth) {
+			return errors.New("swu: malformed responder AUTH payload")
+		}
 		if err := s.canAcceptMissingResponderAuth(); err != nil {
 			return err
 		}
