@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
@@ -158,6 +159,20 @@ func (g *Gateway) OnIMSInvite(deviceID string, raw []byte, session *imsendpoint.
 		return
 	}
 	g.agent.OnIMSInvite(request, session, nil)
+}
+
+// HandleClientPrack routes a local PRACK to the matching device Agent.
+func (g *Gateway) HandleClientPrack(
+	deviceID string,
+	request *sip.Request,
+	transaction sip.ServerTransaction,
+) {
+	if g == nil || g.agent == nil ||
+		(strings.TrimSpace(deviceID) != "" && strings.TrimSpace(deviceID) != g.agent.DeviceID()) {
+		respondClientRequest(transaction, request, 481, "Call/Transaction Does Not Exist")
+		return
+	}
+	g.agent.HandlePrack(request, transaction)
 }
 
 // SimulateCall runs the recovered device-scoped timed-call workflow.

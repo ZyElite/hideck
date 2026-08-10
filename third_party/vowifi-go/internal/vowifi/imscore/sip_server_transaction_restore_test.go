@@ -88,6 +88,45 @@ func TestServerNonInviteUsesHandleAndMemoizesAfterTimerJ(t *testing.T) {
 	}
 }
 
+func TestInboundPRACKRespondsBeforeVoiceDispatchAndPublishesEvent(t *testing.T) {
+	service := newServerTransactionTestService(t)
+	handler := &serverTransactionVoiceHandler{handle: func(
+		InboundVoiceRequest,
+	) (InboundVoiceResult, error) {
+		return InboundVoiceResult{Handled: true}, errors.New("voice handler must not own IMS PRACK")
+	}}
+	service.SetVoiceRequestHandler(handler)
+	events := make(chan imsendpoint.Event, 1)
+	unsubscribe := service.Subscribe(imsendpoint.EventSubscription{
+		Name: "test_inbound_prack", QueueSize: 1, Workers: 1,
+		Match: func(event imsendpoint.Event) bool {
+			return event.Kind == "request" && event.Method == "PRACK"
+		},
+	}, func(event imsendpoint.Event) { events <- event })
+	t.Cleanup(unsubscribe)
+
+	recorder := &serverResponseRecorder{}
+	request := serverTestRequest("PRACK", "prack-call", "prack-branch")
+	if err := service.dispatchInboundSIP(request, recorder.reply); err != nil {
+		t.Fatal(err)
+	}
+	responses := recorder.snapshot()
+	if len(responses) != 1 || !strings.HasPrefix(responses[0], "SIP/2.0 200 OK") {
+		t.Fatalf("PRACK responses = %q", responses)
+	}
+	if len(handler.snapshot()) != 0 {
+		t.Fatal("IMS PRACK reached the generic voice handler")
+	}
+	select {
+	case event := <-events:
+		if !event.ResponseAcknowledged || event.InboundRequest == nil {
+			t.Fatalf("PRACK event = %+v", event)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("IMS PRACK event was not published")
+	}
+}
+
 func TestRejectedInviteRetransmitsAndACKStopsTransaction(t *testing.T) {
 	service := newServerTransactionTestService(t)
 	var invite InboundVoiceRequest

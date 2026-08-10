@@ -60,7 +60,12 @@ func (a *Agent) InboundVoiceEventSubscription() string {
 }
 
 func (a *Agent) handleIMSEvent(event imsendpoint.Event) {
-	if !strings.EqualFold(strings.TrimSpace(event.Kind), "request") {
+	kind := strings.ToLower(strings.TrimSpace(event.Kind))
+	if kind == "response" {
+		a.handleIMSResponseEvent(event)
+		return
+	}
+	if kind != "request" {
 		return
 	}
 	switch strings.ToUpper(strings.TrimSpace(event.Method)) {

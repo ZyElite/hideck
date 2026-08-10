@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
@@ -23,6 +25,7 @@ type reliableProvisionalRegistrar struct {
 	prackCount          int
 	sessionExpires      string
 	provisionalExpires  string
+	provisionalSDP      string
 }
 
 type sipTestResponse struct {
@@ -37,7 +40,27 @@ type reliableRegistrarOptions struct {
 	prackResponsesAfter       int
 	finalSessionExpires       string
 	provisionalSessionExpires string
+	provisionalSDP            string
 }
+
+type earlyMediaProbe struct {
+	call        *Call
+	imsMedia    *net.UDPConn
+	clientMedia *net.UDPConn
+}
+
+type recoveredEarlyDialogCallAPI interface {
+	StartPrackRuntimeRetransmission(func())
+	StopPrackTimer()
+}
+
+var _ recoveredEarlyDialogCallAPI = (*Call)(nil)
+
+type recoveredEarlyDialogGatewayAPI interface {
+	HandleClientPrack(string, *sip.Request, sip.ServerTransaction)
+}
+
+var _ recoveredEarlyDialogGatewayAPI = (*Gateway)(nil)
 
 func startReliableProvisionalRegistrar(t *testing.T) *reliableProvisionalRegistrar {
 	return startReliableProvisionalRegistrarWithOptions(t, reliableRegistrarOptions{prackResponsesAfter: 1})
@@ -57,6 +80,7 @@ func startReliableProvisionalRegistrarWithOptions(
 		prackResponsesAfter: options.prackResponsesAfter,
 		sessionExpires:      options.finalSessionExpires,
 		provisionalExpires:  options.provisionalSessionExpires,
+		provisionalSDP:      options.provisionalSDP,
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	go registrar.serve()
@@ -102,9 +126,11 @@ func (r *reliableProvisionalRegistrar) writeProvisional(request string, remote *
 	if r.provisionalExpires != "" {
 		extra += "Session-Expires: " + r.provisionalExpires + "\r\n"
 	}
-	r.writeResponse(sipTestResponse{
-		request: request, remote: remote, status: 183, extra: extra, body: reliableEarlyMediaSDP,
-	})
+	body := r.provisionalSDP
+	if body == "" {
+		body = reliableEarlyMediaSDP
+	}
+	r.writeResponse(sipTestResponse{request: request, remote: remote, status: 183, extra: extra, body: body})
 }
 
 func (r *reliableProvisionalRegistrar) writeFinalInvite(request string, remote *net.UDPAddr) {
@@ -159,6 +185,104 @@ func TestAgentPRACKsReliableProvisionalBeforeFinalInvite(t *testing.T) {
 	if ack := <-registrar.ack; voiceTestHeader(ack, "CSeq") != wantACKCSeq {
 		t.Fatalf("ACK CSeq = %q, want %s", voiceTestHeader(ack, "CSeq"), wantACKCSeq)
 	}
+}
+
+func TestLocalClientOwnsReliableProvisionalPRACK(t *testing.T) {
+	clientMedia := listenVoiceUDP(t)
+	imsMedia := listenVoiceUDP(t)
+	registrar := startReliableProvisionalRegistrarWithOptions(t, reliableRegistrarOptions{
+		prackResponsesAfter: 1,
+		provisionalSDP:      voiceTestSDP("ims", imsMedia.LocalAddr().(*net.UDPAddr).Port, 104),
+	})
+	agent := newVoiceTestAgent(t, registrar.conn)
+	if err := agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = agent.Stop() })
+
+	inviteTx := newVoiceServerTransaction()
+	clientOffer := voiceTestSDP("client", clientMedia.LocalAddr().(*net.UDPAddr).Port, 104)
+	invite := mustClientRequest(t, sip.INVITE, "client-100rel", clientOffer, "")
+	agent.HandleOutboundInvite(invite, inviteTx)
+	provisional := waitVoiceResponse(t, inviteTx, 183)
+	if got := requestHeaderValueFromResponse(provisional, "Require"); got != "100rel" {
+		t.Fatalf("forwarded Require = %q", got)
+	}
+	if got := requestHeaderValueFromResponse(provisional, "RSeq"); got != "41" {
+		t.Fatalf("forwarded RSeq = %q", got)
+	}
+	if !isVoiceSDPContentType(requestHeaderValueFromResponse(provisional, "Content-Type")) ||
+		len(provisional.Body()) == 0 {
+		t.Fatalf("forwarded early media = %q", provisional.Body())
+	}
+	select {
+	case request := <-registrar.prack:
+		t.Fatalf("agent sent PRACK before the local client: %q", request)
+	default:
+	}
+	assertEarlyMediaRelayed(t, earlyMediaProbe{
+		call: agent.ActiveCall(), imsMedia: imsMedia, clientMedia: clientMedia,
+	})
+
+	prackTx := newVoiceServerTransaction()
+	prack := mustClientRequest(
+		t, sip.PRACK, "client-100rel", "", "RAck: 41 1 INVITE\r\n",
+	)
+	NewGateway(agent).HandleClientPrack(agent.DeviceID(), prack, prackTx)
+	waitVoiceResponse(t, prackTx, 200)
+	select {
+	case request := <-registrar.prack:
+		if got := voiceTestHeader(request, "RAck"); got != "41 1 INVITE" {
+			t.Fatalf("IMS RAck = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("local PRACK was not forwarded to IMS")
+	}
+	waitVoiceResponse(t, inviteTx, 200)
+}
+
+func voiceTestSDP(name string, port, payloadType int) string {
+	return fmt.Sprintf(
+		"v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=%s\r\nc=IN IP4 127.0.0.1\r\n"+
+			"t=0 0\r\nm=audio %d RTP/AVP %d\r\na=rtpmap:%d AMR-WB/16000\r\n",
+		name, port, payloadType, payloadType,
+	)
+}
+
+func assertEarlyMediaRelayed(t *testing.T, probe earlyMediaProbe) {
+	t.Helper()
+	if probe.call == nil || probe.call.RTPRelay() == nil {
+		t.Fatal("early-media RTP relay is unavailable")
+	}
+	packet := []byte{0x80, 0x68, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 0x55}
+	destination := &net.UDPAddr{
+		IP: net.IPv4(127, 0, 0, 1), Port: probe.call.RTPRelay().IMSPort(),
+	}
+	if _, err := probe.imsMedia.WriteToUDP(packet, destination); err != nil {
+		t.Fatal(err)
+	}
+	if err := probe.clientMedia.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	received := make([]byte, len(packet))
+	n, _, err := probe.clientMedia.ReadFromUDP(received)
+	if err != nil {
+		t.Fatalf("early media was not relayed before final response: %v", err)
+	}
+	if string(received[:n]) != string(packet) {
+		t.Fatalf("relayed early media = %x, want %x", received[:n], packet)
+	}
+}
+
+func requestHeaderValueFromResponse(response *sip.Response, name string) string {
+	if response == nil {
+		return ""
+	}
+	header := response.GetHeader(name)
+	if header == nil {
+		return ""
+	}
+	return strings.TrimSpace(header.Value())
 }
 
 func TestAgentEmitsRingingAfterRecoveredProvisionalTransition(t *testing.T) {
@@ -240,6 +364,47 @@ func TestAgentRetainsSessionExpiryFromReliableProvisional(t *testing.T) {
 	}
 	if call.voiceSessionExpires() != 180*time.Second || call.sessionTimer == nil {
 		t.Fatalf("provisional session timer = %s, timer=%v", call.voiceSessionExpires(), call.sessionTimer)
+	}
+}
+
+func TestPRACKResponseEventStopsCompatibilityTimer(t *testing.T) {
+	agent := NewAgent("device-prack-event", nil, nil)
+	call := NewCall(agent, callstate.DirectionOutbound, "prack-event", "43430")
+	t.Cleanup(call.Cancel)
+	agent.mu.Lock()
+	agent.calls[call.CallID()] = call
+	agent.activeCall = call
+	agent.mu.Unlock()
+	call.StartPrackRuntimeRetransmission(func() {})
+	response := sip.NewResponse(200, "OK")
+	response.AppendHeader(sip.NewHeader("Call-ID", call.CallID()))
+	response.AppendHeader(&sip.CSeqHeader{SeqNo: 2, MethodName: sip.PRACK})
+	agent.handleIMSEvent(imsendpoint.Event{
+		Kind: "response", CallID: call.CallID(), CSeqMethod: "PRACK", Response: response,
+	})
+	call.mu.RLock()
+	timer, retry := call.prackTimer, call.prackRetransmit
+	call.mu.RUnlock()
+	if timer != nil || retry != nil {
+		t.Fatalf("PRACK runtime remains active: timer=%v retry=%v", timer, retry != nil)
+	}
+}
+
+func TestPrackRuntimeRetransmissionStopsBeforeNextBackoff(t *testing.T) {
+	call := NewCall(nil, callstate.DirectionOutbound, "prack-timer", "43430")
+	t.Cleanup(call.Cancel)
+	retries := make(chan struct{}, 2)
+	call.startPrackRuntimeRetransmission(time.Millisecond, func() { retries <- struct{}{} })
+	select {
+	case <-retries:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("PRACK retry did not run")
+	}
+	call.StopPrackTimer()
+	select {
+	case <-retries:
+		t.Fatal("PRACK retry ran after StopPrackTimer")
+	case <-time.After(5 * time.Millisecond):
 	}
 }
 

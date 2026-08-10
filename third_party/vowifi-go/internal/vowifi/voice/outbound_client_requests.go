@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/emiago/sipgo/sip"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
@@ -94,9 +93,7 @@ func (a *Agent) forwardClientPRACK(call *Call, rack string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
 	defer cancel()
-	err := a.dialog.SendReliableProvisionalPRACK(ctx, a.deviceID, imsendpoint.ReliableProvisionalOptions{
-		Invite: call.IMSInviteHandleValue(), Dialog: call.IMSDialogValue(), RAck: rack,
-	})
+	err := a.sendReliableProvisionalPRACKWithOptions(ctx, call, forwardedPRACKOptions(call, rack))
 	if err != nil {
 		logging.WarnRate("voice-client-prack:"+call.CallID(), 10*time.Second,
 			"local voice PRACK failed", "device", a.deviceID, "call_id", call.CallID(), "err", err)

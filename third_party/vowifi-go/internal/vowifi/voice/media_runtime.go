@@ -250,7 +250,7 @@ func (a *Agent) updateRemoteMedia(call *Call, response imscore.SIPResponse) erro
 		}
 		configureRelayDTMF(relay, parsedRemote)
 		call.setRemoteSDP(remoteSDP, "")
-		return nil
+		return call.StartMedia()
 	}
 	parsedClient, err := ProcessOutgoingClientSDP(clientLocal)
 	if err != nil {
@@ -262,7 +262,7 @@ func (a *Agent) updateRemoteMedia(call *Call, response imscore.SIPResponse) erro
 	configureRelayDTMF(relay, parsedRemote)
 	relay.SetPTMapping(ExtractAndApplyPTMapping(parsedRemote, parsedClient))
 	call.setRemoteSDP(remoteSDP, RewriteSDP(remoteSDP, clientRelayIP, relay.LANPort()))
-	return nil
+	return call.StartMedia()
 }
 
 func configureRelayDTMF(relay *media.RTPRelay, info *SDPInfo) {

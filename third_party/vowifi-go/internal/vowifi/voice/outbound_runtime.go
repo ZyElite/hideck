@@ -8,6 +8,7 @@ import (
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
@@ -78,7 +79,7 @@ func (a *Agent) handleIMSErrorResponse(
 	return a.failOutboundCall(call, errors.Join(cause, completeErr))
 }
 
-func (a *Agent) handleIMSResponseEvent(
+func (a *Agent) handleIMSResponseCallback(
 	ctx context.Context,
 	call *Call,
 	response *sip.Response,
@@ -97,6 +98,18 @@ func (a *Agent) handleIMSResponseEvent(
 		return errors.Join(handleErr, a.forwardOrDispatchIMSResponse(call, response))
 	}
 	return nil
+}
+
+func (a *Agent) handleIMSResponseEvent(event imsendpoint.Event) {
+	response := event.Response
+	call := a.callForIMSEvent(event)
+	if call == nil || response == nil || response.CSeq() == nil {
+		return
+	}
+	method := strings.ToUpper(strings.TrimSpace(string(response.CSeq().MethodName)))
+	if method == "PRACK" && response.StatusCode >= 200 {
+		call.StopPrackTimer()
+	}
 }
 
 func (a *Agent) sendOutboundInviteErrorACK(call *Call, response imscore.SIPResponse) error {

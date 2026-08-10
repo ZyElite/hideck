@@ -179,6 +179,9 @@ func (s *Service) dispatchInboundSIPRequest(
 	if handled || err != nil {
 		return err
 	}
+	if request.Method == sip.PRACK {
+		return s.handleIMSPRACK(request, transaction)
+	}
 	events := s.publishIMSEvent(s.buildInboundRequestEvent(request, transaction))
 	responseWriter := reply
 	if transaction != nil {

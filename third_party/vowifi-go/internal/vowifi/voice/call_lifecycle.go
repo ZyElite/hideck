@@ -133,7 +133,8 @@ func (c *Call) StopOutboundNoAnswerTimer() error {
 
 // EnsureTimerStopped cancels every call-owned timer.
 func (c *Call) EnsureTimerStopped() error {
-	return errors.Join(c.StopOutboundNoAnswerTimer(), c.StopPrackTimer(), c.stopSessionTimer())
+	c.StopPrackTimer()
+	return errors.Join(c.StopOutboundNoAnswerTimer(), c.stopSessionTimer())
 }
 
 func (c *Call) stopSessionTimer() error {

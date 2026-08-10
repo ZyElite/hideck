@@ -44,6 +44,8 @@ func applyClientResponseHeaders(response *sip.Response, call *Call, source imsco
 	applyClientContact(response, call)
 	copyClientResponseHeader(response, source.Headers, "Supported")
 	copyClientResponseHeader(response, source.Headers, "Allow")
+	copyClientResponseHeader(response, source.Headers, "Require")
+	copyClientResponseHeader(response, source.Headers, "RSeq")
 	if len(response.Body()) > 0 {
 		response.RemoveHeader("Content-Type")
 		response.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))

@@ -80,7 +80,7 @@ type Call struct {
 	prackTimer    *time.Timer
 
 	prackGeneration uint64
-	prackRetransmit func() error
+	prackRetransmit func()
 	prackDeadline   time.Time
 	sessionExpires  time.Duration
 

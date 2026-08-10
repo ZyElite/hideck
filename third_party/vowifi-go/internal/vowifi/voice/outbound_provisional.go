@@ -51,6 +51,9 @@ func (a *Agent) handleIMS1xxResponse(
 	if !call.markReliableProvisionalRSeq(rseq) {
 		return nil
 	}
+	if call.hasLocalInviteTransaction() {
+		return nil
+	}
 	return a.sendReliableProvisionalPRACK(ctx, call, rseq)
 }
 
@@ -66,22 +69,50 @@ func logOutboundInviteResponse(message string, response imscore.SIPResponse) {
 }
 
 func (a *Agent) sendReliableProvisionalPRACK(ctx context.Context, call *Call, rseq uint32) error {
+	options := reliableProvisionalPRACKOptions(
+		call,
+		strconv.FormatUint(uint64(rseq), 10),
+		voiceResponseHeaderFromCall(call, "Contact"),
+		voiceResponseRoutesFromCall(call),
+	)
+	return a.sendReliableProvisionalPRACKWithOptions(ctx, call, options)
+}
+
+func (a *Agent) sendReliableProvisionalPRACKWithOptions(
+	ctx context.Context,
+	call *Call,
+	options imsendpoint.ReliableProvisionalOptions,
+) error {
 	if a == nil || a.dialog == nil || call == nil {
 		return errors.New("voice: dialog controller is unavailable")
 	}
-	invite := call.IMSInviteHandle()
-	if invite == nil {
+	if options.Invite == nil && options.Dialog == nil {
 		return errors.New("voice: IMS INVITE handle is unavailable")
 	}
-	err := a.dialog.SendReliableProvisionalPRACK(ctx, a.deviceID, imsendpoint.ReliableProvisionalOptions{
-		Invite: invite,
-		RSeq:   strconv.FormatUint(uint64(rseq), 10),
-	})
+	err := a.dialog.SendReliableProvisionalPRACK(ctx, a.deviceID, options)
 	if err != nil {
 		return fmt.Errorf("voice: PRACK transaction failed: %w", err)
 	}
-	logging.Info("IMS PRACK 成功", "rseq", rseq, "status", 200)
+	logging.Info("IMS PRACK 成功", "rack", options.RAck, "status", 200)
 	return nil
+}
+
+func voiceResponseHeaderFromCall(call *Call, name string) string {
+	if call == nil || !strings.EqualFold(name, "Contact") {
+		return ""
+	}
+	call.mu.RLock()
+	defer call.mu.RUnlock()
+	return call.DialogState.IMSContact
+}
+
+func voiceResponseRoutesFromCall(call *Call) []string {
+	if call == nil {
+		return nil
+	}
+	call.mu.RLock()
+	defer call.mu.RUnlock()
+	return append([]string(nil), call.DialogState.RouteSet...)
 }
 
 func reliableProvisionalRSeq(response imscore.SIPResponse) (uint32, error) {
