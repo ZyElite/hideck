@@ -18,7 +18,7 @@ func (a *Agent) SimulateCall(
 	ctx context.Context,
 	request SimulateCallRequest,
 ) (*SimulateCallResult, error) {
-	if a == nil || a.ims == nil {
+	if a == nil || a.imsEndpoint() == nil {
 		return nil, errors.New("voice: IMS provider is unavailable")
 	}
 	request.Callee = strings.TrimSpace(request.Callee)
@@ -54,7 +54,11 @@ func (a *Agent) SimulateCall(
 }
 
 func (a *Agent) waitForSimulateRegistration(ctx context.Context) error {
-	if a.ims.IsRegistered() {
+	endpoint := a.imsEndpoint()
+	if endpoint == nil {
+		return errors.New("voice: IMS provider is unavailable")
+	}
+	if endpoint.IsRegistered() {
 		return nil
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, simulateRegistrationTimeout)
@@ -66,7 +70,7 @@ func (a *Agent) waitForSimulateRegistration(ctx context.Context) error {
 		case <-waitCtx.Done():
 			return fmt.Errorf("voice: IMS registration wait failed: %w", waitCtx.Err())
 		case <-ticker.C:
-			if a.ims.IsRegistered() {
+			if endpoint.IsRegistered() {
 				return nil
 			}
 		}

@@ -27,7 +27,9 @@ type Agent struct {
 	mu       sync.RWMutex
 	deviceID string
 	ims      *imscore.Service
+	endpoint imsendpoint.Endpoint
 	bus      *imscore.EventBus
+	gateway  *Gateway
 	actor    *callstate.Actor
 	dialog   *dialog.Controller
 
@@ -120,11 +122,34 @@ type Call struct {
 // Gateway bridges the local client (LAN side) to the IMS network. It owns
 // the client-facing SIP endpoint and forwards requests/responses.
 type Gateway struct {
-	mu            sync.RWMutex
-	agent         *Agent
-	notifier      func(events.Event)
-	clientAdapter voiceclient.Adapter
-	started       bool
+	notifier        CallNotifier
+	eventDispatcher events.EventDispatcher
+	clientAdapter   voiceclient.Adapter
+	mu              sync.RWMutex
+	agents          map[string]*Agent
+	entryWorkers    map[string]*gatewayEntryWorker
+	running         bool
+	epoch           uint64
+	ctx             context.Context
+	cancel          context.CancelFunc
+}
+
+// CallNotifier is the v1.5.5 incoming-call notification contract.
+type CallNotifier interface {
+	NotifyIncomingCall(deviceID, caller, callee string)
+}
+
+type gatewayEntryTask struct {
+	name       string
+	enqueuedAt time.Time
+	fn         func(*Agent)
+}
+
+type gatewayEntryWorker struct {
+	deviceID string
+	agent    *Agent
+	ch       chan gatewayEntryTask
+	cancel   context.CancelFunc
 }
 
 // SDPInfo is a parsed SDP session description (RFC 4566).

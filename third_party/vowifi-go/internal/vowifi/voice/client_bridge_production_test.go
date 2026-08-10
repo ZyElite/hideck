@@ -62,7 +62,7 @@ func TestGatewayStartsAndStopsProductionClientBridge(t *testing.T) {
 	if gateway.GetClientAdapter() != adapter || agent.GetClientAdapter() != adapter {
 		t.Fatal("gateway did not project the adapter into the agent")
 	}
-	if err := gateway.Start(); err != nil {
+	if err := gateway.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	req := sip.NewRequest(sip.OPTIONS, sip.Uri{Scheme: "sip", User: "client", Host: "127.0.0.1"})
@@ -100,7 +100,7 @@ func TestAgentSerializesClientAdapterReplacementWithStop(t *testing.T) {
 	adapter := &agentVoiceClientAdapter{client: client, ua: ua}
 	agent := NewAgent("client-race-device", nil, nil)
 	agent.SetClientAdapter(adapter)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	var operations sync.WaitGroup

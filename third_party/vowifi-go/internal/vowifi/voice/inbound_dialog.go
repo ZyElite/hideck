@@ -11,7 +11,7 @@ import (
 )
 
 func (a *Agent) prepareInboundVoiceDialog(call *Call, request imscore.InboundVoiceRequest) error {
-	profile, err := a.ims.RegisteredSIPDialogProfile()
+	profile, err := a.registeredDialogProfile()
 	if err != nil {
 		return err
 	}

@@ -118,9 +118,13 @@ func writeVoiceOptionalHeader(out *strings.Builder, name, value string) {
 }
 
 func fallbackVoiceDialog(agent *Agent, call *Call) voiceSIPDialog {
-	domain := agent.ims.GetRealm()
-	localURI := "sip:" + agent.ims.GetIMSI() + "@" + domain
-	if identity := strings.TrimSpace(agent.ims.GetIMPU()); identity != "" {
+	snapshot := agent.imsSnapshot()
+	domain := snapshot.Realm
+	localURI := strings.TrimSpace(snapshot.IMPU)
+	if localURI == "" {
+		localURI = "sip:unknown@" + domain
+	}
+	if identity := strings.TrimSpace(snapshot.IMPU); identity != "" {
 		localURI = identity
 	}
 	remoteURI := buildIMSCalledPartyURI(call.Peer(), localURI, domain)
@@ -128,8 +132,9 @@ func fallbackVoiceDialog(agent *Agent, call *Call) voiceSIPDialog {
 		localURI: localURI, remoteURI: remoteURI, remoteTarget: remoteURI,
 		contactURI: localURI, contactHeader: "<" + localURI + ">",
 		localAddress: agent.localAddr(), transport: "udp",
-		serviceRoute: agent.ims.GetServiceRoutes(), securityVerify: agent.ims.GetSecurityVerify(),
-		pani: agent.ims.GetPAccessNetworkInfo(), localTag: voiceTag(), inviteBranch: voiceBranch(),
+		serviceRoute: splitVoiceHeaderValues(snapshot.ServiceRoute), securityVerify: snapshot.SecVerify,
+		pani: snapshot.PAccessNetworkInfo, userAgent: snapshot.UserAgent,
+		localTag: voiceTag(), inviteBranch: voiceBranch(),
 		sessionID: voiceSessionID(), cseq: 1,
 		inviteCSeq: 1,
 	}
@@ -141,14 +146,11 @@ type imsConfigView struct {
 }
 
 func (a *Agent) imsConfig() *imsConfigView {
-	if a == nil || a.ims == nil {
+	if a == nil || a.imsEndpoint() == nil {
 		return &imsConfigView{}
 	}
-	session := a.ims.Session()
-	if session == nil {
-		return &imsConfigView{Domain: a.ims.GetRealm()}
-	}
-	return &imsConfigView{Domain: session.Domain, IMPI: session.IMPI}
+	snapshot := a.imsSnapshot()
+	return &imsConfigView{Domain: snapshot.Realm, IMPI: strings.TrimPrefix(snapshot.IMPU, "sip:")}
 }
 
 func generateBasicSDP(agent *Agent, call *Call) string {
@@ -166,10 +168,13 @@ func generateBasicSDP(agent *Agent, call *Call) string {
 }
 
 func (a *Agent) localAddr() string {
-	if a == nil || a.ims == nil || a.ims.GetLocalIMSAddr() == "" {
+	if a == nil {
 		return "0.0.0.0:5060"
 	}
-	return a.ims.GetLocalIMSAddr()
+	if address := strings.TrimSpace(a.imsSnapshot().LocalAddr); address != "" {
+		return address
+	}
+	return "0.0.0.0:5060"
 }
 
 func (a *Agent) localIP() string {

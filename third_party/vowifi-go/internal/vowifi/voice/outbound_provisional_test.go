@@ -167,7 +167,7 @@ func sipMethodForTest(request string) string {
 func TestAgentPRACKsReliableProvisionalBeforeFinalInvite(t *testing.T) {
 	registrar := startReliableProvisionalRegistrar(t)
 	agent := newVoiceTestAgent(t, registrar.conn)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
@@ -200,7 +200,7 @@ func TestLocalClientOwnsReliableProvisionalPRACK(t *testing.T) {
 		provisionalSDP:      voiceTestSDP("ims", imsMedia.LocalAddr().(*net.UDPAddr).Port, 104),
 	})
 	agent := newVoiceTestAgent(t, registrar.conn)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })
@@ -233,7 +233,12 @@ func TestLocalClientOwnsReliableProvisionalPRACK(t *testing.T) {
 	prack := mustClientRequest(
 		t, sip.PRACK, "client-100rel", "", "RAck: 41 1 INVITE\r\n",
 	)
-	NewGateway(agent).HandleClientPrack(agent.DeviceID(), prack, prackTx)
+	gateway := NewGateway(agent)
+	if err := gateway.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer gateway.Stop()
+	gateway.HandleClientPrack(agent.DeviceID(), prack, prackTx)
 	waitVoiceResponse(t, prackTx, 200)
 	select {
 	case request := <-registrar.prack:
@@ -326,7 +331,7 @@ func TestAgentRetransmitsPRACKWithOriginalTransaction(t *testing.T) {
 		prackResponsesAfter: 2, finalSessionExpires: "120;refresher=uac",
 	})
 	agent := newVoiceTestAgent(t, registrar.conn)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
@@ -356,7 +361,7 @@ func TestAgentRetainsSessionExpiryFromReliableProvisional(t *testing.T) {
 		prackResponsesAfter: 1, provisionalSessionExpires: "180;refresher=uac",
 	})
 	agent := newVoiceTestAgent(t, registrar.conn)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()

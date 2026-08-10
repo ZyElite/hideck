@@ -21,8 +21,12 @@ func (a *Agent) startVoiceClientInvite(
 	if err != nil {
 		return imscore.SIPResponse{}, fmt.Errorf("voice: parse INVITE: %w", err)
 	}
+	endpoint := a.imsEndpoint()
+	if endpoint == nil {
+		return imscore.SIPResponse{}, errors.New("voice: IMS endpoint is unavailable")
+	}
 	var finalObserved atomic.Bool
-	result, err := a.ims.StartClientInvite(ctx, a.deviceID, imsendpoint.ClientInviteOptions{
+	result, err := endpoint.StartClientInvite(ctx, a.deviceID, imsendpoint.ClientInviteOptions{
 		Request: request,
 		Contact: request.Contact(),
 		OnStarted: func(handle imsendpoint.InviteHandle) error {

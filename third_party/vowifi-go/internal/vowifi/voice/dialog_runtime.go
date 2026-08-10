@@ -29,10 +29,10 @@ type voiceSIPDialog struct {
 }
 
 func (a *Agent) prepareVoiceDialog(call *Call, number string) error {
-	if a == nil || a.ims == nil || call == nil {
+	if a == nil || a.imsEndpoint() == nil || call == nil {
 		return errors.New("voice: IMS service is unavailable")
 	}
-	profile, err := a.ims.RegisteredSIPDialogProfile()
+	profile, err := a.registeredDialogProfile()
 	if err != nil {
 		return err
 	}

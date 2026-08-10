@@ -87,7 +87,7 @@ func (a *voiceAgentAdapter) Start() error {
 	if a == nil || a.agent == nil {
 		return errors.New("runtimehost: voice agent is unavailable")
 	}
-	return a.agent.Start()
+	return a.agent.Start(context.Background())
 }
 
 func (a *voiceAgentAdapter) Stop() error {
@@ -155,7 +155,7 @@ func attachVoiceAgent(req StartRequest, inst *Instance, lifecycle IMSLifecycle) 
 	if !ok || adapter.svc == nil {
 		return errors.New("runtimehost: voice requires the registered IMS service")
 	}
-	agent := &voiceAgentAdapter{agent: voice.NewAgent(req.DeviceID, adapter.svc, adapter.svc.EventBus())}
+	agent := &voiceAgentAdapter{agent: voice.NewAgent(req.DeviceID, adapter.svc, nil)}
 	if err := agent.Start(); err != nil {
 		return err
 	}

@@ -3,59 +3,162 @@ package voice
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 
-	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voiceclient"
 )
 
-// NewGateway creates a client-facing gateway.
+// NewGateway retains the additive seeded-gateway constructor. The original
+// Gateway remains usable as a zero value.
 func NewGateway(agent *Agent) *Gateway {
-	return &Gateway{agent: agent}
+	gateway := &Gateway{}
+	gateway.ensureMapsLocked()
+	if agent != nil {
+		gateway.agents[agent.DeviceID()] = agent
+		agent.setGateway(gateway)
+	}
+	return gateway
 }
 
-// GetAgent returns the underlying agent.
-func (g *Gateway) GetAgent() *Agent {
+// Start starts the device registry and its per-device dispatch workers.
+func (g *Gateway) Start(ctx context.Context) error {
+	if g == nil {
+		return errors.New("voice: nil gateway")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	g.mu.Lock()
+	if g.cancel != nil {
+		g.cancel()
+	}
+	g.ctx, g.cancel = context.WithCancel(ctx)
+	g.running = true
+	g.epoch++
+	g.ensureMapsLocked()
+	agents := make([]*Agent, 0, len(g.agents))
+	for deviceID, agent := range g.agents {
+		agents = append(agents, agent)
+		g.startEntryWorkerLocked(deviceID, agent)
+	}
+	g.mu.Unlock()
+	for _, agent := range agents {
+		if err := g.startAgent(agent); err != nil {
+			_ = g.Stop()
+			return err
+		}
+	}
+	return nil
+}
+
+// StartCurrent retains the displaced context-free start API.
+func (g *Gateway) StartCurrent() error {
+	return g.Start(context.Background())
+}
+
+// Stop cancels every worker before stopping and removing every Agent.
+func (g *Gateway) Stop() error {
 	if g == nil {
 		return nil
 	}
-	return g.agent
-}
-
-// SetNotifier wires the event notifier.
-func (g *Gateway) SetNotifier(fn func(events.Event)) {
-	if g == nil {
-		return
-	}
 	g.mu.Lock()
-	g.notifier = fn
+	if g.cancel != nil {
+		g.cancel()
+	}
+	agents := make([]*Agent, 0, len(g.agents))
+	for _, agent := range g.agents {
+		agents = append(agents, agent)
+	}
+	workers := make([]*gatewayEntryWorker, 0, len(g.entryWorkers))
+	for _, worker := range g.entryWorkers {
+		workers = append(workers, worker)
+	}
+	g.agents = make(map[string]*Agent)
+	g.entryWorkers = make(map[string]*gatewayEntryWorker)
+	g.running = false
+	g.epoch++
+	g.ctx = nil
+	g.cancel = nil
 	g.mu.Unlock()
+	for _, worker := range workers {
+		worker.cancel()
+	}
+	var stopErr error
+	for _, agent := range agents {
+		stopErr = errors.Join(stopErr, agent.Stop())
+	}
+	return stopErr
 }
 
-// GetNotifier returns the event notifier.
-func (g *Gateway) GetNotifier() func(events.Event) {
+// GetAgent returns the Agent registered for deviceID.
+func (g *Gateway) GetAgent(deviceID string) *Agent {
 	if g == nil {
 		return nil
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return g.notifier
+	return g.agents[strings.TrimSpace(deviceID)]
 }
 
-// SetClientAdapter installs the local SIP/RTP adapter and immediately
-// projects it into the production agent owned by this gateway.
+// SetNotifier installs the original incoming-call notifier.
+func (g *Gateway) SetNotifier(notifier CallNotifier) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	g.notifier = normalizeCallNotifier(notifier)
+	g.mu.Unlock()
+}
+
+// GetNotifier returns the original incoming-call notifier.
+func (g *Gateway) GetNotifier() CallNotifier {
+	if g == nil {
+		return nil
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return normalizeCallNotifier(g.notifier)
+}
+
+func normalizeCallNotifier(notifier CallNotifier) CallNotifier {
+	if notifier == nil {
+		return nil
+	}
+	value := reflect.ValueOf(notifier)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if value.IsNil() {
+			return nil
+		}
+	}
+	return notifier
+}
+
+// SetEventDispatcher installs the structured event sink.
+func (g *Gateway) SetEventDispatcher(dispatcher events.EventDispatcher) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	g.eventDispatcher = dispatcher
+	g.mu.Unlock()
+}
+
+// SetClientAdapter installs the local SIP/RTP adapter for present and future Agents.
 func (g *Gateway) SetClientAdapter(adapter voiceclient.Adapter) {
 	if g == nil {
 		return
 	}
 	g.mu.Lock()
 	g.clientAdapter = adapter
-	agent := g.agent
+	agents := make([]*Agent, 0, len(g.agents))
+	for _, agent := range g.agents {
+		agents = append(agents, agent)
+	}
 	g.mu.Unlock()
-	if agent != nil {
+	for _, agent := range agents {
 		agent.SetClientAdapter(adapter)
 	}
 }
@@ -70,143 +173,59 @@ func (g *Gateway) GetClientAdapter() voiceclient.Adapter {
 	return g.clientAdapter
 }
 
-// Start starts the gateway.
-func (g *Gateway) Start() error {
-	if g == nil {
-		return errors.New("voice: nil gateway")
+func (g *Gateway) ensureMapsLocked() {
+	if g.agents == nil {
+		g.agents = make(map[string]*Agent)
 	}
-	g.mu.Lock()
-	if g.started {
-		g.mu.Unlock()
-		return nil
+	if g.entryWorkers == nil {
+		g.entryWorkers = make(map[string]*gatewayEntryWorker)
 	}
-	g.started = true
-	g.mu.Unlock()
-	if g.agent == nil {
-		g.mu.Lock()
-		g.started = false
-		g.mu.Unlock()
-		return errors.New("voice: no agent")
-	}
-	if err := g.agent.Start(); err != nil {
-		g.mu.Lock()
-		g.started = false
-		g.mu.Unlock()
-		return err
-	}
-	return nil
 }
 
-// Stop stops the gateway.
-func (g *Gateway) Stop() error {
-	if g == nil {
-		return nil
+func (g *Gateway) startAgent(agent *Agent) error {
+	if agent == nil {
+		return errors.New("voice: nil agent")
 	}
-	g.mu.Lock()
-	if !g.started {
-		g.mu.Unlock()
-		return nil
+	g.mu.RLock()
+	ctx, adapter := g.ctx, g.clientAdapter
+	g.mu.RUnlock()
+	agent.setGateway(g)
+	agent.SetNotifier(g.forwardAgentEvent)
+	if adapter != nil {
+		agent.SetClientAdapter(adapter)
 	}
-	g.started = false
-	g.mu.Unlock()
-	if g.agent != nil {
-		return g.agent.Stop()
-	}
-	return nil
+	return agent.Start(ctx)
 }
 
-// RegisterDevice registers the device with the IMS network.
-func (g *Gateway) RegisterDevice() error {
-	if g == nil || g.agent == nil {
-		return errors.New("voice: no agent")
+func (g *Gateway) forwardAgentEvent(event events.Event) {
+	g.dispatchEvent(context.Background(), event)
+	incoming, ok := event.(events.EventIncomingCall)
+	if !ok {
+		if pointer, pointerOK := event.(*events.EventIncomingCall); pointerOK && pointer != nil {
+			incoming = *pointer
+			ok = true
+		}
 	}
-	return g.agent.register()
-}
-
-// UnregisterDevice deregisters the device.
-func (g *Gateway) UnregisterDevice() error {
-	if g == nil || g.agent == nil {
-		return errors.New("voice: no agent")
-	}
-	return g.agent.unregister()
-}
-
-// DeviceStatus returns the device registration status.
-func (g *Gateway) DeviceStatus() map[string]interface{} {
-	if g == nil || g.agent == nil {
-		return map[string]interface{}{"registered": false}
-	}
-	return g.agent.deviceStatus()
-}
-
-// OnIMSInvite retains the v1.5.5 raw compatibility entry point. Production
-// endpoint delivery uses Agent.OnIMSInvite with a retained server handle.
-func (g *Gateway) OnIMSInvite(deviceID string, raw []byte, session *imsendpoint.Session) {
-	if g == nil || g.agent == nil {
-		logging.WarnRate("voice-gateway-invite:"+strings.TrimSpace(deviceID),
-			voiceActorEventLogInterval, "voice gateway has no agent", "device", deviceID)
+	if !ok {
 		return
 	}
-	if deviceID = strings.TrimSpace(deviceID); deviceID != "" && deviceID != g.agent.DeviceID() {
-		logging.WarnRate("voice-gateway-invite:"+deviceID, voiceActorEventLogInterval,
-			"voice gateway agent does not match device", "device", deviceID)
-		return
+	if notifier := g.GetNotifier(); notifier != nil {
+		notifier.NotifyIncomingCall(incoming.DevID, incoming.Caller, incoming.Callee)
 	}
-	request, err := parseVoiceRequest(string(raw))
-	if err != nil {
-		logging.WarnRate("voice-gateway-invite-parse:"+deviceID, voiceActorEventLogInterval,
-			"voice gateway INVITE parse failed", "device", deviceID, "err", err)
-		return
-	}
-	g.agent.OnIMSInvite(request, session, nil)
 }
 
-// HandleClientPrack routes a local PRACK to the matching device Agent.
-func (g *Gateway) HandleClientPrack(
-	deviceID string,
-	request *sip.Request,
-	transaction sip.ServerTransaction,
-) {
-	if g == nil || g.agent == nil ||
-		(strings.TrimSpace(deviceID) != "" && strings.TrimSpace(deviceID) != g.agent.DeviceID()) {
-		respondClientRequest(transaction, request, 481, "Call/Transaction Does Not Exist")
-		return
-	}
-	g.agent.HandlePrack(request, transaction)
-}
-
-// SimulateCall runs the recovered device-scoped timed-call workflow.
-func (g *Gateway) SimulateCall(
-	ctx context.Context,
-	deviceID string,
-	request SimulateCallRequest,
-) (*SimulateCallResult, error) {
-	if g == nil || g.agent == nil {
-		return nil, errors.New("voice: no agent")
-	}
-	if deviceID != "" && deviceID != g.agent.DeviceID() {
-		return nil, errors.New("voice: agent not found for device " + deviceID)
-	}
-	return g.agent.SimulateCall(ctx, request)
-}
-
-// SimulateCallNumber retains the additive direct-dial convenience API.
-func (g *Gateway) SimulateCallNumber(number string) (*Call, error) {
-	if g == nil || g.agent == nil {
-		return nil, errors.New("voice: no agent")
-	}
-	return g.agent.simulateCall(number)
-}
-
-// dispatchEvent forwards an event to the notifier.
-func (g *Gateway) dispatchEvent(ev events.Event) {
-	if g == nil {
+func (g *Gateway) dispatchEvent(ctx context.Context, event events.Event) {
+	if g == nil || event == nil {
 		return
 	}
 	g.mu.RLock()
-	fn := g.notifier
+	dispatcher := g.eventDispatcher
 	g.mu.RUnlock()
-	if fn != nil {
-		fn(ev)
+	if dispatcher == nil {
+		return
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dispatcher.Dispatch(ctx, event)
 }

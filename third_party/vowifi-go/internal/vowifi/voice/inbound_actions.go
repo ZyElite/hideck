@@ -101,7 +101,7 @@ func (a *Agent) voiceSDPResponse(call *Call, status int, sdp string) imscore.Inb
 	if expires := call.voiceSessionExpires(); expires > 0 {
 		response.SessionExpires = strconv.FormatInt(int64(expires/time.Second), 10)
 	}
-	if profile, err := a.ims.RegisteredSIPDialogProfile(); err == nil {
+	if profile, err := a.registeredDialogProfile(); err == nil {
 		response.Contact = profile.ContactURI
 	}
 	return response

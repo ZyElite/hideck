@@ -96,27 +96,37 @@ func (a *Agent) handleMediaTimeout(call *Call) {
 
 // SendDTMF forwards an event to the agent-owned real call.
 func (g *Gateway) SendDTMF(callID, digit string) error {
-	if g == nil || g.agent == nil {
-		return errors.New("voice: no agent")
+	if g == nil {
+		return errors.New("voice: nil gateway")
 	}
-	return g.agent.SendDTMF(callID, digit)
+	g.mu.RLock()
+	agents := make([]*Agent, 0, len(g.agents))
+	for _, agent := range g.agents {
+		agents = append(agents, agent)
+	}
+	g.mu.RUnlock()
+	for _, agent := range agents {
+		if agent.callByID(callID) != nil {
+			return agent.SendDTMF(callID, digit)
+		}
+	}
+	return errors.New("voice: call not found")
 }
 
-// StartPCAP accepts the original device/path pair or a per-agent path.
-func (g *Gateway) StartPCAP(args ...string) error {
-	if g == nil || g.agent == nil {
-		return errors.New("voice: no agent")
+// StartPCAP starts capture for the active call on one device.
+func (g *Gateway) StartPCAP(deviceID, target string) error {
+	agent := g.GetAgent(deviceID)
+	if agent == nil {
+		return errors.New("voice: agent not found for device " + strings.TrimSpace(deviceID))
 	}
-	if len(args) == 0 {
-		return errors.New("voice: PCAP output is required")
-	}
-	return g.agent.StartPCAP(args[len(args)-1])
+	return agent.StartPCAP(target)
 }
 
-// StopPCAP accepts an optional original device identifier.
-func (g *Gateway) StopPCAP(_ ...string) error {
-	if g == nil || g.agent == nil {
-		return errors.New("voice: no agent")
+// StopPCAP stops capture for the active call on one device.
+func (g *Gateway) StopPCAP(deviceID string) error {
+	agent := g.GetAgent(deviceID)
+	if agent == nil {
+		return errors.New("voice: agent not found for device " + strings.TrimSpace(deviceID))
 	}
-	return g.agent.StopPCAP()
+	return agent.StopPCAP()
 }

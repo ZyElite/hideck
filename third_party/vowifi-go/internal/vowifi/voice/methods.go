@@ -191,8 +191,8 @@ func (a *Agent) HandleClientInvite(peer string, sdp string) (*Call, error) {
 	return a.dialContext(ctx, peer, sdp)
 }
 
-// HandleClientBye handles a client BYE.
-func (a *Agent) HandleClientBye(callID string) error {
+// HandleClientByeByID retains the additive Call-ID convenience API.
+func (a *Agent) HandleClientByeByID(callID string) error {
 	if a == nil {
 		return errors.New("voice: nil agent")
 	}
@@ -340,14 +340,9 @@ func (a *Agent) applyIMSUpdate(call *Call) error {
 
 // --- Wiring ---
 
-// ReplaceIMSProvider swaps the IMS service.
-func (a *Agent) ReplaceIMSProvider(ims *imscore.Service) {
-	if a == nil {
-		return
-	}
-	a.mu.Lock()
-	a.ims = ims
-	a.mu.Unlock()
+// ReplaceIMSProvider swaps the v1.5.5 endpoint provider.
+func (a *Agent) ReplaceIMSProvider(endpoint imsendpoint.Endpoint) error {
+	return a.replaceIMSProvider(endpoint)
 }
 
 // SetClientAdapter wires the structured local SIP client adapter.

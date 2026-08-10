@@ -98,6 +98,22 @@ func (a *Agent) HandleOutboundACK(request *sip.Request) {
 	}
 }
 
+// HandleClientBye acknowledges a matching local BYE and closes the IMS dialog.
+func (a *Agent) HandleClientBye(request *sip.Request, transaction sip.ServerTransaction) {
+	call := a.activeCallForRequest(request)
+	if call == nil {
+		a.respondClientRequestWithFallback(request, transaction, 481, "Call/Transaction Does Not Exist")
+		return
+	}
+	a.respondClientRequestWithFallback(request, transaction, 200, "OK")
+	a.runCallTask(call, "client_bye", func() {
+		if err := a.hangupCall(context.Background(), call); err != nil {
+			logging.WarnRate("voice-client-bye:"+call.CallID(), 10*time.Second,
+				"local voice BYE failed", "device", a.deviceID, "call_id", call.CallID(), "err", err)
+		}
+	})
+}
+
 // HandlePrack acknowledges a matching local PRACK and forwards its RAck context.
 func (a *Agent) HandlePrack(request *sip.Request, transaction sip.ServerTransaction) {
 	call := a.activeCallForRequest(request)

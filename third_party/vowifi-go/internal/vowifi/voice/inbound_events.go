@@ -18,10 +18,11 @@ const (
 )
 
 func (a *Agent) subscribeIMSEvents() func() {
-	if a == nil || a.ims == nil {
+	endpoint := a.imsEndpoint()
+	if endpoint == nil {
 		return nil
 	}
-	return a.ims.Subscribe(imsendpoint.EventSubscription{
+	return endpoint.Subscribe(imsendpoint.EventSubscription{
 		Name: voiceIMSEventSubscription, QueueSize: voiceIMSEventQueueSize,
 		Workers: 1, Match: isVoiceIMSEvent,
 	}, a.handleIMSEvent)
@@ -174,11 +175,15 @@ func (r *endpointEventResponder) LocalTag() string {
 }
 
 func (r *endpointEventResponder) Respond(response imscore.InboundVoiceResponse) error {
-	if r == nil || r.agent == nil || r.agent.ims == nil || r.handle == nil {
+	if r == nil || r.agent == nil || r.handle == nil {
+		return errors.New("voice: IMS inbound response path is unavailable")
+	}
+	endpoint := r.agent.imsEndpoint()
+	if endpoint == nil {
 		return errors.New("voice: IMS inbound response path is unavailable")
 	}
 	headers := endpointResponseHeaders(response)
-	return r.agent.ims.RespondInboundRequest(context.Background(), r.agent.deviceID, r.handle,
+	return endpoint.RespondInboundRequest(context.Background(), r.agent.deviceID, r.handle,
 		imsendpoint.InboundResponseOptions{
 			Code: response.StatusCode, Body: append([]byte(nil), response.Body...), Headers: headers,
 		})

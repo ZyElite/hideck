@@ -43,6 +43,18 @@ func (adapter mediaPacketListenerAdapter) ListenPacket(
 
 var _ imsendpoint.PacketListener = mediaPacketListenerAdapter{}
 
+func (a *Agent) newEndpointMediaRelay(localIP string) (*media.RTPRelay, error) {
+	endpoint := a.imsEndpoint()
+	listener, ok := endpoint.(imsendpoint.PacketListener)
+	if !ok {
+		return nil, errors.New("voice: IMS endpoint does not expose packet transport")
+	}
+	if net.ParseIP(strings.TrimSpace(localIP)) == nil {
+		return nil, fmt.Errorf("voice: invalid IMS media IP %q", localIP)
+	}
+	return media.NewRTPRelayWithListener(listener, localIP, clientRelayIP, 0, 0)
+}
+
 func newVoiceMediaRelay(imsNetwork imsPacketListener, imsLocalIP string) (*media.RTPRelay, error) {
 	if imsNetwork == nil {
 		return nil, errors.New("voice: IMS media network is unavailable")

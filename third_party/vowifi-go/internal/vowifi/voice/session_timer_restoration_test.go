@@ -84,7 +84,7 @@ func TestOutboundSessionTimerSendsRealUpdate(t *testing.T) {
 		finalSessionExpires: "1;refresher=uac",
 	})
 	agent := newVoiceTestAgent(t, registrar.conn)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })
@@ -142,7 +142,7 @@ func establishInboundSessionTimerCall(t *testing.T) inboundSessionFixture {
 	agent := newVoiceTestAgent(t, registrar.conn)
 	incoming := make(chan IncomingCall, 1)
 	agent.SetIncomingCallHandler(func(call IncomingCall) { incoming <- call })
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })

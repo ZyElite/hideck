@@ -95,7 +95,7 @@ func TestInboundNetworkCallForwardsToLocalClientAndClosesBothDialogs(t *testing.
 	registrar := startInboundDialogRegistrar(t)
 	agent := newVoiceTestAgent(t, registrar.conn)
 	requester := installInboundLocalAdapter(t, agent)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })
@@ -149,7 +149,7 @@ func TestInboundNetworkCancelForwardsToLocalClient(t *testing.T) {
 	registrar := startInboundDialogRegistrar(t)
 	agent := newVoiceTestAgent(t, registrar.conn)
 	requester := installInboundLocalAdapter(t, agent)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })

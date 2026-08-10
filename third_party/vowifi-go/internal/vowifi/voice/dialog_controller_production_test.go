@@ -159,7 +159,7 @@ func TestAgentAnswersNetworkInviteThroughServerDialogHandle(t *testing.T) {
 	agent := newVoiceTestAgent(t, registrar.conn)
 	incoming := make(chan IncomingCall, 1)
 	agent.SetIncomingCallHandler(func(call IncomingCall) { incoming <- call })
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })
@@ -204,7 +204,7 @@ func TestAgentRejectsNetworkInviteThroughServerTransaction(t *testing.T) {
 	agent := newVoiceTestAgent(t, registrar.conn)
 	incoming := make(chan IncomingCall, 1)
 	agent.SetIncomingCallHandler(func(call IncomingCall) { incoming <- call })
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })
@@ -238,7 +238,7 @@ func TestAgentRejectsNetworkInviteThroughServerTransaction(t *testing.T) {
 func TestAgentHandlesNetworkCancelRaceOnRetainedInvite(t *testing.T) {
 	registrar := startInboundDialogRegistrar(t)
 	agent := newVoiceTestAgent(t, registrar.conn)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })

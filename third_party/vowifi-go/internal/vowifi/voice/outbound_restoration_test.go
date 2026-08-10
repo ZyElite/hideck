@@ -30,7 +30,7 @@ var _ recoveredOutboundGatewayAPI = (*Gateway)(nil)
 
 func TestStructuredOutboundInviteUsesIMSAndClientTransactions(t *testing.T) {
 	agent := newTestAgent(t)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })
@@ -90,7 +90,7 @@ func TestStructuredOutboundInviteRejectsBusyAndMissingOffer(t *testing.T) {
 func TestStructuredCancelClosesLateAcceptedInvite(t *testing.T) {
 	registrar := startLateAcceptedRegistrar(t)
 	agent := newVoiceTestAgent(t, registrar.conn)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })
@@ -134,7 +134,7 @@ func TestStructuredCancelAndPRACKRejectUnknownDialog(t *testing.T) {
 
 func TestRecoveredSimulateCallConnectsHoldsAndHangsUp(t *testing.T) {
 	agent := newTestAgent(t)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })

@@ -26,7 +26,7 @@ func TestAgentIMSEventNotificationsUseActor(t *testing.T) {
 			close(done)
 		}
 	})
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer func() {

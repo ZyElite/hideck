@@ -116,7 +116,7 @@ func newVoiceTestAgentWithInviteStatus(t *testing.T, status int) *Agent {
 	if err := svc.Register(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return NewAgent("dev-reject", svc, svc.EventBus())
+	return NewAgent("dev-reject", svc, nil)
 }
 
 func voiceTestHeader(message, name string) string {
@@ -183,7 +183,7 @@ func TestCallDuration(t *testing.T) {
 
 func TestAgentDialLifecycle(t *testing.T) {
 	agent := newTestAgent(t)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer agent.Stop()
@@ -222,7 +222,7 @@ func TestAgentSimulateCall(t *testing.T) {
 	defer imsMedia.Close()
 	answer := fmt.Sprintf("v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP 0\r\n", imsMedia.LocalAddr().(*net.UDPAddr).Port)
 	agent := newVoiceTestAgent(t, startVoiceTestRegistrarWithAnswer(t, 200, answer))
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
@@ -263,21 +263,21 @@ func TestAgentSimulateCall(t *testing.T) {
 
 func TestAgentDialRejectionClearsActiveCall(t *testing.T) {
 	agent := newVoiceTestAgentWithInviteStatus(t, 486)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
 	if _, err := agent.HandleClientInvite("+8613800000000", testClientSDP); err == nil || !strings.Contains(err.Error(), "486") {
 		t.Fatalf("Dial error = %v", err)
 	}
-	if agent.IsBusy() || agent.Snapshot().ActiveCall != nil {
-		t.Fatalf("rejected call remained active: %+v", agent.Snapshot())
+	if agent.IsBusy() || agent.SnapshotCurrent().ActiveCall != nil {
+		t.Fatalf("rejected call remained active: %+v", agent.SnapshotCurrent())
 	}
 }
 
 func TestAgentStopReleasesCallWhenBYEFails(t *testing.T) {
 	agent := newTestAgent(t)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	call, err := agent.HandleClientInvite("+8613800000000", testClientSDP)
@@ -300,7 +300,7 @@ func TestAgentStopReleasesCallWhenBYEFails(t *testing.T) {
 
 func TestAgentHangupReleasesCallWhenBYEFails(t *testing.T) {
 	agent := newTestAgent(t)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
@@ -312,8 +312,8 @@ func TestAgentHangupReleasesCallWhenBYEFails(t *testing.T) {
 	if err := agent.Hangup(call.CallID()); err == nil || !strings.Contains(err.Error(), "forced BYE write failure") {
 		t.Fatalf("Hangup error = %v", err)
 	}
-	if agent.IsBusy() || agent.Snapshot().ActiveCall != nil {
-		t.Fatalf("failed BYE left active call: %+v", agent.Snapshot())
+	if agent.IsBusy() || agent.SnapshotCurrent().ActiveCall != nil {
+		t.Fatalf("failed BYE left active call: %+v", agent.SnapshotCurrent())
 	}
 	select {
 	case <-call.Done:
@@ -324,7 +324,7 @@ func TestAgentHangupReleasesCallWhenBYEFails(t *testing.T) {
 
 func TestAgentHandlesRemoteBYE(t *testing.T) {
 	agent := newTestAgent(t)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
@@ -345,7 +345,7 @@ func TestAgentHandlesRemoteBYE(t *testing.T) {
 
 func TestAgentHandlesEstablishedReinvite(t *testing.T) {
 	agent := newTestAgent(t)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
@@ -366,7 +366,7 @@ func TestAgentHandlesEstablishedReinvite(t *testing.T) {
 
 func TestAgentRejectsReinviteOfferWithoutMediaAnswer(t *testing.T) {
 	agent := newTestAgent(t)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
@@ -387,7 +387,7 @@ func TestAgentRejectsReinviteOfferWithoutMediaAnswer(t *testing.T) {
 
 func TestAgentInboundBusEventDoesNotRepublish(t *testing.T) {
 	bus := imscore.NewEventBus()
-	agent := NewAgent("dev-1", nil, bus)
+	agent := NewAgentCurrent("dev-1", nil, bus)
 	bus.Subscribe(agent)
 	notified := 0
 	agent.SetNotifier(func(events.Event) { notified++ })
@@ -484,7 +484,7 @@ func TestAgentInboundAnswerRequiresRequestContext(t *testing.T) {
 
 func TestHandleClientInviteUsesRealTransaction(t *testing.T) {
 	agent := newTestAgent(t)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Stop()
@@ -500,10 +500,12 @@ func TestHandleClientInviteUsesRealTransaction(t *testing.T) {
 	}
 }
 
-func TestGatewayStartRequiresAgent(t *testing.T) {
-	if err := NewGateway(nil).Start(); err == nil {
-		t.Fatal("gateway started without an agent")
+func TestGatewayStartAllowsLaterDeviceRegistration(t *testing.T) {
+	gateway := NewGateway(nil)
+	if err := gateway.StartCurrent(); err != nil {
+		t.Fatal(err)
 	}
+	defer gateway.Stop()
 }
 
 func TestParseSDP(t *testing.T) {
@@ -665,18 +667,18 @@ func TestBuildIMSBye(t *testing.T) {
 func TestGatewayLifecycle(t *testing.T) {
 	agent := newTestAgent(t)
 	gw := NewGateway(agent)
-	if err := gw.Start(); err != nil {
+	if err := gw.StartCurrent(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer gw.Stop()
-	if gw.GetAgent() != agent {
+	if gw.GetAgent(agent.DeviceID()) != agent {
 		t.Error("gateway agent mismatch")
 	}
-	status := gw.DeviceStatus()
+	status := gw.DeviceStatusCurrent(agent.DeviceID())
 	if status["registered"] != true {
 		t.Errorf("status = %+v", status)
 	}
-	call, err := gw.SimulateCallNumber("+8613800000000")
+	call, err := gw.SimulateCallNumber(agent.DeviceID(), "+8613800000000")
 	if err != nil {
 		t.Fatalf("SimulateCall: %v", err)
 	}

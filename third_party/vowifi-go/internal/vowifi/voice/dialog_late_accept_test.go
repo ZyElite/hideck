@@ -94,7 +94,7 @@ func (r *lateAcceptedRegistrar) writeResponse(request string, remote *net.UDPAdd
 func TestAgentACKsAndBYEsInviteAcceptedAfterCancel(t *testing.T) {
 	registrar := startLateAcceptedRegistrar(t)
 	agent := newVoiceTestAgent(t, registrar.conn)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })
@@ -141,7 +141,7 @@ func TestAgentACKsAndBYEsInviteAcceptedAfterCancel(t *testing.T) {
 func TestAgentHangupPendingInviteUsesCancelTerminalState(t *testing.T) {
 	registrar := startLateAcceptedRegistrar(t)
 	agent := newVoiceTestAgent(t, registrar.conn)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })
@@ -183,7 +183,7 @@ func TestCancelSettleStillACKsAndBYEsLaterAcceptedInvite(t *testing.T) {
 	registrar := startLateAcceptedRegistrarWithDelay(t, 80*time.Millisecond)
 	agent := newVoiceTestAgent(t, registrar.conn)
 	agent.outboundCancelSettle = 20 * time.Millisecond
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })

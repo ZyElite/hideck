@@ -122,7 +122,8 @@ func validateClientInviteRequest(request *sip.Request) error {
 }
 
 func (a *Agent) validateOutboundRuntime() error {
-	if a.ims == nil {
+	endpoint := a.imsEndpoint()
+	if endpoint == nil {
 		return errors.New("voice: no IMS service")
 	}
 	a.mu.RLock()
@@ -131,7 +132,7 @@ func (a *Agent) validateOutboundRuntime() error {
 	if !started {
 		return errors.New("voice: agent not started")
 	}
-	if !a.ims.IsRegistered() {
+	if !endpoint.IsRegistered() {
 		return errors.New("voice: IMS not registered")
 	}
 	return nil

@@ -50,7 +50,7 @@ func TestOutboundInviteOutcomeClassification(t *testing.T) {
 func TestStructuredRejectedInviteRecordsTransactionACK(t *testing.T) {
 	registrar := startControlledRejectingRegistrar(t, 486)
 	agent := newVoiceTestAgent(t, registrar.conn)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })

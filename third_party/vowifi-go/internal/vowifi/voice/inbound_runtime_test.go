@@ -232,7 +232,7 @@ func TestInboundReinviteMovesRTPToNewIMSRemote(t *testing.T) {
 func startedVoiceAgent(t *testing.T) *Agent {
 	t.Helper()
 	agent := newTestAgent(t)
-	if err := agent.Start(); err != nil {
+	if err := agent.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = agent.Stop() })

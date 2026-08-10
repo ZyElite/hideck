@@ -9,11 +9,12 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/client"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/dialog"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/media"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voiceclient"
 )
 
 const (
@@ -24,25 +25,46 @@ const (
 	inboundClientTxTimeout     = 32 * time.Second
 )
 
-// NewAgent creates a voice agent for a device.
-func NewAgent(deviceID string, ims *imscore.Service, bus *imscore.EventBus) *Agent {
-	if bus == nil {
-		bus = imscore.NewEventBus()
+// NewAgent creates a voice agent for a device endpoint.
+func NewAgent(deviceID string, endpoint imsendpoint.Endpoint, gateway *Gateway) *Agent {
+	return newAgent(agentConfig{deviceID: deviceID, endpoint: endpoint, gateway: gateway})
+}
+
+// NewAgentCurrent retains the displaced constructor that accepts a concrete
+// imscore service and an optional event bus.
+func NewAgentCurrent(deviceID string, ims *imscore.Service, bus *imscore.EventBus) *Agent {
+	return newAgent(agentConfig{deviceID: deviceID, endpoint: ims, bus: bus})
+}
+
+type agentConfig struct {
+	deviceID string
+	endpoint imsendpoint.Endpoint
+	bus      *imscore.EventBus
+	gateway  *Gateway
+}
+
+func newAgent(config agentConfig) *Agent {
+	ims, _ := config.endpoint.(*imscore.Service)
+	if config.bus == nil && ims != nil {
+		config.bus = ims.EventBus()
+	}
+	if config.bus == nil {
+		config.bus = imscore.NewEventBus()
 	}
 	agent := &Agent{
-		deviceID: deviceID,
+		deviceID: config.deviceID,
 		ims:      ims,
-		bus:      bus,
+		endpoint: config.endpoint,
+		bus:      config.bus,
+		gateway:  config.gateway,
 		actor: callstate.NewActorWithConfig(callstate.ActorConfig{
-			DeviceID: deviceID,
+			DeviceID: config.deviceID,
 		}),
-		dialog:       dialog.NewController(deviceID, ims),
-		clientBridge: client.NewBridge(deviceID, nil),
+		dialog:       dialog.NewController(config.deviceID, config.endpoint),
+		clientBridge: client.NewBridge(config.deviceID, nil),
 		calls:        make(map[string]*Call),
 	}
-	agent.newMediaRelay = func(localIP string) (*media.RTPRelay, error) {
-		return newVoiceMediaRelay(imscorePacketListener{service: ims}, localIP)
-	}
+	agent.newMediaRelay = agent.newEndpointMediaRelay
 	return agent
 }
 
@@ -55,20 +77,33 @@ func (a *Agent) DeviceID() string {
 }
 
 // Start launches the agent's actor and subscribes to IMS events.
-func (a *Agent) Start() error {
+func (a *Agent) Start(ctx context.Context) error {
 	if a == nil {
 		return errors.New("voice: nil agent")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	a.mu.Lock()
 	if a.started {
 		a.mu.Unlock()
 		return nil
 	}
-	a.ctx, a.cancel = context.WithCancel(context.Background())
+	gateway := a.gateway
+	var gatewayAdapter voiceclient.Adapter
+	if gateway != nil {
+		gatewayAdapter = gateway.GetClientAdapter()
+	}
+	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.actor.Start(a.ctx)
+	if gateway != nil {
+		a.notifier = gateway.forwardAgentEvent
+	}
+	if gatewayAdapter != nil {
+		a.clientAdapter = gatewayAdapter
+	}
 	if a.ims != nil {
 		a.ims.SetVoiceRequestHandler(a)
-		a.imsUnsubscribe = a.subscribeIMSEvents()
 	}
 	if a.clientAdapter != nil {
 		a.clientBridge = client.NewBridge(a.deviceID, a.clientAdapter)
@@ -76,7 +111,34 @@ func (a *Agent) Start() error {
 	}
 	a.started = true
 	a.mu.Unlock()
+	a.installIMSUnsubscribe(a.subscribeIMSEvents())
 	return nil
+}
+
+func (a *Agent) setGateway(gateway *Gateway) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	a.gateway = gateway
+	a.mu.Unlock()
+}
+
+func (a *Agent) installIMSUnsubscribe(unsubscribe func()) {
+	a.mu.Lock()
+	if a.started {
+		a.imsUnsubscribe = unsubscribe
+		unsubscribe = nil
+	}
+	a.mu.Unlock()
+	if unsubscribe != nil {
+		unsubscribe()
+	}
+}
+
+// StartCurrent retains the context-free lifecycle entry point.
+func (a *Agent) StartCurrent() error {
+	return a.Start(context.Background())
 }
 
 // Stop shuts the agent down.
@@ -95,6 +157,7 @@ func (a *Agent) Stop() error {
 	a.ctx = nil
 	clientBridge := a.clientBridge
 	unsubscribe := a.imsUnsubscribe
+	ims := a.ims
 	a.imsUnsubscribe = nil
 	var activeCall *Call
 	if a.activeCall != nil && !a.activeCall.IsTerminalState() {
@@ -120,8 +183,8 @@ func (a *Agent) Stop() error {
 		cancel()
 	}
 	a.actor.Stop()
-	if a.ims != nil {
-		a.ims.SetVoiceRequestHandler(nil)
+	if ims != nil {
+		ims.SetVoiceRequestHandler(nil)
 	}
 	return stopErr
 }
@@ -238,10 +301,11 @@ func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, err
 	if a == nil {
 		return nil, errors.New("voice: nil agent")
 	}
-	if a.ims == nil {
+	endpoint := a.imsEndpoint()
+	if endpoint == nil {
 		return nil, errors.New("voice: no IMS service")
 	}
-	if !a.ims.IsRegistered() {
+	if !endpoint.IsRegistered() {
 		return nil, errors.New("voice: IMS not registered")
 	}
 	a.mu.RLock()
@@ -518,13 +582,14 @@ func (a *Agent) refreshVoiceSession(ctx context.Context, call *Call) error {
 
 // Ready reports whether the agent can start an IMS voice transaction.
 func (a *Agent) Ready() bool {
-	if a == nil || a.ims == nil {
+	endpoint := a.imsEndpoint()
+	if endpoint == nil {
 		return false
 	}
 	a.mu.RLock()
 	started := a.started
 	a.mu.RUnlock()
-	return started && a.ims.IsRegistered()
+	return started && endpoint.IsRegistered()
 }
 
 func (a *Agent) callByID(callID string) *Call {
@@ -568,8 +633,44 @@ func (a *Agent) ActiveCall() *Call {
 	return a.activeCall
 }
 
-// Snapshot returns a point-in-time view of the agent.
-func (a *Agent) Snapshot() *AgentSnapshot {
+// Snapshot returns the recovered v1.5.5 status map.
+func (a *Agent) Snapshot() map[string]interface{} {
+	if a == nil {
+		return map[string]interface{}{"running": false, "device_id": "", "active_call": false}
+	}
+	a.mu.RLock()
+	running := a.ctx != nil
+	call := a.activeCall
+	deviceID := a.deviceID
+	a.mu.RUnlock()
+	status := map[string]interface{}{
+		"running": running, "device_id": deviceID, "active_call": call != nil,
+	}
+	if call == nil {
+		return status
+	}
+	call.mu.RLock()
+	status["trace_id"] = call.TraceID
+	status["direction"] = call.Direction
+	status["state"] = call.State
+	status["caller"] = call.DialogState.CallerID
+	status["callee"] = call.DialogState.CalleeID
+	status["ims_call_id"] = call.DialogState.IMSCallID
+	status["outbound_ims_call_id"] = call.DialogState.OutboundIMSCallID
+	status["client_call_id"] = call.clientCallID
+	startedAt, endedAt := call.startTime, call.endTime
+	call.mu.RUnlock()
+	if !startedAt.IsZero() {
+		status["started_at"] = startedAt
+	}
+	if !endedAt.IsZero() {
+		status["ended_at"] = endedAt
+	}
+	return status
+}
+
+// SnapshotCurrent retains the additive structured snapshot.
+func (a *Agent) SnapshotCurrent() *AgentSnapshot {
 	if a == nil {
 		return &AgentSnapshot{}
 	}
@@ -654,8 +755,14 @@ func (a *Agent) emitIncomingCall(c *Call) {
 		return
 	}
 	receivedAt := time.Now()
+	c.mu.RLock()
+	caller, callee := strings.TrimSpace(c.DialogState.CallerID), strings.TrimSpace(c.DialogState.CalleeID)
+	c.mu.RUnlock()
+	if caller == "" {
+		caller = c.Peer()
+	}
 	a.emit(events.EventIncomingCall{
-		DevID: a.deviceID, CallID: c.CallID(), Caller: c.Peer(), Callee: a.deviceID,
+		DevID: a.deviceID, CallID: c.CallID(), Caller: caller, Callee: callee,
 		ReceivedAt: receivedAt, Time: receivedAt,
 	})
 }
@@ -700,7 +807,7 @@ func (a *Agent) finalizeActiveCall(call *Call) {
 // register registers the device with the IMS network.
 func (a *Agent) register() error {
 	if a == nil || a.ims == nil {
-		return errors.New("voice: no IMS service")
+		return errors.New("voice: IMS endpoint does not expose registration control")
 	}
 	return a.ims.Register(context.Background())
 }
@@ -708,21 +815,22 @@ func (a *Agent) register() error {
 // unregister deregisters the device.
 func (a *Agent) unregister() error {
 	if a == nil || a.ims == nil {
-		return errors.New("voice: no IMS service")
+		return errors.New("voice: IMS endpoint does not expose registration control")
 	}
 	return a.ims.Unregister(context.Background())
 }
 
 // deviceStatus returns the device registration status.
 func (a *Agent) deviceStatus() map[string]interface{} {
-	if a == nil || a.ims == nil {
+	endpoint := a.imsEndpoint()
+	if endpoint == nil {
 		return map[string]interface{}{"registered": false}
 	}
-	return map[string]interface{}{
-		"registered": a.ims.IsRegistered(),
-		"reg_state":  a.ims.RegState(),
-		"device_id":  a.deviceID,
+	status := map[string]interface{}{"registered": endpoint.IsRegistered(), "device_id": a.deviceID}
+	if a.ims != nil {
+		status["reg_state"] = a.ims.RegState()
 	}
+	return status
 }
 
 // SimulateCallNumber retains the additive direct-dial convenience API.

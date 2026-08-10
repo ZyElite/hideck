@@ -219,8 +219,8 @@ func TestVoiceGatewaySimulateCallUsesProductionAdapterAndRTP(t *testing.T) {
 	assertProductionVoiceRTP(t, mediaConn)
 	assertProductionVoiceRequests(t, requests)
 	adapter := gateway.GetAgent("dev-1").(*voiceAgentAdapter)
-	if adapter.agent.IsBusy() || adapter.agent.Snapshot().ActiveCall != nil {
-		t.Fatalf("call remained active after timed BYE: %+v", adapter.agent.Snapshot())
+	if adapter.agent.IsBusy() || adapter.agent.SnapshotCurrent().ActiveCall != nil {
+		t.Fatalf("call remained active after timed BYE: %+v", adapter.agent.SnapshotCurrent())
 	}
 }
 
