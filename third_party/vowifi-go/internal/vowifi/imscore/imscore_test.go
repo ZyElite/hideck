@@ -204,11 +204,17 @@ func TestUSSDLifecycle(t *testing.T) {
 	svc, _ := New(cfg)
 	svc.mu.Lock()
 	svc.regState = regRegistered
-	svc.regSession = &registerSession{serviceRoute: "<sip:pcscf.ims.example;lr>"}
+	svc.externalTransport = true
+	svc.regSession = &registerSession{
+		publicID: cfg.IMPU, contactUser: "registered-contact",
+		serviceRoute: "<sip:pcscf.ims.example;lr>",
+	}
 	svc.mu.Unlock()
 	if !svc.transitionRegStatus(registrationRegistered) {
 		t.Fatal("failed to mark service registered")
 	}
+	resultEvents := &countingEventSubscriber{}
+	svc.bus.Subscribe(resultEvents)
 	requests := make(chan string, 4)
 	svc.transport.SetSendFn(func(request string) error {
 		requests <- request
@@ -253,6 +259,9 @@ func TestUSSDLifecycle(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatalf("missing %s request", want)
 		}
+	}
+	if count := resultEvents.count.Load(); count != 2 {
+		t.Fatalf("USSD result event count = %d, want 2", count)
 	}
 }
 

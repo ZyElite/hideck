@@ -93,6 +93,14 @@ func (s *Service) RegisteredSIPDialogProfile() (SIPDialogProfile, error) {
 }
 
 func (s *Service) reserveRegisteredSIPProfile() (SIPDialogProfile, error) {
+	return s.registeredSIPDialogProfile(true)
+}
+
+func (s *Service) snapshotRegisteredSIPProfile() (SIPDialogProfile, error) {
+	return s.registeredSIPDialogProfile(false)
+}
+
+func (s *Service) registeredSIPDialogProfile(reserveCSeq bool) (SIPDialogProfile, error) {
 	if s == nil || s.cfg == nil {
 		return SIPDialogProfile{}, errors.New("imscore: service is not configured")
 	}
@@ -120,7 +128,10 @@ func (s *Service) reserveRegisteredSIPProfile() (SIPDialogProfile, error) {
 	if route.clientAddress == "" || route.serverAddress == "" {
 		return SIPDialogProfile{}, errors.New("imscore: registered SIP transport is unavailable")
 	}
-	initialCSeq := s.reserveSIPCSeqLocked(session, route.securityVerify != "")
+	initialCSeq := 0
+	if reserveCSeq {
+		initialCSeq = s.reserveSIPCSeqLocked(session, route.securityVerify != "")
+	}
 	contactURI, contactHeader := registeredVoiceContact(s.cfg, registeredContactUser, route.serverAddress)
 	return SIPDialogProfile{
 		LocalURI: localURI, Domain: strings.TrimSpace(s.cfg.Domain),

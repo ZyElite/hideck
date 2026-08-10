@@ -58,37 +58,18 @@ func (s *Service) prepareUSSI() error {
 	if !s.IsRegistered() {
 		return errors.New("imscore: IMS is not registered")
 	}
-	clientAddress, serverAddress, route, securityVerify, transport := s.smsMessageRoute()
-	localURI := firstPublicIdentity(s.cfg)
-	if localURI == "" {
-		return errors.New("imscore: no public identity for USSD")
+	profile, err := s.snapshotRegisteredSIPProfile()
+	if err != nil {
+		return fmt.Errorf("imscore: USSD registered profile: %w", err)
 	}
-	contact := fmt.Sprintf("sip:%s@%s;transport=%s", contactUser(s.cfg), serverAddress, transport)
+	contact := fmt.Sprintf("%s;transport=%s", profile.ContactURI, profile.Transport)
 	return s.ussd.Configure(ussi.Config{
 		Transport: &ussiTransportAdapter{transport: s.transport},
-		LocalURI:  localURI, ContactURI: contact, Domain: s.cfg.Domain,
-		LocalAddress: clientAddress, SIPTransport: transport, ServiceRoute: route,
-		SecurityVerify: securityVerify, PANI: s.GetPAccessNetworkInfo(),
-		UserAgent: strings.TrimSpace(s.cfg.UserAgent), OnResult: s.publishUSSIResult,
+		LocalURI:  profile.LocalURI, ContactURI: contact, Domain: profile.Domain,
+		LocalAddress: profile.LocalAddress, SIPTransport: profile.Transport,
+		ServiceRoute: profile.ServiceRoute, SecurityVerify: profile.SecurityVerify,
+		PANI: profile.PANI, UserAgent: profile.UserAgent, OnResult: s.publishUSSIResult,
 	})
-}
-
-func firstPublicIdentity(cfg *IMSConfig) string {
-	if cfg == nil {
-		return ""
-	}
-	for _, identity := range cfg.publicIdentities() {
-		if identity = strings.TrimSpace(identity); identity != "" {
-			if strings.HasPrefix(strings.ToLower(identity), "sip:") {
-				return identity
-			}
-			return "sip:" + identity
-		}
-	}
-	if strings.TrimSpace(cfg.IMPI) != "" {
-		return "sip:" + strings.TrimSpace(cfg.IMPI)
-	}
-	return ""
 }
 
 func (s *Service) publishUSSIResult(result ussi.Result) {
