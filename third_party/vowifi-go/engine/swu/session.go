@@ -93,7 +93,10 @@ type Config struct {
 	// The following fields retain the original IKE_AUTH/EAP identity and
 	// interoperability policy. DisableEAPMACValidation is an explicit unsafe
 	// diagnostic switch and is never enabled by default.
-	DisableEAPMACValidation   bool
+	DisableEAPMACValidation bool
+	// VerifyFinalResponderAUTH enables the post-EAP MSK proof check added by
+	// the rewrite. The original engine did not enforce that final proof.
+	VerifyFinalResponderAUTH  bool
 	EnableDeviceIdentitySpoof bool
 	DeviceIdentityIMEI        string
 	IKEIdentityMode           string

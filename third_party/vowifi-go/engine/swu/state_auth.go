@@ -336,9 +336,7 @@ func (s *Session) buildIKEAuthInitPayloads() ([]ikev2.Payload, error) {
 	tsi, tsr := buildTrafficSelectorsForIPStack(nil)
 	cp := s.buildCPRequestPayload()
 
-	// CP (request inner address) and RFC 5998 EAP-only authentication. EAP-AKA
-	// and EAP-AKA' are mutually authenticating, key-generating methods; the
-	// responder's final AUTH is still mandatory and is verified with the MSK.
+	// CP (request inner address) and RFC 5998 EAP-only authentication.
 	eapOnly := &ikev2.EncryptedPayloadNotify{
 		ProtocolID: ikev2.ProtoIKE, NotifyType: ikev2.NotifyTypeEAPOnlyAuthentication,
 	}
@@ -519,7 +517,7 @@ func (s *Session) buildIKEAuthFinalPayloads() ([]ikev2.Payload, error) {
 }
 
 // handleIKEAuthFinalResp processes the final IKE_AUTH response (AUTH, SA, TS,
-// CP) and verifies the responder AUTH.
+// CP). By default it retains the original engine's final AUTH behavior.
 func (s *Session) handleIKEAuthFinalResp(data []byte) error {
 	resp, err := ikev2.DecodePacket(data)
 	if err != nil {
@@ -543,8 +541,13 @@ func (s *Session) handleIKEAuthFinalPacket(resp *ikev2.IKEPacket) error {
 	if err := ikeAuthenticationError(payloads); err != nil {
 		return err
 	}
-	if err := s.verifyEAPResponderAuth(payloads); err != nil {
-		return err
+	// The original engine accepted the final encrypted response after mutual
+	// EAP-AKA and did not compare its responder AUTH against the MSK. Keep the
+	// rewrite's stricter check available only as an explicit opt-in.
+	if s.cfg != nil && s.cfg.VerifyFinalResponderAUTH {
+		if err := s.verifyEAPResponderAuth(payloads); err != nil {
+			return err
+		}
 	}
 	if err := s.applyFinalIKEAuthPayloads(payloads); err != nil {
 		return err

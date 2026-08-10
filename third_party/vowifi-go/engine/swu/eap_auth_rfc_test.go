@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha1"
 	"net"
+	"strings"
 	"testing"
 
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
@@ -288,7 +289,7 @@ func TestInitialEAPIKEAuthIncludesEmptyIDrForDefaultAPN(t *testing.T) {
 	}
 }
 
-func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
+func TestStrictFinalResponderAUTHVerifier(t *testing.T) {
 	session := NewSession(&Config{IMSI: "234102356143376", APN: "ims", EPDGAddr: "epdg.example"})
 	session.ikeKeys = testIKEKeys()
 	session.prf = enginecrypto.NewPRF(2)
@@ -330,6 +331,67 @@ func TestEAPOnlyResponderAuthenticationRequiresFinalMSKProof(t *testing.T) {
 			t.Fatalf("accepted invalid responder AUTH: %#v", invalid)
 		}
 	}
+}
+
+func TestFinalIKEAuthResponderAUTHPolicy(t *testing.T) {
+	tests := []struct {
+		name    string
+		strict  bool
+		wantErr bool
+	}{
+		{name: "original compatibility", strict: false},
+		{name: "strict opt-in", strict: true, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session, raw := finalIKEAuthResponseWithInvalidProof(t, test.strict)
+			err := session.handleIKEAuthFinalResp(raw)
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "MSK AUTH verification failed") {
+					t.Fatalf("strict final AUTH error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("original final AUTH compatibility rejected response: %v", err)
+			}
+			if !session.responderAuthenticated {
+				t.Fatal("final IKE_AUTH did not complete responder state")
+			}
+		})
+	}
+}
+
+func finalIKEAuthResponseWithInvalidProof(t *testing.T, strict bool) (*Session, []byte) {
+	t.Helper()
+	session := NewSession(&Config{
+		IMSI: "234102356143376", EPDGAddr: "epdg.example",
+		VerifyFinalResponderAUTH: strict,
+	})
+	session.ikeKeys = testIKEKeys()
+	session.prf = enginecrypto.NewPRF(2)
+	session.ikeSAInitResponse = []byte("ike-sa-init-response")
+	session.Ni = []byte("initiator-nonce")
+	session.eapOnlyAuthentication = true
+	session.eapSuccessReceived = true
+	session.eapType = eapaka.TypeAKA
+	session.eapKeys = eapaka.Keys{MSK: bytes.Repeat([]byte{0x71}, eapaka.KeyLengthMSK)}
+	session.responderIDType = ikev2.IDTypeFQDN
+	session.responderID = []byte("epdg.example")
+	payloads := resumedChildResponsePayloads(session, nil)
+	payloads = append([]ikev2.Payload{&ikev2.EncryptedPayloadAuth{
+		AuthMethod: ikev2.AuthMethodSharedKey,
+		AuthData:   bytes.Repeat([]byte{0x99}, 32),
+	}}, payloads...)
+	response := &ikev2.IKEPacket{
+		Header:   newIKEHeader(session.spiI, session.spiR, ikev2.IKE_AUTH, ikeResponseFlag, 3),
+		Payloads: payloads,
+	}
+	raw, err := session.encryptAndWrap(response)
+	if err != nil {
+		t.Fatalf("encrypt final IKE_AUTH response: %v", err)
+	}
+	return session, raw
 }
 
 func TestEAPOnlyResponderMayOmitFinalAuthAfterMutualAKA(t *testing.T) {
