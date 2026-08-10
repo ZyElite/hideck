@@ -36,6 +36,14 @@ type mbimRegistrationOptions struct {
 	MaxAttempts             int
 	RadioCycleAfterAttempts int
 	SuppressRadioCycle      func() bool
+	ShouldAbort             func() bool
+}
+
+type mbimRegistrationCommand struct {
+	deviceID    string
+	config      config.DeviceConfig
+	controller  mbimRegistrationController
+	shouldAbort func() bool
 }
 
 func normalizeMBIMRegistrationOptions(opts mbimRegistrationOptions) mbimRegistrationOptions {
@@ -63,12 +71,24 @@ func ensureMBIMRegistration(ctx context.Context, deviceID string, cfg config.Dev
 		return fmt.Errorf("mbim registration controller unavailable")
 	}
 	opts = normalizeMBIMRegistrationOptions(opts)
+	command := mbimRegistrationCommand{
+		deviceID:    deviceID,
+		config:      cfg,
+		controller:  ctrl,
+		shouldAbort: opts.ShouldAbort,
+	}
+	if err := ensureCellularRegistrationAllowed(opts.ShouldAbort); err != nil {
+		return err
+	}
 
 	mode, err := ctrl.GetOperatingMode(ctx)
 	if err != nil {
 		return fmt.Errorf("读取 MBIM radio mode 失败: %w", err)
 	}
 	if isFlightOperatingMode(mode) {
+		if err := ensureCellularRegistrationAllowed(opts.ShouldAbort); err != nil {
+			return err
+		}
 		logger.Info("MBIM radio 初始处于飞行/低功耗，恢复 Online 后再驻网", "device", deviceID, "mode", int(mode))
 		if err := ctrl.SetOperatingMode(ctx, backend.ModeOnline); err != nil {
 			return fmt.Errorf("MBIM radio mode 恢复 Online 失败: %w", err)
@@ -86,6 +106,9 @@ func ensureMBIMRegistration(ctx context.Context, deviceID string, cfg config.Dev
 	attachIssued := false
 	radioCycleIssued := false
 	for attempt := 1; attempt <= opts.MaxAttempts; attempt++ {
+		if err := ensureCellularRegistrationAllowed(opts.ShouldAbort); err != nil {
+			return err
+		}
 		ss, err := ctrl.GetServingSystem(ctx)
 		if err != nil {
 			return fmt.Errorf("读取 MBIM serving system 失败: %w", err)
@@ -100,6 +123,9 @@ func ensureMBIMRegistration(ctx context.Context, deviceID string, cfg config.Dev
 				return nil
 			}
 			if !attachIssued {
+				if err := ensureCellularRegistrationAllowed(opts.ShouldAbort); err != nil {
+					return err
+				}
 				logger.Info("MBIM 已驻网但 packet service 未 attach，发起 attach", "device", deviceID, "reg_status", ss.RegStatus)
 				if err := ctrl.AttachPacketService(ctx); err != nil {
 					return fmt.Errorf("MBIM packet service attach 失败: %w", err)
@@ -108,7 +134,7 @@ func ensureMBIMRegistration(ctx context.Context, deviceID string, cfg config.Dev
 			}
 		case 2:
 			if !registerIssued {
-				if err := initiateMBIMRegistration(ctx, deviceID, cfg, ctrl); err != nil {
+				if err := command.initiate(ctx); err != nil {
 					return err
 				}
 				registerIssued = true
@@ -118,7 +144,10 @@ func ensureMBIMRegistration(ctx context.Context, deviceID string, cfg config.Dev
 					logger.Info("MBIM 驻网恢复暂缓 radio cycle：运营商扫描进行中", "device", deviceID, "attempt", attempt)
 				} else {
 					radioCycleIssued = true
-					if err := radioCycleMBIMForRegistration(ctx, deviceID, ctrl, opts.PollInterval); err != nil {
+					if err := command.radioCycle(ctx, opts.PollInterval); err != nil {
+						if errors.Is(err, errQMIRegistrationSkipped) {
+							return err
+						}
 						logger.Warn("MBIM 驻网恢复 radio cycle 失败，继续等待模组自主驻网", "device", deviceID, "err", err)
 					}
 					registerIssued = false
@@ -129,7 +158,7 @@ func ensureMBIMRegistration(ctx context.Context, deviceID string, cfg config.Dev
 			return fmt.Errorf("%w: %s", errMBIMRegistrationDenied, ss.RegStatusText)
 		default:
 			if !registerIssued {
-				if err := initiateMBIMRegistration(ctx, deviceID, cfg, ctrl); err != nil {
+				if err := command.initiate(ctx); err != nil {
 					return err
 				}
 				registerIssued = true
@@ -145,6 +174,9 @@ func ensureMBIMRegistration(ctx context.Context, deviceID string, cfg config.Dev
 
 func waitMBIMSIMReady(ctx context.Context, deviceID string, ctrl mbimRegistrationController, opts mbimRegistrationOptions) error {
 	for attempt := 1; attempt <= opts.MaxAttempts; attempt++ {
+		if err := ensureCellularRegistrationAllowed(opts.ShouldAbort); err != nil {
+			return err
+		}
 		inserted, err := ctrl.IsSimInserted(ctx)
 		if err != nil {
 			return fmt.Errorf("读取 MBIM SIM 状态失败: %w", err)
@@ -160,34 +192,43 @@ func waitMBIMSIMReady(ctx context.Context, deviceID string, ctrl mbimRegistratio
 	return fmt.Errorf("%w: attempts=%d", errMBIMSIMNotReady, opts.MaxAttempts)
 }
 
-func initiateMBIMRegistration(ctx context.Context, deviceID string, cfg config.DeviceConfig, ctrl mbimRegistrationController) error {
+func (c mbimRegistrationCommand) initiate(ctx context.Context) error {
+	if err := ensureCellularRegistrationAllowed(c.shouldAbort); err != nil {
+		return err
+	}
 	req := backend.SetOperatorSelectionRequest{Mode: backend.OperatorSelectionAutomatic}
-	if cfg.OperatorSelectionMode == string(backend.OperatorSelectionManual) && cfg.OperatorSelectionPLMN != "" {
+	if c.config.OperatorSelectionMode == string(backend.OperatorSelectionManual) && c.config.OperatorSelectionPLMN != "" {
 		req = backend.SetOperatorSelectionRequest{
 			Mode: backend.OperatorSelectionManual,
-			PLMN: cfg.OperatorSelectionPLMN,
-			RAT:  backend.OperatorAccessTechnology(cfg.OperatorSelectionRAT),
+			PLMN: c.config.OperatorSelectionPLMN,
+			RAT:  backend.OperatorAccessTechnology(c.config.OperatorSelectionRAT),
 		}
 	}
-	if _, err := ctrl.SetOperatorSelection(ctx, req); err != nil {
+	if _, err := c.controller.SetOperatorSelection(ctx, req); err != nil {
 		return fmt.Errorf("MBIM 注册选择提交失败: %w", err)
 	}
-	logger.Info("MBIM 注册选择已提交", "device", deviceID, "mode", req.Mode, "plmn", req.PLMN)
+	logger.Info("MBIM 注册选择已提交", "device", c.deviceID, "mode", req.Mode, "plmn", req.PLMN)
 	return nil
 }
 
-func radioCycleMBIMForRegistration(ctx context.Context, deviceID string, ctrl mbimRegistrationController, wait time.Duration) error {
+func (c mbimRegistrationCommand) radioCycle(ctx context.Context, wait time.Duration) error {
 	if wait <= 0 {
 		wait = 2 * time.Second
 	}
-	logger.Info("MBIM 搜网持续未恢复，执行 radio flight-mode cycle 重新触发搜网", "device", deviceID)
-	if err := ctrl.SetOperatingMode(ctx, backend.ModeRFOff); err != nil {
+	logger.Info("MBIM 搜网持续未恢复，执行 radio flight-mode cycle 重新触发搜网", "device", c.deviceID)
+	if err := ensureCellularRegistrationAllowed(c.shouldAbort); err != nil {
+		return err
+	}
+	if err := c.controller.SetOperatingMode(ctx, backend.ModeRFOff); err != nil {
 		return fmt.Errorf("设置 RFOff 失败: %w", err)
 	}
 	if err := sleepQMIRegistrationPoll(ctx, wait); err != nil {
 		return err
 	}
-	if err := ctrl.SetOperatingMode(ctx, backend.ModeOnline); err != nil {
+	if err := ensureCellularRegistrationAllowed(c.shouldAbort); err != nil {
+		return err
+	}
+	if err := c.controller.SetOperatingMode(ctx, backend.ModeOnline); err != nil {
 		return fmt.Errorf("恢复 Online 失败: %w", err)
 	}
 	if err := sleepQMIRegistrationPoll(ctx, wait); err != nil {
@@ -201,6 +242,12 @@ func (w *Worker) EnsureMBIMRegistration(ctx context.Context, requiredForData boo
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, errQMIRegistrationSkipped) {
+		if requiredForData {
+			return fmt.Errorf("蜂窝射频被 VoWiFi/飞行策略抑制: %w", err)
+		}
+		return nil
+	}
 	if requiredForData {
 		return err
 	}
@@ -212,9 +259,9 @@ func (w *Worker) ensureMBIMRegistration(ctx context.Context, requiredForData boo
 	if w == nil || w.MBIMCore == nil || w.Backend == nil {
 		return nil
 	}
-	if w.Pool != nil && w.Pool.IsVoWiFiActive(w.ID) {
-		logger.Debug("MBIM 驻网协调跳过：VoWiFi 当前活跃", "device", w.ID)
-		return nil
+	if w.shouldAbortCellularRegistration() {
+		logger.Debug("MBIM 驻网协调跳过：蜂窝射频被 VoWiFi/飞行策略抑制", "device", w.ID)
+		return errQMIRegistrationSkipped
 	}
 	ctrl, ok := w.Backend.(mbimRegistrationController)
 	if !ok {
@@ -227,11 +274,16 @@ func (w *Worker) ensureMBIMRegistration(ctx context.Context, requiredForData boo
 	defer cancel()
 	return ensureMBIMRegistration(ctx, w.ID, w.Config, ctrl, mbimRegistrationOptions{
 		SuppressRadioCycle: w.IsOperatorScanActive,
+		ShouldAbort:        w.shouldAbortCellularRegistration,
 	})
 }
 
 func (w *Worker) StartMBIMRegistrationReconcile(ctx context.Context, reason string) bool {
 	if w == nil || w.MBIMCore == nil || w.Backend == nil {
+		return false
+	}
+	if w.shouldAbortCellularRegistration() {
+		logger.Debug("MBIM 后台驻网协调跳过：蜂窝射频被 VoWiFi/飞行策略抑制", "device", w.ID, "reason", reason)
 		return false
 	}
 	return w.startQMIRegistrationReconcile(ctx, reason, func(runCtx context.Context) error {

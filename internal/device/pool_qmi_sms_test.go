@@ -300,3 +300,30 @@ func TestHandleRawSMSQMIAcksDecodeFailure(t *testing.T) {
 		t.Fatalf("ack transaction=0x%x, want 0x55667788", stub.ackCalls[0].TransactionID)
 	}
 }
+
+func TestQMISMSHandlersSkipAllWorkWhenCellularRadioSuppressed(t *testing.T) {
+	stub := &qmiSMSCoreStub{}
+	worker := &Worker{
+		ID:          "wwan0",
+		Pool:        &Pool{},
+		qmiSMS:      stub,
+		reassembler: smscodec.NewReassembler(),
+	}
+	worker.setCellularRadioSuppressed(true)
+
+	if err := worker.CheckAllSMSQMI(); err != nil {
+		t.Fatalf("CheckAllSMSQMI() error=%v", err)
+	}
+	worker.handleNewSMSQMI(1, 17)
+	worker.handleNewSMSRawQMI(qmicore.RawSMSIndication{
+		PDU:           qmiRawSMSFixtureDirectTPDU(t),
+		AckRequired:   true,
+		TransactionID: 0x99,
+		Format:        0x06,
+	})
+
+	if len(stub.listCalls) != 0 || len(stub.readCalls) != 0 || len(stub.deleteCalls) != 0 || len(stub.ackCalls) != 0 {
+		t.Fatalf("suppressed QMI SMS performed work: list=%v read=%v delete=%v ack=%v",
+			stub.listCalls, stub.readCalls, stub.deleteCalls, stub.ackCalls)
+	}
+}

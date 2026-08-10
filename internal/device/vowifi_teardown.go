@@ -67,6 +67,7 @@ func (p *Pool) RestoreRadioAfterVoWiFi(deviceID string) error {
 		return nil
 	}
 
+	w.setCellularRadioSuppressed(false)
 	logger.Info("退出飞行模式恢复射频", "device", deviceID, "backend", w.Backend.Mode())
 	if err := w.Backend.SetOperatingMode(p.ctx, backend.ModeOnline); err != nil {
 		return err

@@ -28,6 +28,7 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	w.Config.APN = strings.TrimSpace(p.APN)
 	w.Config.SMSEnabled = true // SMS 恒开
 	w.restoreNetworkAfterVoWiFi = p.NetworkEnabled
+	w.setCellularRadioSuppressed(w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled)
 }
 
 type policyApplyResult struct {

@@ -417,6 +417,7 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 		stop:             make(chan struct{}),
 		reassembler:      smscodec.NewReassembler(),
 	}
+	w.setCellularRadioSuppressed(devCfg.VoWiFiEnabled || devCfg.AirplaneEnabled)
 	p.assignWorkerGeneration(w)
 	configureWorkerAPDUArbiter(w, qmiTransport)
 

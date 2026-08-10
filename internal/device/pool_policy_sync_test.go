@@ -23,6 +23,9 @@ func TestSetWorkerVoWiFiPolicySyncsConfig(t *testing.T) {
 	if !w.Config.VoWiFiEnabled || !w.Config.AirplaneEnabled || w.Config.NetworkEnabled {
 		t.Fatalf("开 vowifi 应 vowifi=T airplane=T network=F: %+v", w.Config)
 	}
+	if !w.cellularRadioIsSuppressed() {
+		t.Fatal("开 vowifi 应抑制蜂窝射频协调")
+	}
 
 	p.SetWorkerVoWiFiPolicy("wwan0", false)
 	if w.Config.VoWiFiEnabled {
@@ -52,6 +55,9 @@ func TestSetWorkerNetworkPolicyMutualExclusion(t *testing.T) {
 	p.SetWorkerNetworkPolicy("wwan0", true, "v4v6", "ims")
 	if !w.Config.NetworkEnabled || w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled {
 		t.Fatalf("开网络应互斥关 vowifi/airplane: %+v", w.Config)
+	}
+	if w.cellularRadioIsSuppressed() {
+		t.Fatal("开网络应解除蜂窝射频抑制")
 	}
 	if w.Config.IPVersion != "v4v6" || w.Config.APN != "ims" {
 		t.Fatalf("ip/apn 应同步: %+v", w.Config)

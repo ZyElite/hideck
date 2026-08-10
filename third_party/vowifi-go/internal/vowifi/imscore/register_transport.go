@@ -236,6 +236,8 @@ func (s *Service) acceptProtectedSIP(listener net.Listener) {
 		if err != nil {
 			return
 		}
+		logging.Info("IPSec portS accepted server push connection",
+			"device", s.DeviceID(), "remote", conn.RemoteAddr(), "local", conn.LocalAddr())
 		s.inboundTCPAccept.Add(1)
 		configureTCPKeepalive(conn)
 		conn = s.newInboundCountingConn(conn)
@@ -252,7 +254,10 @@ func (s *Service) serveProtectedSIPConnection(conn net.Conn) {
 	defer s.networkDone.Done()
 	defer s.untrackProtectedConnection(conn)
 	defer conn.Close()
-	s.readRegistrationStreamSync(conn)
+	if err := s.readRegistrationStreamSync(conn); err != nil && !s.stopped() {
+		logging.WarnRate("ims-protected-server-stream-"+s.DeviceID(),
+			"IMS protected server push connection closed", "err", err)
+	}
 }
 
 func (s *Service) trackProtectedConnection(conn net.Conn) bool {

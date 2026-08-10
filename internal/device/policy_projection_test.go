@@ -26,6 +26,9 @@ func TestApplyPolicyProjectsFields(t *testing.T) {
 	if !w.Config.SMSEnabled {
 		t.Fatal("SMS 应恒为 true")
 	}
+	if !w.cellularRadioIsSuppressed() {
+		t.Fatal("VoWiFi/飞行策略必须抑制蜂窝射频协调")
+	}
 }
 
 // 投影时按策略真正进入飞行模式：当前在线 ⇒ 切 RFOff。

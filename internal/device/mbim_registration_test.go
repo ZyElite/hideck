@@ -86,6 +86,22 @@ func TestEnsureMBIMRegistrationAttachesWhenRegisteredWithoutPacketService(t *tes
 	}
 }
 
+func TestEnsureMBIMRegistrationSuppressionPreventsRadioSideEffects(t *testing.T) {
+	ctrl := &mbimRegistrationTestController{modeSeq: []backend.OperatingMode{backend.ModeRFOff}}
+	err := ensureMBIMRegistration(context.Background(), "dev-mbim", config.DeviceConfig{}, ctrl, mbimRegistrationOptions{
+		PollInterval: time.Nanosecond,
+		MaxAttempts:  1,
+		ShouldAbort:  func() bool { return true },
+	})
+	if !errors.Is(err, errQMIRegistrationSkipped) {
+		t.Fatalf("ensureMBIMRegistration() error=%v want %v", err, errQMIRegistrationSkipped)
+	}
+	if len(ctrl.setModes) != 0 || len(ctrl.selections) != 0 || ctrl.attachCalls != 0 {
+		t.Fatalf("suppressed registration produced side effects: modes=%v selections=%v attach=%d",
+			ctrl.setModes, ctrl.selections, ctrl.attachCalls)
+	}
+}
+
 func TestEnsureMBIMRegistrationSubmitsManualSelectionWhenSearching(t *testing.T) {
 	ctrl := &mbimRegistrationTestController{
 		servingSeq: []*backend.ServingSystem{

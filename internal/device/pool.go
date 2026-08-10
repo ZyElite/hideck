@@ -129,6 +129,8 @@ type Worker struct {
 
 	qmiRegistrationMu       sync.Mutex
 	qmiRegistrationInFlight bool
+	qmiRegistrationRun      *registrationReconcileRun
+	cellularRadioSuppressed atomic.Bool
 
 	operatorScanMu      sync.Mutex
 	operatorScanCurrent OperatorScanResult
@@ -275,7 +277,6 @@ func (p *Pool) assignWorkerGeneration(worker *Worker) uint64 {
 	}
 	return generation
 }
-
 
 func (p *Pool) registerWorkerStarting(worker *Worker) error {
 	if p == nil || worker == nil || strings.TrimSpace(worker.ID) == "" {
@@ -1829,6 +1830,7 @@ func (p *Pool) SetWorkerNetworkPolicy(deviceID string, networkEnabled bool, ipVe
 		w.Config.IPVersion = strings.TrimSpace(ipVersion)
 	}
 	w.Config.APN = strings.TrimSpace(apn)
+	w.setCellularRadioSuppressed(w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled)
 	return w
 }
 
@@ -1848,6 +1850,7 @@ func (p *Pool) SetWorkerVoWiFiPolicy(deviceID string, vowifiEnabled bool) *Worke
 		w.Config.AirplaneEnabled = true
 		w.Config.NetworkEnabled = false
 	}
+	w.setCellularRadioSuppressed(w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled)
 	return w
 }
 
@@ -1865,6 +1868,7 @@ func (p *Pool) SetWorkerAirplanePolicy(deviceID string, airplaneEnabled bool) *W
 		w.Config.VoWiFiEnabled = false
 		w.Config.NetworkEnabled = false
 	}
+	w.setCellularRadioSuppressed(w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled)
 	return w
 }
 
@@ -1877,6 +1881,7 @@ func (p *Pool) UpdateWorkerConfig(id string, cfg config.DeviceConfig, applyAll b
 	}
 	if applyAll {
 		w.Config = cfg
+		w.setCellularRadioSuppressed(cfg.VoWiFiEnabled || cfg.AirplaneEnabled)
 	} else {
 		w.Config.Name = cfg.Name
 	}

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
+	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 	"github.com/iniwex5/vohive/internal/backend"
 	"github.com/iniwex5/vohive/internal/config"
 )
@@ -130,6 +130,22 @@ func TestEnsureQMIRegistrationRegistersAndAttaches(t *testing.T) {
 	}
 	if len(ctrl.attachCalls) != 1 || !ctrl.attachCalls[0] {
 		t.Fatalf("attachCalls=%v want [true]", ctrl.attachCalls)
+	}
+}
+
+func TestEnsureQMIRegistrationSuppressionPreventsRadioSideEffects(t *testing.T) {
+	ctrl := &qmiRegistrationTestController{opMode: backend.ModeRFOff}
+	err := ensureQMIRegistration(context.Background(), "dev-qmi", config.DeviceConfig{}, ctrl, ctrl, qmiRegistrationOptions{
+		PollInterval: time.Nanosecond,
+		MaxAttempts:  1,
+		ShouldAbort:  func() bool { return true },
+	})
+	if !errors.Is(err, errQMIRegistrationSkipped) {
+		t.Fatalf("ensureQMIRegistration() error=%v want %v", err, errQMIRegistrationSkipped)
+	}
+	if len(ctrl.setModeCalls) != 0 || ctrl.registerCalls != 0 || ctrl.forceNetworkSearchCalls != 0 || len(ctrl.attachCalls) != 0 {
+		t.Fatalf("suppressed registration produced side effects: modes=%v register=%d force=%d attach=%v",
+			ctrl.setModeCalls, ctrl.registerCalls, ctrl.forceNetworkSearchCalls, ctrl.attachCalls)
 	}
 }
 
@@ -563,8 +579,8 @@ func TestQMIRegistrationErrorRequiredOnlyWhenNetworkEnabled(t *testing.T) {
 	}
 
 	err = qmiRegistrationPreferenceError(errQMIRegistrationSkipped, true)
-	if err != nil {
-		t.Fatalf("skipped registration error = %v, want nil", err)
+	if !errors.Is(err, errQMIRegistrationSkipped) {
+		t.Fatalf("required registration skip = %v, want explicit skipped error", err)
 	}
 }
 
@@ -629,6 +645,44 @@ func TestQMIRegistrationReconcileAsyncAllowsOnlyOneInFlightPerWorker(t *testing.
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("reconcile calls = %d, want 2 after retry", got)
+	}
+}
+
+func TestCancelRadioRegistrationReconcileWaitsForExit(t *testing.T) {
+	w := &Worker{ID: "dev-qmi", stop: make(chan struct{})}
+	started := make(chan struct{})
+	exited := make(chan struct{})
+	run := func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		close(exited)
+		return ctx.Err()
+	}
+	if !w.startQMIRegistrationReconcile(context.Background(), "test", run) {
+		t.Fatal("reconcile start = false, want true")
+	}
+	select {
+	case <-started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("reconcile did not start")
+	}
+
+	cancelCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := w.cancelRadioRegistrationReconcile(cancelCtx, "vowifi_start"); err != nil {
+		t.Fatalf("cancelRadioRegistrationReconcile() error=%v", err)
+	}
+	select {
+	case <-exited:
+	default:
+		t.Fatal("cancel returned before reconcile exited")
+	}
+	w.qmiRegistrationMu.Lock()
+	inFlight := w.qmiRegistrationInFlight
+	activeRun := w.qmiRegistrationRun
+	w.qmiRegistrationMu.Unlock()
+	if inFlight || activeRun != nil {
+		t.Fatalf("reconcile state not cleared: inFlight=%v run=%v", inFlight, activeRun)
 	}
 }
 

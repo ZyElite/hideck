@@ -92,6 +92,10 @@ func (w *Worker) readIncomingSMSQMI(storage uint8, index uint32) (*qmimanager.De
 }
 
 func (w *Worker) CheckAllSMSQMI() error {
+	if w.cellularRadioIsSuppressed() {
+		logger.Debug("QMI 短信轮询跳过：蜂窝射频被 VoWiFi/飞行策略抑制", "device", w.ID)
+		return nil
+	}
 	smsCore := w.smsQMICore()
 	if smsCore == nil {
 		return fmt.Errorf("qmi sms core not available")
@@ -166,6 +170,11 @@ func (w *Worker) CheckAllSMSQMI() error {
 
 func (w *Worker) handleNewSMSQMI(storage uint8, index uint32) {
 	logger.Info(fmt.Sprintf("[%s] 收到新短信通知 (QMI)", w.ID), "index", index, "storage", storage)
+	if w.cellularRadioIsSuppressed() {
+		logger.Info("QMI 短信通知保留在模组：蜂窝射频被 VoWiFi/飞行策略抑制",
+			"device", w.ID, "index", index, "storage", storage)
+		return
+	}
 
 	sms, actualStorage, err := w.readIncomingSMSQMI(storage, index)
 	if err != nil {
@@ -199,6 +208,14 @@ func (w *Worker) handleNewSMSRawQMI(info qmicore.RawSMSIndication) {
 		"transaction_id", info.TransactionID,
 		"format", info.Format,
 	)
+	if w.cellularRadioIsSuppressed() {
+		logger.Info("QMI 原始短信通知未处理：蜂窝射频被 VoWiFi/飞行策略抑制",
+			"device", w.ID,
+			"ack_required", info.AckRequired,
+			"transaction_id", info.TransactionID,
+		)
+		return
+	}
 
 	sms, err := qmimanager.DecodeIncomingSMSPDU(info.PDU, qmiSMSStorageUnknown, ^uint32(0))
 	if err != nil {

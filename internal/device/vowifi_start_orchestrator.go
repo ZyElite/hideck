@@ -118,6 +118,7 @@ func (p *Pool) MarkRuntimeStarted(req vowifihost.RuntimeStartedRequest) {
 	if w == nil {
 		return
 	}
+	w.setCellularRadioSuppressed(true)
 	w.smsMode = smsModeVoWiFi
 	if w.Modem != nil {
 		w.Modem.SetNewSMSHandler(nil)
@@ -134,6 +135,10 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		return startCtx, fmt.Errorf("设备 %s 不存在", deviceID)
 	}
 	startCtx.worker = w
+	w.restoreNetworkAfterVoWiFi = w.Config.NetworkEnabled
+	if err := w.suppressCellularRegistration(p.Context(), "vowifi_start"); err != nil {
+		return startCtx, fmt.Errorf("VoWiFi 启动前停止蜂窝驻网协调失败: %w", err)
+	}
 
 	modemIface, errModemIface := newVoWiFiModemInterface(w, deviceID)
 	if errModemIface != nil {
@@ -239,7 +244,6 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		"applied", prepared.IMSIdentity.Applied)
 
 	if nc := w.NetworkController(); nc != nil {
-		w.restoreNetworkAfterVoWiFi = w.Config.NetworkEnabled
 		logger.Info("VoWiFi 启用中，停止网络功能", "trace_id", traceID, "device", deviceID)
 		if err := nc.Disconnect(); err != nil {
 			logger.Warn("断开数据连接失败，继续启动 VoWiFi", "trace_id", traceID, "device", deviceID, "err", err)
@@ -247,28 +251,8 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		w.clearCachedIP()
 	}
 
-	// 切卡恢复场景下设备可能已处于飞行模式，此时无需再次切换。
-	// 冗余的 SetOperatingMode(LowPower) 会触发模组内部 UIM Session Close，
-	// 导致 SIM 卡基础通道上的 USIM 应用选择状态丢失，使后续 AKA 认证失败（SW=6B00）。
-	alreadyInFlight := false
-	if opMode, opErr := w.Backend.GetOperatingMode(p.ctx); opErr == nil {
-		alreadyInFlight = isFlightOperatingMode(opMode)
-	}
-	if strings.EqualFold(w.Backend.Mode(), backend.BackendMBIM) {
-		logger.Info("MBIM 后端不支持真正的低功耗模式",
-			"trace_id", traceID, "device", deviceID)
-	} else if alreadyInFlight {
-		logger.Info("设备已处于飞行模式，跳过冗余的飞行模式切换",
-			"trace_id", traceID, "device", deviceID, "backend", w.Backend.Mode())
-	} else {
-		logger.Info("进入飞行模式以禁用原生 IMS 注册",
-			"trace_id", traceID, "device", deviceID, "backend", w.Backend.Mode())
-		if err := w.Backend.SetOperatingMode(p.ctx, backend.ModeRFOff); err != nil {
-			logger.Warn("进入飞行模式失败，继续尝试建立隧道",
-				"trace_id", traceID, "device", deviceID, "err", err)
-		} else {
-			time.Sleep(500 * time.Millisecond)
-		}
+	if err := enterVoWiFiRFOff(p.Context(), w, traceID); err != nil {
+		return startCtx, err
 	}
 
 	startCtx.Proxy = resolveVoWiFiCountryProxy(startProfile.MCC, traceID, deviceID)
@@ -277,6 +261,41 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 	startCtx.StartupState = newVoWiFiSIMReadyStartupState(deviceID, swu.DataplaneModeUserspace, startCtx.NetworkMode, time.Now())
 	p.recordVoWiFiStartupState(deviceID, startCtx.StartupState)
 	return startCtx, nil
+}
+
+func enterVoWiFiRFOff(ctx context.Context, w *Worker, traceID string) error {
+	if w == nil || w.Backend == nil {
+		return fmt.Errorf("VoWiFi 启动缺少射频控制后端")
+	}
+	if strings.EqualFold(w.Backend.Mode(), backend.BackendMBIM) {
+		logger.Info("MBIM 后端不支持真正的低功耗模式", "trace_id", traceID, "device", w.ID)
+		return nil
+	}
+	mode, err := w.Backend.GetOperatingMode(ctx)
+	if err != nil {
+		return fmt.Errorf("VoWiFi 启动前读取射频模式失败: %w", err)
+	}
+	if isFlightOperatingMode(mode) {
+		logger.Info("设备已处于飞行模式，跳过冗余的飞行模式切换",
+			"trace_id", traceID, "device", w.ID, "backend", w.Backend.Mode())
+		return nil
+	}
+	logger.Info("进入飞行模式以禁用原生 IMS 注册",
+		"trace_id", traceID, "device", w.ID, "backend", w.Backend.Mode())
+	if err := w.Backend.SetOperatingMode(ctx, backend.ModeRFOff); err != nil {
+		return fmt.Errorf("进入飞行模式失败: %w", err)
+	}
+	if err := sleepQMIRegistrationPoll(ctx, 500*time.Millisecond); err != nil {
+		return fmt.Errorf("等待飞行模式生效失败: %w", err)
+	}
+	mode, err = w.Backend.GetOperatingMode(ctx)
+	if err != nil {
+		return fmt.Errorf("验证飞行模式失败: %w", err)
+	}
+	if !isFlightOperatingMode(mode) {
+		return fmt.Errorf("飞行模式未生效: mode=%d", int(mode))
+	}
+	return nil
 }
 
 func resolveVoWiFiCountryProxy(homeMCC, traceID, deviceID string) *runtimehost.ProxyConfig {
