@@ -299,7 +299,7 @@ func TestAgentEmitsRingingAfterRecoveredProvisionalTransition(t *testing.T) {
 	agent := NewAgent("device-ringing", nil, nil)
 	call := NewCall(agent, callstate.DirectionOutbound, "call-ringing", "43430")
 	t.Cleanup(call.Cancel)
-	if err := call.TransitionChecked(callstate.StateDialing); err != nil {
+	if err := call.TransitionChecked(callstate.StateCalling); err != nil {
 		t.Fatal(err)
 	}
 	agent.mu.Lock()
@@ -313,7 +313,7 @@ func TestAgentEmitsRingingAfterRecoveredProvisionalTransition(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if call.CallState() != callstate.StateAlerting {
+	if call.CallState() != callstate.StateRinging {
 		t.Fatalf("state=%s, want Alerting", call.CallState())
 	}
 	select {

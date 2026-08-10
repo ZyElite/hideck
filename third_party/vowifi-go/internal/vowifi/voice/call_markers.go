@@ -39,7 +39,7 @@ func (c *Call) MarkInviteFinalSeen() bool {
 	}
 	c.inviteFinalSeen = true
 	c.DialogState.InviteFinalSeen = true
-	c.transitionLocked(int(callstate.StateEnded))
+	c.transitionLocked(int(callstate.StateTerminated))
 	return true
 }
 
@@ -64,12 +64,12 @@ func (c *Call) MarkInviteProvisional(status int) {
 	c.DialogState.InviteProvisional = true
 	switch status {
 	case 180:
-		c.transitionLocked(int(callstate.StateAlerting))
+		c.transitionLocked(int(callstate.StateRinging))
 	case 183:
-		c.transitionLocked(int(callstate.StateConnecting))
+		c.transitionLocked(int(callstate.StateEarlyMedia))
 	default:
-		if c.State == int(callstate.StateIdle) {
-			c.transitionLocked(int(callstate.StateDialing))
+		if c.State == int(callstate.StateInit) {
+			c.transitionLocked(int(callstate.StateCalling))
 		}
 	}
 }
@@ -99,7 +99,7 @@ func (c *Call) MarkLocalCancelSent(reason string) bool {
 	reason = strings.TrimSpace(reason)
 	c.outboundCancelReason = reason
 	c.DialogState.LocalCancelReason = reason
-	c.transitionLocked(int(callstate.StateFailed))
+	c.transitionLocked(int(callstate.StateTerminating))
 	return true
 }
 

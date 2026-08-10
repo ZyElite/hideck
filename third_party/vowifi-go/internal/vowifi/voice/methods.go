@@ -97,7 +97,7 @@ func NewOutboundCallForAgent(agent *Agent, number string) (*Call, error) {
 	}
 	call := NewCall(agent, callstate.DirectionOutbound, newVoiceCallID(), number)
 	call.SetStartTime(time.Now())
-	if err := call.TransitionChecked(callstate.StateDialing); err != nil {
+	if err := call.TransitionChecked(callstate.StateCalling); err != nil {
 		return nil, err
 	}
 	agent.mu.Lock()
@@ -126,7 +126,7 @@ func NewCallFromRequest(deviceID string, request *sip.Request, session *imsendpo
 // NewCallFromRequestForAgent preserves the additive Agent-owned constructor.
 func NewCallFromRequestForAgent(agent *Agent, peer, callID string) *Call {
 	call := NewCall(agent, callstate.DirectionInbound, callID, peer)
-	_ = call.TransitionChecked(callstate.StateAlerting)
+	_ = call.TransitionChecked(callstate.StateRinging)
 	if agent != nil {
 		agent.mu.Lock()
 		agent.calls[callID] = call
@@ -149,7 +149,7 @@ func NewCallFromClientInvite(deviceID string, request *sip.Request) *Call {
 func NewCallFromClientInviteForAgent(agent *Agent, peer, callID, clientCallID string) *Call {
 	call := NewCall(agent, callstate.DirectionOutbound, callID, peer)
 	call.SetClientCallID(clientCallID)
-	_ = call.TransitionChecked(callstate.StateDialing)
+	_ = call.TransitionChecked(callstate.StateCalling)
 	if agent != nil {
 		agent.mu.Lock()
 		agent.calls[callID] = call
@@ -264,9 +264,8 @@ func (a *Agent) finishRemoteBye(call *Call) error {
 		return nil
 	}
 	clientErr := a.sendClientBye(call)
-	_ = call.TransitionChecked(callstate.StateDisconnected)
-	_ = call.TransitionChecked(callstate.StateEnded)
-	_ = call.StopMedia()
+	_ = call.TransitionChecked(callstate.StateTerminating)
+	call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	closeErr := a.closeCallDialog(context.Background(), call)
 	call.CloseDone()
@@ -310,12 +309,6 @@ func (a *Agent) OnIMSUpdate(callID string) error {
 func (a *Agent) applyIMSUpdate(call *Call) error {
 	if call.CallState() != callstate.StateConnected {
 		return errors.New("voice: call is not connected")
-	}
-	if err := call.TransitionChecked(callstate.StateConnecting); err != nil {
-		return err
-	}
-	if err := call.TransitionChecked(callstate.StateConnected); err != nil {
-		return err
 	}
 	a.emitCallMediaUpdated(call)
 	return nil

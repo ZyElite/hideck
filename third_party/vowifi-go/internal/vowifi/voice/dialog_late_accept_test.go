@@ -161,7 +161,7 @@ func TestAgentHangupPendingInviteUsesCancelTerminalState(t *testing.T) {
 	if err := agent.Hangup(call.CallID()); err != nil {
 		t.Fatalf("Hangup pending INVITE: %v", err)
 	}
-	if call.CallState() != callstate.StateFailed || agent.IsBusy() {
+	if call.CallState() != callstate.StateTerminated || agent.IsBusy() {
 		t.Fatalf("pending hangup state=%s busy=%t", call.CallState(), agent.IsBusy())
 	}
 	select {

@@ -95,12 +95,12 @@ func (a *Agent) sendMarkedOutboundInviteCancel(
 
 func (a *Agent) handleOutboundInviteNoAnswerTimeout(call *Call) {
 	if call == nil || call.HasInviteFinalSeen() ||
-		call.CallState() == callstate.StateDisconnected || call.CallState() == callstate.StateEnded {
+		call.CallState() == callstate.StateTerminating || call.CallState() == callstate.StateTerminated {
 		return
 	}
 	if !call.HasInviteProvisional() {
 		call.MarkLocalCancelSent("no_answer")
-		_ = call.TransitionChecked(callstate.StateEnded)
+		_ = call.TransitionChecked(callstate.StateTerminated)
 		a.respondSyntheticFinalToClient(call, 408, imscore.SIPStatusText(408))
 		call.cancelOutboundRuntime()
 		a.finishOutboundNoAnswer(call)
@@ -129,7 +129,7 @@ func (a *Agent) finishOutboundNoAnswer(call *Call) {
 	if call == nil || !call.claimTerminalFinalization() {
 		return
 	}
-	_ = call.StopMedia()
+	call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	call.CloseDone()
 	a.emitCallEnded(call, "no_answer")

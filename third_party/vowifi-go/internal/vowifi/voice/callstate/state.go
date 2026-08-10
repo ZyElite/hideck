@@ -14,53 +14,65 @@ type State int
 // Call states (recovered from the binary's State.String switch and the
 // transition map in map.init.0).
 const (
-	StateIdle         State = iota // 0: no call
-	StateDialing                   // 1: outbound INVITE sent
-	StateAlerting                  // 2: 180 Ringing received
-	StateConnecting                // 3: early media / 183 received
-	StateConnected                 // 4: 200 OK + ACK, media active
-	StateDisconnected              // 5: call released (BYE)
-	StateFailed                    // 6: call failed (error response)
-	StateEnded                     // 7: terminal
+	StateInit State = iota
+	StateCalling
+	StateRinging
+	StateEarlyMedia
+	StatePreconditionWait
+	StateConnected
+	StateTerminating
+	StateTerminated
+)
+
+// Compatibility aliases retain source compatibility with the interim state
+// names. StateConnectedCurrent names the interim numeric connected state,
+// which the original binary uses for precondition waiting.
+const (
+	StateIdle             = StateInit
+	StateDialing          = StateCalling
+	StateAlerting         = StateRinging
+	StateConnecting       = StateEarlyMedia
+	StateConnectedCurrent = StatePreconditionWait
+	StateDisconnected     = StateTerminating
+	StateFailed           = StateTerminating
+	StateEnded            = StateTerminated
 )
 
 // String returns the state name.
 func (s State) String() string {
 	switch s {
-	case StateIdle:
-		return "Idle"
-	case StateDialing:
-		return "Dialing"
-	case StateAlerting:
-		return "Alerting"
-	case StateConnecting:
-		return "Connecting"
+	case StateInit:
+		return "Init"
+	case StateCalling:
+		return "Calling"
+	case StateRinging:
+		return "Ringing"
+	case StateEarlyMedia:
+		return "EarlyMedia"
+	case StatePreconditionWait:
+		return "PreconditionWait"
 	case StateConnected:
 		return "Connected"
-	case StateDisconnected:
-		return "Disconnected"
-	case StateFailed:
-		return "Failed"
-	case StateEnded:
-		return "Ended"
+	case StateTerminating:
+		return "Terminating"
+	case StateTerminated:
+		return "Terminated"
 	default:
 		return fmt.Sprintf("State(%d)", int(s))
 	}
 }
 
-// transitionMap is the recovered transition table: from each state, the set
-// of allowed next states. State 4 (Connected) may return to State 3
-// (Connecting) for a re-INVITE media renegotiation (recovered from the
-// binary's map.init.0).
+// transitionMap is the recovered transition table from the binary's
+// callstate.map.init.0.
 var transitionMap = map[State]map[State]bool{
-	StateIdle:         {StateDialing: true, StateAlerting: true, StateDisconnected: true, StateEnded: true},
-	StateDialing:      {StateAlerting: true, StateConnecting: true, StateDisconnected: true, StateFailed: true, StateEnded: true},
-	StateAlerting:     {StateConnecting: true, StateDisconnected: true, StateFailed: true, StateEnded: true},
-	StateConnecting:   {StateConnected: true, StateDisconnected: true, StateFailed: true, StateEnded: true},
-	StateConnected:    {StateConnecting: true, StateDisconnected: true, StateFailed: true, StateEnded: true},
-	StateDisconnected: {StateFailed: true, StateEnded: true},
-	StateFailed:       {StateEnded: true},
-	StateEnded:        {},
+	StateInit:             {StateCalling: true, StateRinging: true, StateConnected: true, StateTerminated: true},
+	StateCalling:          {StateRinging: true, StateEarlyMedia: true, StateConnected: true, StateTerminating: true, StateTerminated: true},
+	StateRinging:          {StateEarlyMedia: true, StateConnected: true, StateTerminating: true, StateTerminated: true},
+	StateEarlyMedia:       {StatePreconditionWait: true, StateConnected: true, StateTerminating: true, StateTerminated: true},
+	StatePreconditionWait: {StateEarlyMedia: true, StateConnected: true, StateTerminating: true, StateTerminated: true},
+	StateConnected:        {StateTerminating: true, StateTerminated: true},
+	StateTerminating:      {StateTerminated: true},
+	StateTerminated:       {},
 }
 
 // CanTransition reports whether from may transition to to.
@@ -72,11 +84,9 @@ func CanTransition(from, to State) bool {
 	return next[to]
 }
 
-// IsTerminal reports whether call teardown has reached a terminal outcome.
-// The original runtime treats Failed as terminal even though Failed -> Ended
-// remains a valid bookkeeping transition.
+// IsTerminal reports whether call teardown is terminating or terminated.
 func IsTerminal(s State) bool {
-	return s == StateFailed || s == StateEnded
+	return s == StateTerminating || s == StateTerminated
 }
 
 // Direction is the call direction.

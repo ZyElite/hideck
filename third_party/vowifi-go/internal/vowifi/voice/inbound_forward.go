@@ -185,7 +185,7 @@ func (a *Agent) handleInboundClientTransactionError(call *Call, cause error) {
 	}
 	_ = a.sendClientCancel(call)
 	status := 408
-	if errors.Is(cause, context.Canceled) && call.CallState() != callstate.StateAlerting {
+	if errors.Is(cause, context.Canceled) && call.CallState() != callstate.StateRinging {
 		return
 	}
 	a.failInboundClientDelivery(call, status, cause)

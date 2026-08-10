@@ -22,8 +22,8 @@ var _ originalActorAPI = (*Actor)(nil)
 
 func TestStateString(t *testing.T) {
 	want := []string{
-		"Idle", "Dialing", "Alerting", "Connecting",
-		"Connected", "Disconnected", "Failed", "Ended",
+		"Init", "Calling", "Ringing", "EarlyMedia",
+		"PreconditionWait", "Connected", "Terminating", "Terminated",
 	}
 	for state, name := range want {
 		if got := State(state).String(); got != name {
@@ -37,21 +37,21 @@ func TestStateString(t *testing.T) {
 
 func TestTransitionMapMatchesOriginal(t *testing.T) {
 	want := map[State][]State{
-		StateIdle:         {StateDialing, StateAlerting, StateDisconnected, StateEnded},
-		StateDialing:      {StateAlerting, StateConnecting, StateDisconnected, StateFailed, StateEnded},
-		StateAlerting:     {StateConnecting, StateDisconnected, StateFailed, StateEnded},
-		StateConnecting:   {StateConnected, StateDisconnected, StateFailed, StateEnded},
-		StateConnected:    {StateConnecting, StateDisconnected, StateFailed, StateEnded},
-		StateDisconnected: {StateFailed, StateEnded},
-		StateFailed:       {StateEnded},
-		StateEnded:        {},
+		StateInit:             {StateCalling, StateRinging, StateConnected, StateTerminated},
+		StateCalling:          {StateRinging, StateEarlyMedia, StateConnected, StateTerminating, StateTerminated},
+		StateRinging:          {StateEarlyMedia, StateConnected, StateTerminating, StateTerminated},
+		StateEarlyMedia:       {StatePreconditionWait, StateConnected, StateTerminating, StateTerminated},
+		StatePreconditionWait: {StateEarlyMedia, StateConnected, StateTerminating, StateTerminated},
+		StateConnected:        {StateTerminating, StateTerminated},
+		StateTerminating:      {StateTerminated},
+		StateTerminated:       {},
 	}
-	for from := StateIdle; from <= StateEnded; from++ {
+	for from := StateInit; from <= StateTerminated; from++ {
 		allowed := make(map[State]bool, len(want[from]))
 		for _, to := range want[from] {
 			allowed[to] = true
 		}
-		for to := StateIdle; to <= StateEnded; to++ {
+		for to := StateInit; to <= StateTerminated; to++ {
 			if got := CanTransition(from, to); got != allowed[to] {
 				t.Errorf("CanTransition(%s, %s) = %t, want %t", from, to, got, allowed[to])
 			}
@@ -60,8 +60,8 @@ func TestTransitionMapMatchesOriginal(t *testing.T) {
 }
 
 func TestTerminalStatesMatchOriginalCallLifecycle(t *testing.T) {
-	for state := StateIdle; state <= StateEnded; state++ {
-		want := state == StateFailed || state == StateEnded
+	for state := StateInit; state <= StateTerminated; state++ {
+		want := state == StateTerminating || state == StateTerminated
 		if got := IsTerminal(state); got != want {
 			t.Errorf("IsTerminal(%s) = %t, want %t", state, got, want)
 		}

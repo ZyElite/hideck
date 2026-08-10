@@ -19,8 +19,27 @@ func (c *Call) Hangup() error {
 	return c.agent.Hangup(c.CallID())
 }
 
-// StartMedia starts the RTP relay for the call.
-func (c *Call) StartMedia() error {
+// StartMedia records media establishment and enters the recovered Connected state.
+func (c *Call) StartMedia() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.startTime = time.Now()
+	c.transitionLocked(int(callstate.StateConnected))
+	c.mu.Unlock()
+}
+
+// StartMediaCurrent starts the restored media resources and exposes failures.
+func (c *Call) StartMediaCurrent() error {
+	if err := c.startMediaResourcesCurrent(); err != nil {
+		return err
+	}
+	c.StartMedia()
+	return nil
+}
+
+func (c *Call) startMediaResourcesCurrent() error {
 	if c == nil {
 		return errors.New("voice: nil call")
 	}
@@ -31,7 +50,7 @@ func (c *Call) StartMedia() error {
 	if relay == nil {
 		return errors.New("voice: no media relay")
 	}
-	if err := relay.Start(); err != nil {
+	if err := relay.StartCurrent(); err != nil {
 		return err
 	}
 	if generator == nil {
@@ -39,27 +58,41 @@ func (c *Call) StartMedia() error {
 	}
 	conn, remote := relay.GetIMSConnAndRemote()
 	if err := generator.Start(conn, remote); err != nil {
-		return errors.Join(err, relay.Stop())
+		return errors.Join(err, relay.StopCurrent())
 	}
 	return nil
 }
 
-// StopMedia stops the RTP relay for the call.
-func (c *Call) StopMedia() error {
+// StopMedia records termination and stops all media resources.
+func (c *Call) StopMedia() {
+	_ = c.stopMediaCurrent()
+}
+
+// StopMediaCurrent retains explicit cleanup error propagation.
+func (c *Call) StopMediaCurrent() error {
+	return c.stopMediaCurrent()
+}
+
+func (c *Call) stopMediaCurrent() error {
 	if c == nil {
 		return nil
 	}
-	c.mu.RLock()
+	c.StopPrackTimer()
+	c.mu.Lock()
+	c.endTime = time.Now()
+	c.transitionLocked(int(callstate.StateTerminated))
 	relay := c.rtpRelay
 	generator := c.comfortNoise
-	c.mu.RUnlock()
 	if generator != nil {
 		generator.Stop()
 	}
 	if relay == nil {
+		c.mu.Unlock()
 		return nil
 	}
-	return relay.Stop()
+	err := relay.StopCurrent()
+	c.mu.Unlock()
+	return err
 }
 
 // StartPCAP begins packet capture to a path/directory or an injected writer.
@@ -103,13 +136,13 @@ func (c *Call) StartOutboundNoAnswerTimer(timeout time.Duration) error {
 		c.noAnswerTimer.Stop()
 	}
 	c.noAnswerTimer = time.AfterFunc(timeout, func() {
-		if c.CallState() == callstate.StateDialing || c.CallState() == callstate.StateAlerting {
+		if c.CallState() == callstate.StateCalling || c.CallState() == callstate.StateRinging {
 			if c.agent != nil {
 				c.agent.handleOutboundInviteNoAnswerTimeout(c)
 				return
 			}
 			c.SetOutboundCancelReason("no_answer")
-			_ = c.TransitionChecked(callstate.StateFailed)
+			_ = c.TransitionChecked(callstate.StateTerminating)
 			c.CloseDone()
 		}
 	})

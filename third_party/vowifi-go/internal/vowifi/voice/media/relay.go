@@ -272,7 +272,12 @@ func (r *RTPRelay) GetIMSConnAndRemote() (net.PacketConn, *net.UDPAddr) {
 }
 
 // Start launches each available RTP and RTCP read loop exactly once.
-func (r *RTPRelay) Start() error {
+func (r *RTPRelay) Start() {
+	_ = r.StartCurrent()
+}
+
+// StartCurrent retains explicit lifecycle error propagation.
+func (r *RTPRelay) StartCurrent() error {
 	if r == nil {
 		return errors.New("media: nil relay")
 	}
@@ -309,11 +314,15 @@ func (r *RTPRelay) startLoop(conn net.PacketConn, loop func()) {
 }
 
 // Stop closes all sockets, stops timers and waits for every relay goroutine.
-func (r *RTPRelay) Stop() error {
+func (r *RTPRelay) Stop() {
+	_ = r.StopCurrent()
+}
+
+// StopCurrent retains explicit lifecycle error propagation.
+func (r *RTPRelay) StopCurrent() error {
 	if r == nil {
 		return nil
 	}
-	var stopErr error
 	r.stopOnce.Do(func() {
 		r.mu.Lock()
 		close(r.stopCh)
@@ -328,11 +337,16 @@ func (r *RTPRelay) Stop() error {
 		if r.connLANRTCP != nil {
 			connections = append(connections, r.connLANRTCP)
 		}
-		stopErr = errors.Join(stopErr, closePacketConns(connections...))
+		stopErr := closePacketConns(connections...)
 		r.wg.Wait()
 		stopErr = errors.Join(stopErr, r.StopPCAP())
+		r.mu.Lock()
+		r.stopErr = stopErr
+		r.mu.Unlock()
 	})
-	return stopErr
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.stopErr
 }
 
 func closePacketConns(conns ...net.PacketConn) error {

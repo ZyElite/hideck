@@ -35,7 +35,7 @@ func (a *Agent) IncomingCalls() []IncomingCall {
 	result := make([]IncomingCall, 0, len(calls))
 	for _, call := range calls {
 		state := call.CallState()
-		if state == callstate.StateAlerting || state == callstate.StateConnecting || state == callstate.StateConnected {
+		if state == callstate.StateRinging || state == callstate.StateEarlyMedia || state == callstate.StateConnected {
 			result = append(result, call.incomingSnapshot())
 		}
 	}
@@ -75,7 +75,7 @@ func (a *Agent) HandleInboundVoiceRequest(request imscore.InboundVoiceRequest) (
 
 func (a *Agent) handleInboundInvite(request imscore.InboundVoiceRequest, call *Call) (imscore.InboundVoiceResult, error) {
 	if call != nil {
-		if call.CallDirection() == callstate.DirectionInbound && call.CallState() == callstate.StateAlerting {
+		if call.CallDirection() == callstate.DirectionInbound && call.CallState() == callstate.StateRinging {
 			a.maybeStartInboundClient(call)
 			return voiceResult(0), nil
 		}
@@ -157,7 +157,7 @@ func (a *Agent) handleInboundCancel(request imscore.InboundVoiceRequest, call *C
 	}
 	call.inboundDecisionMu.Lock()
 	defer call.inboundDecisionMu.Unlock()
-	if call.CallState() != callstate.StateAlerting {
+	if call.CallState() != callstate.StateRinging {
 		return voiceResult(481), nil
 	}
 	responder := call.inboundResponseWriter()

@@ -68,6 +68,7 @@ type RTPRelay struct {
 	lanPacket      net.PacketConn
 	pcapWriter     packetCaptureWriter
 	pcapErr        error
+	stopErr        error
 	imsRemote      *net.UDPAddr
 	lanRemote      *net.UDPAddr
 

@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+type originalRTPRelayLifecycle interface {
+	Start()
+	Stop()
+}
+
+var _ originalRTPRelayLifecycle = (*RTPRelay)(nil)
+
 func TestOriginalMediaStructPrefixes(t *testing.T) {
 	assertFieldPrefix(t, reflect.TypeOf(RTPRelay{}), []string{
 		"bytesIMSToLAN", "bytesLANToIMS", "bytesIMSRTCPToLAN", "bytesLANRTCPToIMS",
@@ -40,7 +47,7 @@ func TestOriginalMediaCallForms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = relay.Stop() })
+	t.Cleanup(relay.Stop)
 	relay.SetLogContext("device-30", "trace-30")
 	relay.SetPTMapping(96, 8)
 	if err := relay.SetRemoteAddr("127.0.0.1", 20000); err != nil {
@@ -73,4 +80,20 @@ func TestOriginalMediaCallForms(t *testing.T) {
 		t.Fatal(err)
 	}
 	noise.Stop()
+}
+
+func TestCurrentRTPRelayLifecycleErrorsRemainExplicit(t *testing.T) {
+	var nilRelay *RTPRelay
+	if err := nilRelay.StartCurrent(); err == nil {
+		t.Fatal("nil relay start did not return an error")
+	}
+	nilRelay.Start()
+	nilRelay.Stop()
+
+	relay := NewRTPRelay(nil, nil)
+	relay.Stop()
+	if err := relay.StartCurrent(); err == nil {
+		t.Fatal("stopped relay restart did not return an error")
+	}
+	relay.Start()
 }

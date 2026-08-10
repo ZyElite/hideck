@@ -48,7 +48,7 @@ func TestVoiceMediaRelayUsesIMSNetworkForIPv6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newVoiceMediaRelay: %v", err)
 	}
-	t.Cleanup(func() { _ = relay.Stop() })
+	t.Cleanup(relay.Stop)
 	if network.address == nil || !network.address.IP.Equal(localIP) {
 		t.Fatalf("IMS listener address=%v want %s", network.address, localIP)
 	}

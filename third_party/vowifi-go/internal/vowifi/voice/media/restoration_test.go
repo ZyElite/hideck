@@ -49,10 +49,10 @@ func TestRTPRelayForwardsRTCPBothDirections(t *testing.T) {
 	if err := relay.SetClientAddr(lanPeerRTP.LocalAddr().(*net.UDPAddr)); err != nil {
 		t.Fatal(err)
 	}
-	if err := relay.Start(); err != nil {
+	if err := relay.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = relay.Stop() })
+	t.Cleanup(relay.Stop)
 
 	packet := []byte{0x80, 0xc9, 0, 1, 1, 2, 3, 4}
 	writeUDPTo(t, imsPeerRTCP, imsRTCP.LocalAddr().(*net.UDPAddr), packet)
@@ -86,12 +86,12 @@ func TestRTPRelayWritesOriginalPCAPWireFormat(t *testing.T) {
 	if err := relay.StartPCAP(directory); err != nil {
 		t.Fatal(err)
 	}
-	if err := relay.Start(); err != nil {
+	if err := relay.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
 	writeMediaRTP(t, lanPeer, relay.LANPort(), 8)
 	_ = readMediaRTP(t, imsPeer)
-	if err := relay.Stop(); err != nil {
+	if err := relay.StopCurrent(); err != nil {
 		t.Fatal(err)
 	}
 

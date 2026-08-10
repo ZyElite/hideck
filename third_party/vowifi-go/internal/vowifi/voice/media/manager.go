@@ -43,7 +43,7 @@ func (m *MediaSessionManager) CreateRelay(first string, second any, rest ...any)
 		return nil, errors.New("media: invalid media timeout")
 	}
 	if m.relay != nil {
-		_ = m.relay.Stop()
+		m.relay.Stop()
 	}
 	relay, err := NewRTPRelayWithListener(nil, first, lanAddress, 0, 0)
 	if err != nil {
@@ -111,7 +111,7 @@ func (m *MediaSessionManager) Start() error {
 	relays := m.relaySnapshotLocked()
 	m.mu.Unlock()
 	for _, relay := range relays {
-		if err := relay.Start(); err != nil {
+		if err := relay.StartCurrent(); err != nil {
 			return err
 		}
 	}
@@ -131,7 +131,7 @@ func (m *MediaSessionManager) Release(callID ...string) error {
 			m.relay = nil
 		}
 		m.mu.Unlock()
-		return relay.Stop()
+		return relay.StopCurrent()
 	}
 	if m.released {
 		m.mu.Unlock()
@@ -144,7 +144,7 @@ func (m *MediaSessionManager) Release(callID ...string) error {
 	m.mu.Unlock()
 	var result error
 	for _, relay := range relays {
-		result = errors.Join(result, relay.Stop())
+		result = errors.Join(result, relay.StopCurrent())
 	}
 	return result
 }
@@ -247,8 +247,8 @@ func (b *Bridge) SetupRelay(args ...any) (*RTPRelay, error) {
 	}
 	relay.SetLogContext(b.deviceID, traceID)
 	relay.SetOneWayTimeoutHandler(callback)
-	if err := relay.Start(); err != nil {
-		_ = relay.Stop()
+	if err := relay.StartCurrent(); err != nil {
+		relay.Stop()
 		return nil, err
 	}
 	b.mu.Lock()

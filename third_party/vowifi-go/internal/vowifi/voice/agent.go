@@ -370,7 +370,7 @@ func (a *Agent) startOutboundCall(number string) (*Call, error) {
 	if err := a.prepareVoiceDialog(call, number); err != nil {
 		return nil, err
 	}
-	if err := call.TransitionChecked(callstate.StateDialing); err != nil {
+	if err := call.TransitionChecked(callstate.StateCalling); err != nil {
 		return nil, err
 	}
 	a.mu.Lock()
@@ -399,8 +399,8 @@ func (a *Agent) completeOutboundInvite(ctx context.Context, call *Call, response
 		return fmt.Errorf("voice: INVITE rejected: %d %s", response.StatusCode, response.Reason)
 	}
 	call.applyVoiceSessionExpires(voiceResponseHeader(response.Headers, "Session-Expires"))
-	if state := call.CallState(); state == callstate.StateDialing || state == callstate.StateAlerting {
-		if err := call.TransitionChecked(callstate.StateConnecting); err != nil {
+	if state := call.CallState(); state == callstate.StateCalling || state == callstate.StateRinging {
+		if err := call.TransitionChecked(callstate.StateEarlyMedia); err != nil {
 			return err
 		}
 	}
@@ -513,13 +513,13 @@ func (a *Agent) hangupInboundCall(ctx context.Context, call *Call) error {
 }
 
 func (a *Agent) finishLocalHangup(call *Call) error {
-	if err := call.TransitionChecked(callstate.StateDisconnected); err != nil {
+	if err := call.TransitionChecked(callstate.StateTerminating); err != nil {
 		return err
 	}
 	if !call.claimTerminalFinalization() {
 		return nil
 	}
-	_ = call.StopMedia()
+	call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	call.CloseDone()
 	a.emitCallEnded(call, "local_hangup")
@@ -531,7 +531,7 @@ func (a *Agent) finishLocalCancel(call *Call, reason string) {
 	if call == nil || !call.claimTerminalFinalization() {
 		return
 	}
-	_ = call.StopMedia()
+	call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	call.CloseDone()
 	a.emitCallCanceled(call, reason)
@@ -542,8 +542,8 @@ func (a *Agent) failOutboundCall(call *Call, cause error) error {
 	if call == nil || !call.claimTerminalFinalization() {
 		return cause
 	}
-	_ = call.TransitionChecked(callstate.StateFailed)
-	_ = call.StopMedia()
+	_ = call.TransitionChecked(callstate.StateTerminating)
+	call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	_ = a.closeCallDialog(context.Background(), call)
 	call.CloseDone()
@@ -556,8 +556,8 @@ func (a *Agent) forceReleaseCall(call *Call, cause error) {
 	if call == nil || !call.claimTerminalFinalization() {
 		return
 	}
-	_ = call.TransitionChecked(callstate.StateFailed)
-	_ = call.StopMedia()
+	_ = call.TransitionChecked(callstate.StateTerminating)
+	call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	_ = a.closeCallDialog(context.Background(), call)
 	call.CloseDone()

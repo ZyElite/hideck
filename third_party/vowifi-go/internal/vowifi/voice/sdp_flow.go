@@ -27,7 +27,7 @@ func ProcessIncomingIMSSDP(call *Call, raw []byte, localIP string) ([]byte, erro
 		return nil, fmt.Errorf("解析 IMS SDP 失败: %w", err)
 	}
 	_ = relay.SetRemoteAddr(info.ConnectionIP, info.MediaPort)
-	_ = relay.Start()
+	relay.Start()
 	configureRelayDTMF(relay, info)
 	clientSDP := callClientSDP(call)
 	if len(clientSDP) == 0 {

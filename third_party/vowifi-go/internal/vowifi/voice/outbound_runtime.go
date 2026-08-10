@@ -9,7 +9,6 @@ import (
 	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
 func (a *Agent) prepareOutboundCallSDP(call *Call, clientOffer string) (string, error) {
@@ -48,8 +47,9 @@ func (a *Agent) handleIMS2xxResponse(
 	if err := a.completeOutboundMedia(call, response); err != nil {
 		return a.failEstablishedOutboundCall(ctx, call, err)
 	}
-	if err := call.TransitionChecked(callstate.StateConnected); err != nil {
-		return a.failEstablishedOutboundCall(ctx, call, err)
+	call.StartMedia()
+	if !call.IsConnected() {
+		return a.failEstablishedOutboundCall(ctx, call, errors.New("voice: media state did not become connected"))
 	}
 	a.startVoiceSessionTimer(call)
 	a.emitCallAnswered(call)

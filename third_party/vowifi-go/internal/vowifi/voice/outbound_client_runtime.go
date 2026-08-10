@@ -67,7 +67,7 @@ func (a *Agent) validateAndCleanExistingCall(
 }
 
 func (a *Agent) releaseStaleOutboundCall(call *Call) {
-	_ = call.StopMedia()
+	call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	call.CloseDone()
 	a.finalizeActiveCall(call)
@@ -85,7 +85,7 @@ func (a *Agent) newClientOutboundCall(
 		call.Cancel()
 		return nil, err
 	}
-	if err := call.TransitionChecked(callstate.StateDialing); err != nil {
+	if err := call.TransitionChecked(callstate.StateCalling); err != nil {
 		call.Cancel()
 		return nil, err
 	}

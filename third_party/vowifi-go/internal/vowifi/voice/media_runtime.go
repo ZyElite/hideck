@@ -82,7 +82,7 @@ func (a *Agent) prepareInboundMedia(call *Call, offer string) error {
 	call.SetRTPRelay(relay)
 	rewritten, err := ProcessIncomingIMSSDP(call, []byte(offer), clientRelayIP)
 	if err != nil {
-		_ = relay.Stop()
+		relay.Stop()
 		return err
 	}
 	call.setRemoteSDP(offer, string(rewritten))
@@ -122,7 +122,7 @@ func (a *Agent) prepareOutboundMedia(call *Call, clientOffer string) (string, er
 	setCallClientSDP(call, []byte(clientOffer))
 	imsOffer, err := ProcessOutgoingClientSDP(call, []byte(clientOffer), a.localIP())
 	if err != nil {
-		_ = relay.Stop()
+		relay.Stop()
 		return "", err
 	}
 	call.setLocalSDP(clientOffer, string(imsOffer))
@@ -137,7 +137,7 @@ func (a *Agent) prepareSimulatedOutboundMedia(call *Call) (string, error) {
 	call.SetRTPRelay(relay)
 	imsOffer := generateBasicSDPCurrent(a, call)
 	if strings.TrimSpace(imsOffer) == "" {
-		_ = relay.Stop()
+		relay.Stop()
 		return "", errors.New("voice: failed to generate simulated-call SDP")
 	}
 	call.setLocalSDP("", imsOffer)
@@ -196,7 +196,7 @@ func completeSimulatedOutboundMedia(a *Agent, call *Call, rawAnswer string) erro
 	call.setComfortNoise(media.NewComfortNoiseGenerator())
 	call.setRemoteSDP(rawAnswer, "")
 	a.enableMediaMonitor(call)
-	return call.StartMedia()
+	return call.startMediaResourcesCurrent()
 }
 
 func (a *Agent) updateRemoteMedia(call *Call, response imscore.SIPResponse) error {

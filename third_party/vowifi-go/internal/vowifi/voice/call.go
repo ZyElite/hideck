@@ -41,7 +41,7 @@ func newCall(init callInit) *Call {
 		traceID = common.NewTraceID()
 	}
 	call := &Call{
-		DeviceID: init.deviceID, Direction: int(init.direction), State: int(callstate.StateIdle),
+		DeviceID: init.deviceID, Direction: int(init.direction), State: int(callstate.StateInit),
 		TraceID: traceID, Done: make(chan struct{}), Ctx: ctx, Cancel: cancel,
 		agent: init.agent, callID: init.callID, peer: init.peer,
 	}
@@ -109,7 +109,7 @@ func (c *Call) CallDirection() callstate.Direction {
 // GetState retains the recovered integer state API.
 func (c *Call) GetState() int {
 	if c == nil {
-		return int(callstate.StateIdle)
+		return int(callstate.StateInit)
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -162,13 +162,6 @@ func (c *Call) TransitionChecked(to callstate.State) error {
 	}
 	from := c.CallState()
 	if c.Transition(int(to)) {
-		if callstate.IsTerminal(to) {
-			c.mu.Lock()
-			if c.endTime.IsZero() {
-				c.endTime = time.Now()
-			}
-			c.mu.Unlock()
-		}
 		return nil
 	}
 	return &StateTransitionError{From: from, To: to}

@@ -19,7 +19,7 @@ func TestRTPRelayLifecycle(t *testing.T) {
 	relay := NewRTPRelay(imsConn, lanConn)
 	relay.SetRemoteAddr(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: imsConn.LocalAddr().(*net.UDPAddr).Port})
 	relay.SetClientAddr(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: lanConn.LocalAddr().(*net.UDPAddr).Port})
-	if err := relay.Start(); err != nil {
+	if err := relay.StartCurrent(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer relay.Stop()
@@ -169,10 +169,10 @@ func TestRTPRelayAppliesPTMappingOnNetworkPath(t *testing.T) {
 	relay.SetRemoteAddr(imsPeer.LocalAddr().(*net.UDPAddr))
 	relay.SetClientAddr(lanPeer.LocalAddr().(*net.UDPAddr))
 	relay.SetPTMapping(map[int]int{8: 96})
-	if err := relay.Start(); err != nil {
+	if err := relay.StartCurrent(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = relay.Stop() })
+	t.Cleanup(relay.Stop)
 
 	writeMediaRTP(t, lanPeer, relay.LANPort(), 8)
 	if got := readMediaRTP(t, imsPeer); got != 96 {

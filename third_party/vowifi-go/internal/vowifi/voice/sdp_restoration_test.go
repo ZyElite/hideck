@@ -153,7 +153,7 @@ func TestRecoveredSDPFlowErrorSurface(t *testing.T) {
 		t.Fatalf("nil relay error=%v", err)
 	}
 	relay := media.NewRTPRelay(listenVoiceMediaUDP(t), listenVoiceMediaUDP(t))
-	t.Cleanup(func() { _ = relay.Stop() })
+	t.Cleanup(relay.Stop)
 	call.SetRTPRelay(relay)
 	if _, err := ProcessOutgoingClientSDP(call, nil, "127.0.0.1"); err == nil || err.Error() != "Client SDP body 为空" {
 		t.Fatalf("empty client SDP error=%v", err)
@@ -169,7 +169,7 @@ func TestRecoveredSDPFlowDrivesRelayAndPayloadMapping(t *testing.T) {
 	imsPeer := listenVoiceMediaUDP(t)
 	clientPeer := listenVoiceMediaUDP(t)
 	relay := media.NewRTPRelay(imsRelay, lanRelay)
-	t.Cleanup(func() { _ = relay.Stop() })
+	t.Cleanup(relay.Stop)
 	call := NewCall(NewAgent("sdp-flow", nil, nil), callstate.DirectionOutbound, "sdp-call", "43430")
 	t.Cleanup(func() { call.Cancel(); call.CloseDone() })
 	call.SetRTPRelay(relay)

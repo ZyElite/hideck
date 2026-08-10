@@ -62,7 +62,7 @@ func TestStructuredOutboundInviteRejectsBusyAndMissingOffer(t *testing.T) {
 	agent := NewAgent("device-31", nil, nil)
 	busy := NewCall(agent, callstate.DirectionOutbound, "busy-call", "43430")
 	busy.SetStartTime(time.Now())
-	if err := busy.TransitionChecked(callstate.StateDialing); err != nil {
+	if err := busy.TransitionChecked(callstate.StateCalling); err != nil {
 		t.Fatal(err)
 	}
 	agent.mu.Lock()

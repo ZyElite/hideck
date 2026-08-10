@@ -211,28 +211,28 @@ func responseHeaderValue(message sip.Message, name string) string {
 func TestCallOriginalTransitionAndOneShotMarkers(t *testing.T) {
 	call := NewCall(nil, callstate.DirectionOutbound, "call-31", "43430")
 	t.Cleanup(cleanupRestorationCall(call))
-	if !call.Transition(int(callstate.StateDialing)) || !call.Transition(int(callstate.StateDialing)) {
+	if !call.Transition(int(callstate.StateCalling)) || !call.Transition(int(callstate.StateCalling)) {
 		t.Fatal("valid and same-state transitions must succeed")
 	}
-	if call.Transition(int(callstate.StateConnected)) {
+	if call.Transition(int(callstate.StatePreconditionWait)) {
 		t.Fatal("invalid transition unexpectedly succeeded")
 	}
-	if err := call.TransitionChecked(callstate.StateConnected); err == nil {
+	if err := call.TransitionChecked(callstate.StatePreconditionWait); err == nil {
 		t.Fatal("additive checked transition did not expose the invalid edge")
 	}
 	if !call.MarkInviteFinalSeen() || call.MarkInviteFinalSeen() {
 		t.Fatal("final response marker is not one-shot")
 	}
-	if call.GetState() != int(callstate.StateEnded) {
+	if call.GetState() != int(callstate.StateTerminated) {
 		t.Fatalf("final response state = %d", call.GetState())
 	}
 	canceled := NewCall(nil, callstate.DirectionOutbound, "cancel-31", "43430")
 	t.Cleanup(cleanupRestorationCall(canceled))
-	_ = canceled.Transition(int(callstate.StateDialing))
+	_ = canceled.Transition(int(callstate.StateCalling))
 	if !canceled.MarkLocalCancelSent(" local_cancel ") || canceled.MarkLocalCancelSent("duplicate") {
 		t.Fatal("local cancel marker is not one-shot")
 	}
-	if canceled.LocalCancelReasonValue() != "local_cancel" || canceled.CallState() != callstate.StateFailed {
+	if canceled.LocalCancelReasonValue() != "local_cancel" || canceled.CallState() != callstate.StateTerminating {
 		t.Fatalf("cancel reason = %q state=%s", canceled.LocalCancelReasonValue(), canceled.CallState())
 	}
 	if !call.MarkErrorACKSent() || call.MarkErrorACKSent() {
@@ -241,11 +241,11 @@ func TestCallOriginalTransitionAndOneShotMarkers(t *testing.T) {
 	provisional := NewCall(nil, callstate.DirectionOutbound, "provisional-31", "43430")
 	t.Cleanup(cleanupRestorationCall(provisional))
 	provisional.MarkInviteProvisional(180)
-	if provisional.CallState() != callstate.StateAlerting {
+	if provisional.CallState() != callstate.StateRinging {
 		t.Fatalf("180 state = %s", provisional.CallState())
 	}
 	provisional.MarkInviteProvisional(183)
-	if provisional.CallState() != callstate.StateConnecting {
+	if provisional.CallState() != callstate.StateEarlyMedia {
 		t.Fatalf("183 state = %s", provisional.CallState())
 	}
 	if !canceled.MarkReliableProvisional(10) || canceled.MarkReliableProvisional(10) ||

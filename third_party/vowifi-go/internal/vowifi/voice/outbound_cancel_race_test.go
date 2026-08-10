@@ -26,7 +26,7 @@ func TestNoAnswerBeforeProvisionalReturns408WithoutCANCEL(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timeout did not stop the outbound runtime")
 	}
-	if !callDone(call) || call.CallState() != callstate.StateEnded || agent.IsBusy() {
+	if !callDone(call) || call.CallState() != callstate.StateTerminated || agent.IsBusy() {
 		t.Fatalf("timeout cleanup: done=%t state=%s busy=%t",
 			callDone(call), call.CallState(), agent.IsBusy())
 	}
@@ -106,7 +106,7 @@ func newPendingClientCall(t *testing.T, agent *Agent, callID string) *Call {
 	request := mustClientRequest(t, sip.INVITE, callID, testClientSDP, "")
 	call := NewCallFromClientInvite(agent.DeviceID(), request)
 	call.agent = agent
-	if err := call.TransitionChecked(callstate.StateDialing); err != nil {
+	if err := call.TransitionChecked(callstate.StateCalling); err != nil {
 		t.Fatal(err)
 	}
 	call.DialogState.ClientTx = newVoiceServerTransaction()
