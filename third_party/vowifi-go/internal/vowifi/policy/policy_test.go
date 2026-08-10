@@ -95,7 +95,7 @@ func TestVoWiFiBlocklistAndErrorChain(t *testing.T) {
 func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 	giffgaff := ResolveEffectiveCarrierConfig("234", "10")
 	if giffgaff.PresetID != "giffgaff_23410" || giffgaff.DeviceModel != "rmx3366" ||
-		giffgaff.ReauthIntervalSeconds != 0 || giffgaff.EPDGAddrSource != "standard" {
+		giffgaff.ReauthIntervalSeconds != 180 || giffgaff.EPDGAddrSource != "standard" {
 		t.Fatalf("giffgaff = %+v", giffgaff)
 	}
 	if !reflect.DeepEqual(giffgaff.IKEProposals, []string{"aes256-sha512-prfsha512-modp2048"}) {
