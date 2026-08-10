@@ -168,33 +168,40 @@ type Service struct {
 	spiPairs   [][2]uint32
 
 	// SIP transport.
-	transport                *sipTransport
-	registrationIO           net.PacketConn
-	registrationTCP          net.Conn
-	registrationPreviousTCP  net.Conn
-	registrationTCPProtected bool
-	registrationTransport    string
-	securityServerIO         net.Listener
-	clientPortReserve        net.Listener
-	registrationRemote       *net.UDPAddr
-	protectedClientPort      int
-	protectedServerPort      int
-	externalTransport        bool
-	protectedConnMu          sync.Mutex
-	protectedConns           map[net.Conn]struct{}
-	sipWriteMu               sync.Mutex
-	receiverMu               sync.Mutex
-	activeReceivers          int
-	networkDone              sync.WaitGroup
-	registerErrors           chan error
-	keepaliveOnce            sync.Once
-	keepaliveSuccessOnce     sync.Once
-	maintenanceWake          chan struct{}
-	registrationRefreshAt    time.Time
-	keepaliveInterval        time.Duration
-	keepaliveTimeout         time.Duration
-	keepaliveFailureLimit    int
-	keepaliveFailures        int
+	transport                 *sipTransport
+	registrationIO            net.PacketConn
+	registrationTCP           net.Conn
+	registrationPreviousTCP   net.Conn
+	registrationTCPProtected  bool
+	registrationTransport     string
+	securityServerIO          net.Listener
+	clientPortReserve         net.Listener
+	registrationRemote        *net.UDPAddr
+	protectedClientPort       int
+	protectedServerPort       int
+	externalTransport         bool
+	protectedConnMu           sync.Mutex
+	protectedConns            map[net.Conn]struct{}
+	sipWriteMu                sync.Mutex
+	receiverMu                sync.Mutex
+	activeReceivers           int
+	networkDone               sync.WaitGroup
+	registerErrors            chan error
+	keepaliveOnce             sync.Once
+	keepaliveSuccessOnce      sync.Once
+	maintenanceWake           chan struct{}
+	registrationRefreshAt     time.Time
+	subscriptionRefreshAt     time.Time
+	subscriptionLastAttemptAt time.Time
+	subscriptionLastOKAt      time.Time
+	subscriptionExpires       time.Duration
+	subscriptionLastErr       string
+	subscriptionInFlight      atomic.Bool
+	notifyReconnectPending    atomic.Bool
+	keepaliveInterval         time.Duration
+	keepaliveTimeout          time.Duration
+	keepaliveFailureLimit     int
+	keepaliveFailures         int
 
 	// Dialogs.
 	dialogRegistry *dialogRegistry
@@ -239,6 +246,7 @@ type Service struct {
 	path                   string
 	assocMSISDN            string
 	learnedAOR             string
+	reginfoAOR             string
 
 	stop chan struct{}
 }

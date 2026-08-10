@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/emiago/sipgo/sip"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 // SMSReceiverStatus is a snapshot of the live SIP receiver.
@@ -84,12 +83,10 @@ func (s *Service) handleInboundSIPTransaction(
 	}
 	switch method {
 	case "NOTIFY":
-		logging.Info("IMS NOTIFY(reg) 已确认", "event", rawSIPHeaderValue(raw, "Event"))
-		if s.isMyContactTerminated(raw) {
-			s.reRegisterAfterDelay(250 * time.Millisecond)
-		}
 		response, err := buildSIPRequestResponse(raw, 200)
-		return inboundSIPResult{response: response}, err
+		return inboundSIPResult{response: response, afterReply: func() {
+			s.handleRegistrationNotification(raw)
+		}}, err
 	case "OPTIONS":
 		response, err := buildSIPRequestResponse(raw, 200)
 		return inboundSIPResult{response: response}, err

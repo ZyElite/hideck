@@ -4,21 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/sipkit"
 )
 
-const registrationSubscriptionTimeout = 10 * time.Second
-
-type subscriptionTransaction struct {
-	callID string
-	cseq   int
-	branch string
-}
+const (
+	registrationSubscriptionTimeout = 10 * time.Second
+	registrationSubscriptionFlow    = "subscribe_reg"
+)
 
 func (s *Service) startRegistrationSubscription() {
 	if !s.hasProtectedRegistrationTransport() {
@@ -29,8 +29,8 @@ func (s *Service) startRegistrationSubscription() {
 		defer s.networkDone.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), registrationSubscriptionTimeout)
 		defer cancel()
-		if err := s.sendSubscribeReg(ctx); err != nil && !s.stopped() {
-			s.reportRegistrationRuntimeError(fmt.Errorf("imscore: registration event subscription failed: %w", err))
+		if err := s.sendSubscribeReg(ctx); err != nil {
+			s.reportSubscriptionRuntimeError(err)
 		}
 	}()
 }
@@ -38,7 +38,11 @@ func (s *Service) startRegistrationSubscription() {
 func (s *Service) hasProtectedRegistrationTransport() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.registrationTCP != nil && s.regSession != nil &&
+	return s.subscriptionEligibleLocked()
+}
+
+func (s *Service) subscriptionEligibleLocked() bool {
+	return s.regState == regRegistered && s.registrationTCP != nil && s.regSession != nil &&
 		s.regSession.security != nil && s.regSession.security.verifyHeader != ""
 }
 
@@ -58,115 +62,215 @@ func (s *Service) reportRegistrationRuntimeError(err error) {
 	}
 }
 
+func (s *Service) reportSubscriptionRuntimeError(err error) {
+	if err == nil || s.stopped() {
+		return
+	}
+	if !s.hasProtectedRegistrationTransport() {
+		logging.RunDebug("IMS SUBSCRIBE result discarded after registration changed", "err", err)
+		return
+	}
+	s.reportRegistrationRuntimeError(subscriptionRuntimeError(err))
+}
+
 func (s *Service) sendSubscribeReg(ctx context.Context) error {
+	if !s.subscriptionInFlight.CompareAndSwap(false, true) {
+		return nil
+	}
+	defer s.subscriptionInFlight.Store(false)
 	s.subscribeMu.Lock()
 	defer s.subscribeMu.Unlock()
-	transaction, request, err := s.registrationSubscriptionRequest()
+
+	request, requestedExpires, err := s.buildRegistrationSubscription()
 	if err != nil {
-		return err
+		return s.recordSubscriptionResult(nil, 0, err)
 	}
-	logging.RunDebug("IMS SUBSCRIBE(reg) outbound", "sip", logging.RedactSIPRaw(request))
-	response, err := s.transport.RoundTrip(ctx, request)
+	s.recordSubscriptionAttempt(time.Now(), requestedExpires)
+	logging.RunDebug("IMS SUBSCRIBE(reg) outbound", "sip", logging.RedactSIPRaw(request.String()))
+	response, _, err := s.dispatchOutboundRequest(
+		ctx, registrationSubscriptionFlow, request, registrationSubscriptionTimeout, true,
+	)
 	if err != nil {
-		return fmt.Errorf("SUBSCRIBE transaction: %w", err)
-	}
-	if !subscriptionResponseMatches(response, transaction) {
-		return errors.New("SUBSCRIBE received mismatched transaction response")
+		return s.recordSubscriptionResult(nil, requestedExpires, fmt.Errorf("SUBSCRIBE transaction: %w", err))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("SUBSCRIBE rejected with status %d (%s)", response.StatusCode, response.Reason)
+		err = fmt.Errorf("SUBSCRIBE rejected with status %d (%s)", response.StatusCode, response.Reason)
+		return s.recordSubscriptionResult(response, requestedExpires, err)
 	}
-	logging.Info("IMS SUBSCRIBE(reg) 成功", "call_id", transaction.callID, "code", response.StatusCode)
+	if err := s.recordSubscriptionResult(response, requestedExpires, nil); err != nil {
+		return err
+	}
+	logging.Info("IMS SUBSCRIBE(reg) succeeded", "call_id", request.CallID().Value(), "code", response.StatusCode)
 	return nil
 }
 
-func (s *Service) registrationSubscriptionRequest() (subscriptionTransaction, string, error) {
-	s.mu.RLock()
-	session := s.regSession
-	clientPort, serverPort := s.protectedClientPort, s.protectedServerPort
-	s.mu.RUnlock()
-	if session == nil || session.security == nil || session.security.verifyHeader == "" {
-		return subscriptionTransaction{}, "", errors.New("protected registration session is unavailable")
+func (s *Service) buildRegistrationSubscription() (*sip.Request, time.Duration, error) {
+	profile, err := s.reserveSubscriptionSIPProfile()
+	if err != nil {
+		return nil, 0, fmt.Errorf("imscore: subscription registered profile: %w", err)
 	}
-	if clientPort <= 0 || serverPort <= 0 {
-		return subscriptionTransaction{}, "", errors.New("protected IMS ports are unavailable")
+	aor, err := parseSubscriptionURI(profile.LocalURI)
+	if err != nil {
+		return nil, 0, err
 	}
-	transaction := subscriptionTransaction{
-		callID: randomHex(20),
-		cseq:   session.cseq + 2,
-		branch: "z9hG4bK" + randomHex(40),
+	contact, err := buildSubscribeContactHeader(profile.ContactHeader, profile.Transport, true)
+	if err != nil {
+		return nil, 0, err
 	}
-	return transaction, s.buildRegistrationSubscription(session, transaction, clientPort, serverPort), nil
+	expires := registerExpires(s.cfg)
+	options := subscribeRegHeaderOptions(subscribeRegRequestContext{
+		profile: profile, aor: aor, contact: contact, expires: expires,
+	})
+	request, err := sipkit.BuildIMSRequest(sip.SUBSCRIBE, aor, options)
+	return request, expires, err
 }
 
-func (s *Service) buildRegistrationSubscription(
-	session *registerSession,
-	transaction subscriptionTransaction,
-	clientPort, serverPort int,
-) string {
-	publicID := session.publicID
-	if publicID == "" {
-		publicID = primaryPublicIdentity(s.cfg)
-	}
-	localClient := net.JoinHostPort(s.cfg.LocalIP.String(), fmt.Sprint(clientPort))
-	localServer := net.JoinHostPort(s.cfg.LocalIP.String(), fmt.Sprint(serverPort))
-	instance := imsheaders.NormalizeSipInstance(s.cfg.IMEI)
-
-	var request strings.Builder
-	fmt.Fprintf(&request, "SUBSCRIBE %s SIP/2.0\r\n", publicID)
-	fmt.Fprintf(&request, "Via: SIP/2.0/TCP %s;rport;branch=%s\r\n", localClient, transaction.branch)
-	if session.serviceRoute != "" {
-		request.WriteString("Route: " + session.serviceRoute + "\r\n")
-	}
-	fmt.Fprintf(&request, "From: <%s>;tag=%s\r\n", publicID, randomHex(10))
-	fmt.Fprintf(&request, "To: <%s>\r\n", publicID)
-	fmt.Fprintf(&request, "Call-ID: %s\r\n", transaction.callID)
-	fmt.Fprintf(&request, "CSeq: %d SUBSCRIBE\r\n", transaction.cseq)
-	request.WriteString("Max-Forwards: 70\r\n")
-	fmt.Fprintf(&request, "Contact: <sip:%s@%s>;+sip.instance=\"%s\"\r\n", session.contactUser, localServer, instance)
-	request.WriteString("Require: sec-agree\r\n")
-	request.WriteString("Proxy-Require: sec-agree\r\n")
-	request.WriteString("P-Access-Network-Info: " + s.GetPAccessNetworkInfo() + "\r\n")
-	request.WriteString("P-Preferred-Identity: <" + publicID + ">\r\n")
-	request.WriteString("Security-Verify: " + session.security.verifyHeader + "\r\n")
-	if userAgent := strings.TrimSpace(s.cfg.UserAgent); userAgent != "" {
-		request.WriteString("User-Agent: " + userAgent + "\r\n")
-	}
-	fmt.Fprintf(&request, "Expires: %d\r\n", int(registerExpires(s.cfg).Seconds()))
-	request.WriteString("Event: reg\r\n")
-	request.WriteString("Accept: application/reginfo+xml\r\n")
-	request.WriteString("Content-Length: 0\r\n\r\n")
-	return request.String()
+type subscribeRegRequestContext struct {
+	profile SIPDialogProfile
+	aor     sip.Uri
+	contact *sip.ContactHeader
+	expires time.Duration
 }
 
-func (s *Service) receiveSubscriptionResponse(
-	ctx context.Context,
-	transaction subscriptionTransaction,
-) (*sipResponse, error) {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-s.stop:
-			return nil, errors.New("service stopped")
-		case response := <-s.transport.Responses():
-			if subscriptionResponseMatches(response, transaction) && response.StatusCode >= 200 {
-				return response, nil
-			}
-		}
+func subscribeRegHeaderOptions(requestContext subscribeRegRequestContext) sipkit.IMSRequestOptions {
+	profile := requestContext.profile
+	return sipkit.IMSRequestOptions{
+		Destination: profile.RemoteAddress, Transport: profile.Transport,
+		Branch: "z9hG4bK" + common.RandomHex(36), FromURI: requestContext.aor,
+		FromTag: common.RandomHex(10), ToURI: requestContext.aor,
+		CallID: common.RandomHex(20), CSeq: uint32(profile.InitialCSeq),
+		Contact: requestContext.contact, Kind: sipkit.RequestKindOutOfDialog,
+		SecurityMode: securityModeIPSec, AddRPort: true, OmitURITransport: true,
+		AddUserAgent:      strings.TrimSpace(profile.UserAgent) != "",
+		PreferredIdentity: imsheaders.PreferredIdentityHeaderValue(profile.LocalURI),
+		Runtime: sipkit.IMSRuntimeSnapshot{
+			ServiceRoute: profile.ServiceRoute, SecVerify: profile.SecurityVerify,
+			PAccessNetworkInfo: profile.PANI, UserAgent: profile.UserAgent,
+			LocalAddr: profile.LocalAddress, Transport: profile.Transport,
+		},
+		Headers: []sip.Header{
+			sip.NewHeader("Expires", strconv.FormatInt(int64(requestContext.expires/time.Second), 10)),
+			sip.NewHeader("Event", registrationEventPackage),
+			sip.NewHeader("Accept", reginfoContentType),
+		},
 	}
 }
 
-func subscriptionResponseMatches(response *sipResponse, transaction subscriptionTransaction) bool {
-	if response == nil || response.CallID != transaction.callID {
-		return false
+func (s *Service) reserveSubscriptionSIPProfile() (SIPDialogProfile, error) {
+	if s == nil || s.cfg == nil {
+		return SIPDialogProfile{}, errors.New("service is not configured")
 	}
-	cseq, method, err := parseSIPCSeq(response.CSeq)
-	if err != nil || cseq != transaction.cseq || !strings.EqualFold(method, "SUBSCRIBE") {
-		return false
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.regState != regRegistered || s.regSession == nil {
+		return SIPDialogProfile{}, errors.New("registered SIP session is unavailable")
 	}
-	branch, err := parseTopViaBranch(response.Header("Via"))
-	return err == nil && branch == transaction.branch
+	route := s.registeredSIPRouteLocked()
+	if !route.live || route.clientAddress == "" || route.serverAddress == "" {
+		return SIPDialogProfile{}, errors.New("registered SIP transport is unavailable")
+	}
+	if route.securityVerify == "" {
+		return SIPDialogProfile{}, errors.New("protected registration security is unavailable")
+	}
+	localURI := firstNonBlank(s.regSession.publicID, s.reginfoAOR, primaryPublicIdentity(s.cfg))
+	registeredContactUser := firstNonBlank(s.regSession.contactUser, contactUser(s.cfg))
+	if localURI == "" || registeredContactUser == "" {
+		return SIPDialogProfile{}, errors.New("registered subscription identity is unavailable")
+	}
+	minimum := s.regSession.cseq + 2
+	if s.nextSIPCSeq < minimum {
+		s.nextSIPCSeq = minimum
+	} else {
+		s.nextSIPCSeq++
+	}
+	contactURI, contactHeader := registeredVoiceContact(s.cfg, registeredContactUser, route.serverAddress)
+	return SIPDialogProfile{
+		LocalURI: localURI, FromTag: s.regSession.fromTag,
+		ContactURI: contactURI, ContactHeader: contactHeader,
+		LocalAddress: route.clientAddress, RemoteAddress: route.remoteAddress,
+		Transport: route.transport, ServiceRoute: route.serviceRoute,
+		SecurityVerify: route.securityVerify, PANI: s.GetPAccessNetworkInfo(),
+		UserAgent: strings.TrimSpace(s.cfg.UserAgent), InitialCSeq: s.nextSIPCSeq,
+	}, nil
+}
+
+func parseSubscriptionURI(value string) (sip.Uri, error) {
+	var uri sip.Uri
+	if err := sip.ParseUri(strings.TrimSpace(value), &uri); err != nil {
+		return sip.Uri{}, fmt.Errorf("imscore: subscription AOR: %w", err)
+	}
+	return uri, nil
+}
+
+func buildSubscribeContactHeader(value, transport string, protected bool) (*sip.ContactHeader, error) {
+	var uri sip.Uri
+	params := sip.NewParams()
+	displayName, err := sip.ParseAddressValue(strings.TrimSpace(value), &uri, &params)
+	if err != nil {
+		return nil, fmt.Errorf("imscore: subscription Contact: %w", err)
+	}
+	if protected {
+		transport = "tcp"
+	}
+	if transport = strings.ToLower(strings.TrimSpace(transport)); transport != "" {
+		uri.UriParams.Add("transport", transport)
+	}
+	return &sip.ContactHeader{DisplayName: displayName, Address: uri, Params: params}, nil
+}
+
+func (s *Service) recordSubscriptionAttempt(at time.Time, expires time.Duration) {
+	s.mu.Lock()
+	s.subscriptionLastAttemptAt = at
+	s.subscriptionExpires = expires
+	s.subscriptionRefreshAt = at.Add(subscriptionRefreshDelay(expires))
+	s.subscriptionLastErr = ""
+	s.mu.Unlock()
+	s.signalIMSMaintenance()
+}
+
+func (s *Service) recordSubscriptionResult(
+	response *sip.Response,
+	requestedExpires time.Duration,
+	resultErr error,
+) error {
+	completedAt := time.Now()
+	s.mu.Lock()
+	if resultErr != nil {
+		s.subscriptionLastErr = resultErr.Error()
+		s.mu.Unlock()
+		return resultErr
+	}
+	expires := subscriptionExpires(response, requestedExpires)
+	s.subscriptionLastOKAt = completedAt
+	s.subscriptionExpires = expires
+	s.subscriptionRefreshAt = completedAt.Add(subscriptionRefreshDelay(expires))
+	s.subscriptionLastErr = ""
+	s.mu.Unlock()
+	s.signalIMSMaintenance()
+	return nil
+}
+
+func subscriptionRefreshDelay(expires time.Duration) time.Duration {
+	if expires > imsRegistrationRefreshAdvance {
+		return expires - imsRegistrationRefreshAdvance
+	}
+	return 0
+}
+
+func subscriptionExpires(response *sip.Response, fallback time.Duration) time.Duration {
+	if response == nil {
+		return fallback
+	}
+	value := sipkit.FirstHeaderValue(response, "Expires", true)
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds <= 0 {
+		return fallback
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func subscriptionRuntimeError(err error) error {
+	return fmt.Errorf("imscore: registration event subscription failed: %w", err)
 }
 
 func firstSIPHeaderURI(value string) string {

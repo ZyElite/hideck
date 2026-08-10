@@ -317,7 +317,8 @@ func assertRecoveredRegistrationSubscription(request, securityVerify string, cli
 		}
 	}
 	if !strings.Contains(sipHeaderValue(request, "Via"), fmt.Sprintf(":%d;", client.PortC)) ||
-		!strings.Contains(sipHeaderValue(request, "Contact"), fmt.Sprintf(":%d>", client.PortS)) {
+		!strings.Contains(sipHeaderValue(request, "Contact"),
+			fmt.Sprintf(":%d;transport=tcp>", client.PortS)) {
 		return errors.New("SUBSCRIBE did not advertise the negotiated protected ports")
 	}
 	return nil

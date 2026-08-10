@@ -134,6 +134,7 @@ func TestIMSMaintenanceChoosesEarliestRegistrationOrKeepaliveDeadline(t *testing
 	now := time.Date(2026, 8, 8, 18, 0, 0, 0, time.UTC)
 	service.mu.Lock()
 	service.registrationRefreshAt = now.Add(30 * time.Second)
+	service.subscriptionRefreshAt = now.Add(time.Hour)
 	service.lastPingAt = now.Add(-45 * time.Second)
 	service.keepaliveInterval = time.Minute
 	service.mu.Unlock()
@@ -146,6 +147,22 @@ func TestIMSMaintenanceChoosesEarliestRegistrationOrKeepaliveDeadline(t *testing
 	}
 	if got := service.nextIMSMaintenanceAction(now.Add(30 * time.Second)); got != imsMaintenanceRefresh {
 		t.Fatalf("action at refresh deadline = %d, want refresh", got)
+	}
+}
+
+func TestIMSMaintenancePrioritizesDueSubscriptionBeforeKeepalive(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	client, server := net.Pipe()
+	service.activateProtectedRegistrationTCP(client)
+	t.Cleanup(func() { _ = server.Close() })
+	now := time.Date(2026, 8, 8, 18, 0, 0, 0, time.UTC)
+	service.mu.Lock()
+	service.registrationRefreshAt = now.Add(time.Hour)
+	service.subscriptionRefreshAt = now
+	service.lastPingAt = now.Add(-time.Hour)
+	service.mu.Unlock()
+	if got := service.nextIMSMaintenanceAction(now); got != imsMaintenanceSubscribe {
+		t.Fatalf("maintenance action = %d, want subscribe", got)
 	}
 }
 

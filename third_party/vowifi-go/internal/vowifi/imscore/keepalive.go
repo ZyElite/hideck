@@ -30,6 +30,7 @@ type imsMaintenanceAction uint8
 const (
 	imsMaintenanceIdle imsMaintenanceAction = iota
 	imsMaintenanceRefresh
+	imsMaintenanceSubscribe
 	imsMaintenanceKeepalive
 )
 
@@ -54,6 +55,8 @@ func (s *Service) runIMSMaintenance() {
 		switch s.nextIMSMaintenanceAction(time.Now()) {
 		case imsMaintenanceRefresh:
 			s.refreshRegistration()
+		case imsMaintenanceSubscribe:
+			s.refreshRegistrationSubscription()
 		case imsMaintenanceKeepalive:
 			s.handleIMSKeepaliveTick()
 		}
@@ -80,7 +83,9 @@ func (s *Service) waitForIMSMaintenance(wakeAt time.Time) bool {
 func (s *Service) computeNextIMSWakeTime(now time.Time) time.Time {
 	s.mu.RLock()
 	registered := s.regState == regRegistered
+	subscriptionEligible := s.subscriptionEligibleLocked()
 	refreshAt := s.registrationRefreshAt
+	subscribeAt := s.subscriptionRefreshAt
 	lastTrafficAt := s.lastPingAt
 	interval := s.keepaliveInterval
 	s.mu.RUnlock()
@@ -91,6 +96,9 @@ func (s *Service) computeNextIMSWakeTime(now time.Time) time.Time {
 	}
 	if !refreshAt.IsZero() && refreshAt.Before(next) {
 		next = refreshAt
+	}
+	if subscriptionEligible && !subscribeAt.IsZero() && subscribeAt.Before(next) {
+		next = subscribeAt
 	}
 	keepaliveAt := lastTrafficAt.Add(interval)
 	if lastTrafficAt.IsZero() {
@@ -110,6 +118,10 @@ func (s *Service) nextIMSMaintenanceAction(now time.Time) imsMaintenanceAction {
 	}
 	if s.registrationRefreshAt.IsZero() || !now.Before(s.registrationRefreshAt) {
 		return imsMaintenanceRefresh
+	}
+	if s.subscriptionEligibleLocked() &&
+		(s.subscriptionRefreshAt.IsZero() || !now.Before(s.subscriptionRefreshAt)) {
+		return imsMaintenanceSubscribe
 	}
 	if s.lastPingAt.IsZero() || !now.Before(s.lastPingAt.Add(s.keepaliveInterval)) {
 		return imsMaintenanceKeepalive
@@ -156,6 +168,7 @@ func (s *Service) requestRuntimeReconnect(keepaliveErr error) {
 	}
 	s.regState = regFailed
 	s.registrationRefreshAt = time.Time{}
+	s.subscriptionRefreshAt = time.Time{}
 	s.keepaliveFailures = 0
 	s.mu.Unlock()
 	s.transitionRegStatus(registrationRejectedTemporary)
@@ -171,6 +184,14 @@ func (s *Service) signalIMSMaintenance() {
 	select {
 	case s.maintenanceWake <- struct{}{}:
 	default:
+	}
+}
+
+func (s *Service) refreshRegistrationSubscription() {
+	ctx, cancel := context.WithTimeout(context.Background(), registrationSubscriptionTimeout)
+	defer cancel()
+	if err := s.sendSubscribeReg(ctx); err != nil {
+		s.reportSubscriptionRuntimeError(err)
 	}
 }
 

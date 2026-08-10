@@ -1,7 +1,6 @@
 package imscore
 
 import (
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"strings"
@@ -325,70 +324,4 @@ func (s *Service) buildInboundSMSControlRequest(inbound string, body []byte) (st
 func normalizedContentType(value string) string {
 	value, _, _ = strings.Cut(strings.ToLower(strings.TrimSpace(value)), ";")
 	return strings.TrimSpace(value)
-}
-
-type regInfoDocument struct {
-	Registrations []struct {
-		AOR      string `xml:"aor,attr"`
-		Contacts []struct {
-			ID    string `xml:"id,attr"`
-			State string `xml:"state,attr"`
-			Event string `xml:"event,attr"`
-			URI   string `xml:"uri"`
-		} `xml:"contact"`
-	} `xml:"registration"`
-}
-
-func (s *Service) isMyContactTerminated(raw string) bool {
-	if !strings.EqualFold(strings.TrimSpace(rawSIPHeaderValue(raw, "Event")), "reg") {
-		return false
-	}
-	body, err := rawSIPBody(raw)
-	if err != nil || len(body) == 0 {
-		return false
-	}
-	var document regInfoDocument
-	if err := xml.Unmarshal(body, &document); err != nil {
-		return false
-	}
-	s.mu.RLock()
-	contactID := ""
-	publicID := ""
-	if s.regSession != nil {
-		contactID = strings.TrimSpace(s.regSession.contactUser)
-		publicID = normalizeFragmentIdentity(s.regSession.publicID)
-	}
-	s.mu.RUnlock()
-	for _, registration := range document.Registrations {
-		if publicID != "" && normalizeFragmentIdentity(registration.AOR) != publicID {
-			continue
-		}
-		for _, contact := range registration.Contacts {
-			matches := contactID == "" || contact.ID == contactID || strings.Contains(contact.URI, contactID)
-			if matches && strings.EqualFold(strings.TrimSpace(contact.State), "terminated") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (s *Service) reRegisterAfterDelay(delay time.Duration) {
-	if s == nil {
-		return
-	}
-	if delay < 0 {
-		delay = 0
-	}
-	s.networkDone.Add(1)
-	go func() {
-		defer s.networkDone.Done()
-		timer := time.NewTimer(delay)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-			_ = s.TriggerFastReconnect()
-		case <-s.stop:
-		}
-	}()
 }

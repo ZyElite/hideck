@@ -132,8 +132,9 @@ func (s *Service) Status() *ServiceStatus {
 		SignalingGeneration:    s.signalingGeneration,
 		SignalingReady:         s.signalingReady,
 		SignalingFailureReason: s.signalingFailureReason,
-		RegFailCount:           int(s.regFailCount.Load()), ReRegisterPending: s.reRegisterPending.Load(),
-		LastPingAt: s.lastPingAt, ServiceRoute: currentServiceRoute(s.regSession),
+		RegFailCount:           int(s.regFailCount.Load()),
+		ReRegisterPending:      s.reRegisterPending.Load() || s.notifyReconnectPending.Load(),
+		LastPingAt:             s.lastPingAt, ServiceRoute: currentServiceRoute(s.regSession),
 		Path: s.path, SecurityVerify: s.securityVerify, AssociatedMSISDN: s.assocMSISDN,
 		LastError: s.lastError, LastRegisterTraceID: s.lastRegisterTraceID,
 		LastRegisterAttemptAt: s.lastRegisterAttemptAt, LastRegisterOKAt: s.lastRegisterOKAt,
@@ -371,6 +372,8 @@ func (s *Service) Stop() {
 	s.registrationPreviousTCP = nil
 	s.registrationTCPProtected = false
 	s.registrationTransport = ""
+	s.registrationRefreshAt = time.Time{}
+	s.subscriptionRefreshAt = time.Time{}
 	s.signalingReady = false
 	s.securityServerIO = nil
 	s.clientPortReserve = nil
