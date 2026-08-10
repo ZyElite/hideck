@@ -1,12 +1,14 @@
 package voice
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"strings"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/media"
 )
 
@@ -25,24 +27,33 @@ func (listener imscorePacketListener) ListenPacket(
 	return listener.service.ListenPacketCurrent(network, address)
 }
 
+type mediaPacketListenerAdapter struct{ current imsPacketListener }
+
+func (adapter mediaPacketListenerAdapter) ListenPacket(
+	_ context.Context,
+	network string,
+	address net.Addr,
+) (net.PacketConn, error) {
+	udpAddress, ok := address.(*net.UDPAddr)
+	if !ok {
+		return nil, fmt.Errorf("voice: IMS media address is %T, want UDP", address)
+	}
+	return adapter.current.ListenPacket(network, udpAddress)
+}
+
+var _ imsendpoint.PacketListener = mediaPacketListenerAdapter{}
+
 func newVoiceMediaRelay(imsNetwork imsPacketListener, imsLocalIP string) (*media.RTPRelay, error) {
 	if imsNetwork == nil {
 		return nil, errors.New("voice: IMS media network is unavailable")
 	}
-	bindIP := net.ParseIP(strings.TrimSpace(imsLocalIP))
-	if bindIP == nil {
+	if net.ParseIP(strings.TrimSpace(imsLocalIP)) == nil {
 		return nil, fmt.Errorf("voice: invalid IMS media IP %q", imsLocalIP)
 	}
-	imsConn, err := imsNetwork.ListenPacket("udp", &net.UDPAddr{IP: bindIP})
-	if err != nil {
-		return nil, fmt.Errorf("voice: listen IMS RTP: %w", err)
-	}
-	lanConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero})
-	if err != nil {
-		_ = imsConn.Close()
-		return nil, fmt.Errorf("voice: listen client RTP: %w", err)
-	}
-	return media.NewRTPRelay(imsConn, lanConn), nil
+	return media.NewRTPRelayWithListener(
+		mediaPacketListenerAdapter{current: imsNetwork},
+		imsLocalIP, clientRelayIP, 0, 0,
+	)
 }
 
 func mediaRemote(info *SDPInfo) (*net.UDPAddr, error) {
@@ -72,7 +83,11 @@ func (a *Agent) prepareInboundMedia(call *Call, offer string) error {
 	if err != nil {
 		return err
 	}
-	relay.SetRemoteAddr(remote)
+	if err := relay.SetRemoteAddr(remote); err != nil {
+		_ = relay.Stop()
+		return err
+	}
+	configureRelayDTMF(relay, parsed)
 	call.SetRTPRelay(relay)
 	call.setRemoteSDP(offer, RewriteSDP(offer, clientRelayIP, relay.LANPort()))
 	return nil
@@ -95,7 +110,9 @@ func (a *Agent) applyInboundAnswer(call *Call, answer string) (InboundAnswer, er
 	if err != nil {
 		return InboundAnswer{}, err
 	}
-	relay.SetClientAddr(clientRemote)
+	if err := relay.SetClientAddr(clientRemote); err != nil {
+		return InboundAnswer{}, err
+	}
 	relay.SetPTMapping(ExtractAndApplyPTMapping(remoteOffer, parsedAnswer))
 	imsAnswer := RewriteSDP(answer, a.localIP(), relay.IMSPort())
 	call.setLocalSDP(answer, imsAnswer)
@@ -118,7 +135,10 @@ func (a *Agent) prepareOutboundMedia(call *Call, clientOffer string) (string, er
 	if err != nil {
 		return "", err
 	}
-	relay.SetClientAddr(clientRemote)
+	if err := relay.SetClientAddr(clientRemote); err != nil {
+		_ = relay.Stop()
+		return "", err
+	}
 	call.SetRTPRelay(relay)
 	imsOffer := RewriteSDP(clientOffer, a.localIP(), relay.IMSPort())
 	call.setLocalSDP(clientOffer, imsOffer)
@@ -165,9 +185,12 @@ func (a *Agent) completeOutboundMedia(call *Call, response imscore.SIPResponse) 
 		return errors.New("voice: outbound media relay is unavailable")
 	}
 	clientOffer, _ := call.localSDPs()
-	relay.SetRemoteAddr(remote)
+	if err := relay.SetRemoteAddr(remote); err != nil {
+		return err
+	}
+	configureRelayDTMF(relay, imsAnswer)
 	if strings.TrimSpace(clientOffer) == "" {
-		return completeSimulatedOutboundMedia(call, string(response.Body))
+		return completeSimulatedOutboundMedia(a, call, string(response.Body))
 	}
 	parsedClientOffer, err := ProcessOutgoingClientSDP(clientOffer)
 	if err != nil {
@@ -176,6 +199,7 @@ func (a *Agent) completeOutboundMedia(call *Call, response imscore.SIPResponse) 
 	relay.SetPTMapping(ExtractAndApplyPTMapping(imsAnswer, parsedClientOffer))
 	clientAnswer := RewriteSDP(string(response.Body), clientRelayIP, relay.LANPort())
 	call.setRemoteSDP(string(response.Body), clientAnswer)
+	a.enableMediaMonitor(call)
 	return call.StartMedia()
 }
 
@@ -195,9 +219,10 @@ func finalOrEarlyMediaResponse(call *Call, response imscore.SIPResponse) imscore
 	return response
 }
 
-func completeSimulatedOutboundMedia(call *Call, rawAnswer string) error {
+func completeSimulatedOutboundMedia(a *Agent, call *Call, rawAnswer string) error {
 	call.setComfortNoise(media.NewComfortNoiseGenerator())
 	call.setRemoteSDP(rawAnswer, "")
+	a.enableMediaMonitor(call)
 	return call.StartMedia()
 }
 
@@ -220,7 +245,10 @@ func (a *Agent) updateRemoteMedia(call *Call, response imscore.SIPResponse) erro
 	}
 	clientLocal, _ := call.localSDPs()
 	if strings.TrimSpace(clientLocal) == "" {
-		relay.SetRemoteAddr(remote)
+		if err := relay.SetRemoteAddr(remote); err != nil {
+			return err
+		}
+		configureRelayDTMF(relay, parsedRemote)
 		call.setRemoteSDP(remoteSDP, "")
 		return nil
 	}
@@ -228,8 +256,25 @@ func (a *Agent) updateRemoteMedia(call *Call, response imscore.SIPResponse) erro
 	if err != nil {
 		return err
 	}
-	relay.SetRemoteAddr(remote)
+	if err := relay.SetRemoteAddr(remote); err != nil {
+		return err
+	}
+	configureRelayDTMF(relay, parsedRemote)
 	relay.SetPTMapping(ExtractAndApplyPTMapping(parsedRemote, parsedClient))
 	call.setRemoteSDP(remoteSDP, RewriteSDP(remoteSDP, clientRelayIP, relay.LANPort()))
 	return nil
+}
+
+func configureRelayDTMF(relay *media.RTPRelay, info *SDPInfo) {
+	if relay == nil || info == nil {
+		return
+	}
+	for _, section := range info.Media {
+		for _, codec := range section.Codecs {
+			if strings.EqualFold(codec.Encoding, "telephone-event") {
+				_ = relay.SetDTMFPayloadType(codec.PayloadType)
+				return
+			}
+		}
+	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
@@ -220,6 +221,19 @@ func TestVoiceGatewaySimulateCallUsesProductionAdapterAndRTP(t *testing.T) {
 	adapter := gateway.GetAgent("dev-1").(*voiceAgentAdapter)
 	if adapter.agent.IsBusy() || adapter.agent.Snapshot().ActiveCall != nil {
 		t.Fatalf("call remained active after timed BYE: %+v", adapter.agent.Snapshot())
+	}
+}
+
+func TestVoiceAgentAdapterExposesMediaControls(t *testing.T) {
+	var adapter interface{} = &voiceAgentAdapter{agent: voice.NewAgent("dev-1", nil, nil)}
+	if _, ok := adapter.(interface{ SendDTMF(string, string) error }); !ok {
+		t.Fatal("voice adapter does not expose DTMF")
+	}
+	if _, ok := adapter.(interface{ StartPCAP(string) error }); !ok {
+		t.Fatal("voice adapter does not expose PCAP start")
+	}
+	if _, ok := adapter.(interface{ StopPCAP() error }); !ok {
+		t.Fatal("voice adapter does not expose PCAP stop")
 	}
 }
 

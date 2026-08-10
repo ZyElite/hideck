@@ -36,6 +36,27 @@ func (a *voiceAgentAdapter) HangupContext(ctx context.Context, callID string) er
 	return a.agent.HangupContext(ctx, callID)
 }
 
+func (a *voiceAgentAdapter) SendDTMF(callID, digit string) error {
+	if a == nil || a.agent == nil {
+		return errors.New("runtimehost: voice agent is unavailable")
+	}
+	return a.agent.SendDTMF(callID, digit)
+}
+
+func (a *voiceAgentAdapter) StartPCAP(output string) error {
+	if a == nil || a.agent == nil {
+		return errors.New("runtimehost: voice agent is unavailable")
+	}
+	return a.agent.StartPCAP(output)
+}
+
+func (a *voiceAgentAdapter) StopPCAP() error {
+	if a == nil || a.agent == nil {
+		return errors.New("runtimehost: voice agent is unavailable")
+	}
+	return a.agent.StopPCAP()
+}
+
 func (a *voiceAgentAdapter) Ready() bool {
 	return a != nil && a.agent != nil && a.agent.Ready()
 }

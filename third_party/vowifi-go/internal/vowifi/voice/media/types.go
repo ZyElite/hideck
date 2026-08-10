@@ -1,88 +1,146 @@
-// Package media implements the RTP/RTCP relay between the IMS network and
-// the local client (RFC 3550, RFC 3551). It relays RTP packets, maps payload
-// types, generates comfort noise, and monitors one-way media timeouts.
-//
-// Reconstructed from the decompiled internal/vowifi/voice/media.
+// Package media relays RTP and RTCP between IMS and a local voice client.
 package media
 
 import (
 	"net"
+	"os"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 )
 
-// RTPRelay relays RTP/RTCP between the IMS side and the LAN (client) side.
+const (
+	MediaEventRTPTimeout MediaEvent = iota + 1
+	MediaEventOneWayTimeout
+)
+
+// MediaEvent is emitted by MediaSessionManager when media health changes.
+type MediaEvent int
+
+type ptMapping struct {
+	imsToLan map[int]int
+	lanToIms map[int]int
+}
+
+// RTPRelay owns the RTP/RTCP sockets for one call.
 type RTPRelay struct {
-	mu sync.RWMutex
+	bytesIMSToLAN     uint64
+	bytesLANToIMS     uint64
+	bytesIMSRTCPToLAN uint64
+	bytesLANRTCPToIMS uint64
 
-	imsConn net.PacketConn
-	lanConn net.PacketConn
+	connIMS     net.PacketConn
+	connLAN     *net.UDPConn
+	connIMSRTCP net.PacketConn
+	connLANRTCP *net.UDPConn
 
-	imsRemote *net.UDPAddr
-	lanRemote *net.UDPAddr
+	remoteAddr     atomic.Pointer[net.UDPAddr]
+	remoteAddrRTCP atomic.Pointer[net.UDPAddr]
+	clientAddr     atomic.Pointer[net.UDPAddr]
+	clientAddrRTCP atomic.Pointer[net.UDPAddr]
 
-	ptMapping map[int]int // LAN PT -> IMS PT
-
-	monitor *RTPMonitor
-
-	oneWayTimeout time.Duration
-	onOneWay      func()
-
-	stop    chan struct{}
-	stopped bool
-
-	logContext string
-	pcap       *pcapWriter
-}
-
-// MediaSessionManager owns the media relays for one device.
-type MediaSessionManager struct {
-	mu     sync.RWMutex
-	relays map[string]*RTPRelay // keyed by call ID
-}
-
-// Bridge is the media bridge between the client and the IMS network.
-type Bridge struct {
+	stopCh   chan struct{}
+	stopOnce sync.Once
 	mu       sync.RWMutex
-	endpoint string
-	relay    *RTPRelay
+	active   bool
+
+	imsFirstPacket     uint32
+	lanFirstPacket     uint32
+	imsRTCPFirstPacket uint32
+	lanRTCPFirstPacket uint32
+
+	Monitor            *RTPMonitor
+	rtcpKeepaliveTimer *time.Timer
+	rtcpMu             sync.Mutex
+	ptMap              atomic.Pointer[ptMapping]
+	deviceID           string
+	traceID            string
+	pcapFile           *os.File
+	pcapMu             sync.Mutex
+	pcapEnable         bool
+
+	wg             sync.WaitGroup
+	rtcpWG         sync.WaitGroup
+	monitorStarted bool
+	lanPacket      net.PacketConn
+	pcapWriter     packetCaptureWriter
+	pcapErr        error
+	imsRemote      *net.UDPAddr
+	lanRemote      *net.UDPAddr
+
+	dtmfMu          sync.Mutex
+	dtmfPayloadType int
+	dtmfSequence    uint16
+	dtmfTimestamp   uint32
+	dtmfSSRC        uint32
 }
 
-// ComfortNoiseGenerator generates the legacy PCMU comfort stream used by
-// self-contained timed calls.
-type ComfortNoiseGenerator struct {
-	mu          sync.Mutex
-	conn        net.PacketConn
-	addr        *net.UDPAddr
-	payloadType byte
-	sequence    uint16
-	timestamp   uint32
-	ssrc        uint32
-	randomState uint32
-	stop        chan struct{}
-	errors      chan error
-	wg          sync.WaitGroup
-	started     bool
-}
-
-// RTPMonitor tracks RTP packet flow to detect one-way media.
+// RTPMonitor stores monotonic media activity timestamps as Unix nanoseconds.
 type RTPMonitor struct {
-	mu          sync.Mutex
-	lastIMSPkt  time.Time
-	lastLANPkt  time.Time
-	imsCount    uint64
-	lanCount    uint64
-	oneWaySince time.Time
+	mu                       sync.RWMutex
+	LastActivity             atomic.Int64
+	LastIMSToLAN             atomic.Int64
+	LastLANToIMS             atomic.Int64
+	Timeout                  int64
+	OnTimeout                func()
+	OnOneWayTimeout          func(string)
+	imsToLanTimeoutTriggered bool
+	lanToImsTimeoutTriggered bool
+	stopMonitor              chan struct{}
+	stopOnce                 sync.Once
+	imsCount                 atomic.Uint64
+	lanCount                 atomic.Uint64
 }
 
-// pcapWriter writes RTP packets to a pcap file for debugging.
-type pcapWriter struct {
-	mu   sync.Mutex
-	file osFile
+// MediaSessionManager owns one original relay and additive call-keyed relays.
+type MediaSessionManager struct {
+	mu       sync.Mutex
+	relay    *RTPRelay
+	deviceID string
+	traceID  string
+	EventCh  chan MediaEvent
+	released bool
+
+	relays map[string]*RTPRelay
 }
 
-// osFile is the file interface used by the pcap writer.
-type osFile interface {
-	Write(p []byte) (int, error)
+// Bridge creates relays from an IMS runtime endpoint.
+type Bridge struct {
+	deviceID string
+	endpoint imsendpoint.RuntimeSnapshotSource
+
+	mu             sync.RWMutex
+	relay          *RTPRelay
+	legacyEndpoint string
+}
+
+// ComfortNoiseGenerator emits 20 ms PCMU RTP packets.
+type ComfortNoiseGenerator struct {
+	conn       net.PacketConn
+	remoteAddr *net.UDPAddr
+	seqNum     uint16
+	timestamp  uint32
+	ssrc       uint32
+	seed       uint32
+	stopCh     chan struct{}
+	stopOnce   sync.Once
+	wg         sync.WaitGroup
+	deviceID   string
+	traceID    string
+
+	mu      sync.Mutex
+	errors  chan error
+	started bool
+}
+
+type packetCaptureWriter interface {
+	Write([]byte) (int, error)
 	Close() error
+}
+
+type syscallPacketConn interface {
+	SyscallConn() (syscall.RawConn, error)
 }

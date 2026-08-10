@@ -2,354 +2,438 @@ package media
 
 import (
 	"errors"
+	"fmt"
 	"net"
-	"sync"
+	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
-// NewRTPRelay creates a relay bound to the given IMS and LAN packet conns.
+const (
+	mediaReadBufferSize = 64 * 1024
+	monitorInterval     = 5 * time.Second
+	rtcpKeepalive       = 10 * time.Second
+)
+
+// NewRTPRelay retains the additive constructor for already-open RTP sockets.
 func NewRTPRelay(imsConn, lanConn net.PacketConn) *RTPRelay {
-	return &RTPRelay{
-		imsConn:      imsConn,
-		lanConn:      lanConn,
-		ptMapping:    make(map[int]int),
-		monitor:      NewRTPMonitor(),
-		oneWayTimeout: 10 * time.Second,
-		stop:         make(chan struct{}),
+	relay := newRTPRelay(imsConn, lanConn, nil, nil)
+	relay.lanPacket = lanConn
+	if udp, ok := lanConn.(*net.UDPConn); ok {
+		relay.connLAN = udp
 	}
+	return relay
 }
 
-// NewRTPRelayWithListener creates a relay, listening on the IMS side.
-func NewRTPRelayWithListener(imsLocal *net.UDPAddr) (*RTPRelay, error) {
-	conn, err := net.ListenUDP("udp", imsLocal)
+func newRTPRelay(
+	imsRTP, lanRTP net.PacketConn,
+	imsRTCP net.PacketConn,
+	lanRTCP *net.UDPConn,
+) *RTPRelay {
+	relay := &RTPRelay{
+		connIMS: imsRTP, connIMSRTCP: imsRTCP, connLANRTCP: lanRTCP,
+		lanPacket: lanRTP, stopCh: make(chan struct{}), dtmfPayloadType: -1,
+	}
+	relay.ptMap.Store(&ptMapping{imsToLan: map[int]int{}, lanToIms: map[int]int{}})
+	relay.seedDTMF()
+	return relay
+}
+
+// NewRTPRelayWithListener accepts both the original listener form
+// (PacketListener, IMS address, LAN address, range start, range end) and the
+// additive one-address form used by earlier restoration builds.
+func NewRTPRelayWithListener(source any, args ...any) (*RTPRelay, error) {
+	if address, ok := source.(*net.UDPAddr); ok && len(args) == 0 {
+		return newRelayFromAddresses(nil, address.String(), address.IP.String(), 0, 0)
+	}
+	listener, ok := source.(imsendpoint.PacketListener)
+	if !ok && source != nil {
+		return nil, fmt.Errorf("media: unsupported IMS packet listener %T", source)
+	}
+	if len(args) != 4 {
+		return nil, errors.New("media: listener constructor requires IMS address, LAN address and port range")
+	}
+	imsAddress, okIMS := args[0].(string)
+	lanAddress, okLAN := args[1].(string)
+	start, okStart := args[2].(int)
+	end, okEnd := args[3].(int)
+	if !okIMS || !okLAN || !okStart || !okEnd {
+		return nil, errors.New("media: invalid listener constructor arguments")
+	}
+	return newRelayFromAddresses(listener, imsAddress, lanAddress, start, end)
+}
+
+func newRelayFromAddresses(
+	listener imsendpoint.PacketListener,
+	imsAddress, lanAddress string,
+	start, end int,
+) (*RTPRelay, error) {
+	imsIP, err := resolveBindIP(imsAddress)
 	if err != nil {
 		return nil, err
 	}
-	return NewRTPRelay(conn, nil), nil
+	imsRTP, err := listenIMSPacket(listener, &net.UDPAddr{IP: imsIP})
+	if err != nil {
+		return nil, fmt.Errorf("media: bind IMS RTP: %w", err)
+	}
+	imsRTCP, err := listenIMSPacket(listener, &net.UDPAddr{IP: imsIP})
+	if err != nil {
+		_ = imsRTP.Close()
+		return nil, fmt.Errorf("media: bind IMS RTCP: %w", err)
+	}
+	lanRTP, lanRTCP, err := listenLANRTPPair(lanAddress, start, end)
+	if err != nil {
+		_ = imsRTP.Close()
+		_ = imsRTCP.Close()
+		return nil, err
+	}
+	relay := newRTPRelay(imsRTP, lanRTP, imsRTCP, lanRTCP)
+	relay.connLAN = lanRTP
+	for _, conn := range []net.PacketConn{imsRTP, lanRTP, imsRTCP, lanRTCP} {
+		if err := setDSCP(conn); err != nil {
+			logging.WarnRate("media-dscp:"+packetConnAddrString(conn.LocalAddr()), time.Minute,
+				"RTP socket DSCP setup failed", "error", err)
+		}
+	}
+	return relay, nil
 }
 
-// SetClientAddr sets the LAN-side remote address.
-func (r *RTPRelay) SetClientAddr(addr *net.UDPAddr) {
+func resolveBindIP(address string) (net.IP, error) {
+	host := strings.TrimSpace(address)
+	if splitHost, _, err := net.SplitHostPort(host); err == nil {
+		host = splitHost
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, fmt.Errorf("media: invalid IMS bind address %q", address)
+	}
+	return ip, nil
+}
+
+// SetRemoteAddr accepts an original host/port pair or an additive UDPAddr.
+func (r *RTPRelay) SetRemoteAddr(target any, ports ...int) error {
+	addr, err := resolveMediaAddr(target, ports...)
+	if err != nil {
+		return err
+	}
+	r.remoteAddr.Store(cloneUDPAddr(addr))
+	r.remoteAddrRTCP.Store(offsetUDPAddr(addr, 1))
+	r.mu.Lock()
+	r.imsRemote = cloneUDPAddr(addr)
+	r.mu.Unlock()
+	return nil
+}
+
+// SetClientAddr accepts an original host/port pair or an additive UDPAddr.
+func (r *RTPRelay) SetClientAddr(target any, ports ...int) error {
+	addr, err := resolveMediaAddr(target, ports...)
+	if err != nil {
+		return err
+	}
+	r.clientAddr.Store(cloneUDPAddr(addr))
+	r.clientAddrRTCP.Store(offsetUDPAddr(addr, 1))
+	r.mu.Lock()
+	r.lanRemote = cloneUDPAddr(addr)
+	r.mu.Unlock()
+	return nil
+}
+
+func resolveMediaAddr(target any, ports ...int) (*net.UDPAddr, error) {
+	switch value := target.(type) {
+	case *net.UDPAddr:
+		if value == nil {
+			return nil, errors.New("media: UDP address is nil")
+		}
+		return value, nil
+	case string:
+		if len(ports) != 1 || ports[0] <= 0 || ports[0] > 65535 {
+			return nil, errors.New("media: host requires a valid UDP port")
+		}
+		return net.ResolveUDPAddr("udp", net.JoinHostPort(strings.Trim(value, "[]"), fmt.Sprint(ports[0])))
+	default:
+		return nil, fmt.Errorf("media: unsupported UDP address %T", target)
+	}
+}
+
+func cloneUDPAddr(addr *net.UDPAddr) *net.UDPAddr {
+	if addr == nil {
+		return nil
+	}
+	return &net.UDPAddr{IP: append(net.IP(nil), addr.IP...), Port: addr.Port, Zone: addr.Zone}
+}
+
+func offsetUDPAddr(addr *net.UDPAddr, offset int) *net.UDPAddr {
+	result := cloneUDPAddr(addr)
+	result.Port += offset
+	return result
+}
+
+// SetPTMapping accepts either one original IMS/LAN pair or an additive map.
+func (r *RTPRelay) SetPTMapping(mapping any, rest ...int) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
-	r.lanRemote = addr
-	r.mu.Unlock()
+	defer r.mu.Unlock()
+	current := r.ptMap.Load()
+	next := clonePTMapping(current)
+	switch value := mapping.(type) {
+	case int:
+		if len(rest) != 1 || value == rest[0] {
+			return
+		}
+		next.imsToLan[value] = rest[0]
+		next.lanToIms[rest[0]] = value
+	case map[int]int:
+		next = &ptMapping{imsToLan: map[int]int{}, lanToIms: map[int]int{}}
+		for lanPT, imsPT := range value {
+			if lanPT == imsPT {
+				continue
+			}
+			next.imsToLan[imsPT] = lanPT
+			next.lanToIms[lanPT] = imsPT
+		}
+	default:
+		return
+	}
+	r.ptMap.Store(next)
 }
 
-// SetRemoteAddr sets the IMS-side remote address.
-func (r *RTPRelay) SetRemoteAddr(addr *net.UDPAddr) {
+func clonePTMapping(source *ptMapping) *ptMapping {
+	result := &ptMapping{imsToLan: map[int]int{}, lanToIms: map[int]int{}}
+	if source == nil {
+		return result
+	}
+	for key, value := range source.imsToLan {
+		result.imsToLan[key] = value
+	}
+	for key, value := range source.lanToIms {
+		result.lanToIms[key] = value
+	}
+	return result
+}
+
+// SetLogContext installs device and trace context.
+func (r *RTPRelay) SetLogContext(deviceID string, traceID ...string) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
-	r.imsRemote = addr
+	r.deviceID = deviceID
+	if len(traceID) > 0 {
+		r.traceID = traceID[0]
+	}
 	r.mu.Unlock()
 }
 
-// SetPTMapping sets the LAN->IMS payload type mapping.
-func (r *RTPRelay) SetPTMapping(m map[int]int) {
+func (r *RTPRelay) logContext() (string, string) {
 	if r == nil {
-		return
+		return "", ""
 	}
-	r.mu.Lock()
-	r.ptMapping = make(map[int]int, len(m))
-	for k, v := range m {
-		r.ptMapping[k] = v
-	}
-	r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.deviceID, r.traceID
 }
 
-// SetOneWayTimeoutHandler sets the one-way media timeout callback.
-func (r *RTPRelay) SetOneWayTimeoutHandler(fn func()) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.onOneWay = fn
-	r.mu.Unlock()
-}
+// IMSPort returns the IMS RTP port.
+func (r *RTPRelay) IMSPort() int { return packetConnPort(r.connIMS) }
 
-// SetLogContext sets the log context string.
-func (r *RTPRelay) SetLogContext(ctx string) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.logContext = ctx
-	r.mu.Unlock()
-}
+// LANPort returns the client RTP port.
+func (r *RTPRelay) LANPort() int { return packetConnPort(r.lanRTPConn()) }
 
-// IMSPort returns the IMS-side local port.
-func (r *RTPRelay) IMSPort() int {
-	if r == nil || r.imsConn == nil {
+func packetConnPort(conn net.PacketConn) int {
+	addr := packetConnUDPAddr(conn)
+	if addr == nil {
 		return 0
 	}
-	return r.imsConn.LocalAddr().(*net.UDPAddr).Port
+	return addr.Port
 }
 
-// LANPort returns the LAN-side local port.
-func (r *RTPRelay) LANPort() int {
-	if r == nil || r.lanConn == nil {
-		return 0
+func (r *RTPRelay) lanRTPConn() net.PacketConn {
+	if r == nil {
+		return nil
 	}
-	return r.lanConn.LocalAddr().(*net.UDPAddr).Port
+	if r.connLAN != nil {
+		return r.connLAN
+	}
+	return r.lanPacket
 }
 
-// GetIMSConnAndRemote returns the IMS conn and remote address.
+// GetIMSConnAndRemote returns the RTP socket and a detached remote address.
 func (r *RTPRelay) GetIMSConnAndRemote() (net.PacketConn, *net.UDPAddr) {
 	if r == nil {
 		return nil, nil
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.imsConn, r.imsRemote
+	return r.connIMS, cloneUDPAddr(r.remoteAddr.Load())
 }
 
-// EnableMonitor enables the RTP monitor.
-func (r *RTPRelay) EnableMonitor() {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.monitor = NewRTPMonitor()
-	r.mu.Unlock()
-}
-
-// Start launches the relay loops.
+// Start launches each available RTP and RTCP read loop exactly once.
 func (r *RTPRelay) Start() error {
 	if r == nil {
 		return errors.New("media: nil relay")
 	}
 	r.mu.Lock()
-	if r.stopped {
+	if r.isStopped() {
 		r.mu.Unlock()
 		return errors.New("media: relay stopped")
 	}
-	r.stop = make(chan struct{})
+	if r.active {
+		r.mu.Unlock()
+		return nil
+	}
+	r.active = true
+	r.startLoop(r.connIMS, r.loopIMS)
+	r.startLoop(r.lanRTPConn(), r.loopLAN)
+	r.startLoop(r.connIMSRTCP, r.loopIMSRTCP)
+	if r.connLANRTCP != nil {
+		r.startLoop(r.connLANRTCP, r.loopLANRTCP)
+	}
+	r.startRTCPKeepaliveLoop()
 	r.mu.Unlock()
-
-	var wg sync.WaitGroup
-	if r.imsConn != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			r.loopIMS()
-		}()
-	}
-	if r.lanConn != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			r.loopLAN()
-		}()
-	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		r.monitorLoop()
-	}()
 	return nil
 }
 
-// Stop shuts the relay down.
+func (r *RTPRelay) startLoop(conn net.PacketConn, loop func()) {
+	if conn == nil {
+		return
+	}
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		loop()
+	}()
+}
+
+// Stop closes all sockets, stops timers and waits for every relay goroutine.
 func (r *RTPRelay) Stop() error {
 	if r == nil {
 		return nil
 	}
-	r.mu.Lock()
-	if r.stopped {
+	var stopErr error
+	r.stopOnce.Do(func() {
+		r.mu.Lock()
+		close(r.stopCh)
+		r.active = false
+		monitor := r.Monitor
 		r.mu.Unlock()
-		return nil
-	}
-	r.stopped = true
-	close(r.stop)
-	ims, lan := r.imsConn, r.lanConn
-	r.mu.Unlock()
-	if ims != nil {
-		_ = ims.Close()
-	}
-	if lan != nil {
-		_ = lan.Close()
-	}
-	return nil
+		r.stopRTCPKeepalive()
+		if monitor != nil {
+			monitor.stop()
+		}
+		connections := []net.PacketConn{r.connIMS, r.lanRTPConn(), r.connIMSRTCP}
+		if r.connLANRTCP != nil {
+			connections = append(connections, r.connLANRTCP)
+		}
+		stopErr = errors.Join(stopErr, closePacketConns(connections...))
+		r.wg.Wait()
+		stopErr = errors.Join(stopErr, r.StopPCAP())
+	})
+	return stopErr
 }
 
-// shouldStop reports whether the relay is stopping.
+func closePacketConns(conns ...net.PacketConn) error {
+	seen := map[net.PacketConn]struct{}{}
+	var result error
+	for _, conn := range conns {
+		if conn == nil {
+			continue
+		}
+		if _, exists := seen[conn]; exists {
+			continue
+		}
+		seen[conn] = struct{}{}
+		result = errors.Join(result, conn.Close())
+	}
+	return result
+}
+
 func (r *RTPRelay) shouldStop() bool {
-	if r == nil {
+	if r == nil || r.isStopped() {
 		return true
 	}
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	active := r.active
+	r.mu.RUnlock()
+	return !active
+}
+
+func (r *RTPRelay) isStopped() bool {
 	select {
-	case <-r.stop:
+	case <-r.stopCh:
 		return true
 	default:
 		return false
 	}
 }
 
-// loopIMS relays packets from the IMS side to the LAN side.
 func (r *RTPRelay) loopIMS() {
-	buf := make([]byte, 2048)
-	for {
-		if r.shouldStop() {
-			return
-		}
-		n, addr, err := r.imsConn.ReadFrom(buf)
-		if err != nil {
-			if isRTPRelayReadClosedError(err) {
-				return
-			}
-			continue
-		}
-		r.mu.RLock()
-		lan := r.lanConn
-		lanRemote := r.lanRemote
-		r.mu.RUnlock()
-		if lan == nil || lanRemote == nil {
-			continue
-		}
-		pkt := make([]byte, n)
-		copy(pkt, buf[:n])
-		r.handleIMSPacket(pkt)
-		_, _ = lan.WriteTo(pkt, lanRemote)
-		r.monitor.UpdateIMS()
-		_ = addr
-	}
+	r.readLoop(r.connIMS, func(packet []byte, source *net.UDPAddr) {
+		r.handleIMSPacket(packet, source)
+	})
 }
 
-// loopLAN relays packets from the LAN side to the IMS side.
 func (r *RTPRelay) loopLAN() {
-	buf := make([]byte, 2048)
-	for {
-		if r.shouldStop() {
-			return
-		}
-		n, _, err := r.lanConn.ReadFrom(buf)
+	r.readLoop(r.lanRTPConn(), func(packet []byte, source *net.UDPAddr) {
+		r.handleLANPacket(packet, source)
+	})
+}
+
+func (r *RTPRelay) readLoop(conn net.PacketConn, handle func([]byte, *net.UDPAddr)) {
+	buffer := make([]byte, mediaReadBufferSize)
+	for !r.shouldStop() {
+		n, source, err := conn.ReadFrom(buffer)
 		if err != nil {
-			if isRTPRelayReadClosedError(err) {
+			if isRTPRelayReadClosedError(err) || r.isStopped() {
 				return
 			}
-			continue
-		}
-		r.mu.RLock()
-		ims := r.imsConn
-		imsRemote := r.imsRemote
-		r.mu.RUnlock()
-		if ims == nil || imsRemote == nil {
-			continue
-		}
-		pkt := make([]byte, n)
-		copy(pkt, buf[:n])
-		r.handleLANPacket(pkt)
-		_, _ = ims.WriteTo(pkt, imsRemote)
-		r.monitor.UpdateLAN()
-	}
-}
-
-// monitorLoop watches for one-way media timeouts.
-func (r *RTPRelay) monitorLoop() {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.stop:
-			return
-		case <-ticker.C:
-			if r.monitor.OneWay(r.oneWayTimeout) {
-				r.mu.RLock()
-				fn := r.onOneWay
-				r.mu.RUnlock()
-				if fn != nil {
-					fn()
-				}
+			if !isRTPRelayReadTimeout(err) {
+				r.logReadError(err)
 			}
+			continue
 		}
+		udpSource := packetConnAddrToUDPAddr(source)
+		if udpSource == nil {
+			deviceID, _ := r.logContext()
+			logging.WarnRate("media-source:"+deviceID, time.Minute,
+				"RTP source address is not UDP", "address", packetConnAddrString(source))
+			continue
+		}
+		packet := append([]byte(nil), buffer[:n]...)
+		handle(packet, udpSource)
 	}
 }
 
-// isRTPRelayReadClosedError reports whether err is a closed-conn read error.
+func (r *RTPRelay) logReadError(err error) {
+	deviceID, traceID := r.logContext()
+	logging.WarnRate("media-read:"+deviceID, time.Second,
+		"RTP relay read failed", "device", deviceID, "trace", traceID, "error", err)
+}
+
 func isRTPRelayReadClosedError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, net.ErrClosed)
+	return errors.Is(err, net.ErrClosed) || strings.Contains(strings.ToLower(errString(err)), "closed network connection")
 }
 
-// isRTPRelayReadTimeout reports whether err is a read timeout.
 func isRTPRelayReadTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func errString(err error) string {
 	if err == nil {
-		return false
+		return ""
 	}
-	var ne net.Error
-	if errors.As(err, &ne) {
-		return ne.Timeout()
-	}
-	return false
+	return err.Error()
 }
 
-// NewRTPMonitor creates an RTP monitor.
-func NewRTPMonitor() *RTPMonitor {
-	return &RTPMonitor{}
-}
-
-// UpdateIMS records an IMS-side packet.
-func (m *RTPMonitor) UpdateIMS() {
-	if m == nil {
-		return
+// Stats returns the byte counters for RTP and RTCP in both directions.
+func (r *RTPRelay) Stats() (uint64, uint64, uint64, uint64) {
+	if r == nil {
+		return 0, 0, 0, 0
 	}
-	m.mu.Lock()
-	m.imsCount++
-	m.lastIMSPkt = time.Now()
-	m.mu.Unlock()
-}
-
-// UpdateLAN records a LAN-side packet.
-func (m *RTPMonitor) UpdateLAN() {
-	if m == nil {
-		return
-	}
-	m.mu.Lock()
-	m.lanCount++
-	m.lastLANPkt = time.Now()
-	m.mu.Unlock()
-}
-
-// OneWay reports whether media has been one-way for the given duration.
-func (m *RTPMonitor) OneWay(timeout time.Duration) bool {
-	if m == nil {
-		return false
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	now := time.Now()
-	imsIdle := now.Sub(m.lastIMSPkt)
-	lanIdle := now.Sub(m.lastLANPkt)
-	if m.imsCount == 0 || m.lanCount == 0 {
-		return false
-	}
-	if imsIdle > timeout && lanIdle > timeout {
-		return false
-	}
-	if imsIdle > timeout || lanIdle > timeout {
-		if m.oneWaySince.IsZero() {
-			m.oneWaySince = now
-		}
-		return now.Sub(m.oneWaySince) >= timeout
-	}
-	m.oneWaySince = time.Time{}
-	return false
-}
-
-// Counts returns the packet counts.
-func (m *RTPMonitor) Counts() (ims, lan uint64) {
-	if m == nil {
-		return 0, 0
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.imsCount, m.lanCount
+	return atomic.LoadUint64(&r.bytesIMSToLAN), atomic.LoadUint64(&r.bytesLANToIMS),
+		atomic.LoadUint64(&r.bytesIMSRTCPToLAN), atomic.LoadUint64(&r.bytesLANRTCPToIMS)
 }

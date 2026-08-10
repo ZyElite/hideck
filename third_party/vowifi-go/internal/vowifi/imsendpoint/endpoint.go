@@ -35,6 +35,16 @@ type Endpoint interface {
 	Subscribe(EventSubscription, func(Event)) func()
 }
 
+// PacketListener opens IMS-bound packet sockets through the active dataplane.
+type PacketListener interface {
+	ListenPacket(context.Context, string, net.Addr) (net.PacketConn, error)
+}
+
+// RuntimeSnapshotSource exposes the immutable IMS runtime snapshot.
+type RuntimeSnapshotSource interface {
+	Snapshot() Snapshot
+}
+
 // EventSubscription controls asynchronous IMS signaling event delivery.
 type EventSubscription struct {
 	Name      string

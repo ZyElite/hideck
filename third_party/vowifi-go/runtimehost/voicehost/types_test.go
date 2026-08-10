@@ -9,8 +9,12 @@ import (
 
 // fakeAgent drives a simulated call without the voice engine.
 type fakeAgent struct {
-	dialed string
-	hungup string
+	dialed      string
+	hungup      string
+	pcapStarted string
+	pcapStopped bool
+	dtmfCallID  string
+	dtmfDigit   string
 }
 
 func (f *fakeAgent) DialContext(_ context.Context, number string) (interface{}, error) {
@@ -24,6 +28,19 @@ func (f *fakeAgent) HangupContext(_ context.Context, callID string) error {
 func (f *fakeAgent) Ready() bool  { return true }
 func (f *fakeAgent) Start() error { return nil }
 func (f *fakeAgent) Stop() error  { return nil }
+func (f *fakeAgent) StartPCAP(output string) error {
+	f.pcapStarted = output
+	return nil
+}
+func (f *fakeAgent) StopPCAP() error {
+	f.pcapStopped = true
+	return nil
+}
+func (f *fakeAgent) SendDTMF(callID, digit string) error {
+	f.dtmfCallID = callID
+	f.dtmfDigit = digit
+	return nil
+}
 
 type fakeCall struct{ id string }
 
@@ -94,6 +111,33 @@ func TestGatewayNoAgent(t *testing.T) {
 	g := NewGateway()
 	if _, err := g.SimulateCall(context.Background(), "dev-1", SimulateCallRequest{}); err == nil {
 		t.Error("should error without agent")
+	}
+}
+
+func TestGatewayRoutesPCAPAndDTMFToRealAgent(t *testing.T) {
+	gateway := NewGateway()
+	agent := &fakeAgent{}
+	if err := gateway.SetAgent("dev-1", agent); err != nil {
+		t.Fatal(err)
+	}
+	gateway.SetPCAPDirectory(t.TempDir())
+	if err := gateway.StartPCAP("dev-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.pcapStarted == "" {
+		t.Fatal("PCAP directory was not forwarded")
+	}
+	if err := gateway.SendDTMF("dev-1", "call-1", "2"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.dtmfCallID != "call-1" || agent.dtmfDigit != "2" {
+		t.Fatalf("DTMF forwarding = %q/%q", agent.dtmfCallID, agent.dtmfDigit)
+	}
+	if err := gateway.StopPCAP("dev-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !agent.pcapStopped {
+		t.Fatal("StopPCAP was not forwarded")
 	}
 }
 

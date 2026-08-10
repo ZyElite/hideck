@@ -30,6 +30,7 @@ func (a *Agent) AnswerWithSDP(callID, clientSDP string) (InboundAnswer, error) {
 	if err != nil {
 		return InboundAnswer{}, err
 	}
+	a.enableMediaMonitor(call)
 	if err := call.StartMedia(); err != nil {
 		a.releaseInboundCall(call, err, false)
 		return InboundAnswer{}, err

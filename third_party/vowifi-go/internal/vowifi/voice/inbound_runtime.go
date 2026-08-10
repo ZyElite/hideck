@@ -203,7 +203,10 @@ func (a *Agent) handleReinvite(request imscore.InboundVoiceRequest, call *Call) 
 	if err != nil {
 		return voiceResult(488), nil
 	}
-	relay.SetRemoteAddr(remote)
+	if err := relay.SetRemoteAddr(remote); err != nil {
+		return voiceResult(488), nil
+	}
+	configureRelayDTMF(relay, offer)
 	relay.SetPTMapping(ExtractAndApplyPTMapping(offer, parsedClientAnswer))
 	call.setRemoteSDP(string(request.Body), RewriteSDP(string(request.Body), clientRelayIP, relay.LANPort()))
 	if err := request.Responder.Respond(a.voiceSDPResponse(call, 200, imsAnswer)); err != nil {

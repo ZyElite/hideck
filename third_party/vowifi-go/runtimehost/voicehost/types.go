@@ -62,6 +62,7 @@ type Gateway struct {
 	dispatcher      interface{ Dispatch(interface{}) }
 	agents          map[string]voiceAgent
 	incomingHandler func(IncomingCall)
+	pcapDirectory   string
 	started         bool
 }
 
@@ -337,20 +338,76 @@ func (g *Gateway) SetEventDispatcher(d interface{ Dispatch(interface{}) }) {
 	g.dispatcher = d
 }
 
-// StartPCAP reports that the legacy API lacks the required output target.
-func (g *Gateway) StartPCAP(deviceID string) error {
-	if g == nil || g.GetAgent(deviceID) == nil {
-		return errors.New("voicehost: no agent for device " + deviceID)
+// SetPCAPDirectory injects the default packet-capture output directory.
+func (g *Gateway) SetPCAPDirectory(directory string) {
+	if g == nil {
+		return
 	}
-	return errors.New("voicehost: packet capture output is not configured")
+	g.mu.Lock()
+	g.pcapDirectory = strings.TrimSpace(directory)
+	g.mu.Unlock()
 }
 
-// StopPCAP reports that no capture can be addressed by the legacy API.
-func (g *Gateway) StopPCAP(deviceID string) error {
-	if g == nil || g.GetAgent(deviceID) == nil {
+// StartPCAP starts capture through the real device Agent. An explicit output
+// retains the original two-argument API; otherwise the injected directory is used.
+func (g *Gateway) StartPCAP(deviceID string, output ...string) error {
+	if g == nil {
+		return errors.New("voicehost: nil gateway")
+	}
+	g.mu.RLock()
+	agent := g.agents[deviceID]
+	directory := g.pcapDirectory
+	g.mu.RUnlock()
+	if agent == nil {
 		return errors.New("voicehost: no agent for device " + deviceID)
 	}
-	return errors.New("voicehost: packet capture output is not configured")
+	if len(output) > 0 {
+		directory = strings.TrimSpace(output[0])
+	}
+	if directory == "" {
+		return errors.New("voicehost: packet capture output is not configured")
+	}
+	captureAgent, ok := agent.(interface{ StartPCAP(string) error })
+	if !ok {
+		return errors.New("voicehost: agent does not support packet capture")
+	}
+	return captureAgent.StartPCAP(directory)
+}
+
+// StopPCAP stops capture through the real device Agent.
+func (g *Gateway) StopPCAP(deviceID string) error {
+	if g == nil {
+		return errors.New("voicehost: nil gateway")
+	}
+	g.mu.RLock()
+	agent := g.agents[deviceID]
+	g.mu.RUnlock()
+	if agent == nil {
+		return errors.New("voicehost: no agent for device " + deviceID)
+	}
+	captureAgent, ok := agent.(interface{ StopPCAP() error })
+	if !ok {
+		return errors.New("voicehost: agent does not support packet capture")
+	}
+	return captureAgent.StopPCAP()
+}
+
+// SendDTMF sends one negotiated RFC 4733 event by device and Call-ID.
+func (g *Gateway) SendDTMF(deviceID, callID, digit string) error {
+	if g == nil {
+		return errors.New("voicehost: nil gateway")
+	}
+	g.mu.RLock()
+	agent := g.agents[deviceID]
+	g.mu.RUnlock()
+	if agent == nil {
+		return errors.New("voicehost: no agent for device " + deviceID)
+	}
+	dtmfAgent, ok := agent.(interface{ SendDTMF(string, string) error })
+	if !ok {
+		return errors.New("voicehost: agent does not support DTMF")
+	}
+	return dtmfAgent.SendDTMF(callID, digit)
 }
 
 // eventDispatcherAdapter adapts an event dispatcher.

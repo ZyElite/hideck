@@ -1,270 +1,258 @@
 package media
 
 import (
-	"encoding/binary"
 	"errors"
-	"fmt"
 	"net"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 )
 
-const (
-	comfortNoisePacketInterval = 20 * time.Millisecond
-	comfortNoiseSamples        = 160
-	comfortNoiseSSRC           = 0xdeadbeef
-)
-
-// NewMediaSessionManager creates a media session manager.
-func NewMediaSessionManager() *MediaSessionManager {
-	return &MediaSessionManager{relays: make(map[string]*RTPRelay)}
+// NewMediaSessionManager creates a manager with optional device/trace context.
+func NewMediaSessionManager(context ...string) *MediaSessionManager {
+	manager := &MediaSessionManager{EventCh: make(chan MediaEvent, 8), relays: map[string]*RTPRelay{}}
+	if len(context) > 0 {
+		manager.deviceID = context[0]
+	}
+	if len(context) > 1 {
+		manager.traceID = context[1]
+	}
+	return manager
 }
 
-// CreateRelay creates and stores a relay for a call.
-func (m *MediaSessionManager) CreateRelay(callID string, imsLocal *net.UDPAddr) (*RTPRelay, error) {
+// CreateRelay accepts the original (IMS IP, LAN IP, timeout) form and the
+// additive (call ID, IMS UDP address) form.
+func (m *MediaSessionManager) CreateRelay(first string, second any, rest ...any) (*RTPRelay, error) {
 	if m == nil {
 		return nil, errors.New("media: nil manager")
 	}
-	r, err := NewRTPRelayWithListener(imsLocal)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.released {
+		return nil, errors.New("media: manager released")
+	}
+	if address, ok := second.(*net.UDPAddr); ok && len(rest) == 0 {
+		return m.createAdditiveRelay(first, address)
+	}
+	lanAddress, ok := second.(string)
+	if !ok || len(rest) != 1 {
+		return nil, errors.New("media: invalid relay creation arguments")
+	}
+	timeout, ok := durationArgument(rest[0])
+	if !ok {
+		return nil, errors.New("media: invalid media timeout")
+	}
+	if m.relay != nil {
+		_ = m.relay.Stop()
+	}
+	relay, err := NewRTPRelayWithListener(nil, first, lanAddress, 0, 0)
 	if err != nil {
 		return nil, err
 	}
-	m.mu.Lock()
-	m.relays[callID] = r
-	m.mu.Unlock()
-	return r, nil
+	m.configureRelay(relay, timeout)
+	m.relay = relay
+	return relay, nil
 }
 
-// GetRelay returns the relay for a call.
-func (m *MediaSessionManager) GetRelay(callID string) *RTPRelay {
+func (m *MediaSessionManager) createAdditiveRelay(callID string, address *net.UDPAddr) (*RTPRelay, error) {
+	relay, err := NewRTPRelayWithListener(address)
+	if err != nil {
+		return nil, err
+	}
+	relay.SetLogContext(m.deviceID, m.traceID)
+	m.relays[callID] = relay
+	m.relay = relay
+	return relay, nil
+}
+
+func durationArgument(value any) (time.Duration, bool) {
+	switch duration := value.(type) {
+	case time.Duration:
+		return duration, true
+	case int64:
+		return time.Duration(duration), true
+	default:
+		return 0, false
+	}
+}
+
+func (m *MediaSessionManager) configureRelay(relay *RTPRelay, timeout time.Duration) {
+	relay.SetLogContext(m.deviceID, m.traceID)
+	relay.EnableMonitor(timeout, func() { m.emit(MediaEventRTPTimeout) })
+	relay.SetOneWayTimeoutHandler(func(string) { m.emit(MediaEventOneWayTimeout) })
+}
+
+func (m *MediaSessionManager) emit(event MediaEvent) {
+	select {
+	case m.EventCh <- event:
+	default:
+	}
+}
+
+// GetRelay returns the original relay or a call-keyed additive relay.
+func (m *MediaSessionManager) GetRelay(callID ...string) *RTPRelay {
 	if m == nil {
 		return nil
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.relays[callID]
-}
-
-// Release removes and stops the relay for a call.
-func (m *MediaSessionManager) Release(callID string) error {
-	if m == nil {
-		return nil
-	}
 	m.mu.Lock()
-	r := m.relays[callID]
-	delete(m.relays, callID)
-	m.mu.Unlock()
-	if r != nil {
-		return r.Stop()
+	defer m.mu.Unlock()
+	if len(callID) > 0 {
+		return m.relays[callID[0]]
 	}
-	return nil
+	return m.relay
 }
 
-// Start starts all relays.
+// Start starts the current relay(s).
 func (m *MediaSessionManager) Start() error {
 	if m == nil {
 		return nil
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, r := range m.relays {
-		if err := r.Start(); err != nil {
+	m.mu.Lock()
+	relays := m.relaySnapshotLocked()
+	m.mu.Unlock()
+	for _, relay := range relays {
+		if err := relay.Start(); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// NewBridge creates a media bridge.
-func NewBridge() *Bridge {
-	return &Bridge{}
+// Release stops one call relay or all relays when no call ID is supplied.
+func (m *MediaSessionManager) Release(callID ...string) error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	if len(callID) > 0 {
+		relay := m.relays[callID[0]]
+		delete(m.relays, callID[0])
+		if m.relay == relay {
+			m.relay = nil
+		}
+		m.mu.Unlock()
+		return relay.Stop()
+	}
+	if m.released {
+		m.mu.Unlock()
+		return nil
+	}
+	m.released = true
+	relays := m.relaySnapshotLocked()
+	m.relay = nil
+	m.relays = map[string]*RTPRelay{}
+	m.mu.Unlock()
+	var result error
+	for _, relay := range relays {
+		result = errors.Join(result, relay.Stop())
+	}
+	return result
 }
 
-// SetEndpoint sets the client endpoint.
-func (b *Bridge) SetEndpoint(ep string) {
+func (m *MediaSessionManager) relaySnapshotLocked() []*RTPRelay {
+	seen := map[*RTPRelay]struct{}{}
+	result := make([]*RTPRelay, 0, len(m.relays)+1)
+	if m.relay != nil {
+		seen[m.relay] = struct{}{}
+		result = append(result, m.relay)
+	}
+	for _, relay := range m.relays {
+		if relay == nil {
+			continue
+		}
+		if _, exists := seen[relay]; exists {
+			continue
+		}
+		seen[relay] = struct{}{}
+		result = append(result, relay)
+	}
+	return result
+}
+
+// NewBridge creates a bridge with optional device context.
+func NewBridge(deviceID ...string) *Bridge {
+	bridge := &Bridge{}
+	if len(deviceID) > 0 {
+		bridge.deviceID = deviceID[0]
+	}
+	return bridge
+}
+
+// SetEndpoint installs an IMS snapshot source or retains an additive string.
+func (b *Bridge) SetEndpoint(endpoint any) {
 	if b == nil {
 		return
 	}
 	b.mu.Lock()
-	b.endpoint = ep
-	b.mu.Unlock()
+	defer b.mu.Unlock()
+	switch value := endpoint.(type) {
+	case imsendpoint.RuntimeSnapshotSource:
+		b.endpoint = value
+	case string:
+		b.legacyEndpoint = value
+	}
 }
 
-// SetupRelay attaches a relay to the bridge.
-func (b *Bridge) SetupRelay(r *RTPRelay) {
+// IMSLocalIP returns the current IMS local address without its port.
+func (b *Bridge) IMSLocalIP() string {
 	if b == nil {
-		return
+		return ""
+	}
+	b.mu.RLock()
+	endpoint := b.endpoint
+	legacy := b.legacyEndpoint
+	b.mu.RUnlock()
+	if endpoint == nil {
+		return legacy
+	}
+	address := endpoint.Snapshot().LocalAddr
+	if host, _, err := net.SplitHostPort(address); err == nil {
+		return host
+	}
+	return address
+}
+
+// SetupRelay accepts one additive relay or the original
+// (IMS local IP, trace ID, one-way callback) form.
+func (b *Bridge) SetupRelay(args ...any) (*RTPRelay, error) {
+	if b == nil {
+		return nil, errors.New("media: nil bridge")
+	}
+	if len(args) == 1 {
+		relay, ok := args[0].(*RTPRelay)
+		if !ok || relay == nil {
+			return nil, errors.New("media: invalid relay")
+		}
+		b.mu.Lock()
+		b.relay = relay
+		b.mu.Unlock()
+		return relay, nil
+	}
+	if len(args) != 3 {
+		return nil, errors.New("media: setup requires IMS address, trace ID and callback")
+	}
+	imsAddress, okIMS := args[0].(string)
+	traceID, okTrace := args[1].(string)
+	callback, okCallback := args[2].(func(string))
+	if !okIMS || !okTrace || !okCallback {
+		return nil, errors.New("media: invalid setup arguments")
+	}
+	b.mu.RLock()
+	endpoint := b.endpoint
+	b.mu.RUnlock()
+	listener, _ := endpoint.(imsendpoint.PacketListener)
+	relay, err := NewRTPRelayWithListener(listener, imsAddress, "0.0.0.0", 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	relay.SetLogContext(b.deviceID, traceID)
+	relay.SetOneWayTimeoutHandler(callback)
+	if err := relay.Start(); err != nil {
+		_ = relay.Stop()
+		return nil, err
 	}
 	b.mu.Lock()
-	b.relay = r
+	b.relay = relay
 	b.mu.Unlock()
-}
-
-// IMSLocalIP returns the IMS-side local IP.
-func (b *Bridge) IMSLocalIP() net.IP {
-	if b == nil || b.relay == nil {
-		return nil
-	}
-	conn, _ := b.relay.GetIMSConnAndRemote()
-	if conn == nil {
-		return nil
-	}
-	if ua, ok := conn.LocalAddr().(*net.UDPAddr); ok {
-		return ua.IP
-	}
-	return nil
-}
-
-// NewComfortNoiseGenerator creates a comfort noise generator.
-func NewComfortNoiseGenerator() *ComfortNoiseGenerator {
-	seed := uint32(time.Now().UnixNano())
-	return &ComfortNoiseGenerator{
-		payloadType: 0, timestamp: seed, ssrc: comfortNoiseSSRC, randomState: seed,
-		stop: make(chan struct{}), errors: make(chan error, 1),
-	}
-}
-
-// Start begins generating comfort noise to addr.
-func (g *ComfortNoiseGenerator) Start(conn net.PacketConn, addr *net.UDPAddr) error {
-	if g == nil {
-		return errors.New("media: nil noise generator")
-	}
-	if conn == nil || addr == nil {
-		return errors.New("media: comfort-noise connection and destination are required")
-	}
-	g.mu.Lock()
-	if g.started {
-		g.mu.Unlock()
-		return nil
-	}
-	g.conn = conn
-	g.addr = addr
-	g.stop = make(chan struct{})
-	g.errors = make(chan error, 1)
-	g.started = true
-	g.wg.Add(1)
-	g.mu.Unlock()
-	go g.sendLoop()
-	return nil
-}
-
-// Stop halts comfort noise generation.
-func (g *ComfortNoiseGenerator) Stop() {
-	if g == nil {
-		return
-	}
-	g.mu.Lock()
-	if g.started {
-		g.started = false
-		close(g.stop)
-	}
-	g.mu.Unlock()
-	g.wg.Wait()
-}
-
-// Errors reports the first asynchronous RTP write failure.
-func (g *ComfortNoiseGenerator) Errors() <-chan error {
-	if g == nil {
-		return nil
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.errors
-}
-
-// sendLoop emits comfort noise packets periodically.
-func (g *ComfortNoiseGenerator) sendLoop() {
-	defer g.wg.Done()
-	ticker := time.NewTicker(comfortNoisePacketInterval)
-	defer ticker.Stop()
-	for {
-		g.mu.Lock()
-		stop := g.stop
-		g.mu.Unlock()
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			if err := g.sendOnePacket(); err != nil {
-				g.reportError(err)
-				return
-			}
-		}
-	}
-}
-
-// sendOnePacket emits a single comfort noise packet.
-func (g *ComfortNoiseGenerator) sendOnePacket() error {
-	if g == nil {
-		return errors.New("media: nil noise generator")
-	}
-	g.mu.Lock()
-	conn := g.conn
-	addr := g.addr
-	g.mu.Unlock()
-	if conn == nil || addr == nil {
-		return errors.New("media: comfort-noise connection and destination are required")
-	}
-	_, err := conn.WriteTo(g.generateComfortNoiseUlaw(), addr)
-	return err
-}
-
-func (g *ComfortNoiseGenerator) reportError(err error) {
-	if err == nil {
-		return
-	}
-	g.mu.Lock()
-	errorsCh := g.errors
-	g.mu.Unlock()
-	select {
-	case errorsCh <- fmt.Errorf("media: write PCMU RTP: %w", err):
-	default:
-	}
-}
-
-// generateComfortNoiseUlaw builds one 20 ms PCMU RTP packet.
-func (g *ComfortNoiseGenerator) generateComfortNoiseUlaw() []byte {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	pkt := make([]byte, 12+comfortNoiseSamples)
-	pkt[0] = 0x80
-	pkt[1] = g.payloadType
-	binary.BigEndian.PutUint16(pkt[2:4], g.sequence)
-	binary.BigEndian.PutUint32(pkt[4:8], g.timestamp)
-	binary.BigEndian.PutUint32(pkt[8:12], g.ssrc)
-	for i := 12; i < len(pkt); i++ {
-		g.randomState = g.randomState*1103515245 + 12345
-		sample := int16((g.randomState>>16)&0x1ff) - 0x100
-		pkt[i] = linearToUlaw(sample)
-	}
-	g.sequence++
-	g.timestamp += comfortNoiseSamples
-	return pkt
-}
-
-// linearToUlaw converts a 16-bit linear PCM sample to u-law (G.711).
-func linearToUlaw(sample int16) byte {
-	// Standard u-law encoding.
-	const (
-		biases = 0x84
-		clip   = 32635
-	)
-	sign := byte(0)
-	if sample < 0 {
-		sample = -sample
-		sign = 0x80
-	}
-	if sample > clip {
-		sample = clip
-	}
-	sample += biases
-	exp := 7
-	for seg := int16(0x4000); seg > 0; seg >>= 1 {
-		if sample&seg != 0 {
-			break
-		}
-		exp--
-	}
-	mantissa := byte((sample >> (exp + 3)) & 0x0F)
-	ulaw := ^(sign | byte(exp)<<4 | mantissa)
-	return ulaw
+	return relay, nil
 }

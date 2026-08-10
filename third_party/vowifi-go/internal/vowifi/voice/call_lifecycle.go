@@ -64,11 +64,8 @@ func (c *Call) StopMedia() error {
 	return relay.Stop()
 }
 
-// StartPCAP begins packet capture for the call.
-func (c *Call) StartPCAP(f interface {
-	Write([]byte) (int, error)
-	Close() error
-}) error {
+// StartPCAP begins packet capture to a path/directory or an injected writer.
+func (c *Call) StartPCAP(target any) error {
 	if c == nil {
 		return errors.New("voice: nil call")
 	}
@@ -78,8 +75,7 @@ func (c *Call) StartPCAP(f interface {
 	if relay == nil {
 		return errors.New("voice: no media relay")
 	}
-	relay.StartPCAP(f)
-	return nil
+	return relay.StartPCAP(target)
 }
 
 // StopPCAP stops packet capture for the call.
@@ -93,8 +89,7 @@ func (c *Call) StopPCAP() error {
 	if relay == nil {
 		return nil
 	}
-	relay.StopPCAP()
-	return nil
+	return relay.StopPCAP()
 }
 
 // StartOutboundNoAnswerTimer schedules the no-answer timeout.
