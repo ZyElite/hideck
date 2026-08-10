@@ -61,6 +61,7 @@ func TestOutboundDispatcherRejectsFullShard(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(service.Stop)
+	service.transport.SetSendFn(func(string) error { return nil })
 	request := parsedDispatchRequest(t, "full-call", 1)
 	shards := make([]chan outboundRequestTask, outboundRequestShardCount)
 	for index := range shards {

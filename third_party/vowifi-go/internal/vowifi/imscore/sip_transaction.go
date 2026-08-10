@@ -40,13 +40,33 @@ func (t *sipTransport) roundTripWithCallbacks(
 	request string,
 	callbacks sipTransactionCallbacks,
 ) (*sipResponse, error) {
+	return t.roundTripWithSenderAndCallbacks(ctx, request, nil, callbacks)
+}
+
+func (t *sipTransport) roundTripWithSender(
+	ctx context.Context,
+	request string,
+	sender func(string) error,
+) (*sipResponse, error) {
+	if sender == nil {
+		return nil, errors.New("imscore: nil SIP transaction sender")
+	}
+	return t.roundTripWithSenderAndCallbacks(ctx, request, sender, sipTransactionCallbacks{})
+}
+
+func (t *sipTransport) roundTripWithSenderAndCallbacks(
+	ctx context.Context,
+	request string,
+	sender func(string) error,
+	callbacks sipTransactionCallbacks,
+) (*sipResponse, error) {
 	if t == nil {
 		return nil, errors.New("imscore: nil SIP transport")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	transaction, err := t.startClientTransaction(request, callbacks)
+	transaction, err := t.startClientTransactionWithSender(request, callbacks, sender)
 	if err != nil {
 		return nil, err
 	}

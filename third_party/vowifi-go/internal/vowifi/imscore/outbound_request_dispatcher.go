@@ -82,7 +82,7 @@ func (s *Service) runOutboundRequestTask(shard int, task outboundRequestTask) {
 func (s *Service) executeOutboundRequest(
 	ctx context.Context,
 	req *sip.Request,
-	_ outboundModeContext,
+	modeCtx outboundModeContext,
 	timeout time.Duration,
 ) (*sip.Response, error) {
 	if req == nil {
@@ -96,7 +96,7 @@ func (s *Service) executeOutboundRequest(
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	response, err := s.transport.RoundTrip(ctx, req.String())
+	response, err := s.transport.roundTripWithSender(ctx, req.String(), modeCtx.send)
 	if err != nil {
 		s.handleOutboundRequestError(req, err)
 		return nil, err
@@ -162,6 +162,10 @@ func (s *Service) dispatchOutboundRequest(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	modeCtx, err := s.resolveOutboundModeContext(flow, req)
+	if err != nil {
+		return nil, 0, err
+	}
 	shards := s.ensureOutboundRequestDispatchers()
 	if len(shards) == 0 {
 		return nil, 0, errors.New("imscore: outbound request dispatcher unavailable")
@@ -173,7 +177,7 @@ func (s *Service) dispatchOutboundRequest(
 	}
 	task := outboundRequestTask{
 		ctx: ctx, flow: flow, req: req.Clone(), timeout: int64(timeout),
-		dispatchSeq: seq, enqueuedAt: time.Now(), done: done,
+		modeCtx: modeCtx, dispatchSeq: seq, enqueuedAt: time.Now(), done: done,
 	}
 	queue := shards[outboundDispatchShardIndex(outboundDispatchKey(req, flow), len(shards))]
 	select {
