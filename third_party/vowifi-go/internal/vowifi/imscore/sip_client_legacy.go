@@ -143,33 +143,42 @@ func (s *Service) completeClientInviteResult(
 			return result, errors.Join(waitErr, err)
 		}
 	}
-	if waitErr != nil {
-		handle.markDone(false)
-		s.closeClientInviteDialog(handle)
+	accepted := response != nil && response.StatusCode >= 200 && response.StatusCode < 300
+	if accepted {
+		if err := s.completeAcceptedClientInvite(handle, result, response); err != nil {
+			return result, errors.Join(waitErr, err)
+		}
 		return result, waitErr
 	}
-	accepted := response != nil && response.StatusCode >= 200 && response.StatusCode < 300
-	if !accepted {
+	handle.markDone(false)
+	s.closeClientInviteDialog(handle)
+	if waitErr != nil {
+		return result, waitErr
+	}
+	if response == nil {
+		return result, errors.New("client INVITE final response 为空")
+	}
+	return result, fmt.Errorf("client INVITE response: %d %s", response.StatusCode, response.Reason)
+}
+
+func (s *Service) completeAcceptedClientInvite(
+	handle *imscoreInviteHandle,
+	result *imsendpoint.ClientInviteResult,
+	response *sipResponse,
+) error {
+	if response == nil || response.parsed == nil {
 		handle.markDone(false)
 		s.closeClientInviteDialog(handle)
-		if response == nil {
-			return result, errors.New("client INVITE final response 为空")
-		}
-		return result, fmt.Errorf("client INVITE response: %d %s", response.StatusCode, response.Reason)
+		return errors.New("client INVITE final response 未解析")
 	}
-	if response.parsed == nil {
-		handle.markDone(false)
-		s.closeClientInviteDialog(handle)
-		return result, errors.New("client INVITE final response 未解析")
-	}
-	handle.markDone(true)
 	dialog := s.promoteClientInviteDialog(handle, response.parsed)
+	handle.markDone(true)
 	handle.mu.Lock()
 	handle.dialog = dialog.client
 	handle.mu.Unlock()
 	result.Dialog = dialog
 	s.storeClientDialog(dialog, handle.initialRequest, response.parsed)
-	return result, nil
+	return nil
 }
 
 func (s *Service) promoteClientInviteDialog(

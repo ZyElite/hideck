@@ -147,8 +147,10 @@ func (a *Agent) startIMSOutboundDialog(call *Call) {
 		request, transaction, offer := call.clientInviteRuntime()
 		response, err := a.executeOutboundCall(ctx, call, offer)
 		if call.HasLocalCancelSent() {
-			a.respondSyntheticFinalToClient(call, 487, "Request Terminated")
-			a.finishLocalCancel(call, call.OutboundCancelReason())
+			a.respondOutboundCancellationFinal(call, response)
+			if !callDone(call) {
+				a.finishLocalCancel(call, call.OutboundCancelReason())
+			}
 		} else if response.StatusCode >= 200 {
 			err = errors.Join(err, a.forwardResponseToClient(call, response))
 		} else if err != nil {
@@ -179,6 +181,9 @@ func (a *Agent) respondSyntheticFinalToClient(call *Call, status int, reason str
 		return
 	}
 	request, transaction, _ := call.clientInviteRuntime()
+	if request == nil || !call.markClientFinalSent() {
+		return
+	}
 	response := buildClientResponseFromRequest(request, status, reason, nil)
 	if value := taggedToHeaderValue(call); value != "" {
 		response.RemoveHeader("To")
@@ -187,6 +192,37 @@ func (a *Agent) respondSyntheticFinalToClient(call *Call, status int, reason str
 	if err := a.respondClientWithFallback(transaction, response); err != nil {
 		logging.WarnRate("voice-client-synthetic:"+call.CallID(), 10*time.Second,
 			"local synthetic INVITE response failed", "device", a.deviceID, "status", status, "err", err)
+	}
+}
+
+func (a *Agent) respondOutboundCancellationFinal(call *Call, response imscore.SIPResponse) {
+	if call == nil {
+		return
+	}
+	if call.OutboundCancelReason() == "no_answer" {
+		a.respondSyntheticFinalToClient(call, 408, imscore.SIPStatusText(408))
+		return
+	}
+	if response.StatusCode >= 300 {
+		if err := a.forwardResponseToClient(call, response); err != nil {
+			logging.WarnRate("voice-client-cancel-final:"+call.CallID(), 10*time.Second,
+				"local canceled INVITE final response failed", "device", a.deviceID,
+				"call_id", call.CallID(), "status", response.StatusCode, "err", err)
+		}
+		return
+	}
+	a.respondSyntheticFinalToClient(call, 487, imscore.SIPStatusText(487))
+}
+
+func callDone(call *Call) bool {
+	if call == nil {
+		return true
+	}
+	select {
+	case <-call.Done:
+		return true
+	default:
+		return false
 	}
 }
 

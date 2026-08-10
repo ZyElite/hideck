@@ -40,7 +40,7 @@ func (a *Agent) handleIMS2xxResponse(
 	response imscore.SIPResponse,
 ) error {
 	if call.HasLocalCancelSent() {
-		return a.handleLateInvite2xxAfterLocalCancel(ctx, call, response)
+		return a.handleLateInvite2xxAfterLocalCancel(call, response)
 	}
 	if err := a.completeOutboundInvite(ctx, call, response); err != nil {
 		return a.failOutboundCall(call, err)

@@ -452,6 +452,9 @@ func (a *Agent) finishLocalHangup(call *Call) error {
 	if err := call.TransitionChecked(callstate.StateDisconnected); err != nil {
 		return err
 	}
+	if !call.claimTerminalFinalization() {
+		return nil
+	}
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	call.CloseDone()
@@ -461,6 +464,9 @@ func (a *Agent) finishLocalHangup(call *Call) error {
 }
 
 func (a *Agent) finishLocalCancel(call *Call, reason string) {
+	if call == nil || !call.claimTerminalFinalization() {
+		return
+	}
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
 	call.CloseDone()
@@ -469,6 +475,9 @@ func (a *Agent) finishLocalCancel(call *Call, reason string) {
 }
 
 func (a *Agent) failOutboundCall(call *Call, cause error) error {
+	if call == nil || !call.claimTerminalFinalization() {
+		return cause
+	}
 	_ = call.TransitionChecked(callstate.StateFailed)
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()
@@ -480,7 +489,7 @@ func (a *Agent) failOutboundCall(call *Call, cause error) error {
 }
 
 func (a *Agent) forceReleaseCall(call *Call, cause error) {
-	if call == nil {
+	if call == nil || !call.claimTerminalFinalization() {
 		return
 	}
 	_ = call.TransitionChecked(callstate.StateFailed)

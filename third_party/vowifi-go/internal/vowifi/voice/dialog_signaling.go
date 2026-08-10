@@ -134,10 +134,11 @@ func (a *Agent) cancelVoiceClientInvite(ctx context.Context, call *Call, reason 
 }
 
 func (a *Agent) closeLateAcceptedInvite(
-	ctx context.Context,
 	call *Call,
 	response imscore.SIPResponse,
 ) error {
+	ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
+	defer cancel()
 	call.learnVoiceDialog(response)
 	ack := buildIMSACKForStatus(a, call, response.StatusCode)
 	if _, err := a.sendCallDialogRequest(ctx, call, ack); err != nil {

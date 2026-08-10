@@ -140,6 +140,53 @@ func TestLegacyClientInviteContextCancellationRetainsFinalResponse(t *testing.T)
 	}
 }
 
+func TestLegacyClientInviteContextCancellationPromotesLateAcceptedDialog(t *testing.T) {
+	service := newRegisteredClientInviteService(t)
+	outbound := recordTransactionWrites(service.transport)
+	request := mustClientInviteRequest(t, "legacy-context-late-accept")
+	ctx, cancel := context.WithCancel(context.Background())
+	responses := make(chan int, 2)
+	result := make(chan legacyClientInviteOutcome, 1)
+	go func() {
+		value, err := service.StartClientInvite(ctx, service.DeviceID(), imsendpoint.ClientInviteOptions{
+			Request: request, Contact: request.Contact(),
+			OnResponse: func(response *sip.Response) error {
+				responses <- response.StatusCode
+				return nil
+			},
+		})
+		result <- legacyClientInviteOutcome{result: value, err: err}
+	}()
+
+	writtenInvite := waitTransactionWrite(t, outbound)
+	service.transport.DeliverResponse(mustTransactionResponse(t, writtenInvite, 180))
+	if status := <-responses; status != 180 {
+		t.Fatalf("provisional status = %d", status)
+	}
+	cancel()
+	writtenCancel := waitForTransactionMethod(t, outbound, "CANCEL")
+	service.transport.DeliverResponse(mustTransactionResponse(t, writtenInvite, 200))
+	if status := <-responses; status != 200 {
+		t.Fatalf("late accepted callback status = %d", status)
+	}
+	service.transport.DeliverResponse(mustTransactionResponse(t, writtenCancel, 200))
+	outcome := <-result
+	if !errors.Is(outcome.err, context.Canceled) {
+		t.Fatalf("StartClientInvite error = %v", outcome.err)
+	}
+	if outcome.result == nil || outcome.result.Response == nil ||
+		outcome.result.Response.StatusCode != 200 || outcome.result.Dialog == nil {
+		t.Fatalf("late accepted result = %+v", outcome.result)
+	}
+	handle := outcome.result.InviteHandle.(*imscoreInviteHandle)
+	handle.mu.Lock()
+	confirmed := handle.confirmed
+	handle.mu.Unlock()
+	if !confirmed {
+		t.Fatal("late accepted INVITE handle was not promoted")
+	}
+}
+
 func TestLegacyClientInviteRequiresRegisteredService(t *testing.T) {
 	service, err := New(&IMSConfig{Registrar: "ims.example"})
 	if err != nil {

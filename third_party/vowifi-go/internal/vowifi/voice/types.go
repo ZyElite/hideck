@@ -45,6 +45,8 @@ type Agent struct {
 	clientBridge    *client.Bridge
 	eventDispatcher interface{ Dispatch(interface{}) }
 	imsUnsubscribe  func()
+
+	outboundCancelSettle time.Duration
 }
 
 // Call is one voice call (inbound or outbound).
@@ -113,6 +115,8 @@ type Call struct {
 	inboundClientBridge  *client.Bridge
 	clientCancelSent     bool
 	clientByeSent        bool
+	clientFinalSent      bool
+	terminalFinalized    bool
 }
 
 // Gateway bridges the local client (LAN side) to the IMS network. It owns

@@ -27,29 +27,55 @@ func (a *Agent) cancelClientOutboundInvite(call *Call) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
 	defer cancel()
-	if err := a.sendMarkedOutboundInviteCancel(ctx, call, "client_cancel", "client_cancel"); err != nil {
+	sent, err := a.sendMarkedOutboundInviteCancel(ctx, call, "client_cancel", "client_cancel")
+	if err != nil {
 		logging.WarnRate("voice-client-cancel:"+call.CallID(), 10*time.Second,
 			"local voice CANCEL failed", "device", a.deviceID, "call_id", call.CallID(), "err", err)
 		return
 	}
-	_ = call.StopOutboundNoAnswerTimer()
-	a.scheduleOutboundCancelSettle(call)
+	if sent {
+		a.scheduleOutboundCancelSettle(call, "client_cancel")
+	}
 }
 
-func (a *Agent) scheduleOutboundCancelSettle(call *Call) {
+func (a *Agent) scheduleOutboundCancelSettle(call *Call, reason string) {
 	if call == nil {
 		return
 	}
-	timer := time.NewTimer(outboundCancelSettle)
+	timer := time.NewTimer(a.outboundCancelSettleDuration())
 	go func() {
 		defer timer.Stop()
 		select {
 		case <-call.Done:
 			return
 		case <-timer.C:
-			call.cancelOutboundRuntime()
+			a.settleOutboundCancel(call, reason)
 		}
 	}()
+}
+
+func (a *Agent) outboundCancelSettleDuration() time.Duration {
+	if a != nil && a.outboundCancelSettle > 0 {
+		return a.outboundCancelSettle
+	}
+	return outboundCancelSettle
+}
+
+func (a *Agent) settleOutboundCancel(call *Call, reason string) {
+	if call == nil || callDone(call) || call.HasInviteFinalSeen() {
+		return
+	}
+	if reason == "no_answer" {
+		a.respondSyntheticFinalToClient(call, 408, "Request Timeout")
+	} else {
+		a.respondSyntheticFinalToClient(call, 487, "Request Terminated")
+	}
+	call.cancelOutboundRuntime()
+	if reason == "no_answer" {
+		a.finishOutboundNoAnswer(call)
+		return
+	}
+	a.finishLocalCancel(call, reason)
 }
 
 func (c *Call) cancelOutboundRuntime() {

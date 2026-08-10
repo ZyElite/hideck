@@ -162,3 +162,29 @@ func (c *Call) OutboundCancelReason() string {
 	defer c.mu.RUnlock()
 	return c.outboundCancelReason
 }
+
+func (c *Call) markClientFinalSent() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.clientFinalSent {
+		return false
+	}
+	c.clientFinalSent = true
+	return true
+}
+
+func (c *Call) claimTerminalFinalization() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.terminalFinalized {
+		return false
+	}
+	c.terminalFinalized = true
+	return true
+}

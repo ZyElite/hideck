@@ -8,6 +8,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
 func classifyOutboundInviteOutcome(
@@ -84,31 +85,53 @@ func (a *Agent) sendMarkedOutboundInviteCancel(
 	call *Call,
 	wireReason string,
 	markerReason string,
-) error {
+) (bool, error) {
 	if !call.MarkLocalCancelSent(markerReason) {
-		return nil
+		return false, nil
 	}
 	_ = call.StopOutboundNoAnswerTimer()
-	return a.sendOutboundInviteCancel(ctx, call, wireReason)
+	return true, a.sendOutboundInviteCancel(ctx, call, wireReason)
 }
 
 func (a *Agent) handleOutboundInviteNoAnswerTimeout(call *Call) {
-	if call == nil || call.IsTerminalState() {
+	if call == nil || call.HasInviteFinalSeen() ||
+		call.CallState() == callstate.StateDisconnected || call.CallState() == callstate.StateEnded {
+		return
+	}
+	if !call.HasInviteProvisional() {
+		call.MarkLocalCancelSent("no_answer")
+		_ = call.TransitionChecked(callstate.StateEnded)
+		a.respondSyntheticFinalToClient(call, 408, imscore.SIPStatusText(408))
+		call.cancelOutboundRuntime()
+		a.finishOutboundNoAnswer(call)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), voiceHangupTimeout)
 	defer cancel()
-	if err := a.sendMarkedOutboundInviteCancel(ctx, call, "cancel_no_answer", "no_answer"); err != nil {
+	sent, err := a.sendMarkedOutboundInviteCancel(ctx, call, "cancel_no_answer", "no_answer")
+	if err != nil {
 		_ = a.failOutboundCall(call, errors.Join(errors.New("no_answer"), err))
 		return
 	}
-	a.scheduleOutboundCancelSettle(call)
+	if sent {
+		a.scheduleOutboundCancelSettle(call, "no_answer")
+	}
 }
 
 func (a *Agent) handleLateInvite2xxAfterLocalCancel(
-	ctx context.Context,
 	call *Call,
 	response imscore.SIPResponse,
 ) error {
-	return a.closeLateAcceptedInvite(ctx, call, response)
+	return a.closeLateAcceptedInvite(call, response)
+}
+
+func (a *Agent) finishOutboundNoAnswer(call *Call) {
+	if call == nil || !call.claimTerminalFinalization() {
+		return
+	}
+	_ = call.StopMedia()
+	_ = call.EnsureTimerStopped()
+	call.CloseDone()
+	a.emitCallEnded(call, "no_answer")
+	a.finalizeActiveCall(call)
 }

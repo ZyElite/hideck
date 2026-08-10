@@ -19,6 +19,9 @@ func (a *Agent) forwardResponseToClient(call *Call, source imscore.SIPResponse) 
 	if request == nil {
 		return nil
 	}
+	if source.StatusCode >= 200 && !call.markClientFinalSent() {
+		return nil
+	}
 	response := buildClientResponseFromRequest(
 		request, source.StatusCode, source.Reason, clientResponseBody(call, source),
 	)

@@ -152,6 +152,9 @@ func (a *Agent) sendInboundTimeout(call *Call) error {
 }
 
 func (a *Agent) releaseInboundCall(call *Call, cause error, canceled bool) {
+	if call == nil || !call.claimTerminalFinalization() {
+		return
+	}
 	_ = call.TransitionChecked(callstate.StateFailed)
 	_ = call.StopMedia()
 	_ = call.EnsureTimerStopped()

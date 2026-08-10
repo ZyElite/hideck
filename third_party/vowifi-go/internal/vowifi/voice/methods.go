@@ -277,6 +277,9 @@ func (a *Agent) OnIMSBye(callID string) error {
 }
 
 func (a *Agent) finishRemoteBye(call *Call) error {
+	if call == nil || !call.claimTerminalFinalization() {
+		return nil
+	}
 	clientErr := a.sendClientBye(call)
 	_ = call.TransitionChecked(callstate.StateDisconnected)
 	_ = call.TransitionChecked(callstate.StateEnded)
