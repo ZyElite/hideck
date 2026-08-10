@@ -17,9 +17,7 @@ func imsRegisterConfigForPrepared(prepared *identity.PreparedSession) (imscore.I
 	}
 	carrierConfig := prepared.CarrierConfig
 	if carrierConfig.MCC == "" || carrierConfig.MNC == "" {
-		carrierConfig = carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{
-			MCC: prepared.Profile.MCC, MNC: prepared.Profile.MNC,
-		})
+		carrierConfig = carrier.ResolveEffectiveCarrierConfig(prepared.Profile.MCC, prepared.Profile.MNC)
 	}
 	if err := carrier.ValidateEffectiveCarrierConfig(carrierConfig); err != nil {
 		return imscore.IMSRegisterTemplate{}, "", fmt.Errorf("runtimehost: invalid carrier IMS template: %w", err)

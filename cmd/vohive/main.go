@@ -68,7 +68,7 @@ func main() {
 		}
 	}()
 
-	loadResult, err := carrier.LoadCarrierOverrides("")
+	loadResult, err := carrier.LoadCarrierOverridesResult("")
 	if err != nil {
 		carrier.ClearCarrierOverrides()
 		logger.Warn("加载 carrier_overrides 失败，回退内置运营商配置",

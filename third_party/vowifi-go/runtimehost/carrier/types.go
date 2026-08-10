@@ -6,9 +6,9 @@
 package carrier
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 )
 
@@ -85,7 +85,9 @@ type IMSRegisterTemplate struct {
 func (t *IMSRegisterTemplate) UnmarshalJSON(data []byte) error {
 	type templateAlias IMSRegisterTemplate
 	var decoded templateAlias
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
 		return err
 	}
 	var fields map[string]json.RawMessage
@@ -195,57 +197,9 @@ func IsVoWiFiBlockedMCC(mcc string) bool {
 	return blockedMCCs[mcc]
 }
 
-// overrides holds the runtime carrier overrides.
-var overrides []CarrierOverride
-
 // LoadResult describes the outcome of loading carrier overrides.
 type LoadResult struct {
 	Path    string
 	Missing bool
 	Count   int
-}
-
-// LoadCarrierOverrides loads carrier overrides from a JSON file.
-func LoadCarrierOverrides(path string) (LoadResult, error) {
-	if path == "" {
-		path = "carrier_overrides.json"
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return LoadResult{Path: path, Missing: true}, nil
-		}
-		return LoadResult{Path: path}, err
-	}
-	var list []CarrierOverride
-	if err := json.Unmarshal(data, &list); err != nil {
-		return LoadResult{Path: path}, err
-	}
-	for _, item := range list {
-		cfg := defaultCarrierConfig(EffectiveCarrierConfigInput{MCC: item.MCC, MNC: item.MNC})
-		applyCarrierOverride(&cfg, item)
-		if err := ValidateEffectiveCarrierConfig(cfg); err != nil {
-			return LoadResult{Path: path}, err
-		}
-	}
-	overrides = list
-	return LoadResult{Path: path, Count: len(list)}, nil
-}
-
-// ClearCarrierOverrides clears the loaded overrides.
-func ClearCarrierOverrides() {
-	overrides = nil
-}
-
-// ResolveEffectiveCarrierConfig resolves the carrier configuration for the
-// given PLMN, applying any runtime overrides.
-func ResolveEffectiveCarrierConfig(input EffectiveCarrierConfigInput) EffectiveCarrierConfig {
-	cfg := defaultCarrierConfig(input)
-	for _, o := range overrides {
-		if samePLMN(o.MCC, o.MNC, input.MCC, input.MNC) {
-			applyCarrierOverride(&cfg, o)
-			break
-		}
-	}
-	return cloneEffectiveCarrierConfig(cfg)
 }

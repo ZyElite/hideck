@@ -18,6 +18,10 @@ type E911PolicyOverride struct {
 	Provider           string `yaml:"provider"`
 	EntitlementURL     string `yaml:"entitlement_url"`
 	WebsheetHostPolicy string `yaml:"websheet_host_policy"`
+
+	// Compatibility fields added after v1.5.5.
+	Websheet            string `yaml:"websheet"`
+	EntitlementEndpoint string `yaml:"entitlement_endpoint"`
 }
 
 type IPSec3GPPSecurityMechanism struct {

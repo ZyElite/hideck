@@ -36,7 +36,7 @@ func TestConversionsOwnNestedSlices(t *testing.T) {
 }
 
 func TestConversionPreservesValidationErrors(t *testing.T) {
-	cfg := carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{MCC: "234", MNC: "10"})
+	cfg := carrier.ResolveEffectiveCarrierConfig("234", "10")
 	cfg.IMS.Transport = "sctp"
 	roundTrip := FromInternal(ToInternal(cfg))
 	err := carrier.ValidateEffectiveCarrierConfig(roundTrip)
@@ -46,7 +46,7 @@ func TestConversionPreservesValidationErrors(t *testing.T) {
 }
 
 func TestCurrentCarrierDefaultsSurviveRoundTrip(t *testing.T) {
-	source := carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{MCC: "234", MNC: "10"})
+	source := carrier.ResolveEffectiveCarrierConfig("234", "10")
 	got := FromInternal(ToInternal(source))
 	if got.PresetID != source.PresetID || got.DeviceModel != source.DeviceModel ||
 		!reflect.DeepEqual(got.IKEProposals, source.IKEProposals) ||

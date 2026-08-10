@@ -12,10 +12,8 @@ import (
 
 func TestIMSRegisterConfigForGiffgaff(t *testing.T) {
 	prepared := &identity.PreparedSession{
-		Profile: identity.Profile{MCC: "234", MNC: "10"},
-		CarrierConfig: carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{
-			MCC: "234", MNC: "10",
-		}),
+		Profile:       identity.Profile{MCC: "234", MNC: "10"},
+		CarrierConfig: carrier.ResolveEffectiveCarrierConfig("234", "10"),
 	}
 	template, userAgent, err := imsRegisterConfigForPrepared(prepared)
 	if err != nil {
@@ -57,7 +55,7 @@ func TestIMSRegisterConfigReturnsIndependentOrder(t *testing.T) {
 }
 
 func TestIMSRegisterConfigRejectsUnknownContactMode(t *testing.T) {
-	cfg := carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{MCC: "234", MNC: "10"})
+	cfg := carrier.ResolveEffectiveCarrierConfig("234", "10")
 	cfg.IMS.ContactMode = "unknown"
 	_, _, err := imsRegisterConfigForPrepared(&identity.PreparedSession{CarrierConfig: cfg})
 	if err == nil || !strings.Contains(err.Error(), "unsupported IMS Contact mode") {

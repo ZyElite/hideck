@@ -12,10 +12,7 @@ func SetupAvailable(status modem.DeviceStatus) bool {
 	if mcc == "" || mnc == "" {
 		return false
 	}
-	cfg := carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{
-		MCC: mcc,
-		MNC: mnc,
-	})
+	cfg := carrier.ResolveEffectiveCarrierConfig(mcc, mnc)
 	return cfg.E911.Enabled
 }
 

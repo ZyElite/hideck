@@ -50,10 +50,7 @@ func (c *Coordinator) StartWebsheet(ctx context.Context, deviceID string) (websh
 	}
 
 	mcc, mnc := nativePLMN(status)
-	cfg := carrier.ResolveEffectiveCarrierConfig(carrier.EffectiveCarrierConfigInput{
-		MCC: mcc,
-		MNC: mnc,
-	})
+	cfg := carrier.ResolveEffectiveCarrierConfig(mcc, mnc)
 	if !cfg.E911.Enabled || strings.TrimSpace(cfg.E911.Provider) == "" {
 		return websheet.Info{}, ErrProviderUnavailable
 	}
