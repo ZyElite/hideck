@@ -41,13 +41,13 @@ func TestAgentSendDTMFUsesCallRegistryAndNegotiatedPayload(t *testing.T) {
 	agent.mu.Unlock()
 	gateway := NewGateway(agent)
 	captureDirectory := t.TempDir()
-	if err := agent.StartPCAP(captureDirectory); err != nil {
+	if err := gateway.StartPCAP("device-30", captureDirectory); err != nil {
 		t.Fatal(err)
 	}
 	if err := gateway.SendDTMF("client-call-30", "2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := agent.StopPCAP(); err != nil {
+	if err := gateway.StopPCAP("device-30"); err != nil {
 		t.Fatal(err)
 	}
 	assertAgentPCAP(t, captureDirectory)

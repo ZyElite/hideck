@@ -75,7 +75,7 @@ func (a *Agent) StopPCAP() error {
 	if call == nil {
 		return errors.New("voice: no active call")
 	}
-	return call.StopPCAP()
+	return call.StopPCAPCurrent()
 }
 
 func (a *Agent) currentCall() *Call {

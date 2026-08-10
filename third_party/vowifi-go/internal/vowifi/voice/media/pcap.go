@@ -7,60 +7,131 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 const (
-	pcapSnapLength = 65535
-	pcapLinkUser0  = 147
+	pcapSnapLength       = 65535
+	pcapLinkUser0        = 147
+	defaultPCAPDirectory = "pcap"
+	pcapTimestampLayout  = "20060102_150405"
+	currentPCAPLayout    = "20060102_150405.000"
 )
 
-// StartPCAP accepts the original output directory/path and the additive
-// writer form. A directory produces a unique per-device capture file.
-func (r *RTPRelay) StartPCAP(target any) error {
+type openedPCAP struct {
+	writer packetCaptureWriter
+	file   *os.File
+	label  string
+}
+
+type pcapStartConfig struct {
+	open              func() (openedPCAP, error)
+	activeError       string
+	headerErrorPrefix string
+	includeCloseError bool
+}
+
+// StartPCAP preserves the original directory-based API and file semantics.
+func (r *RTPRelay) StartPCAP(outputDir string) error {
+	return r.startPCAP(pcapStartConfig{
+		open:              func() (openedPCAP, error) { return r.openLegacyPCAP(outputDir) },
+		activeError:       "PCAP 录制已在进行中",
+		headerErrorPrefix: "写入 PCAP 头失败",
+	})
+}
+
+// StartPCAPCurrent retains the additive path and injected-writer forms.
+func (r *RTPRelay) StartPCAPCurrent(target any) error {
+	return r.startPCAP(pcapStartConfig{
+		open:              func() (openedPCAP, error) { return r.openCurrentPCAPTarget(target) },
+		activeError:       "media: PCAP recording is already active",
+		headerErrorPrefix: "media: write PCAP header",
+		includeCloseError: true,
+	})
+}
+
+func (r *RTPRelay) startPCAP(config pcapStartConfig) error {
 	if r == nil {
 		return errors.New("media: nil relay")
 	}
 	r.pcapMu.Lock()
 	defer r.pcapMu.Unlock()
 	if r.pcapWriter != nil || r.pcapFile != nil {
-		return errors.New("media: PCAP recording is already active")
+		return errors.New(config.activeError)
 	}
-	w, file, err := r.openPCAPTarget(target)
+	opened, err := config.open()
 	if err != nil {
 		return err
 	}
-	if err := writeAll(w, pcapGlobalHeader()); err != nil {
-		_ = w.Close()
-		return fmt.Errorf("media: write PCAP header: %w", err)
+	if err := writeAll(opened.writer, pcapGlobalHeader()); err != nil {
+		closeErr := opened.writer.Close()
+		if config.includeCloseError {
+			err = errors.Join(err, closeErr)
+		}
+		return fmt.Errorf("%s: %w", config.headerErrorPrefix, err)
 	}
-	r.pcapWriter = w
-	r.pcapFile = file
+	r.pcapWriter = opened.writer
+	r.pcapFile = opened.file
 	r.pcapEnable = true
 	r.pcapErr = nil
+	deviceID, _ := r.logContext()
+	logging.Debug("PCAP 录制已开始", "device", deviceID, "file", opened.label)
 	return nil
 }
 
-func (r *RTPRelay) openPCAPTarget(target any) (packetCaptureWriter, *os.File, error) {
+func (r *RTPRelay) openLegacyPCAP(outputDir string) (openedPCAP, error) {
+	deviceID, _ := r.logContext()
+	path := legacyCapturePath(outputDir, deviceID, time.Now())
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o666)
+	if err != nil {
+		return openedPCAP{}, fmt.Errorf("创建 PCAP 文件失败: %w", err)
+	}
+	return openedPCAP{writer: file, file: file, label: path}, nil
+}
+
+func legacyCapturePath(outputDir, deviceID string, now time.Time) string {
+	if outputDir == "" {
+		outputDir = defaultPCAPDirectory
+	}
+	return fmt.Sprintf("%s/rtp_%s_%s.pcap", outputDir, deviceID, now.Format(pcapTimestampLayout))
+}
+
+func (r *RTPRelay) openCurrentPCAPTarget(target any) (openedPCAP, error) {
 	switch value := target.(type) {
 	case string:
 		path, err := r.capturePath(value)
 		if err != nil {
-			return nil, nil, err
+			return openedPCAP{}, err
 		}
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o666)
 		if err != nil {
-			return nil, nil, fmt.Errorf("media: create PCAP file: %w", err)
+			return openedPCAP{}, fmt.Errorf("media: create PCAP file: %w", err)
 		}
-		return file, file, nil
+		return openedPCAP{writer: file, file: file, label: path}, nil
 	case packetCaptureWriter:
-		if value == nil {
-			return nil, nil, errors.New("media: PCAP writer is nil")
+		if isNilCaptureWriter(value) {
+			return openedPCAP{}, errors.New("media: PCAP writer is nil")
 		}
-		return value, nil, nil
+		return openedPCAP{writer: value, label: fmt.Sprintf("%T", value)}, nil
 	default:
-		return nil, nil, fmt.Errorf("media: unsupported PCAP target %T", target)
+		return openedPCAP{}, fmt.Errorf("media: unsupported PCAP target %T", target)
+	}
+}
+
+func isNilCaptureWriter(writer packetCaptureWriter) bool {
+	value := reflect.ValueOf(writer)
+	if !value.IsValid() {
+		return true
+	}
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
 	}
 }
 
@@ -83,7 +154,7 @@ func (r *RTPRelay) capturePath(target string) (string, error) {
 	if deviceID == "" {
 		deviceID = "voice"
 	}
-	name := fmt.Sprintf("rtp_%s_%s.pcap", deviceID, time.Now().Format("20060102_150405.000"))
+	name := fmt.Sprintf("rtp_%s_%s.pcap", deviceID, time.Now().Format(currentPCAPLayout))
 	return filepath.Join(target, name), nil
 }
 
@@ -100,21 +171,31 @@ func sanitizeCaptureName(value string) string {
 	}, strings.TrimSpace(value))
 }
 
-// StopPCAP closes the active capture and exposes any earlier write failure.
-func (r *RTPRelay) StopPCAP() error {
+// StopPCAP preserves the original void cleanup API.
+func (r *RTPRelay) StopPCAP() {
+	_ = r.StopPCAPCurrent()
+}
+
+// StopPCAPCurrent closes the capture and exposes write and close failures.
+func (r *RTPRelay) StopPCAPCurrent() error {
 	if r == nil {
 		return nil
 	}
 	r.pcapMu.Lock()
+	defer r.pcapMu.Unlock()
 	w := r.pcapWriter
 	err := r.pcapErr
+	wasActive := w != nil || r.pcapFile != nil
+	if w != nil {
+		err = errors.Join(err, w.Close())
+	}
 	r.pcapWriter = nil
 	r.pcapFile = nil
 	r.pcapEnable = false
 	r.pcapErr = nil
-	r.pcapMu.Unlock()
-	if w != nil {
-		err = errors.Join(err, w.Close())
+	if wasActive {
+		deviceID, _ := r.logContext()
+		logging.Debug("PCAP 录制已停止", "device", deviceID)
 	}
 	return err
 }
@@ -149,6 +230,9 @@ func writeAll(writer io.Writer, data []byte) error {
 			return err
 		}
 		if written == 0 {
+			return io.ErrShortWrite
+		}
+		if written < 0 || written > len(data) {
 			return io.ErrShortWrite
 		}
 		data = data[written:]

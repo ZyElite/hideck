@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
 
@@ -95,8 +96,23 @@ func (c *Call) stopMediaCurrent() error {
 	return err
 }
 
-// StartPCAP begins packet capture to a path/directory or an injected writer.
-func (c *Call) StartPCAP(target any) error {
+// StartPCAP preserves the original directory-based capture API.
+func (c *Call) StartPCAP(outputDir string) error {
+	if c == nil {
+		return errors.New("voice: nil call")
+	}
+	logging.Debug("开启媒体抓包", "call_id", c.CallID(), "output_dir", outputDir)
+	c.mu.RLock()
+	relay := c.rtpRelay
+	c.mu.RUnlock()
+	if relay == nil {
+		return errors.New("voice: no media relay")
+	}
+	return relay.StartPCAP(outputDir)
+}
+
+// StartPCAPCurrent retains the additive path and injected-writer forms.
+func (c *Call) StartPCAPCurrent(target any) error {
 	if c == nil {
 		return errors.New("voice: nil call")
 	}
@@ -106,21 +122,27 @@ func (c *Call) StartPCAP(target any) error {
 	if relay == nil {
 		return errors.New("voice: no media relay")
 	}
-	return relay.StartPCAP(target)
+	return relay.StartPCAPCurrent(target)
 }
 
-// StopPCAP stops packet capture for the call.
-func (c *Call) StopPCAP() error {
+// StopPCAP preserves the original void cleanup API.
+func (c *Call) StopPCAP() {
+	_ = c.StopPCAPCurrent()
+}
+
+// StopPCAPCurrent stops capture and exposes retained writer failures.
+func (c *Call) StopPCAPCurrent() error {
 	if c == nil {
 		return nil
 	}
+	logging.Debug("结束媒体抓包", "call_id", c.CallID())
 	c.mu.RLock()
 	relay := c.rtpRelay
 	c.mu.RUnlock()
 	if relay == nil {
 		return nil
 	}
-	return relay.StopPCAP()
+	return relay.StopPCAPCurrent()
 }
 
 // StartOutboundNoAnswerTimer schedules the no-answer timeout.

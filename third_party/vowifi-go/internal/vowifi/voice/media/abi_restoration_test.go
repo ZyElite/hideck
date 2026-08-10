@@ -10,6 +10,8 @@ import (
 type originalRTPRelayLifecycle interface {
 	Start()
 	Stop()
+	StartPCAP(string) error
+	StopPCAP()
 }
 
 var _ originalRTPRelayLifecycle = (*RTPRelay)(nil)

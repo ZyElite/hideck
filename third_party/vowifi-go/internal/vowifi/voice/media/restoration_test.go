@@ -167,7 +167,7 @@ func TestRTPRelayWritesOriginalPCAPWireFormat(t *testing.T) {
 	imsPeer := listenMediaUDP(t)
 	lanPeer := listenMediaUDP(t)
 	relay := NewRTPRelay(imsRelay, lanRelay)
-	relay.SetLogContext("device/30", "trace-30")
+	relay.SetLogContext("device-30", "trace-30")
 	if err := relay.SetRemoteAddr(imsPeer.LocalAddr().(*net.UDPAddr)); err != nil {
 		t.Fatal(err)
 	}
@@ -212,11 +212,11 @@ func TestRTPRelayWritesOriginalPCAPWireFormat(t *testing.T) {
 func TestRTPRelayReportsPCAPWriteFailure(t *testing.T) {
 	relay := NewRTPRelay(nil, nil)
 	writer := &failingCaptureWriter{}
-	if err := relay.StartPCAP(writer); err != nil {
+	if err := relay.StartPCAPCurrent(writer); err != nil {
 		t.Fatal(err)
 	}
 	relay.writePCAPPacket([]byte{1, 2, 3}, pcapDirectionIMSToLAN)
-	if err := relay.StopPCAP(); err == nil {
+	if err := relay.StopPCAPCurrent(); err == nil {
 		t.Fatal("expected persisted PCAP write failure")
 	}
 }

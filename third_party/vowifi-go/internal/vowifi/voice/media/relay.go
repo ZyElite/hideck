@@ -342,7 +342,7 @@ func (r *RTPRelay) StopCurrent() error {
 		stopErr := closePacketConns(connections...)
 		r.wg.Wait()
 		r.dtmfWG.Wait()
-		stopErr = errors.Join(stopErr, r.StopPCAP())
+		stopErr = errors.Join(stopErr, r.StopPCAPCurrent())
 		r.mu.Lock()
 		r.stopErr = stopErr
 		r.mu.Unlock()

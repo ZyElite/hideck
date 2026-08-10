@@ -12,6 +12,8 @@ import (
 type originalCallMediaLifecycle interface {
 	StartMedia()
 	StopMedia()
+	StartPCAP(string) error
+	StopPCAP()
 	IsConnected() bool
 	IsTerminalState() bool
 	GetStartTime() time.Time
