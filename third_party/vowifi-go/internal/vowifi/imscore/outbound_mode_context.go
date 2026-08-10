@@ -1,8 +1,8 @@
 package imscore
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -39,7 +39,7 @@ type outboundModeContext struct {
 	UDPConn                 net.PacketConn
 	Client                  *sipgo.Client
 	SkipGenericRawLog       bool
-	send                    func(string) error
+	send                    func(context.Context, string) error
 }
 
 func (s *Service) resolveOutboundModeContext(
@@ -47,7 +47,9 @@ func (s *Service) resolveOutboundModeContext(
 	req *sip.Request,
 ) (outboundModeContext, error) {
 	if s == nil || s.transport == nil {
-		return outboundModeContext{}, newOutboundModeResolveError("missing_sip_transport")
+		return outboundModeContext{}, newOutboundModeResolveError(
+			"missing_sip_transport", "outbound transport layer 为空",
+		)
 	}
 	if req == nil {
 		return outboundModeContext{}, errors.New("imscore: nil outbound request")
@@ -56,19 +58,25 @@ func (s *Service) resolveOutboundModeContext(
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.cfg == nil {
-		return outboundModeContext{}, newOutboundModeResolveError("missing_ims_config")
+		return outboundModeContext{}, newOutboundModeResolveError(
+			"missing_ims_config", "IMS config 为空",
+		)
 	}
 	modeCtx := s.outboundModeSnapshotLocked(flow, req, pani)
 	sender := s.outboundSenderLocked(&modeCtx)
 	if sender == nil {
-		return outboundModeContext{}, newOutboundModeResolveError("missing_direct_sender")
+		return outboundModeContext{}, newOutboundModeResolveError(
+			"missing_direct_sender", "no direct sender for %s", destinationFromContext(modeCtx),
+		)
 	}
 	if modeCtx.IPSec3GPP && !modeCtx.SignalingReady && modeCtx.Mode != "external" {
 		reason := strings.TrimSpace(modeCtx.SignalingNotReadyReason)
 		if reason == "" {
 			reason = "signaling_not_ready"
 		}
-		return outboundModeContext{}, newOutboundModeResolveError(reason)
+		return outboundModeContext{}, newOutboundModeResolveError(
+			"signaling_not_ready", "resolve outbound mode: %w", signalingRuntimeNotReadyError(reason),
+		)
 	}
 	modeCtx.send = sender
 	return modeCtx, nil
@@ -93,7 +101,7 @@ func (s *Service) outboundModeSnapshotLocked(
 		LocalPortC: s.protectedClientPort, LocalPortS: s.protectedServerPort,
 		Registrar: strings.TrimSpace(s.registrar), ServiceRoute: route.serviceRoute,
 		RouteHeader: route.serviceRoute, SecVerify: route.securityVerify,
-		PANI: pani, Transport: strings.ToLower(strings.TrimSpace(req.Transport())),
+		PANI: pani, Transport: transportForRequest(cfg.Transport, s.effectiveSecurityModeLocked(), req.Method),
 		TCPConn: s.registrationTCP, UDPConn: s.registrationIO,
 	}
 	if modeCtx.LocalHost == "" {
@@ -130,25 +138,26 @@ func (s *Service) populateOutboundRemoteLocked(modeCtx *outboundModeContext) {
 	modeCtx.Mode = "external"
 }
 
-func (s *Service) outboundSenderLocked(modeCtx *outboundModeContext) func(string) error {
+func (s *Service) outboundSenderLocked(modeCtx *outboundModeContext) func(context.Context, string) error {
 	if modeCtx.TCPConn != nil {
-		conn := modeCtx.TCPConn
-		return func(raw string) error { return s.writeSIPStream(conn, raw) }
+		snapshot := *modeCtx
+		return func(ctx context.Context, raw string) error {
+			s.sipWriteMu.Lock()
+			defer s.sipWriteMu.Unlock()
+			return sendDirectWrite(ctx, snapshot, raw)
+		}
 	}
 	if modeCtx.UDPConn != nil && s.registrationRemote != nil {
-		packet := modeCtx.UDPConn
-		remote := cloneUDPAddr(s.registrationRemote)
-		return func(raw string) error {
-			if _, err := packet.WriteTo([]byte(raw), remote); err != nil {
-				return fmt.Errorf("imscore: write SIP datagram: %w", err)
-			}
-			return nil
-		}
+		snapshot := *modeCtx
+		return func(ctx context.Context, raw string) error { return sendDirectWrite(ctx, snapshot, raw) }
 	}
 	s.transport.mu.Lock()
 	sender := s.transport.sendFn
 	s.transport.mu.Unlock()
-	return sender
+	if sender == nil {
+		return nil
+	}
+	return func(_ context.Context, raw string) error { return sender(raw) }
 }
 
 func cloneOutboundIMSConfig(source *IMSConfig) IMSConfig {

@@ -96,7 +96,9 @@ func (s *Service) executeOutboundRequest(
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	response, err := s.transport.roundTripWithSender(ctx, req.String(), modeCtx.send)
+	response, err := s.sendByMode(outboundSendOperation{
+		Context: ctx, Mode: modeCtx, Request: req, Timeout: timeout,
+	})
 	if err != nil {
 		s.handleOutboundRequestError(req, err)
 		return nil, err

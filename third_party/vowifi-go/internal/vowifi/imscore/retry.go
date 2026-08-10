@@ -1,6 +1,10 @@
 package imscore
 
-import "strings"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
 
 // RequestID returns the inbound request ID.
 func (h *imscoreInboundRequestHandle) RequestID() string {
@@ -26,23 +30,38 @@ func (m *inboundRequestResponseMemo) Sanitize() (int, string) {
 // outboundModeResolveError is returned when the outbound mode cannot be
 // resolved for a registration.
 type outboundModeResolveError struct {
-	reason string
+	code string
+	err  error
 }
 
 // Error implements error.
 func (e *outboundModeResolveError) Error() string {
 	if e == nil {
-		return "imscore: cannot resolve outbound mode"
+		return ""
 	}
-	return "imscore: cannot resolve outbound mode: " + e.reason
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return e.code
 }
 
 // Unwrap returns the wrapped error, if any.
 func (e *outboundModeResolveError) Unwrap() error {
-	return nil
+	if e == nil {
+		return nil
+	}
+	return e.err
 }
 
 // newOutboundModeResolveError builds an outbound mode resolution error.
-func newOutboundModeResolveError(reason string) error {
-	return &outboundModeResolveError{reason: reason}
+func newOutboundModeResolveError(code, format string, args ...interface{}) error {
+	return &outboundModeResolveError{code: strings.TrimSpace(code), err: fmt.Errorf(format, args...)}
+}
+
+func outboundResolveErrorCode(err error) string {
+	var resolveErr *outboundModeResolveError
+	if !errors.As(err, &resolveErr) || resolveErr == nil {
+		return ""
+	}
+	return strings.TrimSpace(resolveErr.code)
 }
