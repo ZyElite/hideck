@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/emiago/sipgo/sip"
 )
@@ -17,8 +18,11 @@ type sipTransactionKey struct {
 }
 
 type sipTransactionCallbacks struct {
-	onProvisional     func(*sipResponse) error
-	onFinalRetransmit func(*sipResponse) error
+	onProvisional           func(*sipResponse) error
+	onFinalRetransmit       func(*sipResponse) error
+	onLateFinal             func(*sipResponse) error
+	retainFinalAfterContext func(error) bool
+	lateFinalRetention      time.Duration
 }
 
 func (t *sipTransport) RoundTrip(ctx context.Context, request string) (*sipResponse, error) {

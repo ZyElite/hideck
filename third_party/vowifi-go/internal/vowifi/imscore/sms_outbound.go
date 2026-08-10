@@ -28,6 +28,8 @@ const (
 	smsDeliveryStateFailed           = "failed"
 )
 
+var errMOSMSFinalProbeTimeout = errors.New("MO SMS final response probe timeout")
+
 type outboundSMSPart struct {
 	number  int
 	rpMR    byte
@@ -248,7 +250,9 @@ func (s *Service) sendOutboundSMSPart(
 	if s.smsTransactionTimeout <= 0 {
 		return nil, smsDeliveryStateFailed, s.recordOutboundSMSFailure(messageID, part, errors.New("SMS transaction timeout is not configured"))
 	}
-	transactionCtx, cancel := context.WithTimeout(ctx, s.smsTransactionTimeout)
+	transactionCtx, cancel := context.WithTimeoutCause(
+		ctx, s.smsTransactionTimeout, errMOSMSFinalProbeTimeout,
+	)
 	defer cancel()
 	pending, response, err := s.dispatchSubmitPartWithRetry(transactionCtx, messageID, part, sentAt)
 	if err != nil {
@@ -396,7 +400,13 @@ func (s *Service) dispatchSubmitPartWithRetry(
 	}
 	s.registerPendingSMS(part.callID, pending)
 	s.recordOutboundSMSAudit(common.TraceID(ctx), part.callID, pending.To, len(request.Body()))
-	result, dispatchErr := s.dispatchOutboundMESSAGE(ctx, "mo-submit", request, s.smsTransactionTimeout)
+	callbacks := s.moSubmitTransactionCallbacks(messageID, part, pending)
+	result, dispatchErr := s.dispatchOutboundMESSAGEWithCallbacks(
+		outboundDispatchOptions{
+			Context: ctx, Flow: "mo-submit", Request: request,
+			Timeout: s.smsTransactionTimeout, Callbacks: callbacks,
+		},
+	)
 	var response *sip.Response
 	if result.SIPCode > 0 {
 		response = sip.NewResponse(result.SIPCode, SIPStatusText(result.SIPCode))

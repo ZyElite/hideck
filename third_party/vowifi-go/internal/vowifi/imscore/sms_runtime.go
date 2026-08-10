@@ -19,12 +19,21 @@ type outboundMessageReply struct {
 	err    error
 }
 
+type outboundDispatchOptions struct {
+	Context   context.Context
+	Flow      string
+	Request   *sip.Request
+	Timeout   time.Duration
+	Callbacks sipTransactionCallbacks
+}
+
 type outboundMessageTask struct {
-	ctx     context.Context
-	flow    string
-	req     *sip.Request
-	timeout int64
-	done    chan outboundMessageReply
+	ctx       context.Context
+	flow      string
+	req       *sip.Request
+	timeout   int64
+	callbacks sipTransactionCallbacks
+	done      chan outboundMessageReply
 }
 
 type outboundRequestReply struct {
@@ -39,6 +48,7 @@ type outboundRequestTask struct {
 	req         *sip.Request
 	modeCtx     outboundModeContext
 	timeout     int64
+	callbacks   sipTransactionCallbacks
 	dispatchSeq uint64
 	enqueuedAt  time.Time
 	done        chan outboundRequestReply

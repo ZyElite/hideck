@@ -23,8 +23,12 @@ func (s *Service) runOutboundMessageDispatcher() {
 			logging.RunDebug("IMS outbound MESSAGE",
 				"flow", task.flow, "call_id", outboundRequestCallID(task.req),
 				"sip", outboundRequestDebugText(task.req))
-			response, seq, err := s.dispatchOutboundRequest(
-				task.ctx, task.flow, task.req, time.Duration(task.timeout), true,
+			response, seq, err := s.dispatchOutboundRequestWithCallbacks(
+				outboundDispatchOptions{
+					Context: task.ctx, Flow: task.flow, Request: task.req,
+					Timeout: time.Duration(task.timeout), Callbacks: task.callbacks,
+				},
+				true,
 			)
 			result := outboundMessageResult{DispatchSeq: seq}
 			if response != nil {
@@ -58,20 +62,30 @@ func (s *Service) dispatchOutboundMESSAGE(
 	req *sip.Request,
 	timeout time.Duration,
 ) (outboundMessageResult, error) {
-	if req == nil {
+	return s.dispatchOutboundMESSAGEWithCallbacks(
+		outboundDispatchOptions{Context: ctx, Flow: flow, Request: req, Timeout: timeout},
+	)
+}
+
+func (s *Service) dispatchOutboundMESSAGEWithCallbacks(
+	options outboundDispatchOptions,
+) (outboundMessageResult, error) {
+	if options.Request == nil {
 		return outboundMessageResult{}, errors.New("imscore: nil outbound MESSAGE")
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	if options.Context == nil {
+		options.Context = context.Background()
 	}
 	s.ensureOutboundRequestDispatchers()
 	task := outboundMessageTask{
-		ctx: ctx, flow: flow, req: req.Clone(), timeout: int64(timeout),
-		done: make(chan outboundMessageReply, 1),
+		ctx: options.Context, flow: options.Flow,
+		req: options.Request.Clone(), timeout: int64(options.Timeout),
+		callbacks: options.Callbacks,
+		done:      make(chan outboundMessageReply, 1),
 	}
 	select {
-	case <-ctx.Done():
-		return outboundMessageResult{}, ctx.Err()
+	case <-options.Context.Done():
+		return outboundMessageResult{}, options.Context.Err()
 	case <-s.stop:
 		return outboundMessageResult{}, errors.New("imscore: service stopped")
 	case s.outboundMsgCh <- task:
@@ -82,8 +96,8 @@ func (s *Service) dispatchOutboundMESSAGE(
 	select {
 	case reply := <-task.done:
 		return reply.result, reply.err
-	case <-ctx.Done():
-		return outboundMessageResult{}, ctx.Err()
+	case <-options.Context.Done():
+		return outboundMessageResult{}, options.Context.Err()
 	case <-s.stop:
 		return outboundMessageResult{}, errors.New("imscore: service stopped")
 	}

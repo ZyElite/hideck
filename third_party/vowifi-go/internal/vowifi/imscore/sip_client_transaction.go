@@ -164,6 +164,10 @@ func (t *sipTransport) waitClientTransaction(
 			return result, nil
 		case <-ctxDone:
 			if !transaction.invite {
+				if shouldRetainClientTransaction(ctx, transaction) {
+					go t.waitLateClientTransaction(transaction, timers)
+					return nil, ctx.Err()
+				}
 				return nil, t.failTransaction(transaction, ctx.Err())
 			}
 			cancelCause = ctx.Err()

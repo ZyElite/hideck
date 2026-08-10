@@ -68,7 +68,10 @@ func (s *Service) runOutboundRequestTask(shard int, task outboundRequestTask) {
 		logging.WarnRate("smsip_outbound_queue_wait_high", "IMS outbound request queue delay is high",
 			"shard", shard, "delay", delay, "dispatch_seq", task.dispatchSeq)
 	}
-	response, err := s.executeOutboundRequest(task.ctx, task.req, task.modeCtx, time.Duration(task.timeout))
+	response, err := s.executeOutboundRequestWithCallbacks(outboundSendOperation{
+		Context: task.ctx, Mode: task.modeCtx, Request: task.req,
+		Timeout: time.Duration(task.timeout), Callbacks: task.callbacks,
+	})
 	reply := outboundRequestReply{res: response, err: err, dispatchSeq: task.dispatchSeq}
 	if task.done == nil {
 		return
@@ -85,22 +88,28 @@ func (s *Service) executeOutboundRequest(
 	modeCtx outboundModeContext,
 	timeout time.Duration,
 ) (*sip.Response, error) {
-	if req == nil {
-		return nil, errors.New("imscore: nil outbound request")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	response, err := s.sendByMode(outboundSendOperation{
+	return s.executeOutboundRequestWithCallbacks(outboundSendOperation{
 		Context: ctx, Mode: modeCtx, Request: req, Timeout: timeout,
 	})
+}
+
+func (s *Service) executeOutboundRequestWithCallbacks(
+	operation outboundSendOperation,
+) (*sip.Response, error) {
+	if operation.Request == nil {
+		return nil, errors.New("imscore: nil outbound request")
+	}
+	if operation.Context == nil {
+		operation.Context = context.Background()
+	}
+	if operation.Timeout > 0 {
+		var cancel context.CancelFunc
+		operation.Context, cancel = context.WithTimeout(operation.Context, operation.Timeout)
+		defer cancel()
+	}
+	response, err := s.sendByMode(operation)
 	if err != nil {
-		s.handleOutboundRequestError(req, err)
+		s.handleOutboundRequestError(operation.Request, err)
 		return nil, err
 	}
 	if response == nil {
@@ -158,13 +167,22 @@ func (s *Service) dispatchOutboundRequest(
 	timeout time.Duration,
 	wait bool,
 ) (*sip.Response, uint64, error) {
-	if req == nil {
+	return s.dispatchOutboundRequestWithCallbacks(
+		outboundDispatchOptions{Context: ctx, Flow: flow, Request: req, Timeout: timeout}, wait,
+	)
+}
+
+func (s *Service) dispatchOutboundRequestWithCallbacks(
+	options outboundDispatchOptions,
+	wait bool,
+) (*sip.Response, uint64, error) {
+	if options.Request == nil {
 		return nil, 0, errors.New("imscore: nil outbound request")
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	if options.Context == nil {
+		options.Context = context.Background()
 	}
-	modeCtx, err := s.resolveOutboundModeContext(flow, req)
+	modeCtx, err := s.resolveOutboundModeContext(options.Flow, options.Request)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -178,13 +196,14 @@ func (s *Service) dispatchOutboundRequest(
 		done = nil
 	}
 	task := outboundRequestTask{
-		ctx: ctx, flow: flow, req: req.Clone(), timeout: int64(timeout),
-		modeCtx: modeCtx, dispatchSeq: seq, enqueuedAt: time.Now(), done: done,
+		ctx: options.Context, flow: options.Flow, req: options.Request.Clone(), timeout: int64(options.Timeout),
+		modeCtx: modeCtx, callbacks: options.Callbacks,
+		dispatchSeq: seq, enqueuedAt: time.Now(), done: done,
 	}
-	queue := shards[outboundDispatchShardIndex(outboundDispatchKey(req, flow), len(shards))]
+	queue := shards[outboundDispatchShardIndex(outboundDispatchKey(options.Request, options.Flow), len(shards))]
 	select {
-	case <-ctx.Done():
-		return nil, seq, ctx.Err()
+	case <-options.Context.Done():
+		return nil, seq, options.Context.Err()
 	case <-s.stop:
 		return nil, seq, errors.New("imscore: service stopped")
 	case queue <- task:
@@ -198,8 +217,8 @@ func (s *Service) dispatchOutboundRequest(
 	select {
 	case reply := <-done:
 		return reply.res, reply.dispatchSeq, reply.err
-	case <-ctx.Done():
-		return nil, seq, ctx.Err()
+	case <-options.Context.Done():
+		return nil, seq, options.Context.Err()
 	case <-s.stop:
 		return nil, seq, errors.New("imscore: service stopped")
 	}

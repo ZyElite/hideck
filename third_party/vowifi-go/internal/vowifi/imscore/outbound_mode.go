@@ -26,10 +26,11 @@ type directTCPWriteOptions struct {
 }
 
 type outboundSendOperation struct {
-	Context context.Context
-	Mode    outboundModeContext
-	Request *sip.Request
-	Timeout time.Duration
+	Context   context.Context
+	Mode      outboundModeContext
+	Request   *sip.Request
+	Timeout   time.Duration
+	Callbacks sipTransactionCallbacks
 }
 
 func transportForRequest(configuredTransport, securityMode string, method sip.RequestMethod) string {
@@ -194,6 +195,9 @@ func (s *Service) sendByMode(operation outboundSendOperation) (*sipResponse, err
 	}
 	setOutboundDestination(built, operation.Mode)
 	if operation.Mode.Client != nil {
+		if operation.Callbacks.onLateFinal != nil {
+			return nil, errors.New("late SIP final retention is unavailable through sipgo client mode")
+		}
 		response, err := operation.Mode.Client.Do(operation.Context, built)
 		if err != nil {
 			return nil, err
@@ -206,7 +210,9 @@ func (s *Service) sendByMode(operation outboundSendOperation) (*sipResponse, err
 		)
 	}
 	sender := func(raw string) error { return operation.Mode.send(operation.Context, raw) }
-	return s.transport.roundTripWithSender(operation.Context, built.String(), sender)
+	return s.transport.roundTripWithSenderAndCallbacks(
+		operation.Context, built.String(), sender, operation.Callbacks,
+	)
 }
 
 func setOutboundDestination(request *sip.Request, modeCtx outboundModeContext) {

@@ -320,6 +320,77 @@ func TestTCPSubmitProbeTimeoutWaitsForLateRPReport(t *testing.T) {
 	}
 }
 
+func TestTCPSubmitProbeTimeoutAcceptsLateSIPFinal(t *testing.T) {
+	service, _, store := newOutboundSMSTestService(t)
+	service.smsTransactionTimeout = 20 * time.Millisecond
+	service.smsReportTimeout = 250 * time.Millisecond
+	requests := make(chan string, 1)
+	service.transport.SetSendFn(func(request string) error {
+		requests <- request
+		return nil
+	})
+
+	resultCh := make(chan SendOutcome, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		outcome, err := service.SendSMSWithResult(context.Background(), "+447700900123", "late final")
+		resultCh <- outcome
+		errCh <- err
+	}()
+	request := waitForOutboundSMSControl(t, requests)
+	time.Sleep(2 * service.smsTransactionTimeout)
+	assertTransactionCount(t, service.transport, 1)
+	service.transport.DeliverResponse(registerResponseForRequest(request, 202, nil))
+
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	if outcome := <-resultCh; outcome.DeliveryState != smsDeliveryStatePending {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	waitTransactionCount(t, service.transport, 0)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.sipResults) != 1 || store.sipResults[0].code != 202 ||
+		store.sipResults[0].state != smsDeliveryStatePending {
+		t.Fatalf("SIP results = %+v", store.sipResults)
+	}
+}
+
+func TestTCPSubmitProbeTimeoutRejectsLateSIPFinal(t *testing.T) {
+	service, _, store := newOutboundSMSTestService(t)
+	service.smsTransactionTimeout = 20 * time.Millisecond
+	service.smsReportTimeout = 250 * time.Millisecond
+	requests := make(chan string, 1)
+	service.transport.SetSendFn(func(request string) error {
+		requests <- request
+		return nil
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := service.SendSMSWithResult(context.Background(), "+447700900123", "late reject")
+		errCh <- err
+	}()
+	request := waitForOutboundSMSControl(t, requests)
+	time.Sleep(2 * service.smsTransactionTimeout)
+	assertTransactionCount(t, service.transport, 1)
+	response := registerResponseForRequest(request, 503, nil)
+	response.Reason = "Service Unavailable"
+	service.transport.DeliverResponse(response)
+
+	if err := <-errCh; err == nil || !strings.Contains(err.Error(), "503") {
+		t.Fatalf("send error = %v", err)
+	}
+	waitTransactionCount(t, service.transport, 0)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.sipResults) != 1 || store.sipResults[0].code != 503 ||
+		store.sipResults[0].state != smsDeliveryStateFailed || store.finalState != smsDeliveryStateFailed {
+		t.Fatalf("SIP results = %+v, final state = %q", store.sipResults, store.finalState)
+	}
+}
+
 func TestTCPSubmitReportWaitHonorsCallerDeadline(t *testing.T) {
 	service, _, store := newOutboundSMSTestService(t)
 	service.cfg.Transport = "tcp"
