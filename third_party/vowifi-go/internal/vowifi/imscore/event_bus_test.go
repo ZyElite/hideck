@@ -118,8 +118,8 @@ func TestPublishUSSIResultPopulatesRecoveredFields(t *testing.T) {
 	received := make(channelEventSubscriber, 1)
 	bus.Subscribe(received)
 	service := &Service{cfg: &IMSConfig{DeviceID: "wwan0"}, bus: bus}
-	service.publishUSSIResult(ussi.Result{
-		SessionID: "session-1", Command: "*100#", Code: "1", Message: "Balance: 10.00",
+	service.dispatchUSSIResult("*100#", &ussi.Result{
+		SessionID: "session-1", Status: 1, Text: "Balance: 10.00", DCS: 15,
 	})
 
 	select {

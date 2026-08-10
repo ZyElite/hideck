@@ -3,345 +3,417 @@ package ussi
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/emiago/sipgo/sip"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 )
 
+const (
+	menuText  = "1. Balance\n2. Data"
+	finalText = "Balance: 10"
+)
+
+func TestRecoveredTypeLayouts(t *testing.T) {
+	assertFields(t, reflect.TypeOf(Context{}), []string{
+		"LocalIP", "LocalPortC", "LocalPortS", "Transport", "Domain", "Realm", "AOR",
+		"RouteHeader", "ServiceRoute", "SecVerify", "Mode", "PANI", "UserAgent",
+		"ContactID", "Destination",
+	})
+	assertFields(t, reflect.TypeOf(InfoResult{}), []string{"Text", "RawXML", "Err"})
+	assertFields(t, reflect.TypeOf(Result{}), []string{"Text", "Status", "SessionID", "RawXML", "DCS"})
+	assertFields(t, reflect.TypeOf(XMLPayload{}), []string{"XMLName", "Xmlns", "Language", "USSDString"})
+	assertFields(t, reflect.TypeOf(Session{}), []string{
+		"mu", "ID", "CallID", "RemoteURI", "RemoteTarget", "State", "ResultCh",
+		"CreatedAt", "LastAt", "dialogContext", "dialogHandle",
+	})
+}
+
 func TestEncodeDecodeXML(t *testing.T) {
-	payload := &XMLPayload{Language: "en", Text: "hello", Request: &struct{}{}}
-	body, err := EncodeXML(payload)
+	body, err := EncodeXML("*100#", "")
 	if err != nil {
-		t.Fatalf("EncodeXML: %v", err)
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(body), `<?xml version="1.0" encoding="UTF-8"?>`) {
+		t.Fatalf("XML header missing: %q", body)
 	}
 	decoded, err := DecodeXML(body)
 	if err != nil {
-		t.Fatalf("DecodeXML: %v", err)
+		t.Fatal(err)
 	}
-	if decoded.Text != "hello" || decoded.Request == nil {
-		t.Fatalf("decoded payload = %#v", decoded)
-	}
-}
-
-func TestRandomHexUsesRecoveredCharacterLength(t *testing.T) {
-	for _, length := range []int{8, 12, 32} {
-		if actual := randomHex(length); len(actual) != length {
-			t.Fatalf("randomHex(%d) length = %d", length, len(actual))
-		}
+	if decoded.USSDString != "*100#" || decoded.Language != "en" || decoded.Xmlns != ContentType {
+		t.Fatalf("decoded = %+v", decoded)
 	}
 }
 
-func TestDecodeXMLRejectsUnrelatedRoot(t *testing.T) {
-	if _, err := DecodeXML([]byte("<message>hello</message>")); err == nil {
-		t.Fatal("DecodeXML accepted an unrelated root")
+func TestParseResultMatchesRecoveredStatuses(t *testing.T) {
+	menu := ParseResult(xmlBody(t, menuText), "ussd-1")
+	if menu.Status != 1 || menu.SessionID != "ussd-1" || menu.DCS != 15 {
+		t.Fatalf("menu = %+v", menu)
+	}
+	final := ParseResult(xmlBody(t, finalText), "ussd-1")
+	if final.Status != 0 || final.SessionID != "" || final.Text != finalText {
+		t.Fatalf("final = %+v", final)
+	}
+	malformed := ParseResult([]byte("not XML"), "ussd-1")
+	if malformed.Text != "not XML" || malformed.Status != 0 {
+		t.Fatalf("malformed fallback = %+v", malformed)
+	}
+	empty := ParseResult(nil, "ussd-1")
+	if empty.Text != "(空响应)" || empty.DCS != 15 {
+		t.Fatalf("empty = %+v", empty)
 	}
 }
 
-func TestLooksLikeMenu(t *testing.T) {
-	if !LooksLikeMenu("1. Balance\n2. Top-up") {
-		t.Error("menu should be detected")
-	}
-	if LooksLikeMenu("Your balance is $10") {
-		t.Error("plain message should not be a menu")
-	}
-}
-
-func TestBuildMultipartBody(t *testing.T) {
-	body := BuildMultipartBody([]byte("v=0\r\n"), []byte("<ussd-data/>"))
-	part := ExtractFromMultipart(body, ContentType)
-	if string(part) != "<ussd-data/>" {
-		t.Fatalf("extracted part = %q", part)
-	}
-}
-
-func TestServiceNetworkLifecycle(t *testing.T) {
-	transport := &scriptedTransport{}
-	transport.roundTrip = func(_ context.Context, request string) (Response, error) {
-		switch requestMethod(request) {
-		case "INVITE":
-			return ussiResponse(requestBodyXML(t, "1. Balance\n2. Top-up", false)), nil
-		case "INFO":
-			return ussiResponse(requestBodyXML(t, "Your balance is 10", true)), nil
-		default:
-			return Response{}, errors.New("unexpected request")
-		}
-	}
-	svc := configuredService(t, transport)
-	result, err := svc.Send("*100#")
-	if err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	if result.Done || result.Command != "*100#" || result.Message != "1. Balance\n2. Top-up" {
-		t.Fatalf("initial result = %#v", result)
-	}
-	continued, err := svc.Continue(result.SessionID, "1")
-	if err != nil {
-		t.Fatalf("Continue: %v", err)
-	}
-	if !continued.Done || continued.Command != "1" || continued.Message != "Your balance is 10" {
-		t.Fatalf("continued result = %#v", continued)
-	}
-	if svc.ActiveSessionID() != "" {
-		t.Fatal("completed session remained active")
-	}
-	requests := transport.Requests()
-	if len(requests) != 3 || requestMethod(requests[0]) != "INVITE" || requestMethod(requests[1]) != "ACK" || requestMethod(requests[2]) != "INFO" {
-		t.Fatalf("SIP sequence = %v", requestMethods(requests))
-	}
-	if !strings.Contains(requests[0], "Route: <sip:pcscf.ims.example;lr>") {
-		t.Fatalf("initial INVITE missing service route:\n%s", requests[0])
-	}
-}
-
-func TestServiceCancelSendsBYE(t *testing.T) {
-	transport := &scriptedTransport{}
-	transport.roundTrip = func(_ context.Context, request string) (Response, error) {
-		if requestMethod(request) == "INVITE" {
-			return ussiResponse(requestBodyXML(t, "1. Continue", false)), nil
-		}
-		return Response{StatusCode: 200, Reason: "OK"}, nil
-	}
-	svc := configuredService(t, transport)
-	result, err := svc.Send("*100#")
+func TestBuildInitialInviteRestoresWireProfile(t *testing.T) {
+	ctx := testContext()
+	ctx.RouteHeader = ctx.ServiceRoute
+	body := xmlBody(t, "*100#")
+	request, err := BuildInitialInvite(ctx, "*100#", "call-1", "tag-1", "z9hG4bKbranch", 7, body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Cancel(result.SessionID); err != nil {
-		t.Fatalf("Cancel: %v", err)
+	if request.Method != sip.INVITE || !strings.Contains(request.Recipient.String(), "%23;phone-context=") {
+		t.Fatalf("recipient = %s", request.Recipient.String())
 	}
-	methods := requestMethods(transport.Requests())
-	if methods[len(methods)-1] != "BYE" {
-		t.Fatalf("last method = %q, sequence = %v", methods[len(methods)-1], methods)
-	}
-}
-
-func TestServiceWaitsForInboundINFO(t *testing.T) {
-	transport := &scriptedTransport{}
-	svc := configuredService(t, transport)
-	transport.roundTrip = func(_ context.Context, request string) (Response, error) {
-		if requestMethod(request) != "INVITE" {
-			return Response{}, errors.New("unexpected request")
-		}
-		callID := headerValue(request, "Call-ID")
-		go func() {
-			_, _ = svc.HandleInbound(InboundRequest{
-				Method: "INFO", CallID: callID, ContentType: ContentType,
-				Body: requestBodyXML(t, "Network result", true),
-			})
-		}()
-		return ussiResponse(nil), nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	result, err := svc.SendContext(ctx, "*100#")
-	if err != nil {
-		t.Fatalf("SendContext: %v", err)
-	}
-	if !result.Done || result.Command != "*100#" || result.Message != "Network result" {
-		t.Fatalf("result = %#v", result)
-	}
-}
-
-func TestServiceWaitTimeoutCleansDialogAndAllowsNextSend(t *testing.T) {
-	invites := 0
-	transport := &scriptedTransport{}
-	transport.roundTrip = func(_ context.Context, request string) (Response, error) {
-		switch requestMethod(request) {
-		case "INVITE":
-			invites++
-			if invites == 1 {
-				return ussiResponse(nil), nil
-			}
-			return ussiResponse(requestBodyXML(t, "Recovered", true)), nil
-		case "BYE":
-			return Response{StatusCode: 200, Reason: "OK"}, nil
-		default:
-			return Response{}, errors.New("unexpected request")
+	for _, header := range []string{
+		"Recv-Info", "P-Preferred-Service", "Accept-Contact", "P-Early-Media",
+		"Require", "Proxy-Require", "Security-Verify",
+	} {
+		if request.GetHeader(header) == nil {
+			t.Errorf("missing %s", header)
 		}
 	}
-	svc := configuredService(t, transport)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if _, err := svc.SendContext(ctx, "*100#"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("SendContext error = %v", err)
+	if request.Contact() == nil || !strings.Contains(request.Contact().Value(), "+g.3gpp.nw-init-ussi") {
+		t.Fatalf("Contact = %v", request.Contact())
 	}
-	if active := svc.ActiveSessionID(); active != "" {
-		t.Fatalf("active session after timeout = %q", active)
+	extracted := ExtractFromMultipart(request.Body())
+	if string(extracted) != string(body) {
+		t.Fatalf("multipart XML = %q", extracted)
 	}
-	result, err := svc.Send("*101#")
+	if !strings.Contains(string(request.Body()), "a=rtpmap:106 EVS/16000/1") {
+		t.Fatal("recovered SDP capability set is missing")
+	}
+	if routes := request.GetHeaders("Route"); len(routes) != 1 {
+		t.Fatalf("Route headers = %d, want 1", len(routes))
+	}
+}
+
+func TestSplitLocalAddrHandlesIPv6WithPort(t *testing.T) {
+	host, port := splitLocalAddr("[2001:db8::10]:5062", 5070)
+	if host != "2001:db8::10" || port != 5062 {
+		t.Fatalf("split address = %q:%d", host, port)
+	}
+}
+
+func TestRecoveredContentTypeAndTransportFallbacks(t *testing.T) {
+	if !IsContentType("application/3gpp-ussd+xml; charset=utf-8") {
+		t.Fatal("legacy USSI content type was rejected")
+	}
+	if normalizedTransport("udp") != "UDP" || normalizedTransport("unknown") != "TCP" {
+		t.Fatal("recovered transport normalization changed")
+	}
+}
+
+func TestDialogRequestURIFallsBackToContextDomain(t *testing.T) {
+	uri, err := dialogRequestURI(&Session{}, Context{Domain: "ims.example"})
 	if err != nil {
-		t.Fatalf("second Send: %v", err)
+		t.Fatal(err)
 	}
-	if !result.Done || result.Message != "Recovered" {
-		t.Fatalf("second result = %#v", result)
-	}
-	if methods := requestMethods(transport.Requests()); strings.Join(methods, ",") != "INVITE,ACK,BYE,INVITE,ACK" {
-		t.Fatalf("SIP sequence = %v", methods)
+	if uri.String() != "sip:ims.example" {
+		t.Fatalf("dialog URI = %q", uri.String())
 	}
 }
 
-func TestServiceINFOTimeoutCleansEstablishedDialog(t *testing.T) {
-	transport := &scriptedTransport{}
-	transport.roundTrip = func(ctx context.Context, request string) (Response, error) {
-		switch requestMethod(request) {
-		case "INVITE":
-			return ussiResponse(requestBodyXML(t, "1. Continue", false)), nil
-		case "INFO":
-			<-ctx.Done()
-			return Response{}, ctx.Err()
-		case "BYE":
-			return Response{StatusCode: 200, Reason: "OK"}, nil
-		default:
-			return Response{}, errors.New("unexpected request")
-		}
-	}
-	svc := configuredService(t, transport)
-	result, err := svc.Send("*100#")
+func TestRecoveredSIPLogMetadata(t *testing.T) {
+	request, err := BuildInitialInvite(
+		testContext(), "*100#", "log-call", "tag", "z9hG4bKlog", 7, xmlBody(t, "*100#"),
+	)
 	if err != nil {
-		t.Fatalf("Send: %v", err)
+		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if _, err := svc.ContinueContext(ctx, result.SessionID, "1"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("ContinueContext error = %v", err)
+	method, callID := ussiSIPRawLogMethodAndCallID(request)
+	if method != "INVITE" || callID != "log-call" {
+		t.Fatalf("request metadata = %q %q", method, callID)
 	}
-	if active := svc.ActiveSessionID(); active != "" {
-		t.Fatalf("active session after INFO timeout = %q", active)
-	}
-	if methods := requestMethods(transport.Requests()); strings.Join(methods, ",") != "INVITE,ACK,INFO,BYE" {
-		t.Fatalf("SIP sequence = %v", methods)
+	response := responseWithBody(request, nil)
+	method, callID = ussiSIPRawLogMethodAndCallID(response)
+	if method != "INVITE" || callID != "log-call" {
+		t.Fatalf("response metadata = %q %q", method, callID)
 	}
 }
 
-func TestServiceRejectsSIPFailure(t *testing.T) {
-	transport := &scriptedTransport{roundTrip: func(context.Context, string) (Response, error) {
-		return Response{StatusCode: 503, Reason: "Service Unavailable"}, nil
-	}}
-	svc := configuredService(t, transport)
-	if _, err := svc.Send("*100#"); err == nil || !strings.Contains(err.Error(), "503") {
-		t.Fatalf("Send error = %v", err)
+func TestClearSessionEmptyIDClearsCurrent(t *testing.T) {
+	service := NewService("dev-1", newFakeEndpoint(t))
+	session := &Session{ID: "active", State: sessionActive}
+	service.setSession(session)
+	if cleared := service.clearSession(""); cleared != session {
+		t.Fatalf("cleared session = %p, want %p", cleared, session)
 	}
-	if svc.ActiveSessionID() != "" {
-		t.Fatal("rejected session remained active")
+	if service.ActiveSessionID() != "" || session.IsActive() {
+		t.Fatal("empty-ID clear left the session active")
 	}
 }
 
-func TestStopWakesBlockedSend(t *testing.T) {
-	started := make(chan struct{})
-	transport := &scriptedTransport{roundTrip: func(context.Context, string) (Response, error) {
-		close(started)
-		return ussiResponse(nil), nil
-	}}
-	svc := configuredService(t, transport)
-	done := make(chan error, 1)
+func TestServiceSendContinueAndCancel(t *testing.T) {
+	endpoint := newFakeEndpoint(t)
+	endpoint.inviteBody = xmlBody(t, menuText)
+	endpoint.infoBody = xmlBody(t, finalText)
+	service := NewService("dev-1", endpoint)
+
+	initial, err := service.Send(context.Background(), "*100#")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.Status != 1 || service.ActiveSessionID() != initial.SessionID {
+		t.Fatalf("initial = %+v active=%q", initial, service.ActiveSessionID())
+	}
+	final, err := service.Continue(context.Background(), initial.SessionID, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Status != 0 || final.Text != finalText || service.ActiveSessionID() != "" {
+		t.Fatalf("final = %+v active=%q", final, service.ActiveSessionID())
+	}
+
+	endpoint.inviteBody = xmlBody(t, menuText)
+	second, err := service.Send(context.Background(), "*101#")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Cancel(context.Background(), second.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if got := endpoint.methods(); !reflect.DeepEqual(got, []sip.RequestMethod{sip.ACK, sip.INFO, sip.ACK, sip.BYE}) {
+		t.Fatalf("dialog methods = %v", got)
+	}
+}
+
+func TestServiceWaitsForInboundInfo(t *testing.T) {
+	endpoint := newFakeEndpoint(t)
+	service := NewService("dev-1", endpoint)
+	resultCh := make(chan *Result, 1)
+	errCh := make(chan error, 1)
 	go func() {
-		_, err := svc.Send("*100#")
-		done <- err
+		result, err := service.Send(context.Background(), "*100#")
+		resultCh <- result
+		errCh <- err
 	}()
-	<-started
-	svc.Stop()
+	request := <-endpoint.started
+	inbound := sip.NewRequest(sip.INFO, *request.Recipient.Clone())
+	callID := sip.CallIDHeader(request.CallID().Value())
+	inbound.AppendHeader(&callID)
+	inbound.AppendHeader(sip.NewHeader("Content-Type", ContentType))
+	inbound.SetBody(xmlBody(t, menuText))
+	if !service.HandleInboundInfoNoResponse(context.Background(), inbound) {
+		t.Fatal("inbound INFO was not consumed")
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	if result := <-resultCh; result == nil || result.Status != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestServiceSerializesConcurrentSends(t *testing.T) {
+	endpoint := newFakeEndpoint(t)
+	endpoint.inviteBody = xmlBody(t, finalText)
+	gate := make(chan struct{})
+	endpoint.inviteGate = gate
+	service := NewService("dev-1", endpoint)
+	first := make(chan error, 1)
+	go func() {
+		_, err := service.Send(context.Background(), "*100#")
+		first <- err
+	}()
+	<-endpoint.started
+
+	if _, err := service.Send(context.Background(), "*101#"); err == nil || !strings.Contains(err.Error(), "已有活动") {
+		t.Fatalf("concurrent Send error = %v", err)
+	}
+	close(gate)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceTimeoutAndStopCleanDialogs(t *testing.T) {
+	endpoint := newFakeEndpoint(t)
+	service := NewService("dev-1", endpoint)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	result, err := service.Send(ctx, "*100#")
+	if !errors.Is(err, context.DeadlineExceeded) || result == nil || result.Status != 5 {
+		t.Fatalf("timeout result=%+v err=%v", result, err)
+	}
+	if service.ActiveSessionID() != "" || endpoint.closeCount() != 1 {
+		t.Fatalf("timeout cleanup active=%q closes=%d", service.ActiveSessionID(), endpoint.closeCount())
+	}
+	<-endpoint.started
+
+	blocked := make(chan error, 1)
+	go func() {
+		_, sendErr := service.Send(context.Background(), "*101#")
+		blocked <- sendErr
+	}()
+	<-endpoint.started
+	service.Stop()
 	select {
-	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "stopped") {
-			t.Fatalf("Send error = %v", err)
+	case stopErr := <-blocked:
+		if stopErr == nil || !strings.Contains(stopErr.Error(), "service stopped") {
+			t.Fatalf("stop error = %v", stopErr)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("blocked Send was not released")
+		t.Fatal("Stop did not wake Send")
 	}
 }
 
-func configuredService(t *testing.T, transport Transport) *Service {
+func assertFields(t *testing.T, typ reflect.Type, want []string) {
 	t.Helper()
-	svc, err := NewServiceWithConfig(Config{
-		Transport: transport, LocalURI: "sip:user@ims.example",
-		ContactURI: "sip:user@192.0.2.10:5060;transport=udp",
-		Domain:     "ims.example", LocalAddress: "192.0.2.10:5060",
-		SIPTransport: "udp", ServiceRoute: "<sip:pcscf.ims.example;lr>",
-		UserAgent: "test",
-	})
-	if err != nil {
-		t.Fatal(err)
+	if typ.NumField() != len(want) {
+		t.Fatalf("%s fields = %d, want %d", typ, typ.NumField(), len(want))
 	}
-	return svc
+	for index, name := range want {
+		if typ.Field(index).Name != name {
+			t.Fatalf("%s field %d = %s, want %s", typ, index, typ.Field(index).Name, name)
+		}
+	}
 }
 
-func requestBodyXML(t *testing.T, text string, done bool) []byte {
-	t.Helper()
-	payload := &XMLPayload{Language: "en", Text: text}
-	if done {
-		payload.Notify = &struct{}{}
-	} else {
-		payload.Request = &struct{}{}
+func testContext() Context {
+	return Context{
+		LocalIP: "192.0.2.10", LocalPortC: 5062, LocalPortS: 5064,
+		Transport: "udp", Domain: "ims.example", Realm: "ims.example",
+		AOR: "sip:+15551234567@ims.example", ServiceRoute: "<sip:pcscf.ims.example;lr>",
+		SecVerify: "ipsec-3gpp;alg=hmac-md5-96", Mode: "ipsec-3gpp",
+		PANI: "IEEE-802.11", UserAgent: "ussi-test", ContactID: "contact-1",
 	}
-	body, err := EncodeXML(payload)
+}
+
+func xmlBody(t *testing.T, text string) []byte {
+	t.Helper()
+	body, err := EncodeXML(text, "en")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return body
 }
 
-func ussiResponse(body []byte) Response {
-	headers := map[string]string{
-		"To": "<sip:ussi@ims.example>;tag=remote", "Contact": "<sip:ussi@server.example>",
-		"Record-Route": "<sip:edge.ims.example;lr>",
+type fakeDialog struct{ id string }
+
+func (d fakeDialog) DialogID() string { return d.id }
+
+type fakeEndpoint struct {
+	t             *testing.T
+	mu            sync.Mutex
+	cseq          uint32
+	inviteBody    []byte
+	infoBody      []byte
+	dialogMethods []sip.RequestMethod
+	closed        int
+	started       chan *sip.Request
+	inviteGate    <-chan struct{}
+}
+
+func newFakeEndpoint(t *testing.T) *fakeEndpoint {
+	return &fakeEndpoint{t: t, cseq: 6, started: make(chan *sip.Request, 4)}
+}
+
+func (e *fakeEndpoint) DeviceID() string   { return "dev-1" }
+func (e *fakeEndpoint) IsRegistered() bool { return true }
+func (e *fakeEndpoint) NextCSeq() uint32 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cseq++
+	return e.cseq
+}
+func (e *fakeEndpoint) Snapshot() imsendpoint.Snapshot {
+	ctx := testContext()
+	return imsendpoint.Snapshot{
+		IMPU: ctx.AOR, Realm: ctx.Realm, ContactID: ctx.ContactID,
+		ServiceRoute: ctx.ServiceRoute, SecVerify: ctx.SecVerify,
+		EffectiveSecMode: ctx.Mode, PAccessNetworkInfo: ctx.PANI,
+		UserAgent: ctx.UserAgent, LocalAddr: ctx.LocalIP,
+		LocalPortC: ctx.LocalPortC, LocalPortS: ctx.LocalPortS, Transport: ctx.Transport,
 	}
-	if len(body) > 0 {
-		headers["Content-Type"] = ContentType
+}
+func (e *fakeEndpoint) StartClientInvite(
+	_ context.Context,
+	_ string,
+	options imsendpoint.ClientInviteOptions,
+) (*imsendpoint.ClientInviteResult, error) {
+	e.started <- options.Request.Clone()
+	if e.inviteGate != nil {
+		<-e.inviteGate
 	}
-	return Response{StatusCode: 200, Reason: "OK", Headers: headers, Body: body}
+	response := responseWithBody(options.Request, e.inviteBody)
+	return &imsendpoint.ClientInviteResult{
+		Dialog: fakeDialog{id: options.Request.CallID().Value()}, Response: response,
+	}, nil
 }
-
-type scriptedTransport struct {
-	mu        sync.Mutex
-	roundTrip func(context.Context, string) (Response, error)
-	requests  []string
+func (e *fakeEndpoint) SendDialogRequest(
+	_ context.Context,
+	_ string,
+	_ imsendpoint.DialogHandle,
+	request *sip.Request,
+	_ imsendpoint.DialogRequestOptions,
+) (*sip.Response, error) {
+	e.mu.Lock()
+	e.dialogMethods = append(e.dialogMethods, request.Method)
+	body := append([]byte(nil), e.infoBody...)
+	e.mu.Unlock()
+	if request.Method == sip.ACK {
+		return nil, nil
+	}
+	return responseWithBody(request, body), nil
 }
-
-func (t *scriptedTransport) RoundTrip(ctx context.Context, request string) (Response, error) {
-	t.record(request)
-	return t.roundTrip(ctx, request)
-}
-
-func (t *scriptedTransport) Send(_ context.Context, request string) error {
-	t.record(request)
+func (e *fakeEndpoint) CloseDialog(context.Context, string, imsendpoint.DialogHandle) error {
+	e.mu.Lock()
+	e.closed++
+	e.mu.Unlock()
 	return nil
 }
-
-func (t *scriptedTransport) record(request string) {
-	t.mu.Lock()
-	t.requests = append(t.requests, request)
-	t.mu.Unlock()
+func (e *fakeEndpoint) methods() []sip.RequestMethod {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]sip.RequestMethod(nil), e.dialogMethods...)
+}
+func (e *fakeEndpoint) closeCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.closed
 }
 
-func (t *scriptedTransport) Requests() []string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return append([]string(nil), t.requests...)
-}
-
-func requestMethod(request string) string {
-	fields := strings.Fields(request)
-	if len(fields) == 0 {
-		return ""
+func responseWithBody(request *sip.Request, body []byte) *sip.Response {
+	response := sip.NewResponseFromRequest(request, 200, "OK", body)
+	if len(body) > 0 {
+		response.AppendHeader(sip.NewHeader("Content-Type", ContentType))
 	}
-	return fields[0]
+	return response
 }
 
-func requestMethods(requests []string) []string {
-	methods := make([]string, 0, len(requests))
-	for _, request := range requests {
-		methods = append(methods, requestMethod(request))
-	}
-	return methods
+func (*fakeEndpoint) AnswerServerInvite(
+	context.Context, string, imsendpoint.ServerInviteHandle, imsendpoint.ServerInviteAnswerOptions,
+) (imsendpoint.DialogHandle, error) {
+	return nil, errors.New("unused")
 }
-
-func headerValue(request, name string) string {
-	for _, line := range strings.Split(request, "\r\n") {
-		key, value, ok := strings.Cut(line, ":")
-		if ok && strings.EqualFold(strings.TrimSpace(key), name) {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+func (*fakeEndpoint) CancelClientInvite(
+	context.Context, string, imsendpoint.InviteHandle, imsendpoint.ClientInviteCancelOptions,
+) error {
+	return errors.New("unused")
+}
+func (*fakeEndpoint) RejectServerInvite(
+	context.Context, string, imsendpoint.ServerInviteHandle, imsendpoint.ServerInviteRejectOptions,
+) error {
+	return errors.New("unused")
+}
+func (*fakeEndpoint) SendReliableProvisionalPRACK(
+	context.Context, string, imsendpoint.ReliableProvisionalOptions,
+) error {
+	return errors.New("unused")
 }

@@ -2,243 +2,274 @@ package ussi
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"mime/multipart"
-	"net/textproto"
+	"net"
 	"strings"
+	"time"
+
+	"github.com/emiago/sipgo/sip"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/sipkit"
 )
 
-func buildInitialInvite(cfg Config, session *Session, command string) (string, error) {
-	xmlBody, err := requestXML(command)
+const multipartBoundary = "vohive_ussd"
+
+// BuildInitialInvite restores the v1.5.5 structured INVITE builder.
+func BuildInitialInvite(
+	ctx Context,
+	command, callID, localTag, branch string,
+	cseq uint32,
+	ussiXML []byte,
+) (*sip.Request, error) {
+	domain := firstNonEmpty(ctx.Domain, ctx.Realm)
+	if domain == "" {
+		return nil, errors.New("USSI domain 为空")
+	}
+	if strings.TrimSpace(command) == "" {
+		return nil, errors.New("USSD command 为空")
+	}
+	if strings.TrimSpace(callID) == "" {
+		return nil, errors.New("USSI Call-ID 为空")
+	}
+	if cseq == 0 {
+		return nil, errors.New("USSI CSeq 为空")
+	}
+	recipient, err := dialstringURI(command, domain)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	boundary := "vowifi-ussi-" + token(session.id)
-	body := BuildMultipartBodyWithBoundary(cfg.LocalAddress, boundary, xmlBody)
-	var request strings.Builder
-	fmt.Fprintf(&request, "INVITE %s SIP/2.0\r\n", session.remoteURI)
-	writeCommonHeaders(&request, cfg, session, "INVITE", session.inviteBranch)
-	fmt.Fprintf(&request, "Contact: <%s>\r\n", cfg.ContactURI)
-	request.WriteString("P-Preferred-Service: urn:urn-7:3gpp-service.ims.icsi.ussd\r\n")
-	request.WriteString("Accept-Contact: *;+g.3gpp.ussd\r\n")
-	request.WriteString("Recv-Info: " + InfoPackage + "\r\n")
-	request.WriteString("Accept: " + ContentType + ", application/sdp, multipart/mixed\r\n")
-	fmt.Fprintf(&request, "Content-Type: multipart/mixed; boundary=\"%s\"\r\n", boundary)
-	fmt.Fprintf(&request, "Content-Length: %d\r\n\r\n", len(body))
-	request.Write(body)
-	return request.String(), nil
+	from, err := parseURI(ctx.AOR)
+	if err != nil {
+		return nil, fmt.Errorf("USSI AOR: %w", err)
+	}
+	profile := initialInviteProfile(ctx)
+	body := BuildMultipartBody(ctx.LocalIP, ussiXML)
+	request, err := sipkit.BuildIMSRequest(sip.INVITE, recipient, inviteOptions(
+		ctx, profile, from, recipient, callID, localTag, branch, cseq, body,
+	))
+	if err != nil {
+		return nil, err
+	}
+	profile.ApplyInitialInvite(request)
+	return request, nil
 }
 
-func buildDialogRequest(cfg Config, session *Session, method string, body []byte) string {
-	branch := "z9hG4bK" + randomHex(12)
-	var request strings.Builder
-	fmt.Fprintf(&request, "%s %s SIP/2.0\r\n", method, session.remoteTarget)
-	writeCommonHeaders(&request, cfg, session, method, branch)
-	if method == "INFO" {
-		request.WriteString("Info-Package: " + InfoPackage + "\r\n")
-		request.WriteString("Content-Disposition: " + ContentDisposition + "\r\n")
-		request.WriteString("Recv-Info: " + InfoPackage + "\r\n")
-		request.WriteString("Accept: " + ContentType + "\r\n")
-		request.WriteString("Content-Type: " + ContentType + "\r\n")
-	}
-	fmt.Fprintf(&request, "Content-Length: %d\r\n\r\n", len(body))
-	request.Write(body)
-	return request.String()
-}
-
-func buildACK(cfg Config, session *Session, finalStatus int) string {
-	branch := "z9hG4bK" + randomHex(12)
-	if finalStatus >= 300 {
-		branch = session.inviteBranch
-	}
-	var request strings.Builder
-	fmt.Fprintf(&request, "ACK %s SIP/2.0\r\n", session.remoteTarget)
-	writeCommonHeaders(&request, cfg, session, "ACK", branch)
-	request.WriteString("Content-Length: 0\r\n\r\n")
-	return request.String()
-}
-
-func writeCommonHeaders(out *strings.Builder, cfg Config, session *Session, method, branch string) {
-	transport := normalizedTransport(cfg.SIPTransport)
-	fmt.Fprintf(out, "Via: SIP/2.0/%s %s;rport;branch=%s\r\n", transport, cfg.LocalAddress, branch)
-	for _, route := range session.routeSet {
-		fmt.Fprintf(out, "Route: %s\r\n", route)
-	}
-	fmt.Fprintf(out, "From: <%s>;tag=%s\r\n", cfg.LocalURI, session.localTag)
-	to := "<" + session.remoteURI + ">"
-	if session.remoteTag != "" {
-		to += ";tag=" + session.remoteTag
-	}
-	fmt.Fprintf(out, "To: %s\r\n", to)
-	fmt.Fprintf(out, "Call-ID: %s\r\nCSeq: %d %s\r\n", session.callID, session.cseq, method)
-	out.WriteString("Max-Forwards: 70\r\n")
-	writeOptionalHeader(out, "P-Preferred-Identity", "<"+cfg.LocalURI+">")
-	writeOptionalHeader(out, "Security-Verify", cfg.SecurityVerify)
-	writeOptionalHeader(out, "P-Access-Network-Info", cfg.PANI)
-	writeOptionalHeader(out, "User-Agent", cfg.UserAgent)
-}
-
-func writeOptionalHeader(out *strings.Builder, name, value string) {
-	if strings.TrimSpace(value) != "" {
-		fmt.Fprintf(out, "%s: %s\r\n", name, strings.TrimSpace(value))
+func inviteOptions(
+	ctx Context,
+	profile Profile,
+	from, recipient sip.Uri,
+	callID, localTag, branch string,
+	cseq uint32,
+	body []byte,
+) sipkit.IMSRequestOptions {
+	return sipkit.IMSRequestOptions{
+		Destination: ctx.Destination, Transport: ctx.Transport,
+		ViaHost: ctx.LocalIP, ViaPort: ctx.LocalPortC, Branch: branch,
+		FromURI: from, FromTag: localTag, ToURI: recipient,
+		CallID: callID, CSeq: cseq, Routes: contextRoutes(ctx),
+		Contact: contactHeader(ctx, profile.ContactHeaderParams()), Body: body,
+		Runtime: sipkit.IMSRuntimeSnapshot{
+			Transport: ctx.Transport, LocalAddr: ctx.LocalIP,
+			LocalPortC: ctx.LocalPortC, LocalPortS: ctx.LocalPortS,
+			PAccessNetworkInfo: ctx.PANI, UserAgent: ctx.UserAgent,
+		},
+		Kind: sipkit.RequestKindOutOfDialog, SecurityMode: "disabled",
+		AddRPort: true, AddAlias: normalizedTransport(ctx.Transport) == "TCP",
+		AddUserAgent: strings.TrimSpace(ctx.UserAgent) != "",
+		ContentType:  "multipart/mixed;boundary=" + multipartBoundary,
 	}
 }
 
-func learnDialog(session *Session, response Response) {
+// BuildInfo builds one in-dialog USSI INFO request.
+func BuildInfo(session *Session, body []byte, ctx Context) (*sip.Request, error) {
+	if len(body) == 0 {
+		return nil, errors.New("USSI INFO body 为空")
+	}
+	return buildDialogRequest(session, sip.INFO, body, ctx)
+}
+
+func buildDialogRequest(
+	session *Session,
+	method sip.RequestMethod,
+	body []byte,
+	ctx Context,
+) (*sip.Request, error) {
+	if session == nil {
+		return nil, errors.New("USSI session 为空")
+	}
+	recipient, err := dialogRequestURI(session, ctx)
+	if err != nil {
+		return nil, fmt.Errorf("USSI dialog remote URI: %w", err)
+	}
+	headers := dialogHeaders(method)
+	return sipkit.BuildMinimalDialogRequest(method, recipient, sipkit.DialogRequestOptions{
+		PAccessNetworkInfo: ctx.PANI, PreferredIdentity: ctx.AOR,
+		SecurityVerify: ctx.SecVerify, Protected: !strings.EqualFold(ctx.Mode, "disabled"),
+		UserAgent: ctx.UserAgent, ContentType: dialogContentType(method),
+		Body: body, Headers: headers,
+	})
+}
+
+func dialogRequestURI(session *Session, ctx Context) (sip.Uri, error) {
+	if session == nil {
+		return sip.Uri{}, errors.New("USSI session 为空")
+	}
 	session.mu.Lock()
-	defer session.mu.Unlock()
-	session.remoteTag = headerTag(responseHeader(response.Headers, "To"))
-	if contact := headerURI(responseHeader(response.Headers, "Contact")); contact != "" {
-		session.remoteTarget = contact
+	target := firstNonEmpty(session.RemoteTarget, session.RemoteURI)
+	session.mu.Unlock()
+	if target == "" {
+		domain := firstNonEmpty(ctx.Domain, ctx.Realm)
+		if domain == "" {
+			return sip.Uri{}, errors.New("USSI dialog remote URI 为空")
+		}
+		target = "sip:" + domain
 	}
-	routes := splitHeaderValues(responseHeader(response.Headers, "Record-Route"))
-	for left, right := 0, len(routes)-1; left < right; left, right = left+1, right-1 {
-		routes[left], routes[right] = routes[right], routes[left]
+	lower := strings.ToLower(target)
+	if !strings.HasPrefix(lower, "sip:") && !strings.HasPrefix(lower, "tel:") {
+		target = "sip:" + target
 	}
-	session.routeSet = routes
+	return parseURI(target)
 }
 
-// BuildMultipartBody preserves the original helper signature.
-func BuildMultipartBody(sdp, ussiXML []byte) []byte {
-	return buildMultipart("----=_Part_0_1", sdp, ussiXML)
-}
-
-func BuildMultipartBodyWithBoundary(localAddress, boundary string, ussiXML []byte) []byte {
-	sdp := BuildSDP(hostOnly(localAddress), "")
-	return buildMultipart(boundary, sdp, ussiXML)
-}
-
-func buildMultipart(boundary string, sdp, ussiXML []byte) []byte {
-	var out bytes.Buffer
-	writer := multipart.NewWriter(&out)
-	_ = writer.SetBoundary(boundary)
-	sdpHeader := textproto.MIMEHeader{"Content-Type": {"application/sdp"}}
-	sdpPart, _ := writer.CreatePart(sdpHeader)
-	_, _ = sdpPart.Write(sdp)
-	ussiHeader := textproto.MIMEHeader{
-		"Content-Type":        {ContentType},
-		"Content-Disposition": {ContentDisposition},
-	}
-	ussiPart, _ := writer.CreatePart(ussiHeader)
-	_, _ = ussiPart.Write(ussiXML)
-	_ = writer.Close()
-	return out.Bytes()
-}
-
-// ExtractFromMultipart extracts one MIME part by media type.
-func ExtractFromMultipart(body []byte, contentType string) []byte {
-	mediaType, params, err := mime.ParseMediaType(contentType)
-	targetType := ContentType
-	boundary := ""
-	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
-		targetType = strings.TrimSpace(mediaType)
-		boundary = multipartBoundary(body)
-	} else {
-		boundary = params["boundary"]
-	}
-	return extractMultipartPart(body, boundary, targetType)
-}
-
-func extractMultipartPart(body []byte, boundary, targetType string) []byte {
-	if strings.TrimSpace(boundary) == "" {
+func dialogHeaders(method sip.RequestMethod) []sip.Header {
+	if method != sip.INFO {
 		return nil
+	}
+	return []sip.Header{
+		sip.NewHeader("Info-Package", InfoPackage),
+		sip.NewHeader("Content-Disposition", ContentDisposition),
+		sip.NewHeader("Recv-Info", InfoPackage),
+		sip.NewHeader("Accept", ContentType),
+	}
+}
+
+func dialogContentType(method sip.RequestMethod) string {
+	if method == sip.INFO {
+		return ContentType
+	}
+	return ""
+}
+
+// BuildMultipartBody builds the fixed v1.5.5 vohive_ussd MIME envelope.
+func BuildMultipartBody(localIP string, ussiXML []byte) []byte {
+	var body bytes.Buffer
+	fmt.Fprintf(&body, "--%s\r\nContent-Type: application/sdp\r\n\r\n", multipartBoundary)
+	body.Write(BuildSDP(localIP))
+	fmt.Fprintf(&body, "\r\n--%s\r\n", multipartBoundary)
+	body.WriteString("Content-Type: " + ContentType + "\r\n")
+	body.WriteString("Content-Disposition: render;handling=optional\r\n\r\n")
+	body.Write(ussiXML)
+	fmt.Fprintf(&body, "\r\n--%s--\r\n", multipartBoundary)
+	return body.Bytes()
+}
+
+// ExtractFromMultipart returns the USSI XML part from a fixed or declared boundary.
+func ExtractFromMultipart(body []byte) []byte {
+	boundary := multipartBoundary
+	if first, _, found := bytes.Cut(body, []byte("\n")); found {
+		line := strings.TrimSpace(string(first))
+		if strings.HasPrefix(line, "--") {
+			boundary = strings.TrimPrefix(line, "--")
+		}
 	}
 	reader := multipart.NewReader(bytes.NewReader(body), boundary)
 	for {
-		part, readErr := reader.NextPart()
-		if readErr != nil {
+		part, err := reader.NextPart()
+		if err != nil {
 			return nil
 		}
-		partBody := new(bytes.Buffer)
-		_, _ = partBody.ReadFrom(part)
-		partType, _, _ := mime.ParseMediaType(part.Header.Get("Content-Type"))
-		if strings.EqualFold(partType, targetType) {
-			return partBody.Bytes()
+		partBody, err := io.ReadAll(part)
+		if err != nil {
+			return nil
+		}
+		mediaType, _, _ := mime.ParseMediaType(part.Header.Get("Content-Type"))
+		if IsContentType(mediaType) {
+			return bytes.TrimSpace(partBody)
 		}
 	}
 }
 
-func multipartBoundary(body []byte) string {
-	firstLine, _, _ := bytes.Cut(body, []byte("\n"))
-	line := strings.TrimSpace(string(firstLine))
-	if strings.HasPrefix(line, "--") {
-		return strings.TrimPrefix(line, "--")
+// BuildSDP builds the exact v1.5.5 audio capability body used by USSI INVITE.
+func BuildSDP(localIP string) []byte {
+	address := strings.Trim(strings.TrimSpace(localIP), "[]")
+	if address == "" {
+		address = "0.0.0.0"
 	}
-	return ""
+	family := "IP4"
+	if net.ParseIP(address) != nil && strings.Contains(address, ":") {
+		family = "IP6"
+	}
+	sessionID := fmt.Sprint(time.Now().UnixMilli())
+	prefix := fmt.Sprintf("v=0\r\no=- %s %s IN %s %s\r\ns=-\r\nc=IN %s %s\r\nt=0 0\r\n",
+		sessionID, sessionID, family, address, family, address)
+	return []byte(prefix + audioCapabilities)
 }
 
-func extractUSSI(contentType string, body []byte) ([]byte, bool, error) {
-	if IsContentType(contentType) {
-		return body, true, nil
+const audioCapabilities = "m=audio 0 RTP/AVP 106 112 104 110 102 108 96 97\r\n" +
+	"b=AS:153\r\nb=RS:600\r\nb=RR:2000\r\n" +
+	"a=rtpmap:106 EVS/16000/1\r\na=fmtp:106 br=5.9-24.4;bw=nb-wb;ch-aw-recv=-1;max-red=0\r\n" +
+	"a=rtpmap:112 EVS/16000/1\r\na=fmtp:112 br=9.6-128;bw=swb;ch-aw-recv=-1;max-red=0\r\n" +
+	"a=rtpmap:104 AMR-WB/16000/1\r\na=fmtp:104 mode-change-capability=2;max-red=0\r\n" +
+	"a=rtpmap:110 AMR-WB/16000/1\r\na=fmtp:110 octet-align=1;mode-change-capability=2;max-red=0\r\n" +
+	"a=rtpmap:102 AMR/8000/1\r\na=fmtp:102 mode-change-capability=2;max-red=0\r\n" +
+	"a=rtpmap:108 AMR/8000/1\r\na=fmtp:108 octet-align=1;mode-change-capability=2;max-red=0\r\n" +
+	"a=rtpmap:96 telephone-event/16000\r\na=fmtp:96 0-15\r\n" +
+	"a=rtpmap:97 telephone-event/8000\r\na=fmtp:97 0-15\r\n" +
+	"a=sendrecv\r\na=maxptime:240\r\na=ptime:20\r\n"
+
+func parseURI(value string) (sip.Uri, error) {
+	var uri sip.Uri
+	if err := sip.ParseUri(strings.TrimSpace(value), &uri); err != nil {
+		return sip.Uri{}, err
 	}
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		return nil, false, err
-	}
-	if !strings.HasPrefix(mediaType, "multipart/") {
-		return nil, false, nil
-	}
-	part := ExtractFromMultipart(body, contentType)
-	return part, len(part) > 0, nil
+	return uri, nil
 }
 
-// BuildSDP builds the message-media SDP carried in the initial INVITE.
-func BuildSDP(localIP, _ string) []byte {
-	if strings.TrimSpace(localIP) == "" {
-		localIP = "0.0.0.0"
-	}
-	return []byte(fmt.Sprintf("v=0\r\no=- 0 0 IN IP4 %s\r\ns=-\r\nc=IN IP4 %s\r\nt=0 0\r\nm=message 0 TCP/MSRP *\r\na=recvonly\r\n", localIP, localIP))
+func dialstringURI(command, domain string) (sip.Uri, error) {
+	command = strings.ReplaceAll(strings.TrimSpace(command), "#", "%23")
+	return parseURI(fmt.Sprintf("sip:%s;phone-context=%s@%s;user=dialstring", command, domain, domain))
 }
 
-func responseHeader(headers map[string]string, name string) string {
-	for key, value := range headers {
-		if strings.EqualFold(key, name) {
-			return strings.TrimSpace(value)
-		}
+func contactHeader(ctx Context, params sip.HeaderParams) *sip.ContactHeader {
+	port := ctx.LocalPortS
+	if port < 1 {
+		port = ctx.LocalPortC
 	}
-	return ""
+	uriParams := sip.NewParams()
+	uriParams.Add("transport", strings.ToLower(normalizedTransport(ctx.Transport)))
+	return &sip.ContactHeader{Address: sip.Uri{
+		Scheme: "sip", User: ctx.ContactID, Host: strings.Trim(ctx.LocalIP, "[]"),
+		Port: port, UriParams: uriParams,
+	}, Params: params}
 }
 
-func headerTag(value string) string {
-	for _, param := range strings.Split(value, ";")[1:] {
-		name, tag, ok := strings.Cut(strings.TrimSpace(param), "=")
-		if ok && strings.EqualFold(name, "tag") {
-			return strings.Trim(strings.TrimSpace(tag), "\"")
-		}
+func contextRoutes(ctx Context) []string {
+	route := firstNonEmpty(ctx.RouteHeader, ctx.ServiceRoute)
+	if route == "" {
+		return nil
 	}
-	return ""
-}
-
-func headerURI(value string) string {
-	start, end := strings.IndexByte(value, '<'), strings.IndexByte(value, '>')
-	if start >= 0 && end > start {
-		return strings.TrimSpace(value[start+1 : end])
-	}
-	return strings.TrimSpace(strings.Split(value, ";")[0])
-}
-
-func splitHeaderValues(value string) []string {
-	var values []string
-	for _, item := range strings.Split(value, ",") {
-		if item = strings.TrimSpace(item); item != "" {
-			values = append(values, item)
-		}
-	}
-	return values
+	return []string{route}
 }
 
 func normalizedTransport(value string) string {
-	if strings.EqualFold(strings.TrimSpace(value), "tcp") {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "UDP":
+		return "UDP"
+	case "TCP":
+		return "TCP"
+	default:
 		return "TCP"
 	}
-	return "UDP"
 }
 
-func hostOnly(address string) string {
-	host := strings.TrimSpace(address)
-	if index := strings.LastIndexByte(host, ':'); index > 0 {
-		return strings.Trim(host[:index], "[]")
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
 	}
-	return strings.Trim(host, "[]")
+	return ""
 }

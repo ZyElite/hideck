@@ -3,85 +3,119 @@ package imscore
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ussi"
 )
 
-// USSDResult is the compatibility result returned by the runtime adapter.
+// USSDResult is the exact v1.5.5 runtime result contract.
 type USSDResult struct {
-	SessionID string
-	Code      string
-	Message   string
-	RawXML    string
-	Done      bool
+	Status    int    `json:"status"`
+	Text      string `json:"text"`
+	RawXML    string `json:"raw_xml,omitempty"`
+	DCS       int    `json:"dcs"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 func (s *Service) SendUSSD(ctx context.Context, code string) (*USSDResult, error) {
-	if err := s.prepareUSSI(); err != nil {
+	service, err := s.readyUSSIService()
+	if err != nil {
 		return nil, err
 	}
-	result, err := s.ussd.SendContext(ctx, code)
-	return adaptUSSIResult(result), err
+	result, sendErr := service.Send(ctx, code)
+	s.dispatchUSSIResult(code, result)
+	return adaptUSSIResult(result), sendErr
 }
 
-func (s *Service) ContinueUSSD(ctx context.Context, sessionID, input string) (*USSDResult, error) {
-	if s == nil || s.ussd == nil {
-		return nil, errors.New("imscore: USSD not available")
+func (s *Service) ContinueUSSD(
+	ctx context.Context,
+	sessionID, input string,
+) (*USSDResult, error) {
+	service, err := s.readyUSSIService()
+	if err != nil {
+		return nil, err
 	}
-	result, err := s.ussd.ContinueContext(ctx, sessionID, input)
-	return adaptUSSIResult(result), err
+	result, continueErr := service.Continue(ctx, sessionID, input)
+	s.dispatchUSSIResult(input, result)
+	return adaptUSSIResult(result), continueErr
 }
 
 func (s *Service) CancelUSSD(ctx context.Context, sessionID string) error {
-	if s == nil || s.ussd == nil {
+	service := s.ussiService()
+	if service == nil {
 		return errors.New("imscore: USSD not available")
 	}
-	return s.ussd.CancelContext(ctx, sessionID)
+	return service.Cancel(ctx, sessionID)
 }
 
 func (s *Service) GetActiveUSSDSession() string {
-	if s == nil || s.ussd == nil {
+	service := s.existingUSSIService()
+	if service == nil {
 		return ""
 	}
-	return s.ussd.ActiveSessionID()
+	return service.ActiveSessionID()
 }
 
-func (s *Service) prepareUSSI() error {
-	if s == nil || s.cfg == nil || s.ussd == nil {
-		return errors.New("imscore: USSD not available")
+func (s *Service) existingUSSIService() *ussi.Service {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ussd
+}
+
+func (s *Service) readyUSSIService() (*ussi.Service, error) {
+	if s == nil {
+		return nil, errors.New("imscore: USSD not available")
 	}
 	if !s.IsRegistered() {
-		return errors.New("imscore: IMS is not registered")
+		return nil, errors.New("imscore: IMS is not registered")
 	}
-	profile, err := s.snapshotRegisteredSIPProfile()
-	if err != nil {
-		return fmt.Errorf("imscore: USSD registered profile: %w", err)
+	s.mu.RLock()
+	hasSession := s.regSession != nil
+	s.mu.RUnlock()
+	if !hasSession {
+		return nil, errors.New("imscore: registered SIP session is unavailable")
 	}
-	contact := fmt.Sprintf("%s;transport=%s", profile.ContactURI, profile.Transport)
-	return s.ussd.Configure(ussi.Config{
-		Transport: &ussiTransportAdapter{transport: s.transport},
-		LocalURI:  profile.LocalURI, ContactURI: contact, Domain: profile.Domain,
-		LocalAddress: profile.LocalAddress, SIPTransport: profile.Transport,
-		ServiceRoute: profile.ServiceRoute, SecurityVerify: profile.SecurityVerify,
-		PANI: profile.PANI, UserAgent: profile.UserAgent, OnResult: s.publishUSSIResult,
-	})
+	service := s.ussiService()
+	if service == nil {
+		return nil, errors.New("imscore: USSD not available")
+	}
+	return service, nil
 }
 
-func (s *Service) publishUSSIResult(result ussi.Result) {
-	if s == nil || s.bus == nil {
+func (s *Service) ussiService() *ussi.Service {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ussd == nil {
+		deviceID := ""
+		if s.cfg != nil {
+			deviceID = s.cfg.DeviceID
+		}
+		s.ussd = ussi.NewService(deviceID, s)
+	}
+	return s.ussd
+}
+
+func (s *Service) dispatchUSSIResult(command string, result *ussi.Result) {
+	if s == nil || s.bus == nil || result == nil {
 		return
 	}
-	status, _ := strconv.Atoi(strings.TrimSpace(result.Code))
-	now := time.Now()
+	deviceID := ""
+	if s.cfg != nil {
+		deviceID = s.cfg.DeviceID
+	}
 	s.bus.Publish(events.EventUSSDResult{
-		DevID: s.cfg.DeviceID, SessionID: result.SessionID,
-		Command: result.Command, Text: result.Message, Status: status, Time: now,
-		Code: result.Code, Message: result.Message,
+		DevID: deviceID, SessionID: result.SessionID,
+		Command: command, Text: result.Text, Status: result.Status, Time: time.Now(),
+		Code: strconv.Itoa(result.Status), Message: result.Text,
 	})
 }
 
@@ -90,59 +124,37 @@ func adaptUSSIResult(result *ussi.Result) *USSDResult {
 		return nil
 	}
 	return &USSDResult{
-		SessionID: result.SessionID, Code: result.Code, Message: result.Message,
-		RawXML: result.RawXML, Done: result.Done,
+		Status: result.Status, Text: result.Text, RawXML: result.RawXML,
+		DCS: result.DCS, SessionID: result.SessionID,
 	}
-}
-
-type ussiTransportAdapter struct {
-	transport *sipTransport
-}
-
-func (a *ussiTransportAdapter) RoundTrip(ctx context.Context, request string) (ussi.Response, error) {
-	if a == nil || a.transport == nil {
-		return ussi.Response{}, errors.New("imscore: no SIP transport for USSD")
-	}
-	response, err := a.transport.RoundTrip(ctx, request)
-	if err != nil {
-		return ussi.Response{}, err
-	}
-	return ussi.Response{
-		StatusCode: response.StatusCode, Reason: response.Reason,
-		Headers: response.Headers, Body: append([]byte(nil), response.Body...),
-	}, nil
-}
-
-func (a *ussiTransportAdapter) Send(_ context.Context, request string) error {
-	if a == nil || a.transport == nil {
-		return errors.New("imscore: no SIP transport for USSD")
-	}
-	return a.transport.Send(request)
 }
 
 func (s *Service) handleInboundUSSI(raw string) (inboundSIPResult, bool, error) {
-	if s == nil || s.ussd == nil {
+	service := s.ussiService()
+	if service == nil {
 		return inboundSIPResult{}, false, nil
 	}
-	body, err := rawSIPBody(raw)
+	message, err := parseSIPMessage(raw)
+	if err != nil {
+		return inboundSIPResult{}, false, nil
+	}
+	request, ok := message.(*sip.Request)
+	if !ok {
+		return inboundSIPResult{}, false, nil
+	}
+	handled := false
+	switch request.Method {
+	case sip.INFO:
+		handled = service.HandleInboundInfoNoResponse(context.Background(), request)
+	case sip.BYE:
+		handled = service.HandleInboundByeNoResponse(context.Background(), request)
+	}
+	if !handled {
+		return inboundSIPResult{}, false, nil
+	}
+	response, err := buildSIPRequestResponse(raw, 200)
 	if err != nil {
 		return inboundSIPResult{}, true, err
 	}
-	result, err := s.ussd.HandleInbound(ussi.InboundRequest{
-		Method: sipRequestMethod(raw), CallID: rawSIPHeaderValue(raw, "Call-ID"),
-		ContentType: rawSIPHeaderValue(raw, "Content-Type"),
-		InfoPackage: rawSIPHeaderValue(raw, "Info-Package"), Body: body,
-	})
-	if !result.Handled {
-		return inboundSIPResult{}, false, err
-	}
-	status := result.StatusCode
-	if status == 0 {
-		status = 500
-	}
-	response, responseErr := buildSIPRequestResponse(raw, status)
-	if responseErr != nil {
-		return inboundSIPResult{}, true, responseErr
-	}
-	return inboundSIPResult{response: response}, true, err
+	return inboundSIPResult{response: response}, true, nil
 }

@@ -7,118 +7,94 @@ import (
 	"strings"
 )
 
-type Operation string
-
 const (
-	OperationRequest Operation = "request"
-	OperationNotify  Operation = "notify"
+	defaultLanguage = "en"
+	defaultDCS      = 15
+	emptyResponse   = "(空响应)"
 )
 
-// XMLPayload models the 3GPP USSI ussd-data document. Session and Dialog are
-// retained for source compatibility with the first reconstruction.
+// XMLPayload is the exact v1.5.5 USSI XML envelope.
 type XMLPayload struct {
-	XMLName         xml.Name  `xml:"ussd-data"`
-	Language        string    `xml:"language,omitempty"`
-	Text            string    `xml:"ussd-string"`
-	Request         *struct{} `xml:"UnstructuredSS-Request,omitempty"`
-	Notify          *struct{} `xml:"UnstructuredSS-Notify,omitempty"`
-	ErrorCode       *int      `xml:"error-code,omitempty"`
-	AlertingPattern *int      `xml:"alerting-pattern,omitempty"`
-	Version         string    `xml:"-"`
-	Session         struct {
-		ID string `xml:"-"`
-	} `xml:"-"`
-	Dialog struct {
-		Text string `xml:"-"`
-	} `xml:"-"`
+	XMLName    xml.Name `xml:"ussd-data"`
+	Xmlns      string   `xml:"xmlns,attr"`
+	Language   string   `xml:"language"`
+	USSDString string   `xml:"ussd-string"`
 }
 
-// EncodeXML encodes a standards-shaped USSI document.
-func EncodeXML(payload *XMLPayload) ([]byte, error) {
-	if payload == nil {
-		return nil, errors.New("ussi: nil payload")
+// EncodeXML encodes one USSD string using the original media-type namespace.
+func EncodeXML(text, language string) ([]byte, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, errors.New("USSD command 为空")
 	}
-	copy := *payload
-	if copy.Text == "" {
-		copy.Text = copy.Dialog.Text
+	language = strings.TrimSpace(language)
+	if language == "" {
+		language = defaultLanguage
 	}
-	if copy.Request == nil && copy.Notify == nil {
-		copy.Request = &struct{}{}
-	}
-	body, err := xml.Marshal(&copy)
+	payload := XMLPayload{Xmlns: ContentType, Language: language, USSDString: text}
+	body, err := xml.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("ussi: encode XML: %w", err)
+		return nil, fmt.Errorf("编码 USSD XML 失败: %w", err)
 	}
 	return append([]byte(xml.Header), body...), nil
 }
 
-// DecodeXML decodes a USSI document and rejects unrelated XML roots.
+// DecodeXML decodes one USSI document.
 func DecodeXML(body []byte) (*XMLPayload, error) {
-	if len(strings.TrimSpace(string(body))) == 0 {
-		return nil, errors.New("ussi: empty XML body")
+	if len(body) == 0 {
+		return nil, errors.New("USSD XML body 为空")
 	}
 	var payload XMLPayload
 	if err := xml.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("ussi: decode XML: %w", err)
+		return nil, fmt.Errorf("解析 USSD XML 失败: %w", err)
 	}
-	if payload.XMLName.Local != "ussd-data" {
-		return nil, fmt.Errorf("ussi: unexpected XML root %q", payload.XMLName.Local)
-	}
-	payload.Dialog.Text = payload.Text
 	return &payload, nil
 }
 
-func requestXML(text string) ([]byte, error) {
-	payload := &XMLPayload{Language: "en", Text: text, Request: &struct{}{}}
-	return EncodeXML(payload)
-}
-
-// IsContentType reports whether a media type contains a USSI document.
+// IsContentType accepts both full and parameter-free USSI media types.
 func IsContentType(contentType string) bool {
-	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
-	return mediaType == ContentType || mediaType == "application/vnd.3gpp.ussi+xml"
+	value := strings.ToLower(strings.TrimSpace(contentType))
+	return strings.Contains(value, ContentType) ||
+		strings.Contains(value, "application/3gpp-ussd+xml")
 }
 
-// LooksLikeMenu reports whether a network result requests another selection.
+// LooksLikeMenu requires at least two numbered choices, as in v1.5.5.
 func LooksLikeMenu(message string) bool {
+	choices := 0
 	for _, line := range strings.Split(message, "\n") {
 		line = strings.TrimSpace(line)
-		if len(line) >= 2 && line[0] >= '1' && line[0] <= '9' && (line[1] == '.' || line[1] == ')') {
-			return true
+		if len(line) < 2 || line[0] < '1' || line[0] > '9' {
+			continue
+		}
+		switch line[1] {
+		case '.', ')', ':', ' ':
+			choices++
 		}
 	}
-	return false
+	return choices > 1
 }
 
-// ParseResult maps network text to the compatibility result shape.
-func ParseResult(sessionID, body string) (*Result, error) {
-	message := strings.TrimSpace(body)
-	result := Result{SessionID: sessionID, Code: "0", Message: message, Done: true}
-	if LooksLikeMenu(message) {
-		result.Code = "1"
-		result.Done = false
+// ParseResult maps a SIP body into the v1.5.5 result contract.
+func ParseResult(body []byte, sessionID string) *Result {
+	result := &Result{DCS: defaultDCS}
+	if len(body) == 0 {
+		result.Text = emptyResponse
+		return result
 	}
-	return &result, nil
-}
-
-func resultFromXML(sessionID string, body []byte) (Result, error) {
-	payload, err := DecodeXML(body)
+	result.RawXML = string(body)
+	xmlBody := ExtractFromMultipart(body)
+	if len(xmlBody) == 0 {
+		xmlBody = body
+	}
+	payload, err := DecodeXML(xmlBody)
 	if err != nil {
-		return Result{}, err
+		result.Text = string(body)
+		return result
 	}
-	done := payload.Notify != nil || payload.ErrorCode != nil
-	result := Result{
-		SessionID: sessionID,
-		Code:      "1",
-		Message:   strings.TrimSpace(payload.Text),
-		RawXML:    string(body),
-		Done:      done,
+	result.Text = payload.USSDString
+	if LooksLikeMenu(result.Text) {
+		result.Status = 1
+		result.SessionID = sessionID
 	}
-	if done {
-		result.Code = "0"
-	}
-	if payload.ErrorCode != nil {
-		result.Code = fmt.Sprint(*payload.ErrorCode)
-	}
-	return result, nil
+	return result
 }

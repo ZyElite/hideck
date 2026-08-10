@@ -78,8 +78,16 @@ func (s *Service) GetIMSContextSnapshot() sipkit.IMSRuntimeSnapshot {
 	if localAddr == "" {
 		localAddr = s.cfg.LocalIP.String()
 	}
+	impu := strings.TrimSpace(s.cfg.IMPU)
+	if s.regSession != nil && strings.TrimSpace(s.regSession.publicID) != "" {
+		impu = strings.TrimSpace(s.regSession.publicID)
+	}
+	if impu == "" && strings.TrimSpace(s.assocMSISDN) != "" {
+		domain := firstNonBlank(s.cfg.Realm, s.cfg.Domain)
+		impu = "sip:" + strings.TrimSpace(s.assocMSISDN) + "@" + domain
+	}
 	return sipkit.IMSRuntimeSnapshot{
-		IMPU: s.cfg.IMPU, Realm: firstNonBlank(s.cfg.Realm, s.cfg.Domain), ContactID: contactID,
+		IMPU: impu, Realm: firstNonBlank(s.cfg.Realm, s.cfg.Domain), ContactID: contactID,
 		ServiceRoute: currentServiceRoute(s.regSession), SecVerify: s.securityVerify,
 		EffectiveSecMode: s.effectiveSecurityModeLocked(), PAccessNetworkInfo: s.GetPAccessNetworkInfo(),
 		UserAgent: s.cfg.UserAgent, LocalAddr: localAddr,

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/emiago/sipgo/sip"
 )
 
 // base64Std encodes b as standard base64.
@@ -222,31 +224,37 @@ func TestUSSDLifecycle(t *testing.T) {
 		if method == "ACK" {
 			return nil
 		}
-		response := registerResponseForRequest(request, 200, map[string]string{
-			"To": "<sip:ussi@ims.example>;tag=remote", "Contact": "<sip:ussi@server.example>",
-		})
-		response.Reason = "OK"
-		response.Headers["Content-Type"] = "application/vnd.3gpp.ussd+xml"
-		if method == "INVITE" {
-			response.Body = []byte(`<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>1. Balance</ussd-string><UnstructuredSS-Request/></ussd-data>`)
-		} else {
-			response.Body = []byte(`<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>Balance: 10</ussd-string><UnstructuredSS-Notify/></ussd-data>`)
+		message, parseErr := parseSIPMessage(request)
+		if parseErr != nil {
+			return parseErr
 		}
-		svc.transport.DeliverResponse(response)
+		parsedRequest := message.(*sip.Request)
+		body := []byte(`<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>Balance: 10</ussd-string><UnstructuredSS-Notify/></ussd-data>`)
+		if method == "INVITE" {
+			body = []byte(`<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>1. Balance&#10;2. Data</ussd-string><UnstructuredSS-Request/></ussd-data>`)
+		}
+		parsedResponse := sip.NewResponseFromRequest(parsedRequest, 200, "OK", body)
+		parsedResponse.AppendHeader(sip.NewHeader("Content-Type", "application/vnd.3gpp.ussd+xml"))
+		if method == "INVITE" {
+			parsedResponse.To().Params.Add("tag", "remote")
+			contact := &sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: "ussi", Host: "server.example"}}
+			parsedResponse.AppendHeader(contact)
+		}
+		svc.transport.DeliverResponse(newSIPResponse(parsedResponse))
 		return nil
 	})
 	res, err := svc.SendUSSD(context.Background(), "*100#")
 	if err != nil {
 		t.Fatalf("SendUSSD: %v", err)
 	}
-	if res.Done || svc.GetActiveUSSDSession() != res.SessionID {
+	if res.Status != 1 || svc.GetActiveUSSDSession() != res.SessionID {
 		t.Fatalf("initial result = %#v, active = %q", res, svc.GetActiveUSSDSession())
 	}
 	continued, err := svc.ContinueUSSD(context.Background(), res.SessionID, "1")
 	if err != nil {
 		t.Fatalf("ContinueUSSD: %v", err)
 	}
-	if !continued.Done || continued.Message != "Balance: 10" || svc.GetActiveUSSDSession() != "" {
+	if continued.Status != 0 || continued.Text != "Balance: 10" || svc.GetActiveUSSDSession() != "" {
 		t.Fatalf("continued result = %#v, active = %q", continued, svc.GetActiveUSSDSession())
 	}
 	wantMethods := []string{"INVITE", "ACK", "INFO"}

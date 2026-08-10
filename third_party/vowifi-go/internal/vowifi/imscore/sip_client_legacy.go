@@ -149,14 +149,20 @@ func (s *Service) completeClientInviteResult(
 		return result, waitErr
 	}
 	accepted := response != nil && response.StatusCode >= 200 && response.StatusCode < 300
-	handle.markDone(accepted)
 	if !accepted {
+		handle.markDone(false)
 		s.closeClientInviteDialog(handle)
 		if response == nil {
 			return result, errors.New("client INVITE final response 为空")
 		}
 		return result, fmt.Errorf("client INVITE response: %d %s", response.StatusCode, response.Reason)
 	}
+	if response.parsed == nil {
+		handle.markDone(false)
+		s.closeClientInviteDialog(handle)
+		return result, errors.New("client INVITE final response 未解析")
+	}
+	handle.markDone(true)
 	dialog := s.promoteClientInviteDialog(handle, response.parsed)
 	handle.mu.Lock()
 	handle.dialog = dialog.client

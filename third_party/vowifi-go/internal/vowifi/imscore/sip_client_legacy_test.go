@@ -169,6 +169,25 @@ func TestLegacyClientInviteOnStartedFailureCleansTransaction(t *testing.T) {
 	assertTransactionCount(t, service.transport, 0)
 }
 
+func TestCompleteClientInviteRejectsUnparsedAcceptedResponse(t *testing.T) {
+	service := newRegisteredClientInviteService(t)
+	handle := &imscoreInviteHandle{id: "unparsed-final"}
+	result := &imsendpoint.ClientInviteResult{InviteHandle: handle}
+
+	result, err := service.completeClientInviteResult(
+		handle, result, &sipResponse{StatusCode: 200, Reason: "OK"}, nil, nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "未解析") {
+		t.Fatalf("result=%+v error=%v", result, err)
+	}
+	handle.mu.Lock()
+	confirmed := handle.confirmed
+	handle.mu.Unlock()
+	if confirmed {
+		t.Fatal("unparsed final response confirmed the dialog")
+	}
+}
+
 type legacyClientInviteOutcome struct {
 	result *imsendpoint.ClientInviteResult
 	err    error

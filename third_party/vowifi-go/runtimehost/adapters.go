@@ -244,13 +244,9 @@ func messagingUSSDResult(result *imscore.USSDResult) *messaging.USSDResult {
 	if result == nil {
 		return nil
 	}
-	status := 0
-	if !result.Done {
-		status = 1
-	}
 	return &messaging.USSDResult{
-		SessionID: result.SessionID, Status: status, Text: result.Message,
-		RawText: result.RawXML, Code: result.Code, Message: result.Message,
+		SessionID: result.SessionID, Status: result.Status, Text: result.Text,
+		RawText: result.RawXML, DCS: result.DCS, Message: result.Text,
 	}
 }
 

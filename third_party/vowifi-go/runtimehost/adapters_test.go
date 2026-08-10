@@ -140,8 +140,8 @@ func TestServiceAdapterUSSD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendUSSD: %v", err)
 	}
-	if res.Code != "0" {
-		t.Errorf("ussd code = %q", res.Code)
+	if res.Status != 0 || res.Text != "Balance: 10" {
+		t.Errorf("ussd result = %+v", res)
 	}
 }
 

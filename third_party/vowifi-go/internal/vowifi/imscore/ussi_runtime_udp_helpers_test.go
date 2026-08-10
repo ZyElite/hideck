@@ -120,14 +120,8 @@ func serveUDPUSSITimeout(conn *net.UDPConn) error {
 	if err := writeUDPUSSIResponse(conn, remote, invite, nil); err != nil {
 		return err
 	}
-	if _, _, err = readUDPUSSIRequest(conn, "ACK"); err != nil {
-		return err
-	}
-	bye, remote, err := readUDPUSSIRequest(conn, "BYE")
-	if err != nil {
-		return err
-	}
-	return writeUDPUSSIResponse(conn, remote, bye, nil)
+	_, _, err = readUDPUSSIRequest(conn, "ACK")
+	return err
 }
 
 func serveUDPUSSIUntilACK(conn *net.UDPConn) error {

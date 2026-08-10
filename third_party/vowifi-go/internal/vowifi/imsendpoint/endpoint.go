@@ -13,20 +13,25 @@ type DialogEndpoint interface {
 	SendDialogRequest(context.Context, string, DialogHandle, *sip.Request, DialogRequestOptions) (*sip.Response, error)
 }
 
-// Endpoint is the runtime-owned IMS service surface needed by voice lifecycle binding.
-// The full call and dialog contract is restored with imscore and voice.
-type Endpoint interface {
+// ClientDialogEndpoint is the v1.5.5 client and dialog signaling contract.
+type ClientDialogEndpoint interface {
 	DialogEndpoint
+	AnswerServerInvite(context.Context, string, ServerInviteHandle, ServerInviteAnswerOptions) (DialogHandle, error)
+	CancelClientInvite(context.Context, string, InviteHandle, ClientInviteCancelOptions) error
 	DeviceID() string
 	IsRegistered() bool
 	NextCSeq() uint32
-	SendReliableProvisionalPRACK(context.Context, string, ReliableProvisionalOptions) error
-	StartClientInvite(context.Context, string, ClientInviteOptions) (*ClientInviteResult, error)
-	CancelClientInvite(context.Context, string, InviteHandle, ClientInviteCancelOptions) error
-	RespondInboundRequest(context.Context, string, InboundRequestHandle, InboundResponseOptions) error
-	AnswerServerInvite(context.Context, string, ServerInviteHandle, ServerInviteAnswerOptions) (DialogHandle, error)
 	RejectServerInvite(context.Context, string, ServerInviteHandle, ServerInviteRejectOptions) error
+	SendReliableProvisionalPRACK(context.Context, string, ReliableProvisionalOptions) error
 	Snapshot() Snapshot
+	StartClientInvite(context.Context, string, ClientInviteOptions) (*ClientInviteResult, error)
+}
+
+// Endpoint is the runtime-owned IMS service surface needed by voice lifecycle binding.
+// The full call and dialog contract is restored with imscore and voice.
+type Endpoint interface {
+	ClientDialogEndpoint
+	RespondInboundRequest(context.Context, string, InboundRequestHandle, InboundResponseOptions) error
 	Subscribe(EventSubscription, func(Event)) func()
 }
 

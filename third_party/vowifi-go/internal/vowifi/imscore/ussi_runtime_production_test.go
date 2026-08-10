@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	testUSSIMenuXML  = `<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>1. Balance</ussd-string><UnstructuredSS-Request/></ussd-data>`
+	testUSSIMenuXML  = `<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>1. Balance&#10;2. Data</ussd-string><UnstructuredSS-Request/></ussd-data>`
 	testUSSIFinalXML = `<?xml version="1.0"?><ussd-data><language>en</language><ussd-string>Balance: 10</ussd-string><UnstructuredSS-Notify/></ussd-data>`
 )
 
@@ -24,14 +24,14 @@ func TestUSSIProductionUDPLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.Done || initial.Message != "1. Balance" {
+	if initial.Status != 1 || initial.Text != "1. Balance\n2. Data" {
 		t.Fatalf("initial result = %+v", initial)
 	}
 	final, err := service.ContinueUSSD(ctx, initial.SessionID, "1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !final.Done || final.Message != "Balance: 10" {
+	if final.Status != 0 || final.Text != "Balance: 10" {
 		t.Fatalf("continued result = %+v", final)
 	}
 	second, err := service.SendUSSD(ctx, "*101#")
@@ -49,7 +49,7 @@ func TestUSSIProductionUDPLifecycle(t *testing.T) {
 	}
 }
 
-func TestUSSIProductionUDPTimeoutSendsBYEAndClearsSession(t *testing.T) {
+func TestUSSIProductionUDPTimeoutClosesAndClearsSession(t *testing.T) {
 	registrar, service := newRegisteredUDPUSSIService(t)
 	serverResult := make(chan error, 1)
 	go func() { serverResult <- serveUDPUSSITimeout(registrar) }()

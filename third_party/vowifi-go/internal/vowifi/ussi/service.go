@@ -7,400 +7,250 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/imsendpoint"
 )
 
-const dialogFailureCleanupTimeout = 5 * time.Second
+const ussiTransactionTimeout = 45 * time.Second
 
-// Send starts a USSI dialog and waits for a real network result.
-func (s *Service) Send(command string) (*Result, error) {
-	return s.SendContext(context.Background(), command)
-}
-
-// SendContext starts a USSI dialog using the caller's timeout.
-func (s *Service) SendContext(ctx context.Context, command string) (*Result, error) {
+// Send starts a USSI dialog and waits for a network-provided result.
+func (s *Service) Send(ctx context.Context, command string) (*Result, error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
-		return nil, errors.New("ussi: command is empty")
+		return nil, errors.New("USSD command 为空")
 	}
-	cfg, err := s.configForOperation()
+	endpoint, err := s.readyEndpoint()
 	if err != nil {
 		return nil, err
 	}
-	session, err := s.newSession(cfg, command)
+	body, err := EncodeXML(command, defaultLanguage)
 	if err != nil {
 		return nil, err
 	}
-	request, err := buildInitialInvite(cfg, session, command)
+	dialogContext, err := contextFromEndpoint(endpoint)
 	if err != nil {
-		s.clearSession(session.id)
+		return nil, fmt.Errorf("构建 USSI 上下文失败: %w", err)
+	}
+	session, request, err := s.startSession(endpoint, dialogContext, command, body)
+	if err != nil {
 		return nil, err
 	}
-	response, err := cfg.Transport.RoundTrip(ctx, request)
+	logUSSISIPRaw(s.deviceID, "initial_invite", "send", request)
+	invite, err := endpoint.StartClientInvite(operationContext(ctx), s.deviceID,
+		imsendpoint.ClientInviteOptions{
+			Request: request, Contact: request.Contact(), Timeout: int64(ussiTransactionTimeout),
+		})
+	if invite != nil {
+		logUSSISIPRaw(s.deviceID, "initial_invite", "recv", invite.Response)
+	}
 	if err != nil {
-		s.clearSession(session.id)
-		return nil, fmt.Errorf("ussi: INVITE transaction failed: %w", err)
+		return s.failInvite(session, invite, err)
 	}
-	learnDialog(session, response)
-	if err := cfg.Transport.Send(ctx, buildACK(cfg, session, response.StatusCode)); err != nil {
-		s.clearSession(session.id)
-		return nil, fmt.Errorf("ussi: send ACK: %w", err)
+	if err := s.establishDialog(ctx, session, invite); err != nil {
+		return s.failSession(session, err)
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		s.clearSession(session.id)
-		return nil, fmt.Errorf("ussi: INVITE rejected: %d %s", response.StatusCode, strings.TrimSpace(response.Reason))
-	}
-	if result, found, parseErr := parseResponseResult(session.id, response); found || parseErr != nil {
-		return s.finishNetworkResult(session, result, parseErr)
-	}
-	return s.waitResult(ctx, cfg, session)
+	result, err := parseOrWaitResult(ctx, invite.Response, session)
+	return s.finishResult(session, result, err)
 }
 
-// Continue sends an in-dialog INFO and waits for the network result.
-func (s *Service) Continue(sessionID, input string) (*Result, error) {
-	return s.ContinueContext(context.Background(), sessionID, input)
+// SendContext is the additive spelling retained from the reconstruction.
+func (s *Service) SendContext(ctx context.Context, command string) (*Result, error) {
+	return s.Send(ctx, command)
 }
 
-// ContinueContext continues a USSI dialog.
-func (s *Service) ContinueContext(ctx context.Context, sessionID, input string) (*Result, error) {
+func (s *Service) startSession(
+	endpoint imsendpoint.ClientDialogEndpoint,
+	dialogContext Context,
+	command string,
+	body []byte,
+) (*Session, *sip.Request, error) {
+	now := time.Now()
+	session := &Session{
+		ID: "ussd-" + common.RandomHex(8), CallID: common.RandomHex(32),
+		State: sessionActive, ResultCh: make(chan InfoResult, 4),
+		CreatedAt: now, LastAt: now, dialogContext: dialogContext,
+	}
+	cseq := endpoint.NextCSeq()
+	if cseq == 0 {
+		cseq = 1
+	}
+	request, err := BuildInitialInvite(
+		dialogContext, command, session.CallID, common.RandomHex(8),
+		"z9hG4bK"+common.RandomHex(18), cseq, body,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("构建 USSI INVITE 失败: %w", err)
+	}
+	session.RemoteURI = request.Recipient.String()
+	session.RemoteTarget = session.RemoteURI
+	s.setSession(session)
+	if !s.ownsSession(session) {
+		return nil, nil, errors.New("已有活动 USSD 会话，请先继续或取消当前会话")
+	}
+	return session, request, nil
+}
+
+func (s *Service) establishDialog(
+	ctx context.Context,
+	session *Session,
+	invite *imsendpoint.ClientInviteResult,
+) error {
+	if invite == nil || invite.Response == nil {
+		return errors.New("USSI INVITE final response 为空")
+	}
+	if invite.Dialog == nil {
+		return errors.New("USSI INVITE 未建立 dialog")
+	}
+	learnSessionFromResponse(session, invite)
+	sendACK(ctx, s.deviceID, s.endpoint, invite.Dialog, session)
+	return nil
+}
+
+func learnSessionFromResponse(session *Session, invite *imsendpoint.ClientInviteResult) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.dialogHandle = invite.Dialog
+	if contact := invite.Response.Contact(); contact != nil {
+		session.RemoteTarget = contact.Address.String()
+	}
+	session.LastAt = time.Now()
+}
+
+func (s *Service) failInvite(
+	session *Session,
+	invite *imsendpoint.ClientInviteResult,
+	cause error,
+) (*Result, error) {
+	text := cause.Error()
+	if invite != nil && invite.Response != nil {
+		text = fmt.Sprintf("%d %s", invite.Response.StatusCode, invite.Response.Reason)
+	}
+	return s.failSession(session, fmt.Errorf("USSI INVITE 失败: %w", cause), text)
+}
+
+func (s *Service) failSession(session *Session, cause error, text ...string) (*Result, error) {
+	message := cause.Error()
+	if len(text) > 0 && strings.TrimSpace(text[0]) != "" {
+		message = strings.TrimSpace(text[0])
+	}
+	result := &Result{Text: message, Status: 2, SessionID: session.ID, DCS: defaultDCS}
+	s.closeSession(session)
+	return result, cause
+}
+
+// Continue sends an in-dialog INFO and waits for its result.
+func (s *Service) Continue(
+	ctx context.Context,
+	sessionID, input string,
+) (*Result, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
-		return nil, errors.New("ussi: input is empty")
+		return nil, errors.New("USSD 输入为空")
 	}
-	cfg, err := s.configForOperation()
+	session, err := s.sessionFor(sessionID)
 	if err != nil {
 		return nil, err
 	}
-	session := s.sessionFor(sessionID)
-	if session == nil || !session.IsActive() {
-		return nil, errors.New("ussi: session not found")
-	}
-	body, err := requestXML(input)
+	endpoint, err := s.readyEndpoint()
 	if err != nil {
 		return nil, err
 	}
-	session.mu.Lock()
-	session.cseq++
-	session.lastCommand = input
-	request := buildDialogRequest(cfg, session, "INFO", body)
-	session.mu.Unlock()
-	response, err := cfg.Transport.RoundTrip(ctx, request)
+	body, err := EncodeXML(input, defaultLanguage)
 	if err != nil {
-		cause := fmt.Errorf("ussi: INFO transaction failed: %w", err)
-		return nil, s.cleanupFailedDialog(cfg, session, cause)
+		return nil, err
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		s.clearSession(session.id)
-		return nil, fmt.Errorf("ussi: INFO rejected: %d %s", response.StatusCode, strings.TrimSpace(response.Reason))
+	dialog, dialogContext, ok := sessionDialog(session)
+	if !ok {
+		return nil, errors.New("USSI 会话缺少 dialog handle")
 	}
-	if result, found, parseErr := parseResponseResult(session.id, response); found || parseErr != nil {
-		return s.finishNetworkResult(session, result, parseErr)
+	touchSession(session)
+	request, err := BuildInfo(session, body, dialogContext)
+	if err != nil {
+		return nil, fmt.Errorf("构建 USSI INFO 失败: %w", err)
 	}
-	return s.waitResult(ctx, cfg, session)
+	logUSSISIPRaw(s.deviceID, "continue_info", "send", request)
+	response, err := endpoint.SendDialogRequest(
+		operationContext(ctx), s.deviceID, dialog, request,
+		imsendpoint.DialogRequestOptions{Timeout: int64(ussiTransactionTimeout)},
+	)
+	logUSSISIPRaw(s.deviceID, "continue_info", "recv", response)
+	if err != nil {
+		return s.failSession(session, fmt.Errorf("USSI INFO 失败: %w", err))
+	}
+	result, err := parseOrWaitResult(ctx, response, session)
+	return s.finishResult(session, result, err)
 }
 
-// Cancel sends a real in-dialog BYE before clearing the session.
-func (s *Service) Cancel(sessionID string) error {
-	return s.CancelContext(context.Background(), sessionID)
+// ContinueContext retains the additive reconstruction API.
+func (s *Service) ContinueContext(
+	ctx context.Context,
+	sessionID, input string,
+) (*Result, error) {
+	return s.Continue(ctx, sessionID, input)
 }
 
-// CancelContext cancels a USSI dialog.
-func (s *Service) CancelContext(ctx context.Context, sessionID string) error {
-	cfg, err := s.configForOperation()
+// Cancel sends BYE and clears the active session even when BYE fails.
+func (s *Service) Cancel(ctx context.Context, sessionID string) error {
+	session, err := s.sessionFor(sessionID)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(sessionID) == "" {
-		sessionID = s.ActiveSessionID()
+	endpoint, err := s.readyEndpoint()
+	if err != nil {
+		return err
 	}
-	session := s.sessionFor(sessionID)
-	if session == nil {
-		return errors.New("ussi: session not found")
+	dialog, dialogContext, ok := sessionDialog(session)
+	if !ok {
+		s.closeSession(session)
+		return errors.New("USSI 会话缺少 dialog handle")
 	}
-	session.mu.Lock()
-	session.cseq++
-	request := buildDialogRequest(cfg, session, "BYE", nil)
-	session.mu.Unlock()
-	response, roundTripErr := cfg.Transport.RoundTrip(ctx, request)
-	s.clearSession(sessionID)
-	if roundTripErr != nil {
-		return fmt.Errorf("ussi: BYE transaction failed: %w", roundTripErr)
+	touchSession(session)
+	request, err := buildDialogRequest(session, sip.BYE, nil, dialogContext)
+	if err != nil {
+		s.closeSession(session)
+		return fmt.Errorf("构建 USSI BYE 失败: %w", err)
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("ussi: BYE rejected: %d %s", response.StatusCode, strings.TrimSpace(response.Reason))
+	logUSSISIPRaw(s.deviceID, "cancel_bye", "send", request)
+	response, sendErr := endpoint.SendDialogRequest(
+		operationContext(ctx), s.deviceID, dialog, request,
+		imsendpoint.DialogRequestOptions{Timeout: int64(ussiTransactionTimeout)},
+	)
+	logUSSISIPRaw(s.deviceID, "cancel_bye", "recv", response)
+	closeErr := endpoint.CloseDialog(operationContext(ctx), s.deviceID, dialog)
+	s.clearSession(session.ID)
+	if sendErr != nil {
+		sendErr = fmt.Errorf("发送 USSI BYE 失败: %w", sendErr)
 	}
-	return nil
+	return errors.Join(sendErr, closeErr)
 }
 
-// ActiveSessionID returns the current network dialog identifier.
+// CancelContext retains the additive reconstruction API.
+func (s *Service) CancelContext(ctx context.Context, sessionID string) error {
+	return s.Cancel(ctx, sessionID)
+}
+
+// ActiveSessionID returns the active menu session identifier.
 func (s *Service) ActiveSessionID() string {
-	if s == nil {
+	session := s.activeSession()
+	if session == nil {
 		return ""
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.active == nil || !s.active.IsActive() {
-		return ""
-	}
-	return s.active.ID()
+	return session.ID
 }
 
-// HandleInbound handles network INFO and BYE requests for an active dialog.
-func (s *Service) HandleInbound(request InboundRequest) (InboundResult, error) {
-	method := strings.ToUpper(strings.TrimSpace(request.Method))
-	if method != "INFO" && method != "BYE" {
-		return InboundResult{}, nil
+func (s *Service) readyEndpoint() (imsendpoint.ClientDialogEndpoint, error) {
+	if s == nil || s.endpoint == nil {
+		return nil, errors.New("USSI endpoint 为空")
 	}
-	looksUSSI := IsContentType(request.ContentType) || strings.EqualFold(strings.TrimSpace(request.InfoPackage), InfoPackage)
-	session := s.matchInboundSession(request.CallID)
-	if session == nil {
-		if looksUSSI {
-			return InboundResult{Handled: true, StatusCode: 481}, nil
-		}
-		return InboundResult{}, nil
+	if !s.endpoint.IsRegistered() {
+		return nil, errors.New("IMS 未注册，无法发送 USSD")
 	}
-	if method == "BYE" && len(request.Body) == 0 {
-		result := Result{SessionID: session.id, Code: "0", Done: true}
-		s.deliverResult(session, result)
-		s.clearSession(session.id)
-		return InboundResult{Handled: true, StatusCode: 200, Result: &result}, nil
-	}
-	xmlBody, found, err := extractUSSI(request.ContentType, request.Body)
-	if err != nil || !found {
-		if err == nil {
-			err = errors.New("ussi: inbound request has no USSI XML")
-		}
-		return InboundResult{Handled: true, StatusCode: 400}, err
-	}
-	result, err := resultFromXML(session.id, xmlBody)
-	if err != nil {
-		return InboundResult{Handled: true, StatusCode: 400}, err
-	}
-	if method == "BYE" {
-		result.Done = true
-		result.Code = "0"
-	}
-	s.deliverResult(session, result)
-	if result.Done {
-		s.clearSession(session.id)
-	}
-	return InboundResult{Handled: true, StatusCode: 200, Result: &result}, nil
+	return s.endpoint, nil
 }
-
-// HandleInboundInfoNoResponse preserves the recovered public API.
-func (s *Service) HandleInboundInfoNoResponse(sessionID, body string) {
-	session := s.sessionFor(sessionID)
-	if session == nil {
-		return
+func operationContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
 	}
-	_, _ = s.HandleInbound(InboundRequest{Method: "INFO", CallID: session.callID, ContentType: ContentType, Body: []byte(body)})
-}
-
-// HandleInboundByeNoResponse preserves the recovered public API.
-func (s *Service) HandleInboundByeNoResponse(sessionID string) {
-	session := s.sessionFor(sessionID)
-	if session == nil {
-		return
-	}
-	_, _ = s.HandleInbound(InboundRequest{Method: "BYE", CallID: session.callID})
-}
-
-// Stop terminates all sessions and wakes blocked callers.
-func (s *Service) Stop() {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	s.stopped = true
-	sessions := make([]*Session, 0, len(s.sessions))
-	for _, session := range s.sessions {
-		sessions = append(sessions, session)
-	}
-	s.sessions = make(map[string]*Session)
-	s.active = nil
-	s.mu.Unlock()
-	for _, session := range sessions {
-		session.Terminate()
-		select {
-		case session.results <- resultEvent{err: errors.New("ussi: service stopped")}:
-		default:
-		}
-	}
-}
-
-func (s *Service) configForOperation() (Config, error) {
-	if s == nil {
-		return Config{}, errors.New("ussi: nil service")
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.stopped {
-		return Config{}, errors.New("ussi: service stopped")
-	}
-	if s.cfg.Transport == nil {
-		return Config{}, errors.New("ussi: service is not configured")
-	}
-	return s.cfg, nil
-}
-
-func (s *Service) newSession(cfg Config, command string) (*Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.active != nil && s.active.IsActive() {
-		return nil, errors.New("ussi: another session is active")
-	}
-	id := "ussi-" + randomHex(8)
-	session := &Session{
-		id: id, callID: "ussi-" + token(id) + "@vowifi-go",
-		localTag: randomHex(8), remoteURI: dialstringURI(command, cfg.Domain),
-		inviteBranch: "z9hG4bK" + randomHex(12), cseq: 1, active: true,
-		lastCommand: command, routeSet: splitHeaderValues(cfg.ServiceRoute),
-		results: make(chan resultEvent, 4),
-	}
-	session.remoteTarget = session.remoteURI
-	s.sessions[id] = session
-	s.active = session
-	return session, nil
-}
-
-func (s *Service) sessionFor(sessionID string) *Session {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.sessions[strings.TrimSpace(sessionID)]
-}
-
-func (s *Service) matchInboundSession(callID string) *Session {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, session := range s.sessions {
-		if strings.TrimSpace(session.callID) == strings.TrimSpace(callID) && session.IsActive() {
-			return session
-		}
-	}
-	return nil
-}
-
-func (s *Service) clearSession(sessionID string) {
-	s.mu.Lock()
-	session := s.sessions[strings.TrimSpace(sessionID)]
-	delete(s.sessions, strings.TrimSpace(sessionID))
-	if s.active == session {
-		s.active = nil
-	}
-	s.mu.Unlock()
-	if session != nil {
-		session.Terminate()
-	}
-}
-
-func (s *Service) waitResult(ctx context.Context, cfg Config, session *Session) (*Result, error) {
-	select {
-	case <-ctx.Done():
-		cause := fmt.Errorf("ussi: wait for network result: %w", ctx.Err())
-		return nil, s.cleanupFailedDialog(cfg, session, cause)
-	case event := <-session.results:
-		if event.err != nil {
-			return nil, event.err
-		}
-		return &event.result, nil
-	}
-}
-
-func (s *Service) cleanupFailedDialog(cfg Config, session *Session, cause error) error {
-	session.mu.Lock()
-	session.cseq++
-	request := buildDialogRequest(cfg, session, "BYE", nil)
-	session.mu.Unlock()
-	s.clearSession(session.id)
-
-	ctx, cancel := context.WithTimeout(context.Background(), dialogFailureCleanupTimeout)
-	defer cancel()
-	response, err := cfg.Transport.RoundTrip(ctx, request)
-	if err != nil {
-		return errors.Join(cause, fmt.Errorf("ussi: cleanup BYE transaction failed: %w", err))
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		cleanupErr := fmt.Errorf("ussi: cleanup BYE rejected: %d %s", response.StatusCode, strings.TrimSpace(response.Reason))
-		return errors.Join(cause, cleanupErr)
-	}
-	return cause
-}
-
-func (s *Service) finishNetworkResult(session *Session, result Result, err error) (*Result, error) {
-	if err != nil {
-		s.clearSession(session.id)
-		return nil, err
-	}
-	result = resultWithSessionCommand(session, result)
-	s.notifyResult(result)
-	if result.Done {
-		s.clearSession(session.id)
-	}
-	return &result, nil
-}
-
-func (s *Service) deliverResult(session *Session, result Result) {
-	result = resultWithSessionCommand(session, result)
-	s.notifyResult(result)
-	select {
-	case session.results <- resultEvent{result: result}:
-	default:
-	}
-}
-
-func resultWithSessionCommand(session *Session, result Result) Result {
-	if session == nil || result.Command != "" {
-		return result
-	}
-	session.mu.RLock()
-	result.Command = session.lastCommand
-	session.mu.RUnlock()
-	return result
-}
-
-func (s *Service) notifyResult(result Result) {
-	s.mu.RLock()
-	onResult := s.cfg.OnResult
-	s.mu.RUnlock()
-	if onResult != nil {
-		onResult(result)
-	}
-}
-
-func parseResponseResult(sessionID string, response Response) (Result, bool, error) {
-	if len(response.Body) == 0 {
-		return Result{}, false, nil
-	}
-	body, found, err := extractUSSI(responseHeader(response.Headers, "Content-Type"), response.Body)
-	if err != nil || !found {
-		return Result{}, found, err
-	}
-	result, err := resultFromXML(sessionID, body)
-	return result, true, err
-}
-
-func dialstringURI(command, domain string) string {
-	var encoded strings.Builder
-	for _, value := range []byte(command) {
-		switch {
-		case value >= '0' && value <= '9', value == '*':
-			encoded.WriteByte(value)
-		case value == '#':
-			encoded.WriteString("%23")
-		default:
-			fmt.Fprintf(&encoded, "%%%02X", value)
-		}
-	}
-	if strings.TrimSpace(domain) == "" {
-		return "tel:" + encoded.String()
-	}
-	return "sip:" + encoded.String() + "@" + strings.TrimSpace(domain) + ";user=dialstring"
-}
-
-func randomHex(size int) string {
-	return common.RandomHex(size)
-}
-
-func token(value string) string {
-	return strings.NewReplacer("@", "", ".", "", "-", "").Replace(value)
+	return ctx
 }

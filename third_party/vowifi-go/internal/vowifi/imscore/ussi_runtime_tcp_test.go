@@ -22,14 +22,14 @@ func TestUSSIProductionProtectedTCPLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.Done || initial.Message != "1. Balance" {
+	if initial.Status != 1 || initial.Text != "1. Balance\n2. Data" {
 		t.Fatalf("initial result = %+v", initial)
 	}
 	final, err := service.ContinueUSSD(ctx, initial.SessionID, "1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !final.Done || final.Message != "Balance: 10" {
+	if final.Status != 0 || final.Text != "Balance: 10" {
 		t.Fatalf("continued result = %+v", final)
 	}
 	if err := <-serverResult; err != nil {

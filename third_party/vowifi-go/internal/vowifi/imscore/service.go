@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iniwex5/vowifi-go/internal/vowifi/ussi"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 
@@ -50,7 +49,6 @@ func New(cfg *IMSConfig) (*Service, error) {
 		maintenanceWake:       make(chan struct{}, 1),
 		protectedConns:        make(map[net.Conn]struct{}),
 		transport:             transport,
-		ussd:                  ussi.NewService(),
 		smsTransactionTimeout: outboundSMSTransactionTimeout,
 		smsReportTimeout:      defaultSMSDeliveryReportTimeout,
 		messagingRuntime: messagingRuntime{
@@ -374,8 +372,8 @@ func (s *Service) StopCurrent() {
 		return
 	}
 	s.setSMSReceiverReady(false)
-	if s.ussd != nil {
-		s.ussd.Stop()
+	if service := s.existingUSSIService(); service != nil {
+		service.Stop()
 	}
 	select {
 	case <-s.stop:
