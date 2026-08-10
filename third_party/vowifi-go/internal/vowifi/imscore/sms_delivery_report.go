@@ -9,6 +9,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/internal/smscodec"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/warthog618/sms/encoding/tpdu"
 )
 
@@ -84,7 +85,7 @@ func parseTPStatusReport(payload []byte) (smsDeliveryReport, error) {
 }
 
 func (s *Service) recordSMSDeliveryReport(raw string, report smsDeliveryReport) error {
-	s.recordMORPErrorCause(report.rpCause)
+	s.handleMORPError(report.rpCause, report.errorText)
 	inReplyTo := rawSIPHeaderValue(raw, "In-Reply-To")
 	callID := rawSIPHeaderValue(raw, "Call-ID")
 	if s.delivery == nil {
@@ -118,14 +119,42 @@ func (s *Service) recordSMSDeliveryReport(raw string, report smsDeliveryReport) 
 	return nil
 }
 
-func (s *Service) recordMORPErrorCause(cause int) {
+func (s *Service) handleMORPError(cause int, reason string) {
 	switch cause {
 	case 28:
 		s.moRPErrorCause28.Add(1)
+		logging.WarnRate("sms-mo-rp-cause-28-"+s.DeviceID(), 30*time.Second,
+			"IMS MO SMS RP-ERROR", "device", s.DeviceID(), "cause", cause, "reason", reason)
 	case 30:
 		s.moRPErrorCause30.Add(1)
+		s.handleMORPErrorCause30(reason, time.Now())
 	case 38:
 		s.moRPErrorCause38.Add(1)
+		logging.WarnRate("sms-mo-rp-cause-38-"+s.DeviceID(), 30*time.Second,
+			"IMS MO SMS RP-ERROR", "device", s.DeviceID(), "cause", cause, "reason", reason)
+	}
+}
+
+func (s *Service) handleMORPErrorCause30(reason string, now time.Time) {
+	if !s.claimMORPErrorCause30(now) {
+		return
+	}
+	logging.WarnRate("sms-mo-rp-cause-30-"+s.DeviceID(), 30*time.Second,
+		"IMS MO SMS RP-ERROR requires re-registration",
+		"device", s.DeviceID(), "cause", 30, "reason", reason)
+	s.triggerRegisterImmediate("RP-ERROR cause=30")
+}
+
+func (s *Service) claimMORPErrorCause30(now time.Time) bool {
+	const cooldown = 30 * time.Second
+	for {
+		previous := s.lastMORPErrorCause30At.Load()
+		if previous > 0 && now.Sub(time.Unix(0, previous)) < cooldown {
+			return false
+		}
+		if s.lastMORPErrorCause30At.CompareAndSwap(previous, now.UnixNano()) {
+			return true
+		}
 	}
 }
 

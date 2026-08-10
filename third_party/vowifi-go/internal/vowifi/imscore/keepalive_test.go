@@ -139,7 +139,7 @@ func TestIMSMaintenanceChoosesEarliestRegistrationOrKeepaliveDeadline(t *testing
 	service.keepaliveInterval = time.Minute
 	service.mu.Unlock()
 
-	if got, want := service.computeNextIMSWakeTime(now), now.Add(5*time.Second); !got.Equal(want) {
+	if got, want := service.computeNextWakeTime(now), now.Add(5*time.Second); !got.Equal(want) {
 		t.Fatalf("next poll wake = %s, want %s", got, want)
 	}
 	if got := service.nextIMSMaintenanceAction(now.Add(15 * time.Second)); got != imsMaintenanceKeepalive {
@@ -170,8 +170,9 @@ func TestInboundSIPTrafficDefersKeepaliveAndResetsFailures(t *testing.T) {
 	service := newProtectedKeepaliveTestService(t)
 	service.mu.Lock()
 	service.lastPingAt = time.Now().Add(-time.Minute)
-	service.keepaliveFailures = 2
 	service.mu.Unlock()
+	service.pingFailCount.Store(2)
+	service.lastPingOK.Store(false)
 
 	raw := "SIP/2.0 200 OK\r\nCall-ID: traffic\r\nCSeq: 9 OPTIONS\r\nContent-Length: 0\r\n\r\n"
 	before := time.Now()
@@ -180,13 +181,12 @@ func TestInboundSIPTrafficDefersKeepaliveAndResetsFailures(t *testing.T) {
 	}
 	service.mu.RLock()
 	lastTrafficAt := service.lastPingAt
-	failures := service.keepaliveFailures
 	service.mu.RUnlock()
 	if lastTrafficAt.Before(before) {
 		t.Fatalf("last traffic = %s, want at or after %s", lastTrafficAt, before)
 	}
-	if failures != 0 {
-		t.Fatalf("keepalive failures = %d, want 0", failures)
+	if status := service.Status(); status.PingFailCount != 0 || !status.LastPingOK {
+		t.Fatalf("ping status = count %d ok %v, want count 0 and ok", status.PingFailCount, status.LastPingOK)
 	}
 }
 

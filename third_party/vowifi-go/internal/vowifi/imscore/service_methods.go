@@ -248,6 +248,11 @@ func (s *Service) UpdateLastPingAt(t time.Time) {
 	if s.lastPingAt.IsZero() || t.After(s.lastPingAt) {
 		s.lastPingAt = t
 	}
-	s.keepaliveFailures = 0
+	s.pingFailCount.Store(0)
+	s.lastPingOK.Store(true)
 	s.mu.Unlock()
+}
+
+func (s *Service) handleTCPTraffic() {
+	s.UpdateLastPingAt(time.Now())
 }

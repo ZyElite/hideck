@@ -166,6 +166,7 @@ func (s *Service) protectedTransportState() (external, connected bool) {
 
 func (s *Service) activateProtectedRegistrationTCP(conn net.Conn) {
 	configureTCPKeepalive(conn)
+	conn = s.newInboundCountingConn(conn)
 	s.mu.Lock()
 	previous := s.registrationTCP
 	s.registrationTCP = conn
@@ -200,6 +201,7 @@ func (s *Service) readRegistrationResponses(conn net.PacketConn) {
 	for {
 		n, remote, err := conn.ReadFrom(buffer)
 		if err != nil {
+			s.handleRegistrationPacketReadError(conn, err)
 			return
 		}
 		err = s.dispatchInboundSIP(string(buffer[:n]), func(response string) error {
@@ -214,6 +216,17 @@ func (s *Service) readRegistrationResponses(conn net.PacketConn) {
 	}
 }
 
+func (s *Service) handleRegistrationPacketReadError(conn net.PacketConn, readErr error) {
+	if s.stopped() {
+		return
+	}
+	err := fmt.Errorf("imscore: registration SIP packet socket closed: %w", readErr)
+	if !s.markRegistrationPacketSignalingDead(conn, err) {
+		return
+	}
+	logging.WarnRate("ims-registration-packet", "IMS registration SIP packet socket closed", "err", err)
+}
+
 func (s *Service) acceptProtectedSIP(listener net.Listener) {
 	defer s.networkDone.Done()
 	s.receiverStarted()
@@ -223,11 +236,13 @@ func (s *Service) acceptProtectedSIP(listener net.Listener) {
 		if err != nil {
 			return
 		}
+		s.inboundTCPAccept.Add(1)
+		configureTCPKeepalive(conn)
+		conn = s.newInboundCountingConn(conn)
 		if !s.trackProtectedConnection(conn) {
 			_ = conn.Close()
 			return
 		}
-		configureTCPKeepalive(conn)
 		s.networkDone.Add(1)
 		go s.serveProtectedSIPConnection(conn)
 	}

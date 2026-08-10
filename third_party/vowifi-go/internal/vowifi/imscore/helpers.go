@@ -3,9 +3,13 @@ package imscore
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
@@ -212,6 +216,13 @@ func CountryISO2FromMCC(mcc string) string {
 func IsFatalNetworkError(err error) bool {
 	if err == nil {
 		return false
+	}
+	for _, target := range []error{
+		io.EOF, net.ErrClosed, syscall.ECONNREFUSED, syscall.ECONNRESET, syscall.EPIPE,
+	} {
+		if errors.Is(err, target) {
+			return true
+		}
 	}
 	message := strings.ToLower(err.Error())
 	for _, fatal := range []string{

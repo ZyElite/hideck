@@ -103,17 +103,23 @@ func (s *Service) RegState() string {
 
 // Status returns a status snapshot.
 func (s *Service) Status() *ServiceStatus {
+	status := s.captureStatusSnapshot()
+	return &status
+}
+
+func (s *Service) captureStatusSnapshot() ServiceStatus {
 	if s == nil || s.cfg == nil {
-		return &ServiceStatus{}
+		return ServiceStatus{}
 	}
 	lastSMSTrace, lastSMSAt, lastSMSErr := s.smsSendStatus()
+	inboundStats := s.captureInboundStats()
 	s.receiverMu.Lock()
 	rxRunning := s.activeReceivers > 0
 	s.receiverMu.Unlock()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	identities := s.cfg.publicIdentities()
-	status := &ServiceStatus{
+	status := ServiceStatus{
 		Enabled: s.cfg.Enabled, DeviceID: s.cfg.DeviceID,
 		Registered: s.regState == regRegistered || s.regStatus.Load() == registrationRegistered,
 		RegStatus:  registrationStatusText(s.regStatus.Load()),
@@ -134,14 +140,17 @@ func (s *Service) Status() *ServiceStatus {
 		SignalingFailureReason: s.signalingFailureReason,
 		RegFailCount:           int(s.regFailCount.Load()),
 		ReRegisterPending:      s.reRegisterPending.Load() || s.notifyReconnectPending.Load(),
-		LastPingAt:             s.lastPingAt, ServiceRoute: currentServiceRoute(s.regSession),
-		Path: s.path, SecurityVerify: s.securityVerify, AssociatedMSISDN: s.assocMSISDN,
+		PingFailCount:          int(s.pingFailCount.Load()),
+		LastPingAt:             s.lastPingAt, LastPingOK: s.lastPingOK.Load(),
+		ServiceRoute: currentServiceRoute(s.regSession),
+		Path:         s.path, SecurityVerify: s.securityVerify, AssociatedMSISDN: s.assocMSISDN,
 		LastError: s.lastError, LastRegisterTraceID: s.lastRegisterTraceID,
 		LastRegisterAttemptAt: s.lastRegisterAttemptAt, LastRegisterOKAt: s.lastRegisterOKAt,
 		LastRegisterErr:    s.lastRegisterErr,
 		LastSMSSendTraceID: lastSMSTrace, LastSMSSendAt: lastSMSAt,
 		LastSMSSendErr: lastSMSErr, FragmentAudit: s.fragmentAuditSnapshot(),
-		State: s.state, RegState: s.regState, IMPUs: identities,
+		Diagnostics: inboundStats.diagnostics(),
+		State:       s.state, RegState: s.regState, IMPUs: identities,
 	}
 	ready, reason := s.evaluateSignalingReadyLocked(status.Registered)
 	status.SignalingReady = status.SignalingReady && ready
@@ -360,6 +369,7 @@ func (s *Service) Stop() {
 		s.transitionRegStatus(registrationStopping)
 		close(s.stop)
 	}
+	s.stopInboundStatsLogger()
 	s.clearPendingSMS()
 	s.mu.Lock()
 	registrationIO := s.registrationIO

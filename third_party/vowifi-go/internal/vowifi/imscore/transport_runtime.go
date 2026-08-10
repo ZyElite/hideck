@@ -28,8 +28,14 @@ func (s *Service) receiverStarted() {
 	s.receiverMu.Lock()
 	s.activeReceivers++
 	active := s.activeReceivers > 0
+	startStats := s.activeReceivers == 1
 	s.receiverMu.Unlock()
 	s.setSMSReceiverReady(active)
+	if startStats {
+		s.startInboundStatsLogger(context.Background(), inboundStatsLoggerOptions{
+			Interval: defaultInboundStatsInterval,
+		})
+	}
 }
 
 func (s *Service) receiverStopped() {
@@ -132,11 +138,14 @@ func (s *Service) dispatchInboundSIP(raw string, reply func(string) error) error
 
 func (s *Service) dispatchInboundSIPMessage(message sip.Message, raw string, reply func(string) error) error {
 	s.UpdateLastPingAt(time.Now())
+	s.inboundSIPParsedMessage.Add(1)
 	switch parsed := message.(type) {
 	case *sip.Response:
+		s.inboundSIPParsedResp.Add(1)
 		s.transport.DeliverResponse(newSIPResponse(parsed))
 		return nil
 	case *sip.Request:
+		s.inboundSIPParsedRequest.Add(1)
 		return s.dispatchInboundSIPRequest(parsed, raw, reply)
 	default:
 		return errors.New("imscore: unsupported inbound SIP message")

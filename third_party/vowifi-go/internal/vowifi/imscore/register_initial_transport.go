@@ -87,6 +87,13 @@ func (s *Service) activateInitialRegistrationTransport(
 	opened *initialRegistrationTransport,
 	serverListener, clientReservation net.Listener,
 ) {
+	if opened.packet != nil {
+		opened.packet = &inboundCountingPacketConn{conn: opened.packet, service: s}
+	}
+	if opened.stream != nil {
+		configureTCPKeepalive(opened.stream)
+		opened.stream = s.newInboundCountingConn(opened.stream)
+	}
 	s.cfg.LocalPort = opened.port
 	s.mu.Lock()
 	s.registrationIO = opened.packet

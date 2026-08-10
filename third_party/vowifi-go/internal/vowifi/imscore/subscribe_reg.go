@@ -56,9 +56,14 @@ func (s *Service) stopped() bool {
 }
 
 func (s *Service) reportRegistrationRuntimeError(err error) {
+	if err == nil || s == nil || s.stopped() {
+		return
+	}
 	select {
 	case s.registerErrors <- err:
 	default:
+		logging.WarnRate("ims-runtime-error-overflow-"+s.DeviceID(), time.Minute,
+			"IMS runtime error channel is full", "device", s.DeviceID(), "err", err)
 	}
 }
 

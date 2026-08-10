@@ -2,11 +2,13 @@ package imscore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
+	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imsheaders"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
@@ -38,18 +40,18 @@ func (s *Service) startIMSKeepalive() {
 	if s == nil {
 		return
 	}
+	s.UpdateLastPingAt(time.Now())
 	s.keepaliveOnce.Do(func() {
-		s.UpdateLastPingAt(time.Now())
 		s.networkDone.Add(1)
-		go s.runIMSMaintenance()
+		go s.keepaliveLoop()
 	})
 	s.signalIMSMaintenance()
 }
 
-func (s *Service) runIMSMaintenance() {
+func (s *Service) keepaliveLoop() {
 	defer s.networkDone.Done()
 	for {
-		if !s.waitForIMSMaintenance(s.computeNextIMSWakeTime(time.Now())) {
+		if !s.waitForIMSMaintenance(s.computeNextWakeTime(time.Now())) {
 			return
 		}
 		switch s.nextIMSMaintenanceAction(time.Now()) {
@@ -80,7 +82,7 @@ func (s *Service) waitForIMSMaintenance(wakeAt time.Time) bool {
 	}
 }
 
-func (s *Service) computeNextIMSWakeTime(now time.Time) time.Time {
+func (s *Service) computeNextWakeTime(now time.Time) time.Time {
 	s.mu.RLock()
 	registered := s.regState == regRegistered
 	subscriptionEligible := s.subscriptionEligibleLocked()
@@ -133,26 +135,35 @@ func (s *Service) handleIMSKeepaliveTick() {
 	if !s.IsRegistered() {
 		return
 	}
-	s.recordIMSKeepaliveResult(s.sendIMSKeepalive(), time.Now())
+	_, _ = s.sendPing()
+}
+
+func (s *Service) sendPing() (bool, error) {
+	if !s.pingSending.CompareAndSwap(false, true) {
+		return false, nil
+	}
+	defer s.pingSending.Store(false)
+	err := s.sendIMSKeepalive()
+	s.recordIMSKeepaliveResult(err, time.Now())
+	return true, err
 }
 
 func (s *Service) recordIMSKeepaliveResult(err error, completedAt time.Time) {
 	s.mu.Lock()
 	s.lastPingAt = completedAt
-	if err == nil {
-		s.keepaliveFailures = 0
-	} else {
-		s.keepaliveFailures++
-	}
-	failures := s.keepaliveFailures
 	limit := s.keepaliveFailureLimit
-	s.mu.Unlock()
 	if err == nil {
+		s.pingFailCount.Store(0)
+		s.lastPingOK.Store(true)
+		s.mu.Unlock()
 		s.keepaliveSuccessOnce.Do(func() {
 			logging.Info("IMS SIP keepalive established", "device", s.DeviceID())
 		})
 		return
 	}
+	s.lastPingOK.Store(false)
+	failures := int(s.pingFailCount.Add(1))
+	s.mu.Unlock()
 	logging.WarnRate("ims-keepalive", "IMS SIP keepalive failed",
 		"device", s.DeviceID(), "attempt", failures, "err", err)
 	if failures >= limit {
@@ -169,7 +180,6 @@ func (s *Service) requestRuntimeReconnect(keepaliveErr error) {
 	s.regState = regFailed
 	s.registrationRefreshAt = time.Time{}
 	s.subscriptionRefreshAt = time.Time{}
-	s.keepaliveFailures = 0
 	s.mu.Unlock()
 	s.transitionRegStatus(registrationRejectedTemporary)
 	s.notifySMSReadiness()
@@ -177,6 +187,7 @@ func (s *Service) requestRuntimeReconnect(keepaliveErr error) {
 		s.keepaliveFailureLimit, keepaliveErr)
 	logging.WarnRate("ims-fast-reconnect", "IMS SIP keepalive requested runtime rebuild",
 		"device", s.DeviceID(), "err", err)
+	s.triggerRegisterReconnect()
 	s.reportRegistrationRuntimeError(err)
 }
 
@@ -193,6 +204,20 @@ func (s *Service) refreshRegistrationSubscription() {
 	if err := s.sendSubscribeReg(ctx); err != nil {
 		s.reportSubscriptionRuntimeError(err)
 	}
+}
+
+func logRegisterRetryAttemptFailure(device, phase string, err error) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, enginesim.ErrAPDUBusy) {
+		logging.Info("IMS REGISTER retry deferred because SIM is busy",
+			"device", device, "phase", strings.TrimSpace(phase), "err", err)
+		return
+	}
+	logging.WarnRate("ims-register-retry-"+device, 30*time.Second,
+		"IMS REGISTER retry failed",
+		"device", device, "phase", strings.TrimSpace(phase), "err", err)
 }
 
 func registrationRefreshDelay(expires time.Duration) time.Duration {
@@ -223,7 +248,6 @@ func (s *Service) sendIMSKeepalive() error {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("OPTIONS rejected with status %d (%s)", response.StatusCode, response.Reason)
 	}
-	s.UpdateLastPingAt(time.Now())
 	return nil
 }
 

@@ -2,7 +2,11 @@ package imscore
 
 import (
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -43,6 +47,7 @@ func TestIsFatalNetworkError(t *testing.T) {
 		errors.New("connection refused"), errors.New("network is unreachable"),
 		errors.New("use of closed network connection"), errors.New("no route to host"),
 		errors.New("connection reset by peer"), errors.New("broken pipe"),
+		io.EOF, net.ErrClosed, fmt.Errorf("wrapped reset: %w", syscall.ECONNRESET),
 	}
 	for _, e := range fatal {
 		if !IsFatalNetworkError(e) {

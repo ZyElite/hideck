@@ -121,6 +121,7 @@ type observability struct {
 	moRPErrorCause28        atomic.Int64
 	moRPErrorCause30        atomic.Int64
 	moRPErrorCause38        atomic.Int64
+	lastMORPErrorCause30At  atomic.Int64
 	outboundQueueReject     atomic.Int64
 	bypassSuppressedSMS     atomic.Int64
 	inboundUDPSocketRead    atomic.Uint64

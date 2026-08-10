@@ -185,6 +185,9 @@ type Service struct {
 	sipWriteMu                sync.Mutex
 	receiverMu                sync.Mutex
 	activeReceivers           int
+	inboundStatsMu            sync.Mutex
+	inboundStatsCancel        context.CancelFunc
+	inboundStatsDone          chan struct{}
 	networkDone               sync.WaitGroup
 	registerErrors            chan error
 	keepaliveOnce             sync.Once
@@ -201,7 +204,6 @@ type Service struct {
 	keepaliveInterval         time.Duration
 	keepaliveTimeout          time.Duration
 	keepaliveFailureLimit     int
-	keepaliveFailures         int
 
 	// Dialogs.
 	dialogRegistry *dialogRegistry

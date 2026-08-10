@@ -830,6 +830,7 @@ func (s *Service) refreshRegistration() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := s.Register(ctx); err != nil {
+		logRegisterRetryAttemptFailure(s.DeviceID(), "periodic", err)
 		s.reportRegistrationRuntimeError(fmt.Errorf("imscore: registration refresh failed: %w", err))
 	}
 }

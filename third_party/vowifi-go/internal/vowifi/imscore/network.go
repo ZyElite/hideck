@@ -241,7 +241,19 @@ func (c *sipFramingConn) LocalAddr() net.Addr {
 
 // inboundCountingConn counts inbound bytes/conns.
 type inboundCountingConn struct {
-	conn net.Conn
+	conn    net.Conn
+	service *Service
+	onRead  func()
+}
+
+func (s *Service) newInboundCountingConn(conn net.Conn) net.Conn {
+	if conn == nil {
+		return nil
+	}
+	if _, counted := conn.(*inboundCountingConn); counted {
+		return conn
+	}
+	return &inboundCountingConn{conn: conn, service: s, onRead: s.handleTCPTraffic}
 }
 
 // Read reads and counts.
@@ -250,6 +262,13 @@ func (c *inboundCountingConn) Read(b []byte) (int, error) {
 		return 0, errors.New("imscore: nil conn")
 	}
 	n, err := c.conn.Read(b)
+	if n > 0 && c.service != nil {
+		c.service.inboundTCPSocketRead.Add(1)
+		c.service.inboundTCPSocketBytes.Add(uint64(n))
+		if c.onRead != nil {
+			c.onRead()
+		}
+	}
 	return n, err
 }
 
@@ -287,7 +306,8 @@ func (c *inboundCountingConn) RemoteAddr() net.Addr {
 
 // inboundCountingPacketConn counts inbound packets.
 type inboundCountingPacketConn struct {
-	conn net.PacketConn
+	conn    net.PacketConn
+	service *Service
 }
 
 // ReadFrom reads a packet.
@@ -295,7 +315,12 @@ func (c *inboundCountingPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	if c == nil || c.conn == nil {
 		return 0, nil, errors.New("imscore: nil packet conn")
 	}
-	return c.conn.ReadFrom(b)
+	n, address, err := c.conn.ReadFrom(b)
+	if n > 0 && c.service != nil {
+		c.service.inboundUDPSocketRead.Add(1)
+		c.service.inboundUDPSocketBytes.Add(uint64(n))
+	}
+	return n, address, err
 }
 
 // WriteTo writes a packet.
