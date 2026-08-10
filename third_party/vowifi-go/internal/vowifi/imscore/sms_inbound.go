@@ -39,21 +39,27 @@ type decodedInboundSMSRequest struct {
 	info smscodec.RPDUInfo
 }
 
+type fragmentLifecycleContext struct {
+	TraceID, Device, Transport, CallID, Key string
+	ArrivedAt                               time.Time
+	Message                                 inboundSMS
+}
+
 func inboundAckHeaders(request *sip.Request) (string, string, string, string) {
 	if request == nil {
 		return "", "", "", ""
 	}
 	callID := sipkit.FirstHeaderValue(request, "Call-ID", false)
-	inReplyTo := sipkit.FirstHeaderValue(request, "In-Reply-To", false)
+	assertedIdentity := sipkit.FirstHeaderValue(request, "P-Asserted-Identity", false)
 	from := sipkit.FirstHeaderValue(request, "From", false)
 	to := sipkit.FirstHeaderValue(request, "To", false)
-	if strings.TrimSpace(inReplyTo) == "" {
-		inReplyTo = callID
+	if strings.TrimSpace(to) == "" {
+		to = sipkit.FirstHeaderValue(request, "P-Called-Party-ID", false)
 	}
 	if strings.TrimSpace(to) == "" {
-		to = from
+		to = firstNonBlank(assertedIdentity, from)
 	}
-	return callID, inReplyTo, from, to
+	return callID, assertedIdentity, from, to
 }
 
 func (s *Service) decodeInboundSMSRequest(raw string) (*decodedInboundSMSRequest, error) {
@@ -175,11 +181,16 @@ func (s *Service) finalizeInboundSMSData(
 	}, nil
 }
 
-func fragmentLifecycleLogFields(message inboundSMS) []interface{} {
+func fragmentLifecycleLogFields(ctx fragmentLifecycleContext) []interface{} {
+	message := ctx.Message
 	return []interface{}{
+		"trace_id", ctx.TraceID, "device", ctx.Device,
 		"sender", normalizeFragmentIdentity(message.sender), "ref", message.concatRef,
 		"ref_bits", message.refBits, "total", message.total, "seq", message.partNo,
-		"rp_mr", message.rpMR,
+		"transport", ctx.Transport, "call_id", ctx.CallID, "rp_mr", message.rpMR,
+		"arrive_at", ctx.ArrivedAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
+		"content_len", len(message.content), "sc_addr", message.serviceCenter,
+		"local_identity", message.targetURI, "key", ctx.Key,
 	}
 }
 
@@ -222,7 +233,20 @@ func (s *Service) assembleInboundSMS(raw string, message *inboundSMS) (bool, err
 	if message.total <= 1 {
 		return s.shouldDispatchMTSMS(*message, raw), nil
 	}
-	logging.RunDebug("IMS SMS fragment received", fragmentLifecycleLogFields(*message)...)
+	identity := fragmentSessionIdentity{
+		Sender: message.sender, ServiceCenter: message.serviceCenter, Local: message.targetURI,
+		Reference: message.concatRef, RefBits: message.refBits, Total: message.total,
+	}
+	traceID, device, transport := "", "", ""
+	if s != nil && s.cfg != nil {
+		traceID, device = s.cfg.TraceID, s.cfg.DeviceID
+		_, _, _, _, transport = s.smsMessageRoute()
+	}
+	logging.RunDebug("IMS SMS fragment received", fragmentLifecycleLogFields(fragmentLifecycleContext{
+		TraceID: traceID, Device: device, Transport: transport,
+		CallID: strings.TrimSpace(rawSIPHeaderValue(raw, "Call-ID")),
+		Key:    buildFragmentSessionKey(identity), ArrivedAt: time.Now(), Message: *message,
+	})...)
 	content, complete, err := s.handleSMSFragment(message.sender, &smsFragment{
 		Ref: message.concatRef, RefBits: message.refBits,
 		Total: message.total, Seq: message.partNo, Content: message.content,

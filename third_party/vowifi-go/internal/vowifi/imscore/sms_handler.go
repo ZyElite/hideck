@@ -72,15 +72,16 @@ func appendRPErrorFields(fields []interface{}, value string) []interface{} {
 
 func rpCauseText(cause int) string {
 	causes := map[int]string{
+		0:  "",
 		21: "short message transfer rejected", 22: "memory capacity exceeded",
-		28: "unidentified subscriber", 29: "facility rejected", 30: "unknown subscriber",
+		28: "IMSI unknown in HLR", 29: "facility not supported", 30: "unknown subscriber",
 		38: "network out of order", 41: "temporary failure", 42: "congestion",
 		47: "resources unavailable", 50: "requested facility not subscribed",
 		69: "requested facility not implemented", 95: "semantically incorrect message",
-		96: "invalid mandatory information", 97: "message type not implemented",
-		98: "message incompatible with protocol state", 111: "protocol error",
+		96: "invalid mandatory information", 97: "message type non-existent or not implemented",
+		98: "message not compatible with short message protocol", 111: "protocol error",
 	}
-	if text := causes[cause]; text != "" {
+	if text, ok := causes[cause]; ok {
 		return text
 	}
 	return "unknown"

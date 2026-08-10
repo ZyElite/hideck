@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -347,6 +348,78 @@ func TestDecodeInboundRPDataFallsBackToFromWhenToIsMissing(t *testing.T) {
 	}
 	if message.targetURI != "sip:+447802002606@ims.example" {
 		t.Fatalf("target URI = %q", message.targetURI)
+	}
+}
+
+func TestInboundAckHeadersUsesRecoveredIdentityPriority(t *testing.T) {
+	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 57, "+447700900123", "headers"))
+	raw = strings.Replace(raw, "To: <sip:234102356143376@ims.example>\r\n",
+		"P-Asserted-Identity: <sip:asserted@ims.example>\r\n"+
+			"P-Called-Party-ID: <sip:called@ims.example>\r\n", 1)
+	parsed, err := parseSIPMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callID, asserted, from, to := inboundAckHeaders(parsed.(*sip.Request))
+	if callID != "inbound-sms" || asserted != "<sip:asserted@ims.example>" ||
+		from != "<sip:+447802002606@ims.example>;tag=remote" ||
+		to != "<sip:called@ims.example>" {
+		t.Fatalf("ack headers = %q, %q, %q, %q", callID, asserted, from, to)
+	}
+	request := parsed.(*sip.Request)
+	request.RemoveHeader("P-Called-Party-ID")
+	_, _, _, to = inboundAckHeaders(request)
+	if to != "<sip:asserted@ims.example>" {
+		t.Fatalf("asserted identity fallback = %q", to)
+	}
+}
+
+func TestFragmentLifecycleLogFieldsMatchRecoveredSet(t *testing.T) {
+	arrivedAt := time.Date(2026, time.August, 10, 11, 12, 13, 456000000, time.FixedZone("BST", 3600))
+	fields := fragmentLifecycleLogFields(fragmentLifecycleContext{
+		TraceID: "trace", Device: "device", Transport: "tcp", CallID: "fragment-call",
+		Key: "fragment-key", ArrivedAt: arrivedAt,
+		Message: inboundSMS{
+			sender: "+447700900123", serviceCenter: "+447802002606",
+			targetURI: "sip:user@ims.example", content: "part", rpMR: 58,
+			concatRef: 7, refBits: 8, total: 3, partNo: 2,
+		},
+	})
+	if len(fields) != 30 {
+		t.Fatalf("field count = %d", len(fields))
+	}
+	got := make(map[string]interface{}, len(fields)/2)
+	for index := 0; index < len(fields); index += 2 {
+		got[fields[index].(string)] = fields[index+1]
+	}
+	want := map[string]interface{}{
+		"trace_id": "trace", "device": "device", "sender": "+447700900123",
+		"ref": 7, "ref_bits": 8, "seq": 2, "total": 3, "transport": "tcp",
+		"call_id": "fragment-call", "rp_mr": byte(58),
+		"arrive_at": "2026-08-10T11:12:13.456+01:00", "content_len": 4,
+		"sc_addr": "+447802002606", "local_identity": "sip:user@ims.example",
+		"key": "fragment-key",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("fields = %#v", got)
+	}
+}
+
+func TestRPCauseTextMatchesRecoveredValues(t *testing.T) {
+	want := map[int]string{
+		0: "", 21: "short message transfer rejected", 22: "memory capacity exceeded",
+		28: "IMSI unknown in HLR", 29: "facility not supported", 30: "unknown subscriber",
+		38: "network out of order", 41: "temporary failure", 42: "congestion",
+		47: "resources unavailable", 50: "requested facility not subscribed",
+		69: "requested facility not implemented", 95: "semantically incorrect message",
+		96: "invalid mandatory information", 97: "message type non-existent or not implemented",
+		98: "message not compatible with short message protocol", 111: "protocol error",
+		999: "unknown",
+	}
+	for cause, text := range want {
+		if got := rpCauseText(cause); got != text {
+			t.Errorf("cause %d = %q, want %q", cause, got, text)
+		}
 	}
 }
 
