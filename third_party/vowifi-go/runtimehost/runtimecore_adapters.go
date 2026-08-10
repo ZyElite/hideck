@@ -50,19 +50,74 @@ type runtimeCoreSIPDeliveryStoreAdapter struct {
 	store messaging.SIPResultStore
 }
 
+type runtimeCoreFragmentCapability struct {
+	store messaging.InboundFragmentStore
+}
+
+type runtimeCoreFragmentStoreAdapter struct {
+	runtimeCoreDeliveryStoreAdapter
+	runtimeCoreFragmentCapability
+}
+
+type runtimeCoreCompleteStoreAdapter struct {
+	runtimeCoreSIPDeliveryStoreAdapter
+	runtimeCoreFragmentCapability
+}
+
 func runtimeCoreDeliveryStore(store messaging.DeliveryStore) smsdelivery.Store {
 	if store == nil {
 		return nil
 	}
 	base := runtimeCoreDeliveryStoreAdapter{store: store}
-	sipResults, ok := store.(messaging.SIPResultStore)
-	if !ok {
+	sipResults, hasSIPResults := store.(messaging.SIPResultStore)
+	fragments, hasFragments := store.(messaging.InboundFragmentStore)
+	switch {
+	case hasSIPResults && hasFragments:
+		return runtimeCoreCompleteStoreAdapter{
+			runtimeCoreSIPDeliveryStoreAdapter: runtimeCoreSIPDeliveryStoreAdapter{
+				runtimeCoreDeliveryStoreAdapter: base, store: sipResults,
+			},
+			runtimeCoreFragmentCapability: runtimeCoreFragmentCapability{store: fragments},
+		}
+	case hasSIPResults:
+		return runtimeCoreSIPDeliveryStoreAdapter{
+			runtimeCoreDeliveryStoreAdapter: base, store: sipResults,
+		}
+	case hasFragments:
+		return runtimeCoreFragmentStoreAdapter{
+			runtimeCoreDeliveryStoreAdapter: base,
+			runtimeCoreFragmentCapability:   runtimeCoreFragmentCapability{store: fragments},
+		}
+	default:
 		return base
 	}
-	return runtimeCoreSIPDeliveryStoreAdapter{
-		runtimeCoreDeliveryStoreAdapter: base,
-		store:                           sipResults,
-	}
+}
+
+func (adapter runtimeCoreFragmentCapability) LoadInboundFragments(
+	owner smsdelivery.InboundFragmentOwner,
+) ([]smsdelivery.StoredInboundFragment, error) {
+	return adapter.store.LoadInboundFragments(owner)
+}
+
+func (adapter runtimeCoreFragmentCapability) SaveInboundFragment(
+	scope smsdelivery.InboundFragmentScope,
+	fragment smsdelivery.InboundFragment,
+) (smsdelivery.InboundFragmentSaveResult, error) {
+	return adapter.store.SaveInboundFragment(scope, fragment)
+}
+
+func (adapter runtimeCoreFragmentCapability) DeleteInboundFragments(
+	scope smsdelivery.InboundFragmentScope,
+) error {
+	return adapter.store.DeleteInboundFragments(scope)
+}
+
+func (adapter runtimeCoreFragmentCapability) MarkInboundFragmentAcked(
+	scope smsdelivery.InboundFragmentScope,
+	sequence int,
+	at time.Time,
+) error {
+	return adapter.store.MarkInboundFragmentAcked(scope, sequence, at)
 }
 
 func (adapter runtimeCoreSIPDeliveryStoreAdapter) MarkSMSDeliveryPartSIPResult(

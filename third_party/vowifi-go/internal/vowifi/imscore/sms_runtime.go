@@ -169,6 +169,7 @@ type outboundSMSAudit struct {
 type fragmentState struct {
 	fragmentCache          map[string][]*smsFragment
 	fragmentMu             sync.Mutex
+	fragmentPersistMu      sync.Mutex
 	fragmentCleanupOnce    sync.Once
 	fragmentArrivedTotal   int64
 	fragmentAssembledOK    int64

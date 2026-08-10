@@ -1,6 +1,9 @@
 package smsdelivery
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // SendOutcome is returned after IMS accepts all SMS parts for delivery.
 type SendOutcome struct {
@@ -66,4 +69,58 @@ type SIPResultStore interface {
 		state, errText string,
 		at time.Time,
 	) error
+}
+
+// ErrInboundFragmentCollision reports a reused multipart identity whose
+// sequence metadata or content differs from the stored fragment.
+var ErrInboundFragmentCollision = errors.New("SMS inbound fragment collision")
+
+// InboundFragmentOwner isolates persisted fragments between subscriptions.
+type InboundFragmentOwner struct {
+	DeviceID string
+	IMSI     string
+}
+
+// InboundFragmentScope identifies one multipart message for an owner.
+type InboundFragmentScope struct {
+	Owner      InboundFragmentOwner
+	SessionKey string
+}
+
+// InboundFragment is the restart-safe form of an incomplete MT fragment.
+type InboundFragment struct {
+	Reference     int
+	ReferenceBits int
+	Total         int
+	Sequence      int
+	Content       string
+	ArrivedAt     time.Time
+	RPMR          int
+	CallID        string
+	ToURI         string
+	ServiceCenter string
+	AckSent       bool
+	AckSentAt     time.Time
+}
+
+// StoredInboundFragment associates a fragment with its persisted session.
+type StoredInboundFragment struct {
+	Scope    InboundFragmentScope
+	Fragment InboundFragment
+}
+
+// InboundFragmentSaveResult is an atomic snapshot after one fragment save.
+type InboundFragmentSaveResult struct {
+	Inserted        bool
+	CollisionReason string
+	Fragments       []InboundFragment
+}
+
+// InboundFragmentStore is an optional delivery-store capability. Implementers
+// must save and return the session snapshot atomically.
+type InboundFragmentStore interface {
+	LoadInboundFragments(owner InboundFragmentOwner) ([]StoredInboundFragment, error)
+	SaveInboundFragment(scope InboundFragmentScope, fragment InboundFragment) (InboundFragmentSaveResult, error)
+	DeleteInboundFragments(scope InboundFragmentScope) error
+	MarkInboundFragmentAcked(scope InboundFragmentScope, sequence int, at time.Time) error
 }

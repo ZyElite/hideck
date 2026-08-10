@@ -28,6 +28,88 @@ func (vowifiDeliveryStore) MarkSMSDeliveryPartSIPResult(
 	return db.MarkSMSDeliveryPartSIPResult(messageID, partNo, sipCode, state, errText, at)
 }
 
+func (vowifiDeliveryStore) LoadInboundFragments(
+	owner messaging.InboundFragmentOwner,
+) ([]messaging.StoredInboundFragment, error) {
+	rows, err := db.LoadSMSInboundFragments(db.SMSInboundFragmentScope{
+		DeviceID: owner.DeviceID, IMSI: owner.IMSI,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]messaging.StoredInboundFragment, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, inboundFragmentFromDB(row))
+	}
+	return result, nil
+}
+
+func (vowifiDeliveryStore) SaveInboundFragment(
+	scope messaging.InboundFragmentScope,
+	fragment messaging.InboundFragment,
+) (messaging.InboundFragmentSaveResult, error) {
+	dbResult, err := db.SaveSMSInboundFragment(fragmentScopeToDB(scope), inboundFragmentToDB(fragment))
+	result := messaging.InboundFragmentSaveResult{
+		Inserted: dbResult.Inserted, CollisionReason: dbResult.CollisionReason,
+		Fragments: make([]messaging.InboundFragment, 0, len(dbResult.Fragments)),
+	}
+	for _, row := range dbResult.Fragments {
+		result.Fragments = append(result.Fragments, inboundFragmentValueFromDB(row))
+	}
+	if errors.Is(err, db.ErrSMSInboundFragmentCollision) {
+		err = errors.Join(messaging.ErrInboundFragmentCollision, err)
+	}
+	return result, err
+}
+
+func (vowifiDeliveryStore) DeleteInboundFragments(scope messaging.InboundFragmentScope) error {
+	return db.DeleteSMSInboundFragments(fragmentScopeToDB(scope))
+}
+
+func (vowifiDeliveryStore) MarkInboundFragmentAcked(
+	scope messaging.InboundFragmentScope,
+	sequence int,
+	at time.Time,
+) error {
+	return db.MarkSMSInboundFragmentAcked(fragmentScopeToDB(scope), sequence, at)
+}
+
+func fragmentScopeToDB(scope messaging.InboundFragmentScope) db.SMSInboundFragmentScope {
+	return db.SMSInboundFragmentScope{
+		DeviceID: scope.Owner.DeviceID, IMSI: scope.Owner.IMSI, SessionKey: scope.SessionKey,
+	}
+}
+
+func inboundFragmentToDB(fragment messaging.InboundFragment) db.SMSInboundFragment {
+	return db.SMSInboundFragment{
+		Reference: fragment.Reference, ReferenceBits: fragment.ReferenceBits,
+		Total: fragment.Total, Sequence: fragment.Sequence, Content: fragment.Content,
+		ArrivedAt: fragment.ArrivedAt, RPMR: fragment.RPMR, CallID: fragment.CallID,
+		ToURI: fragment.ToURI, ServiceCenter: fragment.ServiceCenter,
+		AckSent: fragment.AckSent, AckSentAt: fragment.AckSentAt,
+	}
+}
+
+func inboundFragmentFromDB(row db.SMSInboundFragment) messaging.StoredInboundFragment {
+	return messaging.StoredInboundFragment{
+		Scope: messaging.InboundFragmentScope{
+			Owner:      messaging.InboundFragmentOwner{DeviceID: row.DeviceID, IMSI: row.IMSI},
+			SessionKey: row.SessionKey,
+		},
+		Fragment: inboundFragmentValueFromDB(row),
+	}
+}
+
+func inboundFragmentValueFromDB(row db.SMSInboundFragment) messaging.InboundFragment {
+	return messaging.InboundFragment{
+		Reference: row.Reference, ReferenceBits: row.ReferenceBits,
+		Total: row.Total, Sequence: row.Sequence, Content: row.Content,
+		ArrivedAt: row.ArrivedAt, RPMR: row.RPMR, CallID: row.CallID,
+		ToURI: row.ToURI, ServiceCenter: row.ServiceCenter,
+		AckSent: row.AckSent, AckSentAt: row.AckSentAt,
+	}
+}
+
 func (vowifiDeliveryStore) MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID string, rpMR int, state string, sipCode int, rpCause int, errText string, at time.Time) (messaging.DeliveryPartMatch, error) {
 	part, err := db.MarkSMSDeliveryPartReport(inReplyTo, callID, deviceID, rpMR, state, sipCode, rpCause, errText, at)
 	if err != nil {

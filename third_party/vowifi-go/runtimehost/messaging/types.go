@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
 )
 
 // ErrDeliveryNotFound is returned when a delivery record does not exist.
@@ -140,6 +142,17 @@ type DeliveryStore interface {
 type SIPResultStore interface {
 	MarkSMSDeliveryPartSIPResult(messageID string, partNo, sipCode int, state, errText string, at time.Time) error
 }
+
+type InboundFragmentOwner = smsdelivery.InboundFragmentOwner
+type InboundFragmentScope = smsdelivery.InboundFragmentScope
+type InboundFragment = smsdelivery.InboundFragment
+type StoredInboundFragment = smsdelivery.StoredInboundFragment
+type InboundFragmentSaveResult = smsdelivery.InboundFragmentSaveResult
+
+var ErrInboundFragmentCollision = smsdelivery.ErrInboundFragmentCollision
+
+// InboundFragmentStore optionally persists incomplete inbound multipart SMS.
+type InboundFragmentStore = smsdelivery.InboundFragmentStore
 
 // ServiceStatus is the IMS service registration status.
 type ServiceStatus struct {

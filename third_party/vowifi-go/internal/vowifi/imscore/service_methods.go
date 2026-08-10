@@ -15,6 +15,9 @@ func (s *Service) Start(ctx context.Context) error {
 	if s == nil || s.cfg == nil {
 		return errors.New("imscore: service not configured")
 	}
+	if err := s.restoreInboundFragments(); err != nil {
+		return err
+	}
 	s.startFragmentCleanup()
 	return s.Register(ctx)
 }

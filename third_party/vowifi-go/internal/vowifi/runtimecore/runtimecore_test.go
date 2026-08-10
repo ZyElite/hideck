@@ -665,8 +665,9 @@ func TestMissingIPSec3GPPInstallerReturnsOriginalError(t *testing.T) {
 
 type testSIPResultStore struct {
 	smsdelivery.Store
-	sipCode int
-	status  *smsdelivery.DeliveryStatus
+	sipCode       int
+	status        *smsdelivery.DeliveryStatus
+	inboundStored bool
 }
 
 func (store *testSIPResultStore) MarkSMSDeliveryPartSIPResult(
@@ -683,6 +684,32 @@ func (store *testSIPResultStore) GetSMSDeliveryStatus(string) (*smsdelivery.Deli
 	return store.status, nil
 }
 
+func (store *testSIPResultStore) LoadInboundFragments(
+	smsdelivery.InboundFragmentOwner,
+) ([]smsdelivery.StoredInboundFragment, error) {
+	return nil, nil
+}
+
+func (store *testSIPResultStore) SaveInboundFragment(
+	smsdelivery.InboundFragmentScope,
+	smsdelivery.InboundFragment,
+) (smsdelivery.InboundFragmentSaveResult, error) {
+	store.inboundStored = true
+	return smsdelivery.InboundFragmentSaveResult{Inserted: true}, nil
+}
+
+func (store *testSIPResultStore) DeleteInboundFragments(smsdelivery.InboundFragmentScope) error {
+	return nil
+}
+
+func (store *testSIPResultStore) MarkInboundFragmentAcked(
+	smsdelivery.InboundFragmentScope,
+	int,
+	time.Time,
+) error {
+	return nil
+}
+
 func TestDeliveryStoreAdapterPreservesOptionalSIPResults(t *testing.T) {
 	store := &testSIPResultStore{}
 	adapter := adaptDeliveryStore(store)
@@ -697,6 +724,15 @@ func TestDeliveryStoreAdapterPreservesOptionalSIPResults(t *testing.T) {
 	}
 	if store.sipCode != 202 {
 		t.Fatalf("persisted SIP code = %d", store.sipCode)
+	}
+	fragments, ok := adapter.(imscore.SMSInboundFragmentStore)
+	if !ok {
+		t.Fatal("runtimecore delivery adapter lost inbound fragment capability")
+	}
+	if _, err := fragments.SaveInboundFragment(
+		smsdelivery.InboundFragmentScope{}, smsdelivery.InboundFragment{},
+	); err != nil || !store.inboundStored {
+		t.Fatalf("SaveInboundFragment err=%v stored=%v", err, store.inboundStored)
 	}
 }
 

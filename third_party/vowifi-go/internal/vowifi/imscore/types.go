@@ -351,6 +351,15 @@ type DeliveryStore = smsdelivery.Store
 // MESSAGE transaction separately from the later RP delivery report.
 type SMSDeliverySIPResultStore = smsdelivery.SIPResultStore
 
+// SMSInboundFragmentStore persists incomplete inbound multipart SMS state.
+type SMSInboundFragmentStore = smsdelivery.InboundFragmentStore
+
+type smsInboundFragmentOwner = smsdelivery.InboundFragmentOwner
+type smsInboundFragmentScope = smsdelivery.InboundFragmentScope
+type smsInboundFragmentRecord = smsdelivery.InboundFragment
+type storedSMSInboundFragment = smsdelivery.StoredInboundFragment
+type smsInboundFragmentSaveResult = smsdelivery.InboundFragmentSaveResult
+
 // DeliveryPartMatch identifies a delivery part.
 type DeliveryPartMatch = smsdelivery.DeliveryPartMatch
 

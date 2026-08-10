@@ -38,16 +38,72 @@ type deliveryStoreSIPAdapter struct {
 	store smsdelivery.SIPResultStore
 }
 
+type deliveryStoreFragmentCapability struct {
+	store smsdelivery.InboundFragmentStore
+}
+
+type deliveryStoreFragmentAdapter struct {
+	deliveryStoreAdapter
+	deliveryStoreFragmentCapability
+}
+
+type deliveryStoreCompleteAdapter struct {
+	deliveryStoreSIPAdapter
+	deliveryStoreFragmentCapability
+}
+
 func adaptDeliveryStore(store smsdelivery.Store) imscore.DeliveryStore {
 	if store == nil {
 		return nil
 	}
 	base := deliveryStoreAdapter{store: store}
-	sipResults, ok := store.(smsdelivery.SIPResultStore)
-	if !ok {
+	sipResults, hasSIPResults := store.(smsdelivery.SIPResultStore)
+	fragments, hasFragments := store.(smsdelivery.InboundFragmentStore)
+	switch {
+	case hasSIPResults && hasFragments:
+		return deliveryStoreCompleteAdapter{
+			deliveryStoreSIPAdapter: deliveryStoreSIPAdapter{
+				deliveryStoreAdapter: base, store: sipResults,
+			},
+			deliveryStoreFragmentCapability: deliveryStoreFragmentCapability{store: fragments},
+		}
+	case hasSIPResults:
+		return deliveryStoreSIPAdapter{deliveryStoreAdapter: base, store: sipResults}
+	case hasFragments:
+		return deliveryStoreFragmentAdapter{
+			deliveryStoreAdapter:            base,
+			deliveryStoreFragmentCapability: deliveryStoreFragmentCapability{store: fragments},
+		}
+	default:
 		return base
 	}
-	return deliveryStoreSIPAdapter{deliveryStoreAdapter: base, store: sipResults}
+}
+
+func (adapter deliveryStoreFragmentCapability) LoadInboundFragments(
+	owner smsdelivery.InboundFragmentOwner,
+) ([]smsdelivery.StoredInboundFragment, error) {
+	return adapter.store.LoadInboundFragments(owner)
+}
+
+func (adapter deliveryStoreFragmentCapability) SaveInboundFragment(
+	scope smsdelivery.InboundFragmentScope,
+	fragment smsdelivery.InboundFragment,
+) (smsdelivery.InboundFragmentSaveResult, error) {
+	return adapter.store.SaveInboundFragment(scope, fragment)
+}
+
+func (adapter deliveryStoreFragmentCapability) DeleteInboundFragments(
+	scope smsdelivery.InboundFragmentScope,
+) error {
+	return adapter.store.DeleteInboundFragments(scope)
+}
+
+func (adapter deliveryStoreFragmentCapability) MarkInboundFragmentAcked(
+	scope smsdelivery.InboundFragmentScope,
+	sequence int,
+	at time.Time,
+) error {
+	return adapter.store.MarkInboundFragmentAcked(scope, sequence, at)
 }
 
 func (adapter deliveryStoreSIPAdapter) MarkSMSDeliveryPartSIPResult(

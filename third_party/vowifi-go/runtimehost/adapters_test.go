@@ -298,8 +298,9 @@ func assertProductionVoiceRequests(t *testing.T, requests <-chan string) {
 
 // memDeliveryStore is an in-memory delivery store for adapter tests.
 type memDeliveryStore struct {
-	status  *messaging.DeliveryStatus
-	sipCode int
+	status        *messaging.DeliveryStatus
+	sipCode       int
+	inboundStored bool
 }
 
 func (m *memDeliveryStore) CreateSMSDelivery(messageID, imsi, deviceID, peer, content string, partsTotal int, at time.Time) error {
@@ -326,6 +327,24 @@ func (m *memDeliveryStore) GetSMSDeliveryStatus(messageID string) (*messaging.De
 	}
 	return m.status, nil
 }
+func (m *memDeliveryStore) LoadInboundFragments(messaging.InboundFragmentOwner) ([]messaging.StoredInboundFragment, error) {
+	return nil, nil
+}
+func (m *memDeliveryStore) SaveInboundFragment(
+	messaging.InboundFragmentScope,
+	messaging.InboundFragment,
+) (messaging.InboundFragmentSaveResult, error) {
+	m.inboundStored = true
+	return messaging.InboundFragmentSaveResult{Inserted: true}, nil
+}
+func (m *memDeliveryStore) DeleteInboundFragments(messaging.InboundFragmentScope) error { return nil }
+func (m *memDeliveryStore) MarkInboundFragmentAcked(
+	messaging.InboundFragmentScope,
+	int,
+	time.Time,
+) error {
+	return nil
+}
 
 func TestDeliveryStoreAdapter(t *testing.T) {
 	store := &memDeliveryStore{}
@@ -350,6 +369,15 @@ func TestDeliveryStoreAdapter(t *testing.T) {
 	if store.sipCode != 202 {
 		t.Fatalf("persisted SIP code = %d", store.sipCode)
 	}
+	fragments, ok := adapter.(imscore.SMSInboundFragmentStore)
+	if !ok {
+		t.Fatal("adapter did not preserve inbound fragment capability")
+	}
+	if _, err := fragments.SaveInboundFragment(
+		messaging.InboundFragmentScope{}, messaging.InboundFragment{},
+	); err != nil || !store.inboundStored {
+		t.Fatalf("SaveInboundFragment err=%v stored=%v", err, store.inboundStored)
+	}
 }
 
 func TestRuntimeCoreDeliveryStorePreservesOptionalSIPResults(t *testing.T) {
@@ -366,6 +394,15 @@ func TestRuntimeCoreDeliveryStorePreservesOptionalSIPResults(t *testing.T) {
 	}
 	if store.sipCode != 202 {
 		t.Fatalf("persisted SIP code = %d", store.sipCode)
+	}
+	fragments, ok := adapter.(smsdelivery.InboundFragmentStore)
+	if !ok {
+		t.Fatal("runtimehost runtimecore adapter lost inbound fragment capability")
+	}
+	if _, err := fragments.SaveInboundFragment(
+		smsdelivery.InboundFragmentScope{}, smsdelivery.InboundFragment{},
+	); err != nil || !store.inboundStored {
+		t.Fatalf("SaveInboundFragment err=%v stored=%v", err, store.inboundStored)
 	}
 }
 

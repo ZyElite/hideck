@@ -6,7 +6,10 @@ import (
 	"time"
 
 	"github.com/iniwex5/vohive/internal/db"
+	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
+
+var _ messaging.InboundFragmentStore = vowifiDeliveryStore{}
 
 func TestVoWiFiDeliveryStoreReportsMatchedPart(t *testing.T) {
 	previousDB := db.DB
@@ -61,5 +64,28 @@ func TestVoWiFiDeliveryStoreReportsMatchedPart(t *testing.T) {
 	}
 	if preserved.Parts[0].State != "acked" || preserved.Parts[0].ReportAt == nil || preserved.Parts[0].ErrorText != "" {
 		t.Fatalf("late SIP result downgraded report = %+v", preserved.Parts[0])
+	}
+	assertInboundFragmentStoreRoundTrip(t, store, now)
+}
+
+func assertInboundFragmentStoreRoundTrip(t *testing.T, store vowifiDeliveryStore, at time.Time) {
+	t.Helper()
+	scope := messaging.InboundFragmentScope{
+		Owner:      messaging.InboundFragmentOwner{DeviceID: "wwan0", IMSI: "imsi-1"},
+		SessionKey: "sender=giffgaff|ref=198",
+	}
+	result, err := store.SaveInboundFragment(scope, messaging.InboundFragment{
+		Reference: 198, ReferenceBits: 8, Total: 2, Sequence: 1,
+		Content: "first", ArrivedAt: at, RPMR: 61,
+	})
+	if err != nil || !result.Inserted || len(result.Fragments) != 1 {
+		t.Fatalf("fragment save=%#v err=%v", result, err)
+	}
+	rows, err := store.LoadInboundFragments(scope.Owner)
+	if err != nil || len(rows) != 1 || rows[0].Scope != scope || rows[0].Fragment.Content != "first" {
+		t.Fatalf("fragment load=%#v err=%v", rows, err)
+	}
+	if err := store.DeleteInboundFragments(scope); err != nil {
+		t.Fatal(err)
 	}
 }
