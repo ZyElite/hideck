@@ -239,10 +239,6 @@ async function deleteRule(id: string) {
     </PageHeader>
 
     <div class="command-workspace ui-surface-strong">
-      <main class="conversation-pane">
-        <CommandTimeline :events="events" :loading="loading || loadingOlder" :has-older="hasOlder" @load-older="loadOlder" />
-        <CommandComposer :definitions="definitions" :busy="executing" @submit="execute" @dangerous="openDangerous" />
-      </main>
       <BalancePanel
         v-model:selected-device="selectedDevice"
         :devices="devices"
@@ -252,6 +248,16 @@ async function deleteRule(id: string) {
         @query="startBalance"
         @edit-rules="rulesOpen = true"
       />
+      <main class="conversation-pane">
+        <CommandTimeline :events="events" :loading="loading || loadingOlder" :has-older="hasOlder" @load-older="loadOlder" />
+        <CommandComposer
+          :definitions="definitions"
+          :busy="executing"
+          :selected-device="selectedDevice"
+          @submit="execute"
+          @dangerous="openDangerous"
+        />
+      </main>
     </div>
 
     <el-dialog
@@ -297,15 +303,14 @@ async function deleteRule(id: string) {
 .header-actions { display: flex; align-items: center; gap: 8px; }
 .stream-state { min-height: 36px; padding: 0 10px; border: 1px solid var(--ui-border); border-radius: 6px; display: inline-flex; align-items: center; gap: 6px; color: #b45309; font-size: 12px; }
 .stream-state.online { color: #15803d; }
-.command-workspace { height: calc(100vh - 166px); min-height: 520px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; overflow: hidden; border-radius: 8px; box-shadow: var(--ui-shadow-sm); }
+.command-workspace { height: calc(100dvh - 166px); min-height: 520px; display: grid; grid-template-columns: 340px minmax(0, 1fr); overflow: hidden; border-radius: 8px; box-shadow: var(--ui-shadow-sm); }
 .conversation-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
 @media (max-width: 1023px) {
-  .command-workspace { height: auto; min-height: 0; grid-template-columns: 1fr; }
-  .conversation-pane { height: min(620px, calc(100vh - 180px)); min-height: 480px; }
+  .command-workspace { height: calc(100dvh - 166px); min-height: 520px; grid-template-columns: 1fr; grid-template-rows: minmax(190px, 34%) minmax(0, 1fr); }
+  .conversation-pane { height: auto; min-height: 0; }
 }
 @media (max-width: 640px) {
   .header-actions { width: 100%; justify-content: space-between; }
-  .command-workspace { margin: 0 -4px; }
-  .conversation-pane { height: calc(100vh - 178px); min-height: 460px; }
+  .command-workspace { height: calc(100dvh - 178px); min-height: 480px; margin: 0 -4px; grid-template-rows: minmax(176px, 32%) minmax(0, 1fr); }
 }
 </style>

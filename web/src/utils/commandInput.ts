@@ -7,8 +7,16 @@ export function commandSuggestions(input: string, definitions: CommandDefinition
   return definitions.filter((definition) => definition.name.startsWith(prefix)).slice(0, 8)
 }
 
-export function commandTemplate(definition: CommandDefinition) {
-  return definition.device_argument ? `/${definition.name} ` : `/${definition.name}`
+export function commandTemplate(definition: CommandDefinition, selectedDevice = '') {
+  if (!definition.device_argument) return `/${definition.name}`
+  const device = selectedDevice.trim()
+  return device ? `/${definition.name} ${device}` : `/${definition.name} `
+}
+
+export function carrierReplySenderError(responseMode: string, sendersText: string) {
+  if (responseMode !== 'sms') return ''
+  const hasSender = sendersText.split('\n').some((sender) => sender.trim() !== '')
+  return hasSender ? '' : '短信回复规则必须至少设置一个预期发送者'
 }
 
 export type DangerousCommandInput = {

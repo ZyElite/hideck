@@ -7,6 +7,7 @@ import { Send24Regular } from '@vicons/fluent'
 const props = defineProps<{
   definitions: CommandDefinition[]
   busy: boolean
+  selectedDevice: string
 }>()
 
 const emit = defineEmits<{
@@ -22,7 +23,7 @@ function choose(definition: CommandDefinition) {
     emit('dangerous', definition)
     return
   }
-  input.value = commandTemplate(definition)
+  input.value = commandTemplate(definition, props.selectedDevice)
 }
 
 function submit() {
@@ -77,7 +78,7 @@ function submit() {
 </template>
 
 <style scoped>
-.composer { position: relative; padding: 10px 12px 12px; border-top: 1px solid var(--ui-border); background: var(--ui-surface-strong); }
+.composer { position: relative; padding: 10px 12px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--ui-border); background: var(--ui-surface-strong); }
 .quick-list { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 9px; scrollbar-width: thin; }
 .quick-list button { min-height: 44px; padding: 0 10px; border: 1px solid var(--ui-border); border-radius: 6px; background: transparent; color: #475569; font: 12px "v-mono", monospace; white-space: nowrap; }
 .quick-list button:hover, .quick-list button:focus-visible { border-color: #0d9488; color: #0f766e; outline: none; }
@@ -93,4 +94,5 @@ function submit() {
 .suggestions span { color: #64748b; font-size: 11px; }
 :global(html.dark) .quick-list button { color: #cbd5e1; }
 :global(html.dark) .quick-list button.dangerous { color: #fbbf24; }
+@media (max-width: 1023px) { .composer { position: sticky; bottom: 0; z-index: 4; } }
 </style>

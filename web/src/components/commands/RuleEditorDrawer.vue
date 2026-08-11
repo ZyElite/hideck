@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import type { CarrierQueryRule } from '../../types/commands'
 import { Add24Regular, Delete24Regular, Save24Regular } from '@vicons/fluent'
+import { carrierReplySenderError } from '../../utils/commandInput'
 
 const props = defineProps<{
   modelValue: boolean
@@ -20,8 +21,10 @@ const activeTab = ref('custom')
 const editingID = ref('')
 const sendersText = ref('')
 const limitationsText = ref('')
+const submitAttempted = ref(false)
 const form = reactive<CarrierQueryRule>(blankRule())
 const isExisting = computed(() => props.custom.some((rule) => rule.id === editingID.value))
+const sendersError = computed(() => submitAttempted.value ? carrierReplySenderError(form.response_mode, sendersText.value) : '')
 
 watch(() => props.modelValue, (open) => {
   if (open && !editingID.value) startNew()
@@ -44,6 +47,7 @@ function assignRule(rule: CarrierQueryRule) {
   editingID.value = rule.id
   sendersText.value = (rule.expected_senders || []).join('\n')
   limitationsText.value = (rule.limitations || []).join('\n')
+  submitAttempted.value = false
 }
 
 function startNew() {
@@ -51,9 +55,12 @@ function startNew() {
   editingID.value = ''
   sendersText.value = ''
   limitationsText.value = ''
+  submitAttempted.value = false
 }
 
 function submit() {
+  submitAttempted.value = true
+  if (sendersError.value) return
   emit('save', {
     ...form,
     expected_senders: lines(sendersText.value),
@@ -115,7 +122,13 @@ function lines(value: string) {
             <el-form-item label="币种"><el-input v-model="form.currency" placeholder="GBP" /></el-form-item>
             <el-form-item label="资费状态"><el-input v-model="form.cost_status" /></el-form-item>
           </div>
-          <el-form-item label="预期回复发送者（每行一个）"><el-input v-model="sendersText" type="textarea" :rows="2" /></el-form-item>
+          <el-form-item
+            label="预期回复发送者（每行一个）"
+            :required="form.response_mode === 'sms'"
+            :error="sendersError"
+          >
+            <el-input v-model="sendersText" type="textarea" :rows="2" />
+          </el-form-item>
           <el-form-item label="余额解析正则（命名组 amount）"><el-input v-model="form.parser_pattern" type="textarea" :rows="2" /></el-form-item>
           <el-form-item label="证据类型"><el-input v-model="form.evidence_type" /></el-form-item>
           <el-form-item label="证据链接"><el-input v-model="form.evidence_url" /></el-form-item>
