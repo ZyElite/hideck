@@ -57,7 +57,7 @@ Default login: `admin` / `admin`. Change the password after first login. Set
 
 ## EC25 SIM 检测设置
 
-EC25 的 USB/QMI 设备热插拔与实体 SIM 检测是两个独立功能。大疆/Baiwang 定制
+EC25 的 USB/QMI 设备热插拔与实体 SIM 检测是两个独立功能。大疆定制
 模块实测应保持实体 SIM 热插拔检测关闭：
 
 ```text
@@ -143,7 +143,7 @@ lsusb
 2. 标准 MBIM `OPEN` 能收到 `OPEN_DONE`；
 3. `DeviceCaps` 能返回当前模组 IMEI。
 
-只出现 `cdc_mbim` 接口仍不足以证明协议可用。当前测试使用的 Baiwang 定制 EC25
+只出现 `cdc_mbim` 接口仍不足以证明协议可用。当前测试使用的大疆定制 EC25
 在 `usbnet=2` 时可以枚举 `cdc_mbim`，但标准 `OPEN` 无响应，因此 VoHive 会拒绝把
 该状态持久化为 MBIM，并保留/恢复 QMI 配置。其他 EC25 或其他型号必须按上述握手
 逐台验证，不能套用这一固件结论。
