@@ -642,7 +642,7 @@ func (m *Manager) handleCmdCall(cmdCtx CommandContext, args []string) string {
 	}
 
 	voiceGW := m.pool.GetVoiceGateway()
-	if voiceGW == nil || voiceGW.GetAgent(deviceID) == nil {
+	if voiceGW == nil || voiceGW.GetAgentCurrent(deviceID) == nil {
 		return fmt.Sprintf("发起 VoWiFi 呼叫 / 失败\n设备    %s\n原因    VoWiFi 未就绪", deviceID)
 	}
 

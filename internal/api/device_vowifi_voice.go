@@ -70,10 +70,10 @@ func validateVoWiFiCallRequest(deviceID string, req deviceVoWiFiCallRequest) (in
 }
 
 func (s *Server) voiceAgentReady(deviceID string) bool {
-	if s == nil || s.voiceGW == nil || s.voiceGW.GetAgent(deviceID) == nil {
+	if s == nil || s.voiceGW == nil || s.voiceGW.GetAgentCurrent(deviceID) == nil {
 		return false
 	}
-	ready, _ := s.voiceGW.DeviceStatus(deviceID)["ready"].(bool)
+	ready, _ := s.voiceGW.DeviceStatusCurrent(deviceID)["ready"].(bool)
 	return ready
 }
 

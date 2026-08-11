@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
 )
 
 // IncomingCall describes a pending or renegotiated IMS call. OfferSDP points
@@ -59,14 +61,24 @@ func (g *Gateway) SetIncomingCallHandler(handler func(IncomingCall)) {
 	for _, agent := range g.agents {
 		agents = append(agents, agent)
 	}
+	deviceIDs := make([]string, 0, len(g.innerDevices))
+	for deviceID := range g.innerDevices {
+		deviceIDs = append(deviceIDs, deviceID)
+	}
 	g.mu.Unlock()
 	for _, agent := range agents {
-		g.bindIncomingHandler(agent)
+		g.bindIncomingHandlerCurrent(agent)
+	}
+	for _, deviceID := range deviceIDs {
+		bindIncomingVoiceAgent(g.internalAgent(deviceID), handler)
 	}
 }
 
 // IncomingCalls returns the active inbound calls for a device.
 func (g *Gateway) IncomingCalls(deviceID string) ([]IncomingCall, error) {
+	if agent := g.internalAgent(deviceID); agent != nil {
+		return incomingCallsFromVoice(agent), nil
+	}
 	agent, err := g.incomingAgent(deviceID)
 	if err != nil {
 		return nil, err
@@ -88,6 +100,10 @@ func (g *Gateway) AnswerIncomingCall(ctx context.Context, request AnswerRequest)
 	if strings.TrimSpace(request.SDP) == "" {
 		return AnswerResult{}, errors.New("voicehost: client SDP is required")
 	}
+	if agent := g.internalAgent(request.DeviceID); agent != nil {
+		answer, err := agent.AnswerWithSDP(request.CallID, request.SDP)
+		return answerResultFromVoice(answer), err
+	}
 	agent, err := g.incomingAgent(request.DeviceID)
 	if err != nil {
 		return AnswerResult{}, err
@@ -100,6 +116,9 @@ func (g *Gateway) RejectIncomingCall(request RejectRequest) error {
 	status := request.StatusCode
 	if status == 0 {
 		status = 486
+	}
+	if agent := g.internalAgent(request.DeviceID); agent != nil {
+		return agent.Reject(request.CallID, status)
 	}
 	agent, err := g.incomingAgent(request.DeviceID)
 	if err != nil {
@@ -122,7 +141,7 @@ func (g *Gateway) incomingAgent(deviceID string) (incomingVoiceAgent, error) {
 	return incoming, nil
 }
 
-func (g *Gateway) bindIncomingHandler(agent voiceAgent) {
+func (g *Gateway) bindIncomingHandlerCurrent(agent voiceAgent) {
 	incoming, ok := agent.(incomingVoiceAgent)
 	if !ok {
 		return
@@ -131,4 +150,35 @@ func (g *Gateway) bindIncomingHandler(agent voiceAgent) {
 	handler := g.incomingHandler
 	g.mu.RUnlock()
 	incoming.SetIncomingCallHandler(handler)
+}
+
+func bindIncomingVoiceAgent(agent *voice.Agent, handler func(IncomingCall)) {
+	if agent == nil {
+		return
+	}
+	agent.SetIncomingCallHandler(func(call voice.IncomingCall) {
+		if handler != nil {
+			handler(incomingCallFromVoice(call))
+		}
+	})
+}
+
+func incomingCallsFromVoice(agent *voice.Agent) []IncomingCall {
+	calls := agent.IncomingCalls()
+	result := make([]IncomingCall, 0, len(calls))
+	for _, call := range calls {
+		result = append(result, incomingCallFromVoice(call))
+	}
+	return result
+}
+
+func incomingCallFromVoice(call voice.IncomingCall) IncomingCall {
+	return IncomingCall{
+		DeviceID: call.DeviceID, CallID: call.CallID, Caller: call.Caller,
+		Callee: call.Callee, OfferSDP: call.OfferSDP, ReceivedAt: call.ReceivedAt, State: call.State,
+	}
+}
+
+func answerResultFromVoice(answer voice.InboundAnswer) AnswerResult {
+	return AnswerResult{CallID: answer.CallID, OfferSDP: answer.OfferSDP, State: answer.State}
 }

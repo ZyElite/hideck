@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
+	"github.com/iniwex5/vowifi-go/runtimehost/eventhost"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
@@ -177,7 +180,7 @@ func TestVoiceAgentAttachAndStopCleanup(t *testing.T) {
 	if err := attachVoiceAgent(req, inst, newServiceAdapter(svc)); err != nil {
 		t.Fatalf("attachVoiceAgent: %v", err)
 	}
-	if gateway.GetAgent("dev-1") == nil || gateway.DeviceStatus("dev-1")["ready"] != true {
+	if gateway.GetAgent("dev-1") == nil || gateway.DeviceStatusCurrent("dev-1")["ready"] != true {
 		t.Fatalf("voice status = %+v", gateway.DeviceStatus("dev-1"))
 	}
 	if err := inst.Stop(context.Background()); err != nil {
@@ -210,34 +213,187 @@ func TestVoiceGatewaySimulateCallUsesProductionAdapterAndRTP(t *testing.T) {
 	defer inst.Stop(context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	captureDirectory := t.TempDir()
+	mediaControlDone := make(chan error, 1)
 	result, err := gateway.SimulateCall(ctx, "dev-1", voicehost.SimulateCallRequest{
 		Callee: "+8613800000000", HoldSeconds: 1,
+		OnConnected: func() {
+			mediaControlDone <- startProductionMediaControls(gateway, "dev-1", captureDirectory)
+		},
 	})
 	if err != nil || !result.Success {
 		t.Fatalf("SimulateCall result=%+v err=%v", result, err)
 	}
-	assertProductionVoiceRTP(t, mediaConn)
+	if err := <-mediaControlDone; err != nil {
+		t.Fatalf("media controls: %v", err)
+	}
+	assertProductionVoiceMedia(t, mediaConn)
+	assertProductionVoicePCAP(t, captureDirectory)
 	assertProductionVoiceRequests(t, requests)
-	adapter := gateway.GetAgent("dev-1").(*voiceAgentAdapter)
-	if adapter.agent.IsBusy() || adapter.agent.SnapshotCurrent().ActiveCall != nil {
-		t.Fatalf("call remained active after timed BYE: %+v", adapter.agent.SnapshotCurrent())
+	agent := gateway.GetAgent("dev-1").(*voice.Agent)
+	if agent.IsBusy() || agent.SnapshotCurrent().ActiveCall != nil {
+		t.Fatalf("call remained active after timed BYE: %+v", agent.SnapshotCurrent())
 	}
 }
 
-func TestVoiceAgentAdapterExposesMediaControls(t *testing.T) {
-	var adapter interface{} = &voiceAgentAdapter{agent: voice.NewAgent("dev-1", nil, nil)}
-	if _, ok := adapter.(interface{ SendDTMF(string, string) error }); !ok {
-		t.Fatal("voice adapter does not expose DTMF")
+func startProductionMediaControls(gateway *voicehost.Gateway, deviceID, directory string) error {
+	agent, ok := gateway.GetAgent(deviceID).(*voice.Agent)
+	if !ok || agent == nil || agent.SnapshotCurrent().ActiveCall == nil {
+		return errors.New("production voice call is not registered")
 	}
-	if _, ok := adapter.(interface{ StartPCAP(string) error }); !ok {
-		t.Fatal("voice adapter does not expose PCAP start")
+	callID := agent.SnapshotCurrent().ActiveCall.CallID
+	if err := gateway.StartPCAP(deviceID, directory); err != nil {
+		return err
 	}
-	if _, ok := adapter.(interface{ StopPCAP() error }); !ok {
-		t.Fatal("voice adapter does not expose PCAP stop")
+	return gateway.SendDTMF(deviceID, callID, "2")
+}
+
+func TestVoiceGatewayReceivesAndRejectsProductionIncomingCall(t *testing.T) {
+	requests := make(chan string, 32)
+	registeredClient := make(chan *net.UDPAddr, 1)
+	registrar := startVoiceAdapterRegistrar(t, 40000, requests, registeredClient)
+	svc := newTestServiceWithRegistrar(t, registrar)
+	clientAddress := <-registeredClient
+	gateway := voicehost.NewGateway()
+	if err := gateway.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer gateway.Stop()
+	incoming := make(chan voicehost.IncomingCall, 1)
+	notified := make(chan productionIncomingNotification, 1)
+	dispatched := make(chan eventhost.Event, 4)
+	gateway.SetNotifier(productionCallNotifier{notifications: notified})
+	gateway.SetEventDispatcher(eventhostDispatcherFunc(func(_ context.Context, event eventhost.Event) {
+		dispatched <- event
+	}))
+	gateway.SetIncomingCallHandler(func(call voicehost.IncomingCall) { incoming <- call })
+	inst := &Instance{}
+	inst.setService(newServiceAdapter(svc))
+	if err := attachVoiceAgent(StartRequest{DeviceID: "dev-1", VoiceGateway: gateway}, inst, newServiceAdapter(svc)); err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Stop(context.Background())
+
+	callID := "incoming-runtimehost-1"
+	invite := productionIncomingInvite(registrar.LocalAddr().String(), callID)
+	if _, err := registrar.WriteToUDP([]byte(invite), clientAddress); err != nil {
+		t.Fatal(err)
+	}
+	call := awaitProductionIncomingCall(t, incoming)
+	if call.CallID != callID || call.DeviceID != "dev-1" {
+		t.Fatalf("incoming call = %+v", call)
+	}
+	awaitProductionCallNotification(t, notified, "dev-1", "+15557654321", "+15551234567")
+	awaitProductionVoiceEvent(t, dispatched, "IncomingCall", "dev-1")
+	calls, err := gateway.IncomingCalls("dev-1")
+	if err != nil || len(calls) != 1 || calls[0].CallID != callID {
+		t.Fatalf("registry calls=%+v error=%v", calls, err)
+	}
+	if err := gateway.RejectIncomingCall(voicehost.RejectRequest{DeviceID: "dev-1", CallID: callID}); err != nil {
+		t.Fatal(err)
+	}
+	awaitProductionSIPStatus(t, requests, 486)
+}
+
+type eventhostDispatcherFunc func(context.Context, eventhost.Event)
+
+func (dispatch eventhostDispatcherFunc) Dispatch(ctx context.Context, event eventhost.Event) {
+	dispatch(ctx, event)
+}
+
+type productionIncomingNotification struct {
+	deviceID string
+	caller   string
+	callee   string
+}
+
+type productionCallNotifier struct {
+	notifications chan<- productionIncomingNotification
+}
+
+func (notifier productionCallNotifier) NotifyIncomingCall(deviceID, caller, callee string) {
+	notifier.notifications <- productionIncomingNotification{
+		deviceID: deviceID,
+		caller:   caller,
+		callee:   callee,
 	}
 }
 
-func startVoiceAdapterRegistrar(t *testing.T, mediaPort int, requests chan<- string) *net.UDPConn {
+func awaitProductionCallNotification(
+	t *testing.T,
+	notifications <-chan productionIncomingNotification,
+	deviceID, caller, callee string,
+) {
+	t.Helper()
+	select {
+	case notification := <-notifications:
+		if notification.deviceID != deviceID || notification.caller != caller || notification.callee != callee {
+			t.Fatalf("incoming notification = %+v", notification)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for incoming call notification")
+	}
+}
+
+func productionIncomingInvite(registrarAddress, callID string) string {
+	body := "v=0\r\no=- 3 3 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 0 101\r\n"
+	return fmt.Sprintf("INVITE sip:+15551234567@ims.example.com SIP/2.0\r\nVia: SIP/2.0/UDP %s;branch=z9hG4bK-incoming\r\nMax-Forwards: 70\r\nFrom: <sip:+15557654321@ims.example.com>;tag=remote-incoming\r\nTo: <sip:+15551234567@ims.example.com>\r\nCall-ID: %s\r\nCSeq: 1 INVITE\r\nContact: <sip:+15557654321@%s>\r\nContent-Type: application/sdp\r\nContent-Length: %d\r\n\r\n%s", registrarAddress, callID, registrarAddress, len(body), body)
+}
+
+func awaitProductionIncomingCall(t *testing.T, calls <-chan voicehost.IncomingCall) voicehost.IncomingCall {
+	t.Helper()
+	select {
+	case call := <-calls:
+		return call
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for production incoming call")
+		return voicehost.IncomingCall{}
+	}
+}
+
+func awaitProductionSIPStatus(t *testing.T, requests <-chan string, status int) {
+	t.Helper()
+	want := fmt.Sprintf("SIP/2.0 %d ", status)
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case message := <-requests:
+			if strings.HasPrefix(message, want) {
+				return
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for %d response", status)
+		}
+	}
+}
+
+func awaitProductionVoiceEvent(
+	t *testing.T,
+	events <-chan eventhost.Event,
+	eventType, deviceID string,
+) {
+	t.Helper()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case event := <-events:
+			if event != nil && event.Type() == eventType && event.DeviceID() == deviceID {
+				return
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for %s/%s event", eventType, deviceID)
+		}
+	}
+}
+
+func startVoiceAdapterRegistrar(
+	t *testing.T,
+	mediaPort int,
+	requests chan<- string,
+	registeredClient ...chan<- *net.UDPAddr,
+) *net.UDPConn {
 	t.Helper()
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -252,11 +408,18 @@ func startVoiceAdapterRegistrar(t *testing.T, mediaPort int, requests chan<- str
 				return
 			}
 			request := string(buffer[:n])
+			if strings.HasPrefix(request, "REGISTER ") && len(registeredClient) != 0 {
+				address := *remote
+				select {
+				case registeredClient[0] <- &address:
+				default:
+				}
+			}
 			select {
 			case requests <- request:
 			default:
 			}
-			if strings.HasPrefix(request, "ACK ") {
+			if strings.HasPrefix(request, "ACK ") || strings.HasPrefix(request, "SIP/2.0 ") {
 				continue
 			}
 			body, extra := "", ""
@@ -264,7 +427,7 @@ func startVoiceAdapterRegistrar(t *testing.T, mediaPort int, requests chan<- str
 				extra = "P-Associated-URI: <sip:+15551234567@ims.example.com>\r\n"
 			}
 			if strings.HasPrefix(request, "INVITE ") {
-				body = fmt.Sprintf("v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP 0\r\n", mediaPort)
+				body = fmt.Sprintf("v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=ims\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP 0 101\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-16\r\n", mediaPort)
 				extra = "To: <sip:callee@ims.example.com>;tag=voice-remote\r\nContact: <sip:callee@ims.example.com>\r\nContent-Type: application/sdp\r\n"
 			}
 			response := fmt.Sprintf("SIP/2.0 200 OK\r\nVia: %s\r\nCall-ID: %s\r\nCSeq: %s\r\n%sContent-Length: %d\r\n\r\n%s",
@@ -275,18 +438,39 @@ func startVoiceAdapterRegistrar(t *testing.T, mediaPort int, requests chan<- str
 	return conn
 }
 
-func assertProductionVoiceRTP(t *testing.T, mediaConn *net.UDPConn) {
+func assertProductionVoiceMedia(t *testing.T, mediaConn *net.UDPConn) {
 	t.Helper()
-	if err := mediaConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+	if err := mediaConn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	packet := make([]byte, 256)
-	n, _, err := mediaConn.ReadFromUDP(packet)
-	if err != nil {
-		t.Fatalf("read production adapter RTP: %v", err)
+	seenAudio, seenDTMF := false, false
+	for !seenAudio || !seenDTMF {
+		n, _, err := mediaConn.ReadFromUDP(packet)
+		if err != nil {
+			t.Fatalf("read production adapter RTP: %v (audio=%v DTMF=%v)", err, seenAudio, seenDTMF)
+		}
+		if n == 172 && packet[1]&0x7f == 0 {
+			seenAudio = true
+		}
+		if n >= 16 && packet[1]&0x7f == 101 && packet[12] == 2 {
+			seenDTMF = true
+		}
 	}
-	if n != 172 || packet[1]&0x7f != 0 {
-		t.Fatalf("production adapter RTP n=%d pt=%d", n, packet[1]&0x7f)
+}
+
+func assertProductionVoicePCAP(t *testing.T, directory string) {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(directory, "rtp_*.pcap"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("PCAP paths=%v error=%v", paths, err)
+	}
+	data, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) <= 24 {
+		t.Fatalf("PCAP length = %d, want packet records", len(data))
 	}
 }
 

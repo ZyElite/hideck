@@ -102,7 +102,7 @@ func TestGatewaySimulateCall(t *testing.T) {
 	if agent.hungup != "call-1" {
 		t.Errorf("hung up = %q, want call-1", agent.hungup)
 	}
-	if g.GetAgent("dev-1") != agent {
+	if g.GetAgentCurrent("dev-1") != agent {
 		t.Error("GetAgent mismatch")
 	}
 }
@@ -121,7 +121,7 @@ func TestGatewayRoutesPCAPAndDTMFToRealAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	gateway.SetPCAPDirectory(t.TempDir())
-	if err := gateway.StartPCAP("dev-1"); err != nil {
+	if err := gateway.StartPCAPCurrent("dev-1"); err != nil {
 		t.Fatal(err)
 	}
 	if agent.pcapStarted == "" {

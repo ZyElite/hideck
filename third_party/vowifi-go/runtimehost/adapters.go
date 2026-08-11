@@ -11,141 +11,11 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
-	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 )
 
 // serviceAdapter adapts an imscore.Service to the runtimehost.Service surface.
 type serviceAdapter struct {
 	svc *imscore.Service
-}
-
-type voiceAgentAdapter struct {
-	agent *voice.Agent
-}
-
-func (a *voiceAgentAdapter) SimulateCall(
-	ctx context.Context,
-	request voicehost.SimulateCallRequest,
-) (voicehost.SimulateCallResult, error) {
-	if a == nil || a.agent == nil {
-		return voicehost.SimulateCallResult{}, errors.New("runtimehost: voice agent is unavailable")
-	}
-	result, err := a.agent.SimulateCall(ctx, voice.SimulateCallRequest{
-		Callee: request.Callee, HoldSeconds: request.HoldSeconds, OnConnected: request.OnConnected,
-	})
-	if result == nil {
-		return voicehost.SimulateCallResult{}, err
-	}
-	adapted := voicehost.SimulateCallResult{
-		Success: result.Success, DurationMs: result.DurationMs, Reason: result.Reason,
-	}
-	if result.Success {
-		adapted.Message = "call completed"
-	}
-	return adapted, err
-}
-
-func (a *voiceAgentAdapter) DialContext(ctx context.Context, number string) (interface{}, error) {
-	if a == nil || a.agent == nil {
-		return nil, errors.New("runtimehost: voice agent is unavailable")
-	}
-	return a.agent.DialContext(ctx, number)
-}
-
-func (a *voiceAgentAdapter) HangupContext(ctx context.Context, callID string) error {
-	if a == nil || a.agent == nil {
-		return errors.New("runtimehost: voice agent is unavailable")
-	}
-	return a.agent.HangupContext(ctx, callID)
-}
-
-func (a *voiceAgentAdapter) SendDTMF(callID, digit string) error {
-	if a == nil || a.agent == nil {
-		return errors.New("runtimehost: voice agent is unavailable")
-	}
-	return a.agent.SendDTMF(callID, digit)
-}
-
-func (a *voiceAgentAdapter) StartPCAP(output string) error {
-	if a == nil || a.agent == nil {
-		return errors.New("runtimehost: voice agent is unavailable")
-	}
-	return a.agent.StartPCAP(output)
-}
-
-func (a *voiceAgentAdapter) StopPCAP() error {
-	if a == nil || a.agent == nil {
-		return errors.New("runtimehost: voice agent is unavailable")
-	}
-	return a.agent.StopPCAP()
-}
-
-func (a *voiceAgentAdapter) Ready() bool {
-	return a != nil && a.agent != nil && a.agent.Ready()
-}
-
-func (a *voiceAgentAdapter) Start() error {
-	if a == nil || a.agent == nil {
-		return errors.New("runtimehost: voice agent is unavailable")
-	}
-	return a.agent.Start(context.Background())
-}
-
-func (a *voiceAgentAdapter) Stop() error {
-	if a == nil || a.agent == nil {
-		return nil
-	}
-	return a.agent.Stop()
-}
-
-func (a *voiceAgentAdapter) SetIncomingCallHandler(handler func(voicehost.IncomingCall)) {
-	if a == nil || a.agent == nil {
-		return
-	}
-	a.agent.SetIncomingCallHandler(func(call voice.IncomingCall) {
-		if handler != nil {
-			handler(adaptIncomingCall(call))
-		}
-	})
-}
-
-func (a *voiceAgentAdapter) IncomingCalls() []voicehost.IncomingCall {
-	if a == nil || a.agent == nil {
-		return nil
-	}
-	calls := a.agent.IncomingCalls()
-	result := make([]voicehost.IncomingCall, 0, len(calls))
-	for _, call := range calls {
-		result = append(result, adaptIncomingCall(call))
-	}
-	return result
-}
-
-func (a *voiceAgentAdapter) AnswerIncomingCall(ctx context.Context, callID, sdp string) (voicehost.AnswerResult, error) {
-	if a == nil || a.agent == nil {
-		return voicehost.AnswerResult{}, errors.New("runtimehost: voice agent is unavailable")
-	}
-	select {
-	case <-ctx.Done():
-		return voicehost.AnswerResult{}, ctx.Err()
-	default:
-	}
-	answer, err := a.agent.AnswerWithSDP(callID, sdp)
-	return voicehost.AnswerResult{CallID: answer.CallID, OfferSDP: answer.OfferSDP, State: answer.State}, err
-}
-
-func (a *voiceAgentAdapter) RejectIncomingCall(callID string, statusCode int) error {
-	if a == nil || a.agent == nil {
-		return errors.New("runtimehost: voice agent is unavailable")
-	}
-	return a.agent.Reject(callID, statusCode)
-}
-
-func adaptIncomingCall(call voice.IncomingCall) voicehost.IncomingCall {
-	return voicehost.IncomingCall{
-		DeviceID: call.DeviceID, CallID: call.CallID, Caller: call.Caller, Callee: call.Callee,
-		OfferSDP: call.OfferSDP, ReceivedAt: call.ReceivedAt, State: call.State,
-	}
 }
 
 func attachVoiceAgent(req StartRequest, inst *Instance, lifecycle IMSLifecycle) error {
@@ -156,18 +26,19 @@ func attachVoiceAgent(req StartRequest, inst *Instance, lifecycle IMSLifecycle) 
 	if !ok || adapter.svc == nil {
 		return errors.New("runtimehost: voice requires the registered IMS service")
 	}
-	agent := &voiceAgentAdapter{agent: voice.NewAgent(req.DeviceID, adapter.svc, nil)}
-	if err := agent.Start(); err != nil {
+	if err := req.VoiceGateway.AttachDeviceCurrent(req.DeviceID, adapter.svc); err != nil {
 		return err
 	}
-	if err := req.VoiceGateway.SetAgent(req.DeviceID, agent); err != nil {
-		_ = agent.Stop()
-		return err
+	agent, ok := req.VoiceGateway.GetAgent(req.DeviceID).(*voice.Agent)
+	if !ok || agent == nil {
+		req.VoiceGateway.DetachDeviceCurrent(req.DeviceID)
+		return errors.New("runtimehost: voice gateway did not retain the registered agent")
 	}
-	adapter.svc.SetVoiceRequestHandler(agent.agent)
+	adapter.svc.SetVoiceRequestHandler(agent)
 	inst.setVoiceDetach(func() error {
 		adapter.svc.SetVoiceRequestHandler(nil)
-		return req.VoiceGateway.RemoveAgent(req.DeviceID)
+		req.VoiceGateway.DetachDeviceCurrent(req.DeviceID)
+		return nil
 	})
 	return nil
 }
