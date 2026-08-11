@@ -85,6 +85,7 @@ func (s *Service) decodeInboundSMSRequest(raw string) (*decodedInboundSMSRequest
 }
 
 func (s *Service) handleInboundSMS(raw string) (inboundSIPResult, error) {
+	s.logInboundSMSProtocolTrace(raw)
 	decoded, err := s.decodeInboundSMSRequest(raw)
 	if err != nil && decoded == nil && normalizedContentType(rawSIPHeaderValue(raw, "Content-Type")) != imsSMSContentType {
 		response, err := buildSIPRequestResponse(raw, 415)

@@ -270,6 +270,95 @@ func TestRefreshRegisterCarriesLearnedServiceRoute(t *testing.T) {
 	}
 }
 
+func TestClearRegistrationBindingsUsesAuthenticatedWildcardRegister(t *testing.T) {
+	service, err := New(registerTransportTestConfig("udp", "127.0.0.1:5060"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.StopCurrent()
+	service.regSession = &registerSession{
+		callID: "call-1", fromTag: "tag-1", contactUser: "contact-1",
+		cseq: 7, authHeader: "Digest username=\"user\"", expires: time.Hour,
+	}
+	requests := make(chan string, 1)
+	service.transport.SetSendFn(func(request string) error {
+		requests <- request
+		service.transport.DeliverResponse(registerResponseForRequest(request, 200, nil))
+		return nil
+	})
+
+	if err := service.ClearRegistrationBindings(context.Background()); err != nil {
+		t.Fatalf("ClearRegistrationBindings: %v", err)
+	}
+	request := <-requests
+	if got := sipHeaderValue(request, "Contact"); got != "*" {
+		t.Fatalf("Contact = %q, want wildcard", got)
+	}
+	if got := sipHeaderValue(request, "Expires"); got != "0" {
+		t.Fatalf("Expires = %q, want 0", got)
+	}
+	if got := sipHeaderValue(request, "Authorization"); got != "Digest username=\"user\"" {
+		t.Fatalf("Authorization = %q", got)
+	}
+	if got := parseCSeq(sipHeaderValue(request, "CSeq")); got != 8 {
+		t.Fatalf("CSeq = %d, want 8", got)
+	}
+	if service.regSession.cseq != 8 || service.regSession.expires != time.Hour {
+		t.Fatalf("registration session = %+v", service.regSession)
+	}
+}
+
+func TestRegisterClearsProvenDuplicateBindingsBeforeRegistering(t *testing.T) {
+	config := registerTransportTestConfig("udp", "127.0.0.1:5060")
+	config.DeviceID = "dev-1"
+	config.CarrierPresetID = giffgaffCarrierPresetID
+	service, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.StopCurrent()
+	service.regSession = &registerSession{
+		callID: "call-1", fromTag: "tag-1", contactUser: "contact-1",
+		cseq: 7, authHeader: "Digest username=\"user\"", publicID: config.IMPU,
+		expires: time.Hour,
+	}
+	document, err := parseReginfoXML([]byte(`<reginfo><registration aor="sip:user@example">` +
+		`<contact id="contact-1" state="active"><uri>sip:contact-1@new.example</uri></contact>` +
+		`<contact id="stale" state="active"><uri>sip:stale@old.example</uri></contact>` +
+		`</registration></reginfo>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !service.requestRegistrationBindingCleanup(document) {
+		t.Fatal("duplicate giffgaff binding did not request cleanup")
+	}
+
+	requests := make(chan string, 2)
+	service.transport.SetSendFn(func(request string) error {
+		requests <- request
+		service.transport.DeliverResponse(registerResponseForRequest(request, 200, nil))
+		return nil
+	})
+
+	if err := service.Register(context.Background()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	wildcard, registeredAgain := <-requests, <-requests
+	if sipHeaderValue(wildcard, "Contact") != "*" || sipHeaderValue(wildcard, "Expires") != "0" {
+		t.Fatalf("cleanup REGISTER Contact=%q Expires=%q",
+			sipHeaderValue(wildcard, "Contact"), sipHeaderValue(wildcard, "Expires"))
+	}
+	if sipHeaderValue(registeredAgain, "Contact") == "*" {
+		t.Fatal("registration after cleanup retained wildcard Contact")
+	}
+	wantCSeq := []int{8, 9}
+	for index, request := range []string{wildcard, registeredAgain} {
+		if got := parseCSeq(sipHeaderValue(request, "CSeq")); got != wantCSeq[index] {
+			t.Fatalf("request %d CSeq = %d, want %d", index+1, got, wantCSeq[index])
+		}
+	}
+}
+
 func TestServiceStatusRestoresRegistrationDiagnostics(t *testing.T) {
 	service, err := New(registerTransportTestConfig("udp", "127.0.0.1:5060"))
 	if err != nil {

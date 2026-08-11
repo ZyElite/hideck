@@ -74,6 +74,7 @@ func (s *Service) sendRPReport(report rpReportRequest) error {
 	ctx, cancel := context.WithTimeout(common.WithTraceID(context.Background(), traceID), inboundSMSAckTimeout)
 	defer cancel()
 	err = s.sendOutOfDialogRequest(ctx, modeCtx, request)
+	s.logRPReportProtocolTrace(request, modeCtx, report, err)
 	if err != nil {
 		s.mtAckSendErr.Add(1)
 		s.recordMTAckAudit(audit, err)

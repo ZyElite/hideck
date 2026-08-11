@@ -200,9 +200,17 @@ func (s *Service) dispatchInboundSIPRequest(
 		return errors.New("imscore: ACK handler attempted to send a SIP response")
 	}
 	if responseWriter == nil {
-		return errors.New("imscore: inbound SIP reply path is unavailable")
+		responseErr := errors.New("imscore: inbound SIP reply path is unavailable")
+		if request.Method == sip.MESSAGE {
+			s.logInboundSMSResponseTrace(raw, result.response, responseErr)
+		}
+		return responseErr
 	}
-	if responseErr := responseWriter(result.response); responseErr != nil {
+	responseErr := responseWriter(result.response)
+	if request.Method == sip.MESSAGE {
+		s.logInboundSMSResponseTrace(raw, result.response, responseErr)
+	}
+	if responseErr != nil {
 		return responseErr
 	}
 	if result.afterReply != nil {

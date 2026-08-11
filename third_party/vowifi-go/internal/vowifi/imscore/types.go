@@ -201,6 +201,7 @@ type Service struct {
 	subscriptionLastErr       string
 	subscriptionInFlight      atomic.Bool
 	notifyReconnectPending    atomic.Bool
+	bindingCleanupPending     atomic.Bool
 	keepaliveInterval         time.Duration
 	keepaliveTimeout          time.Duration
 	keepaliveFailureLimit     int

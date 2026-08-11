@@ -35,6 +35,15 @@ type regInfoContact struct {
 	URI     string `xml:"uri"`
 }
 
+type regInfoStats struct {
+	registrations     int
+	contacts          int
+	active            int
+	terminated        int
+	currentActive     int
+	currentTerminated int
+}
+
 func (s *Service) handleRegistrationNotification(raw string) {
 	event := rawSIPHeaderValue(raw, "Event")
 	logging.Info("IMS NOTIFY acknowledged", "event", event)
@@ -57,14 +66,55 @@ func (s *Service) handleRegistrationNotification(raw string) {
 		s.reginfoAOR = aor
 		s.mu.Unlock()
 	}
-	if summary := summarizeReginfoDocument(document); summary != "" {
-		logging.RunDebug("IMS reginfo", "device", s.DeviceID(), "summary", summary)
+	s.logReginfoStats(document)
+	if s.requestRegistrationBindingCleanup(document) {
+		s.reRegisterAfterDelay(reginfoReconnectDelay)
 	}
 	if s.myContactTerminated(document) {
 		logging.WarnRate("ims-reginfo-terminated-"+s.DeviceID(),
 			"IMS registration binding terminated", "device", s.DeviceID(), "aor", aor)
 		s.reRegisterAfterDelay(reginfoReconnectDelay)
 	}
+}
+
+func (s *Service) logReginfoStats(document *regInfoDocument) {
+	s.mu.RLock()
+	contactID, contactNeedle := s.registrationContactIdentityLocked()
+	s.mu.RUnlock()
+	stats := collectReginfoStats(document, contactID, contactNeedle)
+	logging.Info("IMS reginfo state", "device", s.DeviceID(),
+		"registrations", stats.registrations, "contacts", stats.contacts,
+		"active", stats.active, "terminated", stats.terminated,
+		"current_active", stats.currentActive,
+		"current_terminated", stats.currentTerminated)
+}
+
+func collectReginfoStats(document *regInfoDocument, contactID, contactNeedle string) regInfoStats {
+	stats := regInfoStats{}
+	if document == nil {
+		return stats
+	}
+	stats.registrations = len(document.Registrations)
+	for _, registration := range document.Registrations {
+		for _, contact := range registration.Contacts {
+			stats.contacts++
+			state := strings.ToLower(strings.TrimSpace(contact.State))
+			matched := reginfoContactMatches(contact, contactID, contactNeedle)
+			switch state {
+			case "active", "registered":
+				stats.active++
+				if matched {
+					stats.currentActive++
+				}
+			case "terminated":
+				stats.terminated++
+				if matched {
+					stats.currentTerminated++
+				}
+			}
+		}
+	}
+	return stats
 }
 
 func isRegistrationNotification(raw string) bool {

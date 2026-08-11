@@ -70,7 +70,18 @@ func (s *Service) Register(ctx context.Context) error {
 	s.lastRegisterAttemptAt = time.Now()
 	s.mu.Unlock()
 
-	expires, err := s.runRegisterFlow(ctx)
+	var expires time.Duration
+	var err error
+	if s.bindingCleanupPending.Swap(false) {
+		err = s.clearRegistrationBindingsLocked(ctx)
+		if err != nil {
+			logging.Info("IMS registration binding cleanup flow failed",
+				"device", s.DeviceID(), "err", err)
+		}
+	}
+	if err == nil {
+		expires, err = s.runRegisterFlow(ctx)
+	}
 	if err != nil {
 		s.mu.Lock()
 		s.regState = regFailed
@@ -502,11 +513,32 @@ func (s *Service) recordRegisterResponse(response *sipResponse) {
 
 // buildRegister builds a REGISTER request.
 func (s *Service) buildRegister(session *registerSession, authHeader string) string {
+	return s.buildRegisterRequest(session, authHeader, false)
+}
+
+// buildWildcardUnregister builds an authenticated REGISTER that removes all
+// bindings for the current public identity.
+func (s *Service) buildWildcardUnregister(session *registerSession, authHeader string) string {
+	return s.buildRegisterRequest(session, authHeader, true)
+}
+
+func (s *Service) buildRegisterRequest(
+	session *registerSession,
+	authHeader string,
+	wildcardUnregister bool,
+) string {
 	cfg := s.cfg
 	// Each request starts a distinct SIP transaction even when refresh reuses
 	// the registration Call-ID.
 	session.branch = "z9hG4bK" + newBranch()
 	expires := registerExpires(cfg)
+	contact := registerContact(s.registerContactOptions(session), s.registerRequestTransport(
+		registerUsesProtectedTransport(session),
+	), int(expires.Seconds()))
+	if wildcardUnregister {
+		expires = 0
+		contact = "*"
+	}
 	authenticated := strings.TrimSpace(authHeader) != ""
 	protected := registerUsesProtectedTransport(session)
 	transport := s.registerRequestTransport(protected)
@@ -520,9 +552,7 @@ func (s *Service) buildRegister(session *registerSession, authHeader string) str
 	b.WriteString(fmt.Sprintf("To: <%s>\r\n", publicIdentity))
 	b.WriteString(fmt.Sprintf("Call-ID: %s\r\n", session.callID))
 	b.WriteString(fmt.Sprintf("CSeq: %d REGISTER\r\n", session.cseq))
-	b.WriteString("Contact: " + registerContact(
-		s.registerContactOptions(session), transport, int(expires.Seconds()),
-	) + "\r\n")
+	b.WriteString("Contact: " + contact + "\r\n")
 	b.WriteString(fmt.Sprintf("Expires: %d\r\n", int(expires.Seconds())))
 	b.WriteString("Max-Forwards: 70\r\n")
 	b.WriteString("Supported: " + formatHeaderList(registerSupportedHeaderForSession(cfg, session)) + "\r\n")

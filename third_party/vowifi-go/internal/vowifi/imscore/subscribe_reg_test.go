@@ -197,6 +197,90 @@ func TestRegistrationNotifyRepliesThenParsesReginfo(t *testing.T) {
 	}
 }
 
+func TestCollectReginfoStatsCountsBindingsWithoutIdentityData(t *testing.T) {
+	body := []byte(`<reginfo><registration aor="sip:user@example">` +
+		`<contact id="current" state="active"><uri>sip:current@new.example</uri></contact>` +
+		`<contact id="stale" state="active"><uri>sip:stale@old.example</uri></contact>` +
+		`<contact id="current" state="terminated"><uri>sip:current@old.example</uri></contact>` +
+		`</registration></reginfo>`)
+	document, err := parseReginfoXML(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats := collectReginfoStats(document, "current", "current")
+	if stats.registrations != 1 || stats.contacts != 3 || stats.active != 2 ||
+		stats.terminated != 1 || stats.currentActive != 1 || stats.currentTerminated != 1 {
+		t.Fatalf("reginfo stats = %+v", stats)
+	}
+}
+
+func TestDuplicateActiveRegistrationRequiresSameAORAndCurrentContact(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "duplicate in one registration",
+			body: `<reginfo><registration aor="sip:user@example">` +
+				`<contact id="current" state="active"><uri>sip:current@new.example</uri></contact>` +
+				`<contact id="stale" state="active"><uri>sip:stale@old.example</uri></contact>` +
+				`</registration></reginfo>`,
+			want: true,
+		},
+		{
+			name: "one binding for each public identity",
+			body: `<reginfo><registration aor="sip:user@example">` +
+				`<contact id="current" state="active"><uri>sip:current@one.example</uri></contact>` +
+				`</registration><registration aor="sip:+44123@example">` +
+				`<contact id="current" state="active"><uri>sip:current@two.example</uri></contact>` +
+				`</registration></reginfo>`,
+		},
+		{
+			name: "duplicates do not include current contact",
+			body: `<reginfo><registration aor="sip:user@example">` +
+				`<contact id="other-1" state="active"><uri>sip:other-1@one.example</uri></contact>` +
+				`<contact id="other-2" state="active"><uri>sip:other-2@two.example</uri></contact>` +
+				`</registration></reginfo>`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document, err := parseReginfoXML([]byte(test.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := hasDuplicateActiveRegistration(document, "current", "current"); got != test.want {
+				t.Fatalf("hasDuplicateActiveRegistration = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRegistrationBindingCleanupIsGiffgaffOnlyAndOncePerIdentity(t *testing.T) {
+	document, err := parseReginfoXML([]byte(`<reginfo><registration aor="sip:user@example">` +
+		`<contact id="current" state="active"><uri>sip:current@new.example</uri></contact>` +
+		`<contact id="stale" state="active"><uri>sip:stale@old.example</uri></contact>` +
+		`</registration></reginfo>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newService := func(preset, device string) *Service {
+		return &Service{cfg: &IMSConfig{CarrierPresetID: preset, DeviceID: device, IMPU: "sip:user@example"},
+			regSession: &registerSession{contactUser: "current", publicID: "sip:user@example", authHeader: "Digest auth"}}
+	}
+	if newService("CTEUK_23433", "cte").requestRegistrationBindingCleanup(document) {
+		t.Fatal("non-giffgaff carrier requested wildcard cleanup")
+	}
+	service := newService(giffgaffCarrierPresetID, "giffgaff-once")
+	if !service.requestRegistrationBindingCleanup(document) || !service.bindingCleanupPending.Load() {
+		t.Fatal("giffgaff duplicate binding did not request cleanup")
+	}
+	if service.requestRegistrationBindingCleanup(document) {
+		t.Fatal("giffgaff duplicate binding requested cleanup more than once")
+	}
+}
+
 func TestRegistrationNotifyDeduplicatesReRegistration(t *testing.T) {
 	service := newProtectedKeepaliveTestService(t)
 	body := `<reginfo><registration aor="sip:+447840844894@o2.co.uk">` +
