@@ -125,11 +125,12 @@ func (q *QQChannel) RegisterCommand(cmd string, handler CommandHandler) {
 
 		cmdCtx := &qqCommandContext{conversation: c}
 		response := handler(cmdCtx, append([]string(nil), parsed.Params...))
-		if response == "" {
-			return nil
+		var responseErr error
+		if response != "" {
+			_, responseErr = cmdCtx.respond(ctx, response)
 		}
-		_, err := c.RespondText(ctx, response)
-		return err
+		cmdCtx.release()
+		return responseErr
 	})
 	logger.Info("注册 QQ 命令", "command", "/"+name)
 }
@@ -221,15 +222,45 @@ func parseAllowedRecipients(groupIDs, directIDs string) map[string]qqbot.Recipie
 
 type qqCommandContext struct {
 	conversation qqbot.Conversation
+	stateMu      sync.Mutex
+	sendMu       sync.Mutex
+	released     bool
+	pending      []string
 }
 
 func (c *qqCommandContext) Reply(text string) {
 	if c == nil || c.conversation == nil {
 		return
 	}
+	c.stateMu.Lock()
+	if !c.released {
+		c.pending = append(c.pending, text)
+		c.stateMu.Unlock()
+		return
+	}
+	c.stateMu.Unlock()
 	go func() {
-		if _, err := c.conversation.RespondText(context.Background(), text); err != nil {
+		if _, err := c.respond(context.Background(), text); err != nil {
 			logger.Warn("回复 QQ 命令消息失败", "err", err)
 		}
 	}()
+}
+
+func (c *qqCommandContext) release() {
+	c.stateMu.Lock()
+	c.released = true
+	pending := append([]string(nil), c.pending...)
+	c.pending = nil
+	c.stateMu.Unlock()
+	for _, text := range pending {
+		if _, err := c.respond(context.Background(), text); err != nil {
+			logger.Warn("回复 QQ 命令消息失败", "err", err)
+		}
+	}
+}
+
+func (c *qqCommandContext) respond(ctx context.Context, text string) (qqbot.Receipt, error) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	return c.conversation.RespondText(ctx, text)
 }

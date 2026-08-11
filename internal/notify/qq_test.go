@@ -62,6 +62,9 @@ func TestQQChannelRegisterCommandWithAllowedRecipient(t *testing.T) {
 	if len(conv.replies) == 0 {
 		t.Fatalf("expected reply sent for allowed recipient")
 	}
+	if len(conv.replies) != 2 || conv.replies[0] != "sync" || conv.replies[1] != "async" {
+		t.Fatalf("reply order = %v, want [sync async]", conv.replies)
+	}
 }
 
 func TestQQChannelRegisterCommandBlocksUnallowed(t *testing.T) {
