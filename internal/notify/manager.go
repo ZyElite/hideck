@@ -3,6 +3,7 @@ package notify
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/iniwex5/vohive/internal/config"
@@ -13,8 +14,10 @@ import (
 // Manager 统一通知管理器
 // 持有多个 Channel 实例，向所有已启用渠道广播通知和命令
 type Manager struct {
-	pool     *device.Pool
-	channels []Channel // 所有已启用的通知渠道
+	pool           *device.Pool
+	channels       []Channel // 所有已启用的通知渠道
+	commandMu      sync.Mutex
+	commandService *CommandService
 }
 
 type NotificationContext struct {
@@ -49,6 +52,7 @@ func NewManager(cfg *config.Config, pool *device.Pool) (*Manager, error) {
 	m := &Manager{
 		pool: pool,
 	}
+	m.commandService = NewCommandService(m.baseCommandHandlers())
 
 	// 初始化所有通知渠道
 	if err := m.initChannels(cfg); err != nil {
@@ -164,7 +168,17 @@ func (m *Manager) initChannels(cfg *config.Config) error {
 
 // registerCommands 向所有已启用渠道注册同一组命令处理器
 func (m *Manager) registerCommands() {
-	commands := map[string]CommandHandler{
+	commands := m.CommandService().Handlers()
+
+	for _, ch := range m.channels {
+		for cmd, handler := range commands {
+			ch.RegisterCommand(cmd, handler)
+		}
+	}
+}
+
+func (m *Manager) baseCommandHandlers() map[string]CommandHandler {
+	return map[string]CommandHandler{
 		"send":   m.handleCmdSendSMS,
 		"status": m.handleCmdStatus,
 		"rotate": m.handleCmdRotate,
@@ -174,12 +188,19 @@ func (m *Manager) registerCommands() {
 		"switch": m.handleCmdSwitch,
 		"vocall": m.handleCmdCall,
 	}
+}
 
-	for _, ch := range m.channels {
-		for cmd, handler := range commands {
-			ch.RegisterCommand(cmd, handler)
-		}
+func (m *Manager) CommandService() *CommandService {
+	m.commandMu.Lock()
+	defer m.commandMu.Unlock()
+	if m.commandService == nil {
+		m.commandService = NewCommandService(m.baseCommandHandlers())
 	}
+	return m.commandService
+}
+
+func (m *Manager) SetBalanceCommandHandler(handler CommandHandler) error {
+	return m.CommandService().SetHandler("balance", handler)
 }
 
 // Close 关闭所有通知渠道
