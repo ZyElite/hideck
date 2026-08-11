@@ -9,6 +9,8 @@ import (
 	"github.com/iniwex5/vowifi-go/engine/bufferpool"
 	"github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 // setupDataPlane builds the ESP SA and the inner packet endpoint after the
@@ -91,7 +93,10 @@ func (s *Session) installInitialESPAssociations(
 	s.espKey = append([]byte{}, keys.initiator.enc...)
 	s.espIntegKey = append([]byte{}, keys.initiator.integ...)
 	s.syncLegacyChildStateLocked()
+	localSPI, remoteSPI := s.espLocalSPI, s.espRemoteSPI
 	s.childSAMu.Unlock()
+	logger.Info("initial CHILD_SA installed",
+		zap.Uint32("local_spi", localSPI), zap.Uint32("remote_spi", remoteSPI))
 }
 
 func (s *Session) newESPAssociation(spi uint32, keys childDirectionKeys) (*ipsec.SecurityAssociation, error) {
@@ -259,7 +264,12 @@ func (s *Session) decapsulateOuterESP(esp []byte) ([]byte, uint32, error) {
 	}
 	s.childSAMu.RUnlock()
 	if inbound == nil {
-		return nil, spi, fmt.Errorf("%w: spi=%08x", errInnerPacketSAMissing, spi)
+		snapshot := s.captureChildSASnapshot()
+		return nil, spi, fmt.Errorf(
+			"%w: spi=%08x current_local=%08x current_remote=%08x known_inbound=%s",
+			errInnerPacketSAMissing, spi, snapshot.localSPI, snapshot.remoteSPI,
+			snapshot.inboundSPIText(),
+		)
 	}
 	inner, err := ipsec.Decapsulate(esp, inbound)
 	if err != nil {

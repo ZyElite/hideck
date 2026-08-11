@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -125,10 +126,15 @@ func TestUserspaceInboundQueueDropsWithoutBlocking(t *testing.T) {
 func TestDecapsulateOuterESPReturnsSPIOnFailure(t *testing.T) {
 	session, _ := newUserspaceDataPlaneSession(t, newTestIKETransport())
 	packet := make([]byte, 8)
-	packet[0], packet[1], packet[2], packet[3] = 0x10, 0x20, 0x30, 0x40
+	packet[0], packet[1], packet[2], packet[3] = 0xde, 0xad, 0xbe, 0xef
 	_, spi, err := session.decapsulateOuterESP(packet)
-	if spi != session.espLocalSPI || err == nil {
+	if spi != 0xdeadbeef || err == nil {
 		t.Fatalf("decapsulate failure spi=%08x err=%v", spi, err)
+	}
+	for _, expected := range []string{"spi=deadbeef", "current_local=10203040", "known_inbound=10203040"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("decapsulate error %q omitted %q", err, expected)
+		}
 	}
 }
 

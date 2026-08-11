@@ -7,6 +7,8 @@ import (
 	enginecrypto "github.com/iniwex5/vowifi-go/engine/crypto"
 	"github.com/iniwex5/vowifi-go/engine/ikev2"
 	"github.com/iniwex5/vowifi-go/engine/ipsec"
+	"github.com/iniwex5/vowifi-go/engine/logger"
+	"go.uber.org/zap"
 )
 
 func (s *Session) handlePeerChildSARekey(packet *ikev2.IKEPacket) error {
@@ -88,6 +90,9 @@ func (s *Session) answerPeerChildSARekey(
 	if err := s.activateChildSARuntime(runtime); err != nil {
 		return err
 	}
+	logger.Info("peer CHILD_SA rekey installed",
+		zap.Uint32("old_local_spi", oldLocalSPI), zap.Uint32("old_remote_spi", oldRemoteSPI),
+		zap.Uint32("new_local_spi", runtime.localSPI), zap.Uint32("new_remote_spi", runtime.remoteSPI))
 	s.markChildRekeyComplete()
 	s.recordRetiredChildSA(oldRemoteSPI, oldLocalSPI)
 	return nil
