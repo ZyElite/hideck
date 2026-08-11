@@ -23,11 +23,21 @@ const (
 	DataFormatQOSFlowHeader     uint8 = 1 << 0
 	DataFormatLinkProtEth       uint8 = 0
 	DataFormatLinkProtIP        uint8 = 1 << 1
-	DataFormatUlDataAggEnabled  uint8 = 1 << 2
+	DataFormatUlDataAggEnabled  uint8 = 1 << 2 // Deprecated: use a DataAggregationProtocol value.
 	DataFormatUlDataAggDisabled uint8 = 0
-	DataFormatDlDataAggEnabled  uint8 = 1 << 3
+	DataFormatDlDataAggEnabled  uint8 = 1 << 3 // Deprecated: use a DataAggregationProtocol value.
 	DataFormatDlDataAggDisabled uint8 = 0
 	DataFormatNdpSigEnabled     uint8 = 1 << 4 // New Data Path Signature / 新数据路径签名
+)
+
+// WDA data aggregation protocol values used in Set Data Format TLVs 0x12/0x13.
+const (
+	DataAggregationProtocolDisabled uint32 = 0x00
+	DataAggregationProtocolTLP      uint32 = 0x01
+	DataAggregationProtocolQCNCM    uint32 = 0x02
+	DataAggregationProtocolMBIM     uint32 = 0x03
+	DataAggregationProtocolRNDIS    uint32 = 0x04
+	DataAggregationProtocolQMAP     uint32 = 0x05
 )
 
 // WDAService implements the QMI WDA service / WDAService 实现 QMI WDA 服务
