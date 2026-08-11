@@ -58,6 +58,7 @@ type StartRequest struct {
 	BeforeStart   func(context.Context, SessionConfig) error
 	ShouldRun     func() bool
 	runner        func(context.Context, runtimecore.RuntimeStartRequest) (StartResult, error)
+	Observer      Observer
 
 	TunnelFactory TunnelFactory
 	IMSFactory    IMSFactory
@@ -87,12 +88,13 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 	}
 	waitForReady, delay := req.startPolicy()
 	coreRequest := req.coreRequest()
+	launch := runtimeLaunchOptions{runner: req.runner, delay: delay, observer: req.Observer}
 	if !waitForReady {
-		instance, err := startInstanceAsync(ctx, coreRequest, req.runner, delay)
+		instance, err := startInstanceAsync(ctx, coreRequest, launch)
 		applyRequestMetadata(instance, req)
 		return instance, err
 	}
-	instance, err := startInstance(ctx, coreRequest, req.runner, delay)
+	instance, err := startInstance(ctx, coreRequest, launch)
 	applyRequestMetadata(instance, req)
 	return instance, err
 }
@@ -119,6 +121,7 @@ func startCurrent(ctx context.Context, req StartRequest) (*Instance, error) {
 
 	inst := &Instance{}
 	inst.setState(initialState(req))
+	inst.AddObserver(req.Observer)
 	runCtx, cancel := context.WithCancel(ctx)
 	tunnel, err := newTunnel(req, inst)
 	if err != nil {

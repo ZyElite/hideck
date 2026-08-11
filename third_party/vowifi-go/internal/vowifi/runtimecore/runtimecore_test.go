@@ -389,15 +389,23 @@ func TestRuntimeStartEmitsEstablishedOnlyForEstablishedSnapshot(t *testing.T) {
 	recorder := &eventRecorder{}
 	req := baseRuntimeRequest(recorder)
 	req.BeforeSessionStart = func(_ context.Context, config SessionConfig) error {
+		if got := recorder.kinds(); !reflect.DeepEqual(got, []string{"prepared"}) {
+			t.Fatalf("events before session preflight = %v", got)
+		}
 		if config.TraceID != defaultRuntimeTraceID || config.DataplaneMode != swu.DataplaneModeUserspace {
 			t.Fatalf("session defaults = trace %q mode %q", config.TraceID, config.DataplaneMode)
 		}
 		return nil
 	}
-	req.SessionStarter = func(context.Context, SessionConfig) (*SessionResult, error) {
-		return &SessionResult{DeviceID: "dev-1", Snapshot: swu.SessionSnapshot{
+	req.SessionStarter = func(_ context.Context, config SessionConfig) (*SessionResult, error) {
+		session := &SessionResult{DeviceID: "dev-1", Snapshot: swu.SessionSnapshot{
 			Established: true, IPv4: []byte{10, 0, 0, 1},
-		}}, nil
+		}}
+		config.OnTunnelReady(session)
+		if got := recorder.kinds(); !reflect.DeepEqual(got, []string{"prepared", "connecting", "established"}) {
+			t.Fatalf("events before IMS startup = %v", got)
+		}
+		return session, nil
 	}
 	result, err := (Runtime{}).Start(context.Background(), req)
 	if err != nil || result.Session == nil || result.TraceID != defaultRuntimeTraceID {

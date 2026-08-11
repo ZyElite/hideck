@@ -55,6 +55,11 @@ func (observer *instanceObserver) applyEvent(
 	case "prepared":
 		state.Phase = PhaseSIMReady
 		state.SIMReady = true
+		state.AccessReady = false
+	case "connecting":
+		state.Phase = PhaseAccessReady
+		state.SIMReady = true
+		state.AccessReady = true
 	case "ipsec_up":
 		observer.installSession(event)
 		state.Phase = readyPhase(*state)

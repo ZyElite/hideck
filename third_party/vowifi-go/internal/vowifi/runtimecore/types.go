@@ -118,6 +118,7 @@ type SessionConfig struct {
 	FastReauthKEncr    []byte
 	OnFastReauthUpdate func(string, []byte, []byte, []byte)
 	OnProgress         func(string)
+	OnTunnelReady      func(*SessionResult)
 }
 
 type SessionResult struct {

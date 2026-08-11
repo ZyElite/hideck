@@ -49,12 +49,13 @@ func (m *Manager) RuntimeStore() RuntimeStore {
 	return m.runtimeStore
 }
 
-func (m *Manager) SubscribeState(deviceID string) (<-chan struct{}, func()) {
+func (m *Manager) SubscribeState(deviceID string) (<-chan runtimehost.State, func()) {
 	return m.stateNotifications().Subscribe(deviceID)
 }
 
 func (m *Manager) BroadcastState(deviceID string) {
-	m.stateNotifications().Broadcast(deviceID)
+	state, _ := m.State(deviceID)
+	m.stateNotifications().Broadcast(deviceID, state)
 }
 
 func (m *Manager) SubscriberCount(deviceID string) int {

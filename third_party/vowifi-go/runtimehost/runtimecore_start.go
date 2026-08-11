@@ -14,6 +14,12 @@ import (
 type coreRunner func(context.Context, runtimecore.RuntimeStartRequest) (StartResult, error)
 type reconnectDelay func(int) int64
 
+type runtimeLaunchOptions struct {
+	runner   coreRunner
+	delay    reconnectDelay
+	observer Observer
+}
+
 func (req StartRequest) coreRequest() runtimecore.RuntimeStartRequest {
 	request := runtimecore.RuntimeStartRequest{
 		DeviceID: strings.TrimSpace(req.DeviceID), TraceID: strings.TrimSpace(req.TraceID),
@@ -56,10 +62,9 @@ func (req StartRequest) coreRequest() runtimecore.RuntimeStartRequest {
 func startInstance(
 	ctx context.Context,
 	request runtimecore.RuntimeStartRequest,
-	runner coreRunner,
-	delay reconnectDelay,
+	options runtimeLaunchOptions,
 ) (*Instance, error) {
-	instance, ready, done := launchRuntimeCore(ctx, request, runner, delay)
+	instance, ready, done := launchRuntimeCore(ctx, request, options)
 	select {
 	case <-ctx.Done():
 		_ = instance.Stop(context.Background())
@@ -78,30 +83,30 @@ func startInstance(
 func startInstanceAsync(
 	ctx context.Context,
 	request runtimecore.RuntimeStartRequest,
-	runner coreRunner,
-	delay reconnectDelay,
+	options runtimeLaunchOptions,
 ) (*Instance, error) {
-	instance, _, _ := launchRuntimeCore(ctx, request, runner, delay)
+	instance, _, _ := launchRuntimeCore(ctx, request, options)
 	return instance, nil
 }
 
 func launchRuntimeCore(
 	ctx context.Context,
 	request runtimecore.RuntimeStartRequest,
-	runner coreRunner,
-	delay reconnectDelay,
+	options runtimeLaunchOptions,
 ) (*Instance, <-chan struct{}, <-chan error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	instance := &Instance{cancel: cancel}
 	instance.setState(coreInitialState(request))
+	instance.AddObserver(options.observer)
 	ready := make(chan struct{})
 	observer := &instanceObserver{
 		inst: instance, deviceID: request.DeviceID, ready: ready,
 	}
 	request.Observer = observer
 	request.Reconnect = true
-	request.ReconnectDelay = delay
+	request.ReconnectDelay = options.delay
 	chainSMSReadyHook(&request, observer)
+	runner := options.runner
 	if runner == nil {
 		runner = defaultCoreRunner
 	}
@@ -117,8 +122,7 @@ func coreInitialState(request runtimecore.RuntimeStartRequest) State {
 	return State{
 		Phase: "starting", DeviceID: request.DeviceID,
 		DataplaneMode: request.Dataplane.Mode, SIMReady: request.SIM != nil,
-		AccessReady: request.Access != nil, LastEvent: "starting",
-		SessionState: "starting",
+		LastEvent: "starting", SessionState: "starting",
 	}
 }
 

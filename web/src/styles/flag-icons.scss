@@ -1,0 +1,4 @@
+@use 'flag-icons/sass/flag-icons' with (
+  $flag-icons-path: '../../node_modules/flag-icons/flags',
+  $flag-icons-use-square: false
+);

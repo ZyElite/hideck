@@ -35,6 +35,9 @@ func RunSession(ctx context.Context, cfg SessionConfig) (*SessionResult, error) 
 		DeviceID: cfg.DeviceID, EPDGMgr: manager, Session: session, Snapshot: snapshot,
 		LocalAddr: snapshotLocalAddress(snapshot),
 	}
+	if cfg.OnTunnelReady != nil {
+		cfg.OnTunnelReady(result)
+	}
 	if err := startIMS(ctx, cfg, result); err != nil {
 		defaultStopSession(context.Background(), result)
 		return nil, err

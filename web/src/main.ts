@@ -5,6 +5,7 @@ import App from './App.vue'
 import { debugCollector } from './debug/collector'
 import 'vfonts/FiraSans.css'
 import 'vfonts/FiraCode.css'
+import './styles/flag-icons.scss'
 import 'element-plus/dist/index.css'
 // Element Plus: 暗色主题变量（全局需要）
 import 'element-plus/theme-chalk/dark/css-vars.css'

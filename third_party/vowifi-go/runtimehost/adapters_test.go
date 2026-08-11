@@ -732,7 +732,7 @@ func TestStartInstanceAsync(t *testing.T) {
 	}
 	instance, err := startInstanceAsync(ctx, runtimecore.RuntimeStartRequest{
 		DeviceID: "dev-1", TraceID: "trace-1",
-	}, runner, defaultReaderReconnectDelay)
+	}, runtimeLaunchOptions{runner: runner, delay: defaultReaderReconnectDelay})
 	if err != nil || instance == nil {
 		t.Fatalf("startInstanceAsync instance=%v err=%v", instance, err)
 	}

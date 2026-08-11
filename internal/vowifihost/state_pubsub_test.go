@@ -70,3 +70,29 @@ func TestManagerRecordStartupStateBroadcastsWhenAccepted(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 }
+
+func TestManagerStateSubscriptionPreservesBurstSnapshots(t *testing.T) {
+	manager := NewManager()
+	deviceID := "dev-burst"
+	ch, unsub := manager.SubscribeState(deviceID)
+	defer unsub()
+
+	base := time.Now()
+	phases := []string{"sim_ready", "access_ready", "ipsec_up", "ims_ready", "sms_ready"}
+	for index, phase := range phases {
+		manager.RecordStartupState(deviceID, runtimehost.State{
+			DeviceID: deviceID, Phase: phase, UpdatedAt: base.Add(time.Duration(index) * time.Millisecond),
+		})
+	}
+
+	for _, phase := range phases {
+		select {
+		case state := <-ch:
+			if state.Phase != phase {
+				t.Fatalf("phase = %q, want %q", state.Phase, phase)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %q", phase)
+		}
+	}
+}

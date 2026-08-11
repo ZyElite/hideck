@@ -59,6 +59,14 @@ func TestOverviewStreamEmitVersionTracksRuntimeBusinessState(t *testing.T) {
 			item: deviceMgmtOverviewLiteItem{VoWiFiActive: true, VoWiFiRuntime: &voWiFiRuntimeDTO{Phase: "ready", TunnelReady: true}},
 		},
 		{
+			name: "sim changed",
+			item: deviceMgmtOverviewLiteItem{VoWiFiActive: true, VoWiFiRuntime: &voWiFiRuntimeDTO{Phase: "registering", SIMReady: true, TunnelReady: true}},
+		},
+		{
+			name: "access changed",
+			item: deviceMgmtOverviewLiteItem{VoWiFiActive: true, VoWiFiRuntime: &voWiFiRuntimeDTO{Phase: "registering", AccessReady: true, TunnelReady: true}},
+		},
+		{
 			name: "tunnel changed",
 			item: deviceMgmtOverviewLiteItem{VoWiFiActive: true, VoWiFiRuntime: &voWiFiRuntimeDTO{Phase: "registering", TunnelReady: false}},
 		},

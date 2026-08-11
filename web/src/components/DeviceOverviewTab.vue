@@ -13,6 +13,7 @@ import type { StatusLightTone } from './statusLight'
 const props = defineProps<{
   device: DeviceOverviewItem | null
   simOperatorDisplay: string
+  simOperatorCountryCode: string
   trafficSpeedRx: string
   trafficSpeedTx: string
   trafficMinuteRx: string
@@ -354,7 +355,17 @@ const networkPanelMessage = computed(() => {
           </el-button>
         </div>
         <FieldRow v-if="activeEsimProfileName" label="当前eSIM" :value="activeEsimProfileName" monospace copyable />
-        <FieldRow label="原运营商" :value="simOperatorDisplay" copyable />
+        <FieldRow label="原运营商" :value="simOperatorDisplay" copyable>
+          <span class="inline-flex min-w-0 items-center justify-end gap-2">
+            <span
+              v-if="simOperatorCountryCode"
+              class="fi h-3.5 w-5 shrink-0 overflow-hidden rounded-sm shadow-sm ring-1 ring-black/10"
+              :class="`fi-${simOperatorCountryCode}`"
+              aria-hidden="true"
+            />
+            <span class="truncate">{{ simOperatorDisplay }}</span>
+          </span>
+        </FieldRow>
         <FieldRow label="固件版本"      :value="device?.modem?.firmware" monospace copyable />
         <div class="flex justify-between gap-3">
           <span class="text-gray-500">飞行模式</span>

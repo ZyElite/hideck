@@ -13,9 +13,20 @@ export type ServingOperatorLike = {
   mnc?: string
 }
 
+type CountryGroup = {
+  country_code?: string
+  country_name?: string
+  mccs?: string[]
+}
+
 const TABLE_URL = 'https://raw.githubusercontent.com/musalbas/mcc-mnc-table/refs/heads/master/mcc-mnc-table.json'
 const STORAGE_KEY = 'go-4gproxy:mcc-mnc-table:v1'
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const LEGACY_COUNTRY_CODE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  an: 'cw', // Netherlands Antilles MCC 362 is now represented by Curacao.
+  fg: 'gf', // French Guiana's ISO 3166-1 code is GF.
+  tp: 'tl' // East Timor was renamed Timor-Leste and reassigned from TP to TL.
+})
 
 type CachePayload = {
   fetched_at: number
@@ -32,24 +43,29 @@ function isAllDigits(s: string): boolean {
   return s.length > 0
 }
 
-function normalizeCode(s: string): string {
+function normalizeCode(s: unknown): string {
   return String(s || '').trim()
 }
 
-function buildIndex(rows: MccMncRow[]): Map<string, MccMncRow> {
+function normalizeCountryCode(value: unknown): string {
+  const code = normalizeCode(value).toLowerCase()
+  return LEGACY_COUNTRY_CODE_ALIASES[code] || code
+}
+
+export function buildMccMncIndex(rows: MccMncRow[]): Map<string, MccMncRow> {
   const idx = new Map<string, MccMncRow>()
   for (const r of rows) {
     const mcc = normalizeCode(r?.mcc)
     const mnc = normalizeCode(r?.mnc)
-    if (!mcc || !mnc) continue
+    if (!mcc) continue
     const key = `${mcc}${mnc}`
     if (!idx.has(key)) {
       idx.set(key, {
         mcc,
         mnc,
-        iso: normalizeCode(r?.iso).toLowerCase(),
+        iso: normalizeCountryCode(r?.iso),
         country: normalizeCode(r?.country),
-        country_code: normalizeCode(r?.country_code),
+        country_code: normalizeCountryCode(r?.country_code),
         network: normalizeCode(r?.network)
       })
       continue
@@ -60,6 +76,33 @@ function buildIndex(rows: MccMncRow[]): Map<string, MccMncRow> {
     }
   }
   return idx
+}
+
+function countryGroupRows(groups: CountryGroup[]): MccMncRow[] {
+  const rows: MccMncRow[] = []
+  for (const group of groups) {
+    const countryCode = normalizeCountryCode(group?.country_code)
+    if (countryCode.length !== 2 || !Array.isArray(group?.mccs)) continue
+    for (const rawMCC of group.mccs) {
+      const mcc = normalizeCode(rawMCC)
+      if (mcc.length !== 3 || !isAllDigits(mcc)) continue
+      rows.push({
+        mcc,
+        mnc: '',
+        iso: countryCode,
+        country: normalizeCode(group.country_name),
+        country_code: countryCode,
+        network: ''
+      })
+    }
+  }
+  return rows
+}
+
+async function fetchBackendCountryRows(): Promise<MccMncRow[]> {
+  const { api } = await import('../stores/auth')
+  const response = await api.get('/upstream-proxy-countries')
+  return countryGroupRows(Array.isArray(response.data) ? response.data : [])
 }
 
 function readCache(): CachePayload | null {
@@ -110,23 +153,42 @@ async function fetchRows(): Promise<MccMncRow[]> {
 export async function getMccMncIndex(): Promise<Map<string, MccMncRow>> {
   if (indexPromise) return indexPromise
   indexPromise = (async () => {
+    let countryRows: MccMncRow[] = []
+    try {
+      countryRows = await fetchBackendCountryRows()
+    } catch (error) {
+      console.warn('设备本地 MCC 国家表读取失败', error)
+    }
     const cache = readCache()
     const now = Date.now()
     if (cache && cache.rows.length > 0 && now - cache.fetched_at < CACHE_TTL_MS) {
-      return buildIndex(cache.rows)
+      return buildMccMncIndex([...countryRows, ...cache.rows])
     }
     try {
       const rows = await fetchRows()
       if (rows.length > 0) writeCache(rows)
-      return buildIndex(rows)
-    } catch {
+      return buildMccMncIndex([...countryRows, ...rows])
+    } catch (error) {
+      console.warn('外部 MCC/MNC 运营商表读取失败', error)
       if (cache && cache.rows.length > 0) {
-        return buildIndex(cache.rows)
+        return buildMccMncIndex([...countryRows, ...cache.rows])
       }
-      return new Map()
+      return buildMccMncIndex(countryRows)
     }
   })()
   return indexPromise
+}
+
+export function lookupMccMncRow(index: Map<string, MccMncRow> | null, code: string): MccMncRow | null {
+  if (!index) return null
+  const normalized = normalizeCode(code)
+  if (!normalized) return null
+  return index.get(normalized) || index.get(normalized.slice(0, 3)) || null
+}
+
+export function mccMncCountryCode(index: Map<string, MccMncRow> | null, code: string): string {
+  const row = lookupMccMncRow(index, code)
+  return normalizeCountryCode(row?.iso || row?.country_code)
 }
 
 export function isoToFlagEmoji(iso: string): string {
@@ -153,14 +215,14 @@ export function getMncCandidateLengths(mcc: string): number[] {
 export function lookupServingOperatorNameFromPLMN(index: Map<string, MccMncRow>, modem: ServingOperatorLike): MccMncRow | null {
   const op = normalizeCode(modem?.operator || '')
   if (op && (op.length === 5 || op.length === 6) && isAllDigits(op)) {
-    const hit = index.get(op)
+    const hit = lookupMccMncRow(index, op)
     if (hit) return hit
   }
 
   const mcc = normalizeCode(modem?.mcc || '')
   const mnc = normalizeCode(modem?.mnc || '')
   if (mcc && mnc) {
-    const hit = index.get(`${mcc}${mnc}`)
+    const hit = lookupMccMncRow(index, `${mcc}${mnc}`)
     if (hit) return hit
   }
 

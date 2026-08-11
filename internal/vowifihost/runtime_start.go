@@ -53,6 +53,20 @@ func (m *Manager) runtimeStarter() runtimeStartFunc {
 	return runtimehost.Start
 }
 
+func (m *Manager) runtimeStateObserver(deviceID string) runtimehost.Observer {
+	return runtimehost.ObserverFunc(func(_ context.Context, ev runtimehost.Event) {
+		inst := ev.Session
+		if inst != nil && m.IsCurrentInstance(deviceID, inst) {
+			m.BroadcastState(deviceID)
+			if isTerminalRuntimeFailure(ev.State) {
+				go m.releaseFailedRuntime(deviceID, inst, ev.State)
+			}
+			return
+		}
+		m.RecordStartupState(deviceID, ev.State)
+	})
+}
+
 func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (RuntimeStartResult, error) {
 	if m == nil {
 		return RuntimeStartResult{}, fmt.Errorf("vowifi host manager is nil")
@@ -97,21 +111,11 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 		ShouldRun: func() bool {
 			return ctx.Err() == nil && m.ShouldRun(deviceID, req.Epoch)
 		},
+		Observer: m.runtimeStateObserver(deviceID),
 	})
 	if err != nil {
 		return RuntimeStartResult{}, err
 	}
-
-	inst.AddObserver(runtimehost.ObserverFunc(func(_ context.Context, ev runtimehost.Event) {
-		if m.IsCurrentInstance(deviceID, inst) {
-			m.BroadcastState(deviceID)
-			if isTerminalRuntimeFailure(ev.State) {
-				go m.releaseFailedRuntime(deviceID, inst, ev.State)
-			}
-			return
-		}
-		m.RecordStartupState(deviceID, ev.State)
-	}))
 
 	if !m.ClaimStarted(deviceID, req.Epoch, inst) {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

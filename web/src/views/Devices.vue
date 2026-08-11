@@ -25,7 +25,7 @@ import { debugCollector } from '../debug/collector'
 import { copyToClipboard } from '../utils/clipboard'
 import { isManagedDeviceBackendSwitch, isWwanQmiControlPath } from '../utils/deviceBackend'
 import { isControlOnline, isRecoveryPhase } from '../utils/deviceLifecycle'
-import { getMccMncIndex, isoToFlagEmoji, type MccMncRow } from '../utils/mcc-mnc'
+import { getMccMncIndex, lookupMccMncRow, mccMncCountryCode, type MccMncRow } from '../utils/mcc-mnc'
 import type { CardPolicy, CarrierWebsheetInfo, DeviceConfigDTO, DeviceMgmtListItem, DeviceOverviewItem, DiscoveredDevice, ModemStatus, PNNRecord, RealtimeTrafficSnapshot } from '../types/api'
 import type { AppError } from '../types/domain'
 import { toAppError } from '../services/http'
@@ -252,21 +252,15 @@ function pnnNameFromOPL(modem: ModemStatus | undefined): string {
   return ''
 }
 
-function flagForMccMnc(code: string): string {
-  const row = mccMncIndex.value?.get(code)
-  return row ? isoToFlagEmoji(row.iso) : ''
-}
-
 function formatNamedOperator(name: string, code: string): string {
-  const flag = flagForMccMnc(code)
-  if (!code) return flag ? `${flag} ${name}` : name
-  return `${flag ? flag + ' ' : ''}${name} (${code})`
+  if (!code) return name
+  return `${name} (${code})`
 }
 
 function formatMccMncOperator(code: string): string {
   const index = mccMncIndex.value
   if (!index || !code) return code
-  const row = index.get(code)
+  const row = lookupMccMncRow(index, code)
   if (!row) return code
   const name = normalizeSPN(row.network) || normalizeSPN(row.country)
   return name ? formatNamedOperator(name, code) : code
@@ -373,6 +367,11 @@ const selectedSimOperatorDisplay = computed(() => {
   if (spn) return formatNamedOperator(spn, mccmnc)
   if (pnn) return formatNamedOperator(pnn, mccmnc)
   return mccmnc ? formatMccMncOperator(mccmnc) : '--'
+})
+
+const selectedSimOperatorCountryCode = computed(() => {
+  const code = nativeMccMnc(selectedDevice.value?.modem)
+  return mccMncCountryCode(mccMncIndex.value, code)
 })
 
 function formatBytesPerSecond(bps: unknown) {
@@ -1278,6 +1277,7 @@ usePollingScheduler(async () => {
                 <DeviceOverviewTab
                   :device="selectedDevice"
                   :sim-operator-display="selectedSimOperatorDisplay"
+                  :sim-operator-country-code="selectedSimOperatorCountryCode"
                   :traffic-speed-rx="trafficSpeedRx"
                   :traffic-speed-tx="trafficSpeedTx"
                   :traffic-minute-rx="rollingMinuteRx"

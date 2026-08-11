@@ -12,6 +12,14 @@ import (
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 
+type restorationAccess struct{}
+
+func (restorationAccess) Capabilities() identity.AccessCapabilities {
+	return identity.AccessCapabilities{SIM: true, Modem: true}
+}
+
+func (restorationAccess) IMSIdentityProvider() identity.IMSIdentityProvider { return nil }
+
 func TestObserverUnsubscribeAndContextPropagation(t *testing.T) {
 	instance := &Instance{}
 	key := struct{}{}
@@ -39,7 +47,14 @@ func TestMainStartWaitsForRecoveredIPSecReadyEvent(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{})
 	finished := make(chan struct{})
+	observed := make(chan Event, 2)
 	request := restoredRuntimeRequest()
+	request.Access = restorationAccess{}
+	request.Observer = ObserverFunc(func(_ context.Context, event Event) {
+		if event.Kind == "prepared" || event.Kind == "connecting" {
+			observed <- event
+		}
+	})
 	request.runner = func(ctx context.Context, core runtimecore.RuntimeStartRequest) (StartResult, error) {
 		defer close(finished)
 		if !core.Reconnect || time.Duration(core.ReconnectDelay(0)) != 5*time.Second {
@@ -47,6 +62,9 @@ func TestMainStartWaitsForRecoveredIPSecReadyEvent(t *testing.T) {
 		}
 		core.Observer.OnRuntimeEvent(ctx, runtimecore.RuntimeEvent[*runtimecore.SessionResult]{
 			Kind: "prepared", DeviceID: core.DeviceID, TraceID: core.TraceID,
+		})
+		core.Observer.OnRuntimeEvent(ctx, runtimecore.RuntimeEvent[*runtimecore.SessionResult]{
+			Kind: "connecting", DeviceID: core.DeviceID, TraceID: core.TraceID,
 		})
 		close(started)
 		<-release
@@ -72,6 +90,22 @@ func TestMainStartWaitsForRecoveredIPSecReadyEvent(t *testing.T) {
 		resultChannel <- result{instance: instance, err: err}
 	}()
 	<-started
+	select {
+	case event := <-observed:
+		if !event.State.SIMReady || event.State.AccessReady || event.Session == nil {
+			t.Fatalf("prepared event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial observer missed prepared event before Start returned")
+	}
+	select {
+	case event := <-observed:
+		if event.State.Phase != PhaseAccessReady || !event.State.SIMReady || !event.State.AccessReady {
+			t.Fatalf("connecting event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial observer missed connecting event before Start returned")
+	}
 	select {
 	case got := <-resultChannel:
 		t.Fatalf("Start returned before ipsec_up: %+v", got)

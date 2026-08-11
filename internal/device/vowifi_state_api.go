@@ -118,7 +118,7 @@ func (p *Pool) GetVoWiFiRuntimeState(deviceID string) (runtimehost.State, bool) 
 	return p.voWiFiHost().State(deviceID)
 }
 
-func (p *Pool) SubscribeVoWiFiState(deviceID string) (<-chan struct{}, func()) {
+func (p *Pool) SubscribeVoWiFiState(deviceID string) (<-chan runtimehost.State, func()) {
 	return p.voWiFiHost().SubscribeState(deviceID)
 }
 

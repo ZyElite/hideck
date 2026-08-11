@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 
 	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
@@ -89,6 +90,23 @@ func (Runtime) startOnce(
 		Kind: "prepared", DeviceID: req.DeviceID, TraceID: req.TraceID,
 		Identity: prepared.IMSIdentity,
 	})
+	notifier := newIMSRegisteredNotifier(ctx, req, prepared.IMSIdentity)
+	config := sessionConfigFromRequest(ctx, req, prepared, notifier)
+	var tunnelReadyEmitted atomic.Bool
+	emitTunnelReady := func(session *SessionResult) {
+		snapshot := snapshotFromSessionResult(session)
+		if !snapshot.Established || !tunnelReadyEmitted.CompareAndSwap(false, true) {
+			return
+		}
+		emitEstablished(ctx, req, RuntimeStartResult{TraceID: req.TraceID, Session: session}, prepared.IMSIdentity, snapshot)
+	}
+	config.OnTunnelReady = emitTunnelReady
+	if req.BeforeSessionStart != nil {
+		if err := req.BeforeSessionStart(ctx, config); err != nil {
+			emitRuntimeError(ctx, req, err)
+			return result, err
+		}
+	}
 	if req.Hooks.OnConnecting != nil {
 		req.Hooks.OnConnecting(ctx)
 	}
@@ -96,14 +114,6 @@ func (Runtime) startOnce(
 		Kind: "connecting", DeviceID: req.DeviceID, TraceID: req.TraceID,
 		Identity: prepared.IMSIdentity,
 	})
-	notifier := newIMSRegisteredNotifier(ctx, req, prepared.IMSIdentity)
-	config := sessionConfigFromRequest(ctx, req, prepared, notifier)
-	if req.BeforeSessionStart != nil {
-		if err := req.BeforeSessionStart(ctx, config); err != nil {
-			emitRuntimeError(ctx, req, err)
-			return result, err
-		}
-	}
 	starter := req.SessionStarter
 	if starter == nil {
 		starter = defaultSessionStarter
@@ -120,10 +130,7 @@ func (Runtime) startOnce(
 	}
 	notifier.SetSession(session)
 	result.Session = session
-	snapshot := snapshotFromSessionResult(session)
-	if snapshot.Established {
-		emitEstablished(ctx, req, result, prepared.IMSIdentity, snapshot)
-	}
+	emitTunnelReady(session)
 	return result, nil
 }
 

@@ -118,6 +118,59 @@ func TestManagerStartRuntimeBroadcastsClaimedState(t *testing.T) {
 	}
 }
 
+func TestManagerStartRuntimePublishesStateBeforeStarterReturns(t *testing.T) {
+	manager := NewManager()
+	deviceID := "dev-starting-state"
+	claim := manager.BeginStart(deviceID)
+	notifications, unsubscribe := manager.SubscribeState(deviceID)
+	defer unsubscribe()
+
+	eventSent := make(chan struct{})
+	release := make(chan struct{})
+	wantInst := &runtimehost.Instance{}
+	manager.SetRuntimeStartForTest(func(ctx context.Context, req runtimehost.StartRequest) (*runtimehost.Instance, error) {
+		req.Observer.OnRuntimeHostEvent(ctx, runtimehost.Event{
+			Kind: "prepared", DeviceID: deviceID, Session: wantInst,
+			State: runtimehost.State{
+				DeviceID: deviceID, Phase: runtimehost.PhaseSIMReady,
+				SIMReady: true, AccessReady: true, UpdatedAt: time.Now(),
+			},
+		})
+		close(eventSent)
+		<-release
+		return wantInst, nil
+	})
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := manager.StartRuntime(context.Background(), RuntimeStartRequest{
+			DeviceID: deviceID,
+			Epoch:    claim.Epoch,
+			Prepared: PreparedStart{
+				SIM:      runtimehost.NewReaderSIMAdapter(simProviderStub{}),
+				Prepared: identity.PreparedSession{Profile: identity.Profile{IMSI: "001010000000001"}},
+			},
+			Modem: runtimeStartTestModem{},
+		})
+		result <- err
+	}()
+
+	<-eventSent
+	select {
+	case <-notifications:
+	case <-time.After(time.Second):
+		t.Fatal("startup runtime state was not broadcast before starter returned")
+	}
+	state, ok := manager.State(deviceID)
+	if !ok || !state.SIMReady || !state.AccessReady {
+		t.Fatalf("startup runtime state = %+v, ok=%v", state, ok)
+	}
+	close(release)
+	if err := <-result; err != nil {
+		t.Fatalf("StartRuntime: %v", err)
+	}
+}
+
 func TestManagerStartRuntimeStopsStaleStartedInstance(t *testing.T) {
 	manager := NewManager()
 	deviceID := "dev-stale"

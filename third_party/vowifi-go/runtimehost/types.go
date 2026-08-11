@@ -202,7 +202,10 @@ func (apduBusyError) Unwrap() error { return enginesim.ErrAPDUBusy }
 var errNoService = errors.New("runtimehost: no service installed")
 var errNoIdentityProvider = errors.New("runtimehost: no identity provider")
 
-const PhaseSIMReady = "sim_ready"
+const (
+	PhaseSIMReady    = "sim_ready"
+	PhaseAccessReady = "access_ready"
+)
 
 // Instance retains the v1.5.5 field sequence before additive fields.
 type Instance struct {

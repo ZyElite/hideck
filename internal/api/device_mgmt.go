@@ -473,6 +473,13 @@ func runtimeStateToDTO(st runtimehost.State, status modem.DeviceStatus) *voWiFiR
 	}
 }
 
+func runtimeStateSnapshotToDTO(st runtimehost.State, status modem.DeviceStatus) *voWiFiRuntimeDTO {
+	if st.Phase == "" && st.UpdatedAt.IsZero() {
+		return nil
+	}
+	return runtimeStateToDTO(st, status)
+}
+
 func (s *Server) getVoWiFiRuntimeDTO(deviceID string) *voWiFiRuntimeDTO {
 	st, ok := s.pool.GetVoWiFiRuntimeState(deviceID)
 	if !ok {
@@ -633,6 +640,8 @@ type overviewStreamEmitVersion struct {
 	LifecycleReason string
 	HasRuntime      bool
 	Phase           string
+	SIMReady        bool
+	AccessReady     bool
 	TunnelReady     bool
 	IMSReady        bool
 	SMSReady        bool
@@ -648,6 +657,8 @@ func newOverviewStreamEmitVersion(item deviceMgmtOverviewLiteItem) overviewStrea
 	if item.VoWiFiRuntime != nil {
 		v.HasRuntime = true
 		v.Phase = item.VoWiFiRuntime.Phase
+		v.SIMReady = item.VoWiFiRuntime.SIMReady
+		v.AccessReady = item.VoWiFiRuntime.AccessReady
 		v.TunnelReady = item.VoWiFiRuntime.TunnelReady
 		v.IMSReady = item.VoWiFiRuntime.IMSReady
 		v.SMSReady = item.VoWiFiRuntime.SMSReady
@@ -2616,16 +2627,17 @@ func (s *Server) handleDeviceMgmtOverviewStreamSingle(c *gin.Context) {
 		return md
 	}
 
-	sendData := func(refreshConfig bool, fromStateEvent bool) {
+	sendData := func(refreshConfig bool, fromStateEvent bool, stateSnapshot *runtimehost.State) {
 		md := getConfig(refreshConfig)
 		if md == nil {
 			return
 		}
 		var item deviceMgmtOverviewLiteItem
+		var status modem.DeviceStatus
 
 		w := s.pool.GetWorker(deviceID)
 		if w != nil {
-			status := w.GetCachedDeviceStatus()
+			status = w.GetCachedDeviceStatus()
 			trueVal := true
 			// 用运行时投影(w.Config)合并展示，使策略字段反映跟卡走的有效值
 			item = s.buildOverviewLiteDetailItemFromWorker(w, overviewDisplayConfig(w.Config, *md, true), status, &trueVal)
@@ -2666,6 +2678,9 @@ func (s *Server) handleDeviceMgmtOverviewStreamSingle(c *gin.Context) {
 			}
 			s.applyLifecycleToOverviewLiteItem(&item, nil, *md)
 		}
+		if stateSnapshot != nil {
+			item.VoWiFiRuntime = runtimeStateSnapshotToDTO(*stateSnapshot, status)
+		}
 
 		trafficCh = trafficStream.sync(item)
 		curr := newOverviewStreamEmitVersion(item)
@@ -2675,10 +2690,19 @@ func (s *Server) handleDeviceMgmtOverviewStreamSingle(c *gin.Context) {
 		lastSent = &curr
 		if fromStateEvent {
 			phase := ""
+			readiness := voWiFiRuntimeDTO{}
 			if item.VoWiFiRuntime != nil {
 				phase = item.VoWiFiRuntime.Phase
+				readiness = *item.VoWiFiRuntime
 			}
-			logger.Debug("overview SSE 推送 VoWiFi 状态变更", "device", deviceID, "phase", phase)
+			logger.Debug("overview SSE 推送 VoWiFi 状态变更",
+				"device", deviceID,
+				"phase", phase,
+				"sim_ready", readiness.SIMReady,
+				"access_ready", readiness.AccessReady,
+				"tunnel_ready", readiness.TunnelReady,
+				"ims_ready", readiness.IMSReady,
+				"sms_ready", readiness.SMSReady)
 		}
 
 		// 仍然使用 devices 结构体包裹返回单项从而无缝对接前台旧结构
@@ -2686,7 +2710,7 @@ func (s *Server) handleDeviceMgmtOverviewStreamSingle(c *gin.Context) {
 		c.Writer.Flush()
 	}
 
-	sendData(true, false)
+	sendData(true, false, nil)
 
 	for {
 		select {
@@ -2697,9 +2721,9 @@ func (s *Server) handleDeviceMgmtOverviewStreamSingle(c *gin.Context) {
 		case <-s.shutdownCh:
 			return
 		case <-ticker.C:
-			sendData(true, false)
-		case <-stateCh: // VoWiFi 状态变化（隧道建立/IMS 注册/SMS 就绪等），立即推送
-			sendData(false, true)
+			sendData(true, false, nil)
+		case state := <-stateCh: // 按事件快照推送，避免连续状态被合并成最终态。
+			sendData(false, true, &state)
 		case snap, ok := <-trafficCh:
 			if !ok {
 				trafficStream.stop()
