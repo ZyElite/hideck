@@ -24,6 +24,9 @@ func TestOpenAPIVoHiveYAMLValid(t *testing.T) {
 		t.Fatal("openapi.vohive.yaml missing /system/time")
 	}
 	for _, path := range []string{
+		"/command-center/commands", "/command-center/executions", "/command-center/events",
+		"/command-center/stream", "/command-center/history", "/balances",
+		"/devices/{device_id}/balance-queries", "/carrier-query-rules", "/carrier-query-rules/{rule_id}",
 		"/commands/catalog", "/commands/executions", "/commands/events",
 		"/commands/events/stream", "/commands/history", "/balance/queries",
 		"/balance/queries/{query_id}", "/balance/rules", "/balance/rules/{rule_id}",

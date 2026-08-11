@@ -20,6 +20,28 @@ type commandExecuteRequest struct {
 }
 
 func (s *Server) registerCommandCenterRoutes(api *gin.RouterGroup) {
+	s.registerApprovedCommandRoutes(api)
+	s.registerCompatibilityCommandRoutes(api)
+}
+
+func (s *Server) registerApprovedCommandRoutes(api *gin.RouterGroup) {
+	commands := api.Group("/command-center")
+	commands.GET("/commands", s.handleCommandCatalog)
+	commands.POST("/executions", s.handleCommandExecute)
+	commands.GET("/events", s.handleCommandEvents)
+	commands.GET("/stream", s.handleCommandEventStream)
+	commands.DELETE("/history", s.handleCommandHistoryClear)
+
+	api.GET("/balances", s.handleBalanceQueryList)
+	api.POST("/devices/:device_id/balance-queries", s.handleDeviceBalanceQueryStart)
+	api.GET("/devices/:device_id/balance-queries", s.handleDeviceBalanceQueryList)
+	api.GET("/carrier-query-rules", s.handleBalanceRules)
+	api.POST("/carrier-query-rules", s.handleBalanceRulePost)
+	api.PUT("/carrier-query-rules/:rule_id", s.handleBalanceRulePut)
+	api.DELETE("/carrier-query-rules/:rule_id", s.handleBalanceRuleDelete)
+}
+
+func (s *Server) registerCompatibilityCommandRoutes(api *gin.RouterGroup) {
 	api.GET("/commands/catalog", s.handleCommandCatalog)
 	api.POST("/commands/executions", s.handleCommandExecute)
 	api.GET("/commands/events", s.handleCommandEvents)
@@ -29,6 +51,7 @@ func (s *Server) registerCommandCenterRoutes(api *gin.RouterGroup) {
 	api.GET("/balance/queries", s.handleBalanceQueryList)
 	api.GET("/balance/queries/:query_id", s.handleBalanceQueryGet)
 	api.GET("/balance/rules", s.handleBalanceRules)
+	api.POST("/balance/rules", s.handleBalanceRulePost)
 	api.PUT("/balance/rules/:rule_id", s.handleBalanceRulePut)
 	api.DELETE("/balance/rules/:rule_id", s.handleBalanceRuleDelete)
 }

@@ -34,7 +34,7 @@ const dangerForm = reactive({ device: '', target: '', phone: '', duration: 15 })
 let balanceTimer: number | null = null
 
 const stream = useEventStream<CommandEvent>({
-  path: '/commands/events/stream',
+  path: '/command-center/stream',
   eventName: 'command',
   parse: (payload) => JSON.parse(payload) as CommandEvent,
   onEvent: (event) => mergeEvents([event]),

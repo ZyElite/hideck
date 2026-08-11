@@ -82,6 +82,7 @@ type Server struct {
 	notifyMgr     *notify.Manager
 	commandCenter *commandcenter.Service
 	balance       *balance.Service
+	carrierRules  carrierRuleStore
 	websheets     *vwebsheet.Broker
 	cardPolicies  cardPolicyStore
 	systemTime    systemTimeProvider
@@ -145,6 +146,7 @@ func (s *Server) initializeCommandCenter() {
 	}
 	rules := balance.NewRules(balance.DBCustomRuleSource{})
 	s.balance = balance.NewService(balance.NewPoolGateway(s.pool), balance.NewDatabaseStore(db.DB), rules)
+	s.carrierRules = databaseCarrierRuleStore{}
 	s.commandCenter = commandcenter.NewService(s.notifyMgr.CommandService(), commandcenter.NewDatabaseStore(db.DB))
 	_ = s.notifyMgr.SetBalanceCommandHandler(s.handleBalanceCommand)
 	s.pool.OnInboundSMS(func(message device.InboundSMS) error {

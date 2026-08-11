@@ -63,12 +63,24 @@ func (r Rule) Validate() error {
 	if err := validateTransport(r); err != nil {
 		return err
 	}
+	if r.ResponseMode == ResponseSMS && !hasExpectedSender(r.ExpectedSenders) {
+		return errors.New("短信回复规则必须至少设置一个预期发送者")
+	}
 	if strings.TrimSpace(r.ParserPattern) != "" {
 		if _, err := regexp.Compile(r.ParserPattern); err != nil {
 			return fmt.Errorf("余额解析正则无效: %w", err)
 		}
 	}
 	return validateEvidenceURL(r.EvidenceURL)
+}
+
+func hasExpectedSender(senders []string) bool {
+	for _, sender := range senders {
+		if strings.TrimSpace(sender) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func validateTransport(r Rule) error {

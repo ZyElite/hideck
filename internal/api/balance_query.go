@@ -20,6 +20,26 @@ type balanceQueryRequest struct {
 	DeviceID string `json:"device_id" binding:"required"`
 }
 
+type carrierRuleStore interface {
+	ListCustomCarrierQueryRules() ([]carrierquery.Rule, error)
+	SaveCustomCarrierQueryRule(carrierquery.Rule) error
+	DeleteCustomCarrierQueryRule(string) error
+}
+
+type databaseCarrierRuleStore struct{}
+
+func (databaseCarrierRuleStore) ListCustomCarrierQueryRules() ([]carrierquery.Rule, error) {
+	return db.ListCustomCarrierQueryRules()
+}
+
+func (databaseCarrierRuleStore) SaveCustomCarrierQueryRule(rule carrierquery.Rule) error {
+	return db.SaveCustomCarrierQueryRule(rule)
+}
+
+func (databaseCarrierRuleStore) DeleteCustomCarrierQueryRule(id string) error {
+	return db.DeleteCustomCarrierQueryRule(id)
+}
+
 func (s *Server) handleBalanceQueryStart(c *gin.Context) {
 	if !s.requireBalance(c) {
 		return
@@ -29,7 +49,18 @@ func (s *Server) handleBalanceQueryStart(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "device_id 不能为空"})
 		return
 	}
-	query, err := s.balance.StartQuery(c.Request.Context(), request.DeviceID)
+	s.startBalanceQuery(c, request.DeviceID)
+}
+
+func (s *Server) handleDeviceBalanceQueryStart(c *gin.Context) {
+	if !s.requireBalance(c) {
+		return
+	}
+	s.startBalanceQuery(c, c.Param("device_id"))
+}
+
+func (s *Server) startBalanceQuery(c *gin.Context, deviceID string) {
+	query, err := s.balance.StartQuery(c.Request.Context(), strings.TrimSpace(deviceID))
 	if err != nil {
 		writeBalanceError(c, err)
 		return
@@ -41,6 +72,17 @@ func (s *Server) handleBalanceQueryList(c *gin.Context) {
 	if !s.requireBalance(c) {
 		return
 	}
+	s.listBalanceQueries(c, c.Query("device_id"))
+}
+
+func (s *Server) handleDeviceBalanceQueryList(c *gin.Context) {
+	if !s.requireBalance(c) {
+		return
+	}
+	s.listBalanceQueries(c, c.Param("device_id"))
+}
+
+func (s *Server) listBalanceQueries(c *gin.Context, deviceID string) {
 	limit, err := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	if err != nil || limit < 1 || limit > 200 {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "limit 必须是 1 到 200"})
@@ -51,7 +93,7 @@ func (s *Server) handleBalanceQueryList(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "before 必须是 RFC3339 时间"})
 		return
 	}
-	queries, err := s.balance.List(c.Request.Context(), c.Query("device_id"), limit, before)
+	queries, err := s.balance.List(c.Request.Context(), strings.TrimSpace(deviceID), limit, before)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
 		return
@@ -76,10 +118,10 @@ func (s *Server) handleBalanceQueryGet(c *gin.Context) {
 }
 
 func (s *Server) handleBalanceRules(c *gin.Context) {
-	if !s.requireBalance(c) {
+	if !s.requireCarrierRules(c) {
 		return
 	}
-	custom, err := db.ListCustomCarrierQueryRules()
+	custom, err := s.carrierRules.ListCustomCarrierQueryRules()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
 		return
@@ -87,8 +129,16 @@ func (s *Server) handleBalanceRules(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"built_in": carrierquery.BuiltInRules(), "custom": custom})
 }
 
+func (s *Server) handleBalanceRulePost(c *gin.Context) {
+	s.saveBalanceRule(c, "")
+}
+
 func (s *Server) handleBalanceRulePut(c *gin.Context) {
-	if !s.requireBalance(c) {
+	s.saveBalanceRule(c, c.Param("rule_id"))
+}
+
+func (s *Server) saveBalanceRule(c *gin.Context, pathID string) {
+	if !s.requireCarrierRules(c) {
 		return
 	}
 	var rule carrierquery.Rule
@@ -96,9 +146,11 @@ func (s *Server) handleBalanceRulePut(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "规则 JSON 无效"})
 		return
 	}
-	rule.ID = strings.TrimSpace(c.Param("rule_id"))
+	if strings.TrimSpace(pathID) != "" {
+		rule.ID = strings.TrimSpace(pathID)
+	}
 	rule.BuiltIn = false
-	if err := db.SaveCustomCarrierQueryRule(rule); err != nil {
+	if err := s.carrierRules.SaveCustomCarrierQueryRule(rule); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
@@ -106,14 +158,22 @@ func (s *Server) handleBalanceRulePut(c *gin.Context) {
 }
 
 func (s *Server) handleBalanceRuleDelete(c *gin.Context) {
-	if !s.requireBalance(c) {
+	if !s.requireCarrierRules(c) {
 		return
 	}
-	if err := db.DeleteCustomCarrierQueryRule(c.Param("rule_id")); err != nil {
+	if err := s.carrierRules.DeleteCustomCarrierQueryRule(c.Param("rule_id")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) requireCarrierRules(c *gin.Context) bool {
+	if s.carrierRules != nil {
+		return true
+	}
+	c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "message": "运营商规则存储未配置"})
+	return false
 }
 
 func (s *Server) handleBalanceCommand(_ notify.CommandContext, args []string) string {

@@ -59,20 +59,47 @@ func (apiRuleResolver) ByID(context.Context, string) (carrierquery.Rule, error) 
 	return apiRuleResolver{}.Resolve(context.Background(), balance.DeviceSnapshot{})
 }
 
+type apiCarrierRuleStore struct {
+	rules     map[string]carrierquery.Rule
+	saveCalls int
+}
+
+func (s *apiCarrierRuleStore) ListCustomCarrierQueryRules() ([]carrierquery.Rule, error) {
+	rules := make([]carrierquery.Rule, 0, len(s.rules))
+	for _, rule := range s.rules {
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+func (s *apiCarrierRuleStore) SaveCustomCarrierQueryRule(rule carrierquery.Rule) error {
+	if err := rule.Validate(); err != nil {
+		return err
+	}
+	s.saveCalls++
+	s.rules[rule.ID] = rule
+	return nil
+}
+
+func (s *apiCarrierRuleStore) DeleteCustomCarrierQueryRule(id string) error {
+	delete(s.rules, id)
+	return nil
+}
+
 func TestCommandCenterRoutesRequireAuthAndPersistExecution(t *testing.T) {
 	server, token, _ := newCommandCenterAPITestServer(t)
 	router := server.newRouter()
-	unauthorized := performAPIRequest(router, http.MethodGet, "/api/commands/catalog", "", nil)
+	unauthorized := performAPIRequest(router, apiRequestOptions{method: http.MethodGet, path: "/api/command-center/commands"})
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status = %d", unauthorized.Code)
 	}
 	body := bytes.NewBufferString(`{"input":"/list"}`)
-	accepted := performAPIRequest(router, http.MethodPost, "/api/commands/executions", token, body)
+	accepted := performAPIRequest(router, apiRequestOptions{method: http.MethodPost, path: "/api/command-center/executions", token: token, body: body})
 	if accepted.Code != http.StatusAccepted {
 		t.Fatalf("execute status = %d body=%s", accepted.Code, accepted.Body.String())
 	}
 	waitForAPIEvents(t, server.commandCenter, 2)
-	events := performAPIRequest(router, http.MethodGet, "/api/commands/events?after_id=0", token, nil)
+	events := performAPIRequest(router, apiRequestOptions{method: http.MethodGet, path: "/api/command-center/events?after_id=0", token: token})
 	if events.Code != http.StatusOK || !strings.Contains(events.Body.String(), `"state":"completed"`) {
 		t.Fatalf("events status=%d body=%s", events.Code, events.Body.String())
 	}
@@ -80,10 +107,59 @@ func TestCommandCenterRoutesRequireAuthAndPersistExecution(t *testing.T) {
 
 func TestBalanceQueryRouteUsesInjectedProductionService(t *testing.T) {
 	server, token, gateway := newCommandCenterAPITestServer(t)
-	body := bytes.NewBufferString(`{"device_id":"wwan0"}`)
-	response := performAPIRequest(server.newRouter(), http.MethodPost, "/api/balance/queries", token, body)
+	response := performAPIRequest(server.newRouter(), apiRequestOptions{
+		method: http.MethodPost, path: "/api/devices/wwan0/balance-queries", token: token,
+	})
 	if response.Code != http.StatusAccepted || gateway.smsCalls != 1 {
 		t.Fatalf("balance status=%d calls=%d body=%s", response.Code, gateway.smsCalls, response.Body.String())
+	}
+}
+
+func TestApprovedCommandCenterRoutesAreProtected(t *testing.T) {
+	server, _, _ := newCommandCenterAPITestServer(t)
+	router := server.newRouter()
+	routes := []apiRequestOptions{
+		{method: http.MethodGet, path: "/api/command-center/commands"},
+		{method: http.MethodPost, path: "/api/command-center/executions"},
+		{method: http.MethodGet, path: "/api/command-center/events"},
+		{method: http.MethodGet, path: "/api/command-center/stream"},
+		{method: http.MethodDelete, path: "/api/command-center/history"},
+		{method: http.MethodGet, path: "/api/balances"},
+		{method: http.MethodPost, path: "/api/devices/wwan0/balance-queries"},
+		{method: http.MethodGet, path: "/api/devices/wwan0/balance-queries"},
+		{method: http.MethodGet, path: "/api/carrier-query-rules"},
+		{method: http.MethodPost, path: "/api/carrier-query-rules"},
+		{method: http.MethodPut, path: "/api/carrier-query-rules/custom"},
+		{method: http.MethodDelete, path: "/api/carrier-query-rules/custom"},
+	}
+	for _, route := range routes {
+		response := performAPIRequest(router, route)
+		if response.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s status = %d, want 401", route.method, route.path, response.Code)
+		}
+	}
+}
+
+func TestCarrierRuleCollectionPostValidatesReplySenders(t *testing.T) {
+	server, token, _ := newCommandCenterAPITestServer(t)
+	store := server.carrierRules.(*apiCarrierRuleStore)
+	body := bytes.NewBufferString(`{"id":"custom","mcc":"234","mnc":"10","operator":"custom","transport":"sms","destination":"85075","payload":"INFO","response_mode":"sms","enabled":true}`)
+	response := performAPIRequest(server.newRouter(), apiRequestOptions{
+		method: http.MethodPost, path: "/api/carrier-query-rules", token: token, body: body,
+	})
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "预期发送者") {
+		t.Fatalf("empty sender status=%d body=%s", response.Code, response.Body.String())
+	}
+	if store.saveCalls != 0 {
+		t.Fatalf("invalid rule persisted, save calls=%d", store.saveCalls)
+	}
+
+	validBody := bytes.NewBufferString(`{"id":"custom","mcc":"234","mnc":"10","operator":"custom","transport":"sms","destination":"85075","payload":"INFO","response_mode":"sms","expected_senders":["85075"],"enabled":true}`)
+	valid := performAPIRequest(server.newRouter(), apiRequestOptions{
+		method: http.MethodPost, path: "/api/carrier-query-rules", token: token, body: validBody,
+	})
+	if valid.Code != http.StatusOK || store.saveCalls != 1 {
+		t.Fatalf("valid rule status=%d calls=%d body=%s", valid.Code, store.saveCalls, valid.Body.String())
 	}
 }
 
@@ -97,7 +173,7 @@ func TestCommandEventStreamResumesAfterLastEventID(t *testing.T) {
 	defer httpServer.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, httpServer.URL+"/api/commands/events/stream", nil)
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, httpServer.URL+"/api/command-center/stream", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Last-Event-ID", fmt.Sprint(events[0].ID))
 	response, err := http.DefaultClient.Do(request)
@@ -133,6 +209,7 @@ func newCommandCenterAPITestServer(t *testing.T) (*Server, string, *apiBalanceGa
 	server := &Server{auth: config.WebConfig{Username: "admin", Password: "secret"},
 		commandCenter: commandcenter.NewService(commands, commandcenter.NewDatabaseStore(database)),
 		balance:       balance.NewService(gateway, balance.NewDatabaseStore(database), apiRuleResolver{}),
+		carrierRules:  &apiCarrierRuleStore{rules: make(map[string]carrierquery.Rule)},
 		shutdownCh:    make(chan struct{}),
 	}
 	token, _, err := server.issueSessionToken()
@@ -142,16 +219,23 @@ func newCommandCenterAPITestServer(t *testing.T) (*Server, string, *apiBalanceGa
 	return server, token, gateway
 }
 
-func performAPIRequest(handler http.Handler, method, path, token string, body *bytes.Buffer) *httptest.ResponseRecorder {
+type apiRequestOptions struct {
+	method string
+	path   string
+	token  string
+	body   *bytes.Buffer
+}
+
+func performAPIRequest(handler http.Handler, options apiRequestOptions) *httptest.ResponseRecorder {
 	var request *http.Request
-	if body == nil {
-		request = httptest.NewRequest(method, path, nil)
+	if options.body == nil {
+		request = httptest.NewRequest(options.method, options.path, nil)
 	} else {
-		request = httptest.NewRequest(method, path, body)
+		request = httptest.NewRequest(options.method, options.path, options.body)
 		request.Header.Set("Content-Type", "application/json")
 	}
-	if token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
+	if options.token != "" {
+		request.Header.Set("Authorization", "Bearer "+options.token)
 	}
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)

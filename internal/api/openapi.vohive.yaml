@@ -1680,6 +1680,220 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /command-center/commands:
+    get:
+      tags: [commands]
+      summary: 获取共享命令目录
+      responses:
+        '200':
+          description: 命令元数据
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /command-center/executions:
+    post:
+      tags: [commands]
+      summary: 执行共享斜杠命令
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [input]
+              properties:
+                input:
+                  type: string
+                  maxLength: 4096
+      responses:
+        '202':
+          description: 命令已持久化并开始执行
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /command-center/events:
+    get:
+      tags: [commands]
+      summary: 按游标读取命令事件
+      parameters:
+        - $ref: '#/components/parameters/AfterEventID'
+        - in: query
+          name: before_id
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - $ref: '#/components/parameters/EventLimit'
+      responses:
+        '200':
+          description: 命令事件列表
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /command-center/stream:
+    get:
+      tags: [commands]
+      summary: 命令事件 SSE 流
+      description: 使用 Last-Event-ID 或 after_id 从持久化游标恢复，事件名为 command。
+      parameters:
+        - $ref: '#/components/parameters/AfterEventID'
+        - in: header
+          name: Last-Event-ID
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      responses:
+        '200':
+          description: SSE 命令事件流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /command-center/history:
+    delete:
+      tags: [commands]
+      summary: 清理已结束的命令历史
+      responses:
+        '200':
+          description: 已删除的执行数量
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /balances:
+    get:
+      tags: [balance]
+      summary: 获取余额查询历史
+      parameters:
+        - in: query
+          name: device_id
+          schema:
+            type: string
+        - in: query
+          name: before
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: 查询历史
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /devices/{device_id}/balance-queries:
+    post:
+      tags: [balance]
+      summary: 为指定设备发起运营商余额查询
+      parameters:
+        - $ref: '#/components/parameters/DeviceIDPath'
+      responses:
+        '202':
+          description: 查询已发起或已直接完成
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+    get:
+      tags: [balance]
+      summary: 获取指定设备的余额查询历史
+      parameters:
+        - $ref: '#/components/parameters/DeviceIDPath'
+        - in: query
+          name: before
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: 查询历史
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /carrier-query-rules:
+    get:
+      tags: [balance]
+      summary: 获取内置及自定义运营商余额规则
+      responses:
+        '200':
+          description: 内置规则和自定义覆盖
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [balance]
+      summary: 创建自定义运营商余额规则
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarrierQueryRule'
+      responses:
+        '200':
+          description: 已保存规则
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /carrier-query-rules/{rule_id}:
+    put:
+      tags: [balance]
+      summary: 更新自定义运营商余额规则
+      parameters:
+        - in: path
+          name: rule_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarrierQueryRule'
+      responses:
+        '200':
+          description: 已保存规则
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [balance]
+      summary: 删除自定义运营商余额规则
+      parameters:
+        - in: path
+          name: rule_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: 已删除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /commands/catalog:
     get:
       tags: [commands]

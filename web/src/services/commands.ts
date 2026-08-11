@@ -5,21 +5,21 @@ import { callService } from './http'
 export const commandService = {
   catalog() {
     return callService(async () => {
-      const response = await api.get('/commands/catalog')
+      const response = await api.get('/command-center/commands')
       return (response.data?.commands || []) as CommandDefinition[]
     })
   },
 
   execute(input: string) {
     return callService(async () => {
-      const response = await api.post('/commands/executions', { input })
+      const response = await api.post('/command-center/executions', { input })
       return response.data?.execution as CommandExecution
     })
   },
 
   events(params: { afterId?: number; beforeId?: number; limit?: number }) {
     return callService(async () => {
-      const response = await api.get('/commands/events', {
+      const response = await api.get('/command-center/events', {
         params: {
           after_id: params.afterId,
           before_id: params.beforeId,
@@ -32,14 +32,14 @@ export const commandService = {
 
   clearHistory() {
     return callService(async () => {
-      const response = await api.delete('/commands/history')
+      const response = await api.delete('/command-center/history')
       return Number(response.data?.deleted || 0)
     })
   },
 
   balances(params: { deviceId?: string; limit?: number; before?: string } = {}) {
     return callService(async () => {
-      const response = await api.get('/balance/queries', {
+      const response = await api.get('/balances', {
         params: { device_id: params.deviceId, limit: params.limit || 50, before: params.before }
       })
       return (response.data?.queries || []) as BalanceQuery[]
@@ -48,14 +48,14 @@ export const commandService = {
 
   startBalance(deviceId: string) {
     return callService(async () => {
-      const response = await api.post('/balance/queries', { device_id: deviceId })
+      const response = await api.post(`/devices/${encodeURIComponent(deviceId)}/balance-queries`)
       return response.data?.query as BalanceQuery
     })
   },
 
   rules() {
     return callService(async () => {
-      const response = await api.get('/balance/rules')
+      const response = await api.get('/carrier-query-rules')
       return {
         builtIn: (response.data?.built_in || []) as CarrierQueryRule[],
         custom: (response.data?.custom || []) as CarrierQueryRule[]
@@ -65,14 +65,14 @@ export const commandService = {
 
   saveRule(rule: CarrierQueryRule) {
     return callService(async () => {
-      const response = await api.put(`/balance/rules/${encodeURIComponent(rule.id)}`, rule)
+      const response = await api.post('/carrier-query-rules', rule)
       return response.data?.rule as CarrierQueryRule
     })
   },
 
   deleteRule(id: string) {
     return callService(async () => {
-      await api.delete(`/balance/rules/${encodeURIComponent(id)}`)
+      await api.delete(`/carrier-query-rules/${encodeURIComponent(id)}`)
       return true
     })
   }

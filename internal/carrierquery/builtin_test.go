@@ -48,3 +48,13 @@ func TestRuleValidationRejectsInvalidParser(t *testing.T) {
 		t.Fatal("Validate() accepted invalid RE2 pattern")
 	}
 }
+
+func TestRuleValidationRejectsSMSReplyWithoutExpectedSender(t *testing.T) {
+	rule := BuiltInRules()[0]
+	rule.ID = "custom-rule"
+	rule.BuiltIn = false
+	rule.ExpectedSenders = []string{"", "  "}
+	if err := rule.Validate(); err == nil {
+		t.Fatal("Validate() accepted a reply rule that cannot correlate inbound SMS")
+	}
+}
