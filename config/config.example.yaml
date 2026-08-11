@@ -3,6 +3,10 @@ server:
   port: 7575
   sms_rate_limit_disabled: false
 
+system:
+  # 仅 OpenWrt 使用：把已拨号的数据网卡动态映射到 netifd，其他系统必须保持 false。
+  openwrt_dynamic_interfaces: false
+
 web:
   username: admin
   password: admin

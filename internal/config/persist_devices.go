@@ -10,7 +10,7 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 )
 
-var deviceFileMu sync.Mutex
+var configFileMu sync.Mutex
 
 func AddDeviceInFile(path string, device DeviceConfig) error {
 	return updateDevicesInFile(path, func(devices *yaml.Node) (*yaml.Node, error) {
@@ -101,55 +101,59 @@ func DeleteDeviceInFile(path string, deviceID string) error {
 }
 
 func updateDevicesInFile(path string, mutate func(*yaml.Node) (*yaml.Node, error)) error {
-	deviceFileMu.Lock()
-	defer deviceFileMu.Unlock()
+	return updateConfigInFile(path, func(root *yaml.Node) error {
+		devices := getMapValue(root, "devices")
+		if devices == nil || devices.Kind != yaml.SequenceNode {
+			devices = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			setMapNode(root, "devices", devices)
+		}
+		_, err := mutate(devices)
+		return err
+	})
+}
+
+func updateConfigInFile(path string, mutate func(*yaml.Node) error) error {
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("读取配置文件失败: %w", err)
 	}
-
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return fmt.Errorf("解析配置文件失败: %w", err)
 	}
-
-	if len(doc.Content) == 0 {
-		return fmt.Errorf("配置文件为空")
-	}
-
-	root := doc.Content[0]
-	if root.Kind != yaml.MappingNode {
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
 		return fmt.Errorf("配置文件结构错误")
 	}
-
-	devices := getMapValue(root, "devices")
-	if devices == nil || devices.Kind != yaml.SequenceNode {
-		devices = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-		setMapNode(root, "devices", devices)
-	}
-
-	if _, err := mutate(devices); err != nil {
+	if err := mutate(doc.Content[0]); err != nil {
 		return err
 	}
-
 	out, err := yaml.Marshal(&doc)
 	if err != nil {
 		return fmt.Errorf("序列化配置文件失败: %w", err)
 	}
+	if err := writeConfigAtomically(path, out); err != nil {
+		return err
+	}
+	if GetConfigPath() == path {
+		return ReloadFromFile()
+	}
+	return nil
+}
 
-	tmp := path + ".tmp"
+func writeConfigAtomically(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("创建配置目录失败: %w", err)
 	}
-	if err := os.WriteFile(tmp, out, 0o600); err != nil {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("写入临时配置文件失败: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("替换配置文件失败: %w", err)
 	}
-
-	_ = ReloadFromFile() // 触发配置重载到内存
 	return nil
 }
 

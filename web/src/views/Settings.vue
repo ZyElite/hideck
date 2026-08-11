@@ -19,6 +19,9 @@ import { formatDeviceDateTime } from '../utils/deviceTime'
 const settingsStore = useSettingsStore()
 const { systemInfo, loadingNotifications, savingNotifications, testingWebhook, testingBark, testingEmail, changingPassword, passwordForm, telegramForm, feishuForm, qqForm, webhookSettings, barkSettings, emailForm, pushplusForm } = storeToRefs(settingsStore)
 const activeNotifyTab = ref('telegram')
+const openWRTDynamicInterfaces = ref(false)
+const loadingSystemSettings = ref(false)
+const savingSystemSettings = ref(false)
 
 
 
@@ -69,6 +72,43 @@ async function loadSystemInfo() {
   if (!result.ok) {
     console.error('系统信息读取失败', result.error)
   }
+}
+
+async function loadSystemSettings() {
+  loadingSystemSettings.value = true
+  const result = await systemService.getSystemSettings()
+  loadingSystemSettings.value = false
+  if (!result.ok) {
+    ElMessage.error(result.error.message || '系统设置加载失败')
+    return
+  }
+  openWRTDynamicInterfaces.value = !!result.data.openwrt_dynamic_interfaces
+}
+
+async function updateOpenWRTDynamicInterfaces(value: string | number | boolean) {
+  const enabled = value === true
+  const previous = !enabled
+  if (enabled) {
+    try {
+      await ElMessageBox.confirm(
+        '该设置仅适用于 OpenWrt。确认把当前拨号数据网卡交给 netifd 展示？',
+        '启用 OpenWrt 接口映射',
+        { confirmButtonText: '启用', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      openWRTDynamicInterfaces.value = previous
+      return
+    }
+  }
+  savingSystemSettings.value = true
+  const result = await systemService.saveSystemSettings({ openwrt_dynamic_interfaces: enabled })
+  savingSystemSettings.value = false
+  if (!result.ok) {
+    openWRTDynamicInterfaces.value = previous
+    ElMessage.error(result.error.message || 'OpenWrt 接口映射更新失败')
+    return
+  }
+  ElMessage.success(enabled ? 'OpenWrt 接口映射已启用' : 'OpenWrt 接口映射已关闭')
 }
 
 
@@ -308,6 +348,7 @@ async function doApplyUpdate() {
 onMounted(() => {
   loadNotifications()
   loadSystemInfo()
+  loadSystemSettings()
 })
 
 onBeforeUnmount(() => {
@@ -430,6 +471,18 @@ onBeforeUnmount(() => {
                   打开 API 文档
                 </el-button>
               </div>
+            </div>
+            <div class="border-t border-gray-100 dark:border-white/10 pt-4 flex items-center justify-between gap-4">
+              <div class="min-w-0">
+                <div class="text-sm font-bold text-gray-800 dark:text-gray-100">OpenWrt 动态接口映射</div>
+                <div class="text-xs text-gray-500">netifd</div>
+              </div>
+              <el-switch
+                v-model="openWRTDynamicInterfaces"
+                :loading="loadingSystemSettings || savingSystemSettings"
+                :disabled="loadingSystemSettings || savingSystemSettings"
+                @change="updateOpenWRTDynamicInterfaces"
+              />
             </div>
          </div>
       </div>

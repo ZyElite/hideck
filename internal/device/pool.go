@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -197,32 +198,41 @@ type Pool struct {
 	overviewSubs atomic.Int32
 
 	// 热插拔监听
-	udevWatcher    *UdevWatcher
-	startOnce      sync.Once
-	policyResolver cardpolicy.Resolver
-	smsIdentities  smsIdentityStore
+	udevWatcher            *UdevWatcher
+	startOnce              sync.Once
+	policyResolver         cardpolicy.Resolver
+	smsIdentities          smsIdentityStore
+	dynamicInterfaceMapper DynamicInterfaceMapper
 }
 
 func NewPool(cfg *config.Config) *Pool {
+	return NewPoolWithDynamicInterfaceMapper(cfg, disabledDynamicInterfaceMapper{})
+}
+
+func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfaceMapper) *Pool {
 	ctx, cancel := context.WithCancel(context.Background())
+	if mapper == nil {
+		mapper = disabledDynamicInterfaceMapper{}
+	}
 	p := &Pool{
-		workers:               make(map[string]*Worker),
-		rebuilding:            make(map[string]bool),
-		rebuildAttempt:        make(map[string]uint64),
-		workerGenerations:     make(map[string]uint64),
-		modemRebootRecovering: make(map[string]bool),
-		modemRebootWakeups:    make(map[string]chan struct{}),
-		cfg:                   cfg,
-		ctx:                   ctx,
-		cancel:                cancel,
-		vowifiHost:            vowifihost.NewManager(),
-		simEventTimers:        make(map[string]*time.Timer),
-		deviceEventWakeups:    make(map[string]*deviceEventRecoverWakeup),
-		switchingDevices:      make(map[string]bool),
-		switchContexts:        make(map[string]esimSwitchContext),
-		switchTokens:          make(map[string]uint64),
-		lifecycle:             newLifecycleCoordinator(),
-		smsIdentities:         databaseSMSIdentityStore{},
+		workers:                make(map[string]*Worker),
+		rebuilding:             make(map[string]bool),
+		rebuildAttempt:         make(map[string]uint64),
+		workerGenerations:      make(map[string]uint64),
+		modemRebootRecovering:  make(map[string]bool),
+		modemRebootWakeups:     make(map[string]chan struct{}),
+		cfg:                    cfg,
+		ctx:                    ctx,
+		cancel:                 cancel,
+		vowifiHost:             vowifihost.NewManager(),
+		simEventTimers:         make(map[string]*time.Timer),
+		deviceEventWakeups:     make(map[string]*deviceEventRecoverWakeup),
+		switchingDevices:       make(map[string]bool),
+		switchContexts:         make(map[string]esimSwitchContext),
+		switchTokens:           make(map[string]uint64),
+		lifecycle:              newLifecycleCoordinator(),
+		smsIdentities:          databaseSMSIdentityStore{},
+		dynamicInterfaceMapper: mapper,
 	}
 	p.transportRecovery = NewTransportRecoveryController(p)
 	p.voWiFiHost().ConfigureAdapter(p)
@@ -1016,6 +1026,7 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 	if worker.publicIPRetryTimer != nil {
 		worker.publicIPRetryTimer.Stop()
 	}
+	mappingErr := p.removeDynamicInterfaceMapping(context.Background(), deviceID)
 
 	if worker.Proxy != nil {
 		worker.Proxy.Shutdown()
@@ -1043,7 +1054,7 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 			p.lifecycle.MarkOffline(deviceID, "worker_removed")
 		}
 	}
-	return nil
+	return mappingErr
 }
 
 // qmiWorkerBootstrapDeadline 是 AddWorkerFromConfig 单次执行的硬上限。
@@ -1182,6 +1193,10 @@ func (p *Pool) applyNetworkPreference(worker *Worker) error {
 			return nil
 		}
 		if nc.IsConnected() {
+			if err := p.ensureDynamicInterfaceMapping(p.ctx, worker); err != nil {
+				disconnectErr := nc.Disconnect()
+				return errors.Join(fmt.Errorf("OpenWrt 动态接口映射失败: %w", err), disconnectErr)
+			}
 			p.refreshIPs(worker, true)
 			return nil
 		}
@@ -2022,7 +2037,17 @@ func (w *Worker) StartNetwork() error {
 			return err
 		}
 	}
-	return nc.Connect()
+	if err := nc.Connect(); err != nil {
+		return err
+	}
+	if w.Pool == nil {
+		return nil
+	}
+	if err := w.Pool.ensureDynamicInterfaceMapping(context.Background(), w); err != nil {
+		disconnectErr := nc.Disconnect()
+		return errors.Join(fmt.Errorf("OpenWrt 动态接口映射失败: %w", err), disconnectErr)
+	}
+	return nil
 }
 
 func (w *Worker) StopNetwork() error {
@@ -2030,11 +2055,13 @@ func (w *Worker) StopNetwork() error {
 	if w == nil || nc == nil {
 		return fmt.Errorf("network_not_available")
 	}
-	if err := nc.Disconnect(); err != nil {
-		return err
+	var mappingErr error
+	if w.Pool != nil {
+		mappingErr = w.Pool.removeDynamicInterfaceMapping(context.Background(), w.ID)
 	}
+	disconnectErr := nc.Disconnect()
 	w.clearCachedIP()
-	return nil
+	return errors.Join(mappingErr, disconnectErr)
 }
 
 func (w *Worker) RotateWithNotify() (oldIP, newIP string, err error) {
@@ -2198,6 +2225,7 @@ func (p *Pool) Shutdown() error {
 		_ = p.stopVoWiFiAppForTeardown(context.Background(), devID, "shutdown")
 	}
 
+	mappingErr := p.removeAllDynamicInterfaceMappings(context.Background())
 	p.cancel()
 	var wg sync.WaitGroup
 	p.mu.RLock()
@@ -2249,9 +2277,9 @@ func (p *Pool) Shutdown() error {
 	select {
 	case <-c:
 		logger.Info("所有工作器已正常关闭")
-		return nil
+		return mappingErr
 	case <-time.After(5 * time.Second):
-		return fmt.Errorf("关闭超时")
+		return errors.Join(mappingErr, fmt.Errorf("关闭超时"))
 	}
 }
 

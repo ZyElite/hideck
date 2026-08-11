@@ -69,6 +69,7 @@ func ResolveIPFamily(in string) (enableV4 bool, enableV6 bool, err error) {
 
 type Config struct {
 	Server   ServerConfig   `mapstructure:"server"`
+	System   SystemConfig   `mapstructure:"system"`
 	Devices  []DeviceConfig `mapstructure:"devices"`
 	Telegram TelegramConfig `mapstructure:"telegram"`
 	Feishu   FeishuConfig   `mapstructure:"feishu"`
@@ -81,6 +82,10 @@ type Config struct {
 	Web      WebConfig      `mapstructure:"web"`
 	Proxy    ProxyConfig    `mapstructure:"proxy"`
 	VoWiFi   VoWiFiConfig   `mapstructure:"vowifi"`
+}
+
+type SystemConfig struct {
+	OpenWRTDynamicInterfaces bool `mapstructure:"openwrt_dynamic_interfaces" json:"openwrt_dynamic_interfaces"`
 }
 
 // ProxyConfig 定义代理服务配置
@@ -142,10 +147,10 @@ type DeviceConfig struct {
 	USBPath       string `mapstructure:"-"` // Deprecated: 运行时按 IMEI 现解析,绝不从文件读取
 	ATPort        string `mapstructure:"-"` // Deprecated: 运行时解析;AT 终端用 Worker.ResolvedATPort()
 	ProxyPort     int    `mapstructure:"proxy_port"`
-	ManagePort    string `mapstructure:"-"` // Deprecated: 运行时解析,绝不从文件读取
-	Interface     string `mapstructure:"-"` // Deprecated: 运行时解析,绝不从文件读取
-	QMIDevice     string `mapstructure:"-"` // Deprecated: 运行时解析,绝不从文件读取
-	ControlDevice string `mapstructure:"-"` // Deprecated: 运行时按 IMEI 现解析,绝不从文件读取
+	ManagePort    string `mapstructure:"-"`              // Deprecated: 运行时解析,绝不从文件读取
+	Interface     string `mapstructure:"-"`              // Deprecated: 运行时解析,绝不从文件读取
+	QMIDevice     string `mapstructure:"-"`              // Deprecated: 运行时解析,绝不从文件读取
+	ControlDevice string `mapstructure:"-"`              // Deprecated: 运行时按 IMEI 现解析,绝不从文件读取
 	MBIMTransport string `mapstructure:"mbim_transport"` // MBIM 传输: auto|proxy|direct，默认 auto
 	QMIUseProxy   bool   `mapstructure:"qmi_use_proxy"`  // 是否通过 libqmi qmi-proxy 打开 QMI 控制口
 	// 可选：qmi-proxy abstract socket 名称和可执行文件路径。留空使用 quectel-qmi-go 默认值。
@@ -247,6 +252,7 @@ func Load(path string) (*Config, error) {
 
 	// 默认值设置
 	viper.SetDefault("server.port", 7575)
+	viper.SetDefault("system.openwrt_dynamic_interfaces", false)
 	viper.SetDefault("webhook.timeout_ms", 5000)
 	viper.SetDefault("webhook.retry_max", 3)
 	viper.SetDefault("webhook.text_template", DefaultWebhookTextTemplate)

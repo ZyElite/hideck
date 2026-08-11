@@ -23,6 +23,10 @@ export type SystemInfo = {
   docs: DocsLinks
 }
 
+export type SystemSettings = {
+	openwrt_dynamic_interfaces: boolean
+}
+
 export type TelegramSettings = {
   enabled: boolean
   bot_token: string
@@ -211,6 +215,18 @@ export const systemService = {
     return callService(async () => {
       const res = await api.get('/system/info')
       return res.data as SystemInfo
+    })
+  },
+  getSystemSettings() {
+    return callService(async () => {
+      const res = await api.get<SystemSettings>('/settings/system')
+      return res.data
+    })
+  },
+  saveSystemSettings(payload: SystemSettings) {
+    return callService(async () => {
+      await api.put('/settings/system', payload)
+      return true
     })
   },
   changePassword(payload: { old_password: string; new_password: string; confirm_password: string }) {

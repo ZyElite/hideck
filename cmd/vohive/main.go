@@ -18,6 +18,7 @@ import (
 	"github.com/iniwex5/vohive/internal/db"
 	"github.com/iniwex5/vohive/internal/device"
 	"github.com/iniwex5/vohive/internal/notify"
+	"github.com/iniwex5/vohive/internal/openwrt"
 	proxyserver "github.com/iniwex5/vohive/internal/proxy/server"
 	"github.com/iniwex5/vohive/internal/proxy/traffic"
 	"github.com/iniwex5/vohive/internal/upstreamproxy"
@@ -125,7 +126,8 @@ func main() {
 
 	// 4. 初始化设备池
 
-	pool := device.NewPool(cfg)
+	dynamicInterfaceMapper := openwrt.NewMapper(cfg.System.OpenWRTDynamicInterfaces)
+	pool := device.NewPoolWithDynamicInterfaceMapper(cfg, dynamicInterfaceMapper)
 
 	pool.SetPolicyResolver(db.CardPolicyResolver{})
 

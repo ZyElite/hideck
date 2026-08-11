@@ -519,6 +519,12 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 
 		qmiCore.SetOnConnect(func() {
 			p.markQMIControlRecovered(w, "qmi_connected")
+			if err := p.ensureDynamicInterfaceMapping(p.ctx, w); err != nil {
+				disconnectErr := w.NetworkController().Disconnect()
+				logger.Error("QMI 数据面映射到 OpenWrt 失败，已撤销数据连接",
+					"device", w.ID, "err", err, "disconnect_err", disconnectErr)
+				return
+			}
 			p.refreshIPs(w, true)
 			p.notifyDataConnected(w.ID)
 		})

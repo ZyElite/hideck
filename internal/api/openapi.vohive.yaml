@@ -467,6 +467,40 @@ paths:
         '500':
           $ref: '#/components/responses/ErrorMessage'
 
+  /settings/system:
+    get:
+      tags: [settings]
+      summary: 获取系统设置
+      responses:
+        '200':
+          description: 当前系统设置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemSettings'
+    put:
+      tags: [settings]
+      summary: 更新系统设置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemSettings'
+      responses:
+        '200':
+          description: 设置已持久化并应用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppliedResult'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '422':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+
   /settings/notifications/webhook/test:
     post:
       tags: [settings]
@@ -1780,6 +1814,14 @@ components:
           type: string
         docs:
           $ref: '#/components/schemas/DocsLinks'
+
+    SystemSettings:
+      type: object
+      required: [openwrt_dynamic_interfaces]
+      properties:
+        openwrt_dynamic_interfaces:
+          type: boolean
+          description: 是否将拨号后的实际 Linux 数据接口动态映射到 OpenWrt netifd
 
     SystemTimeResponse:
       type: object
