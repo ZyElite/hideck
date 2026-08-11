@@ -180,13 +180,13 @@ func (s *Service) finalizeInboundSMSData(
 	return inboundSIPResult{
 		response: response,
 		afterReply: func() {
-			ackErr := s.sendRPReport(rpReportRequest{
+			if fragmentKey != "" {
+				s.markFragmentAcked(fragmentKey, message.partNo)
+			}
+			s.sendRPReportWithRetry(rpReportRequest{
 				Inbound: raw, Body: smscodec.BuildRPAck(message.rpMR),
 				RPMR: message.rpMR, Fingerprint: fingerprint,
 			})
-			if ackErr == nil && fragmentKey != "" {
-				s.markFragmentAcked(fragmentKey, message.partNo)
-			}
 		},
 	}, nil
 }
@@ -285,13 +285,9 @@ func (s *Service) inboundSMSProtocolError(raw string, status int, rpMR byte, sen
 	result := inboundSIPResult{response: response}
 	if sendRPError {
 		result.afterReply = func() {
-			err := s.sendRPReport(rpReportRequest{
+			s.sendRPReportWithRetry(rpReportRequest{
 				Inbound: raw, Body: smscodec.BuildRPError(rpMR, rpCauseTemporaryFailure), RPMR: rpMR,
 			})
-			if err != nil {
-				logging.WarnRate("ims-inbound-rp-error:"+s.cfg.DeviceID, time.Minute,
-					"IMS RP-ERROR delivery failed", "device", s.cfg.DeviceID, "rp_mr", int(rpMR), "error", err)
-			}
 		}
 	}
 	return result, protocolErr

@@ -19,6 +19,12 @@ type rpReportRequest struct {
 	Fingerprint string
 }
 
+const (
+	rpReportInitialDelay = 100 * time.Millisecond
+	rpReportRetryDelay   = time.Second
+	rpReportMaxAttempts  = 4
+)
+
 type mtAckAudit struct {
 	traceID, target, destination, transport, callID, fingerprint string
 	rpMR                                                         int
@@ -67,15 +73,7 @@ func (s *Service) sendRPReport(report rpReportRequest) error {
 		"transport", audit.transport, "call_id", audit.callID, "rp_mr", audit.rpMR)
 	ctx, cancel := context.WithTimeout(common.WithTraceID(context.Background(), traceID), inboundSMSAckTimeout)
 	defer cancel()
-	response, err := s.sendByMode(outboundSendOperation{
-		Context: ctx,
-		Mode:    modeCtx,
-		Request: request,
-		Timeout: inboundSMSAckTimeout,
-	})
-	if err == nil {
-		err = validateRPReportResponse(response)
-	}
+	err = s.sendOutOfDialogRequest(ctx, modeCtx, request)
 	if err != nil {
 		s.mtAckSendErr.Add(1)
 		s.recordMTAckAudit(audit, err)
@@ -86,14 +84,50 @@ func (s *Service) sendRPReport(report rpReportRequest) error {
 	return nil
 }
 
-func validateRPReportResponse(response *sipResponse) error {
-	if response == nil {
-		return errors.New("IMS RP report returned no SIP response")
+func (s *Service) sendRPReportWithRetry(report rpReportRequest) {
+	err := s.sendRPReportWithRetryPolicy(
+		report, rpReportInitialDelay, rpReportRetryDelay,
+	)
+	if err != nil {
+		logging.WarnRate("smsip-rp-report-retry-exhausted:"+s.cfg.DeviceID, 30*time.Second,
+			"IMS RP report delivery failed after retries",
+			"device", s.cfg.DeviceID, "attempts", rpReportMaxAttempts,
+			"rp_mr", int(report.RPMR), "error", err)
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("IMS RP report rejected: SIP %d %s", response.StatusCode, strings.TrimSpace(response.Reason))
+}
+
+func (s *Service) sendRPReportWithRetryPolicy(
+	report rpReportRequest,
+	initialDelay time.Duration,
+	retryDelay time.Duration,
+) error {
+	if !s.waitSMSRetryDelay(initialDelay) {
+		return nil
 	}
-	return nil
+	delay := retryDelay
+	var lastErr error
+	for attempt := 0; attempt < rpReportMaxAttempts; attempt++ {
+		if attempt > 0 && !s.waitSMSRetryDelay(delay) {
+			return nil
+		}
+		lastErr = s.sendRPReport(report)
+		if lastErr == nil {
+			return nil
+		}
+		delay *= 2
+	}
+	return lastErr
+}
+
+func (s *Service) waitSMSRetryDelay(delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-s.stop:
+		return false
+	}
 }
 
 func resolveRpAckTarget(assertedIdentity, from string) (string, error) {
