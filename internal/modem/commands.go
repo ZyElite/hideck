@@ -267,27 +267,7 @@ func (m *Manager) QueryUSBNetMode() (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	mode, ok := parseUSBNet(resp)
-	if !ok {
-		return -1, nil
-	}
-	return mode, nil
-}
-
-// SetUSBNetMode 设置 USBNET 模式并重启
-func (m *Manager) SetUSBNetMode(mode int) error {
-	cmd := fmt.Sprintf("AT+QCFG=\"usbnet\",%d", mode)
-	_, err := m.ExecuteAT(cmd, 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("设置 USBNET 模式失败: %w", err)
-	}
-
-	// 重启模组以生效
-	if _, err := m.ExecuteAT("AT+CFUN=1,1", 5*time.Second); err != nil {
-		return fmt.Errorf("重启模组失败: %w", err)
-	}
-
-	return nil
+	return ParseUSBNetMode(resp)
 }
 
 // OpenLogicalChannel 通过 AT+CCHO 打开 eUICC 的 logical channel

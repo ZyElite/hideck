@@ -96,10 +96,15 @@ func deviceConfigFromDTOWithBase(d deviceConfigDTO, base *config.DeviceConfig) c
 	qmiUseProxy := false
 	qmiProxyPath := ""
 	qmiProxyExecutable := ""
+	var usbNetMode *int
 	if base != nil {
 		qmiUseProxy = base.QMIUseProxy
 		qmiProxyPath = base.QMIProxyPath
 		qmiProxyExecutable = base.QMIProxyExecutable
+		if base.USBNetMode != nil {
+			mode := *base.USBNetMode
+			usbNetMode = &mode
+		}
 	}
 	if d.QMIUseProxy != nil {
 		qmiUseProxy = *d.QMIUseProxy
@@ -136,6 +141,7 @@ func deviceConfigFromDTOWithBase(d deviceConfigDTO, base *config.DeviceConfig) c
 		NetworkEnabled:        d.NetworkEnabled,
 		VoWiFiEnabled:         d.VoWiFiEnabled,
 		DeviceBackend:         d.DeviceBackend,
+		USBNetMode:            usbNetMode,
 	}
 }
 
@@ -1356,6 +1362,27 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 	newCfg.VoWiFiEnabled = effVoWiFi
 	newCfg.IPVersion = effIP
 	newCfg.APN = effAPN
+	oldBackend := strings.ToLower(strings.TrimSpace(oldCfg.DeviceBackend))
+	newBackend := strings.ToLower(strings.TrimSpace(newCfg.DeviceBackend))
+	if oldBackend != newBackend {
+		switchCtx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
+		defer cancel()
+		result, switchErr := s.deviceBackendSwitcher().Switch(switchCtx, backendSwitchRequest{
+			Current: oldCfg,
+			Desired: newCfg,
+			Target:  newBackend,
+		})
+		if switchErr != nil {
+			respondBackendSwitchFailure(c, switchErr)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"status":           "ok",
+			"requires_restart": false,
+			"backend_switch":   result,
+		})
+		return
+	}
 
 	requiresRestart := deviceConfigRequiresRestart(oldCfg, newCfg)
 	if err := config.UpdateDeviceInFile(s.configPath, newCfg.ID, newCfg); err != nil {
@@ -1659,23 +1686,42 @@ func (s *Server) handleDeviceMgmtSetUSBNetMode(c *gin.Context) {
 		return
 	}
 
-	worker := s.pool.GetWorker(id)
-	if worker == nil {
-		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到或未运行"})
+	target := ""
+	switch req.Mode {
+	case 0:
+		target = "qmi"
+	case 2:
+		target = "mbim"
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "仅支持 USBNET 0(QMI) 与 2(MBIM)，其他模式不会自动猜测",
+		})
 		return
 	}
-
-	if worker.Modem == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "当前设备为纯 QMI 模式，不支持 USBNET 模式设置"})
+	current, err := config.GetDeviceByID(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "读取设备配置失败: " + err.Error()})
 		return
 	}
-	if err := worker.Modem.SetUSBNetMode(req.Mode); err != nil {
-		logger.Error("设置 USBNET 模式失败", "device", id, "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "设置模式失败: " + err.Error()})
+	if current == nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到"})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "指令已发送，设备正在重启..."})
+	desired := *current
+	desired.DeviceBackend = target
+	switchCtx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
+	defer cancel()
+	result, switchErr := s.deviceBackendSwitcher().Switch(switchCtx, backendSwitchRequest{
+		Current: *current,
+		Desired: desired,
+		Target:  target,
+	})
+	if switchErr != nil {
+		respondBackendSwitchFailure(c, switchErr)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "backend_switch": result})
 }
 
 // handleEsimListProfiles 获取 eSIM Profile 列表

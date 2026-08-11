@@ -26,3 +26,9 @@ test('activeATPort prefers runtime deviceStatus value', () => {
     /activeATPort\s*=\s*computed\(\(\)\s*=>\s*props\.deviceStatus\?\.at_port\s*\|\|\s*props\.editConfig\?\.at_port\)/
   )
 })
+
+test('managed backend mode is selectable and is not forced from the control path', () => {
+  assert.match(source, /<el-radio-button value="qmi">QMI<\/el-radio-button>/)
+  assert.match(source, /<el-radio-button value="mbim">MBIM<\/el-radio-button>/)
+  assert.doesNotMatch(source, /editConfig\.device_backend\s*=\s*['"]qmi['"]/)
+})

@@ -55,6 +55,7 @@ func TestDeviceConfigDTOPreservesIPVersion(t *testing.T) {
 }
 
 func TestDeviceConfigFromDTOWithBasePreservesOmittedQMIProxyFields(t *testing.T) {
+	usbNetMode := 0
 	base := config.DeviceConfig{
 		ID:                 "dev-qmi",
 		Name:               "old name",
@@ -62,6 +63,7 @@ func TestDeviceConfigFromDTOWithBasePreservesOmittedQMIProxyFields(t *testing.T)
 		QMIUseProxy:        true,
 		QMIProxyPath:       "qmi-proxy",
 		QMIProxyExecutable: "/usr/libexec/qmi-proxy",
+		USBNetMode:         &usbNetMode,
 	}
 
 	cfg := deviceConfigFromDTOWithBase(deviceConfigDTO{
@@ -81,6 +83,9 @@ func TestDeviceConfigFromDTOWithBasePreservesOmittedQMIProxyFields(t *testing.T)
 	}
 	if cfg.QMIProxyExecutable != base.QMIProxyExecutable {
 		t.Fatalf("QMIProxyExecutable=%q, want %q", cfg.QMIProxyExecutable, base.QMIProxyExecutable)
+	}
+	if cfg.USBNetMode == nil || *cfg.USBNetMode != usbNetMode {
+		t.Fatalf("USBNetMode=%v, want %d", cfg.USBNetMode, usbNetMode)
 	}
 }
 

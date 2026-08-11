@@ -66,21 +66,22 @@ type loginAttempt struct {
 
 // Server 是 API 服务器的核心结构
 type Server struct {
-	cfg          config.ServerConfig // HTTP 服务器配置
-	fullCfg      *config.Config      // 完整配置引用
-	pool         *device.Pool        // 设备工作器池
-	auth         config.WebConfig    // Web 认证配置
-	fs           http.FileSystem     // 静态文件系统
-	configPath   string              // 配置文件路径
-	proxyMgr     *server.Manager     // 代理实例管理器
-	trafficRT    realtimeTrafficSubscriber
-	proxyRepo    repo.ProxyInstanceRepository
-	proxySyncMu  sync.Mutex
-	voiceGW      *voicehost.Gateway
-	notifyMgr    *notify.Manager
-	websheets    *vwebsheet.Broker
-	cardPolicies cardPolicyStore
-	systemTime   systemTimeProvider
+	cfg           config.ServerConfig // HTTP 服务器配置
+	fullCfg       *config.Config      // 完整配置引用
+	pool          *device.Pool        // 设备工作器池
+	auth          config.WebConfig    // Web 认证配置
+	fs            http.FileSystem     // 静态文件系统
+	configPath    string              // 配置文件路径
+	proxyMgr      *server.Manager     // 代理实例管理器
+	trafficRT     realtimeTrafficSubscriber
+	proxyRepo     repo.ProxyInstanceRepository
+	proxySyncMu   sync.Mutex
+	voiceGW       *voicehost.Gateway
+	notifyMgr     *notify.Manager
+	websheets     *vwebsheet.Broker
+	cardPolicies  cardPolicyStore
+	systemTime    systemTimeProvider
+	backendSwitch deviceBackendSwitcher
 
 	httpSrvMu sync.Mutex
 	httpSrv   *http.Server
@@ -127,6 +128,7 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 		),
 		shutdownCh: make(chan struct{}),
 	}
+	s.backendSwitch = newDeviceBackendSwitchService(pool, configPath)
 
 	return s
 }

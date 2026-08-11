@@ -5,6 +5,16 @@ import (
 	"testing"
 )
 
+func TestParseUSBNetMode(t *testing.T) {
+	mode, err := ParseUSBNetMode("\r\n+QCFG: \"usbnet\",2\r\nOK\r\n")
+	if err != nil || mode != 2 {
+		t.Fatalf("ParseUSBNetMode() = (%d, %v), want (2, nil)", mode, err)
+	}
+	if _, err := ParseUSBNetMode("\r\nOK\r\n"); err == nil {
+		t.Fatal("ParseUSBNetMode() error = nil for malformed response")
+	}
+}
+
 func TestParseServingCellLTE(t *testing.T) {
 	tests := []struct {
 		name     string

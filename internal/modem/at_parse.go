@@ -532,6 +532,15 @@ func parseUSBNet(resp string) (int, bool) {
 	return -1, false
 }
 
+// ParseUSBNetMode parses a Quectel USBNET query response and rejects malformed output.
+func ParseUSBNetMode(resp string) (int, error) {
+	mode, ok := parseUSBNet(resp)
+	if !ok {
+		return -1, fmt.Errorf("无法解析 USBNET 模式响应")
+	}
+	return mode, nil
+}
+
 // parseCCHO 解析 AT+CCHO 响应，提取逻辑通道号
 // 响应格式: +CCHO: <channel>
 func parseCCHO(resp string) (int, bool) {

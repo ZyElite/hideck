@@ -857,14 +857,16 @@ paths:
               $ref: '#/components/schemas/SetUSBNetModeRequest'
       responses:
         '200':
-          description: 指令已发送
+          description: 硬件模式已验证、配置已持久化且 Worker 已重建
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StatusResponse'
+                $ref: '#/components/schemas/BackendSwitchResponse'
         '400':
           $ref: '#/components/responses/ErrorMessage'
         '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '409':
           $ref: '#/components/responses/ErrorMessage'
         '500':
           $ref: '#/components/responses/ErrorMessage'
@@ -2796,6 +2798,63 @@ components:
       properties:
         mode:
           type: integer
+          enum: [0, 2]
+          description: 0=QMI，2=MBIM
+
+    BackendSwitchResponse:
+      type: object
+      required: [status, backend_switch]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        backend_switch:
+          $ref: '#/components/schemas/BackendSwitchResult'
+
+    BackendSwitchResult:
+      type: object
+      required:
+        - device_id
+        - target_backend
+        - configured_backend
+        - hardware_changed
+        - hardware_verified
+        - persisted
+        - worker_started
+      properties:
+        device_id:
+          type: string
+        target_backend:
+          type: string
+          enum: [qmi, mbim]
+        configured_backend:
+          type: string
+          enum: [qmi, mbim]
+        actual_backend:
+          type: string
+        hardware_changed:
+          type: boolean
+        hardware_verified:
+          type: boolean
+        persisted:
+          type: boolean
+        worker_started:
+          type: boolean
+        attachment:
+          type: object
+          properties:
+            backend:
+              type: string
+            imei:
+              type: string
+            control_device:
+              type: string
+            interface:
+              type: string
+            usb_path:
+              type: string
+            at_port:
+              type: string
 
     SetFlightModeRequest:
       type: object

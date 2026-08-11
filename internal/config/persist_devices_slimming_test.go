@@ -16,10 +16,12 @@ func TestUpdateDeviceInFileDoesNotPersistRuntimePaths(t *testing.T) {
 	}
 
 	// 模拟切运营商/编辑:传入带运行时解析路径的 cfg。
+	usbNetMode := 2
 	newDev := DeviceConfig{
 		ID:            "dev1",
 		ModemIMEI:     "867383058993207",
 		DeviceBackend: "qmi",
+		USBNetMode:    &usbNetMode,
 		VoWiFiEnabled: true,
 		ControlDevice: "/dev/cdc-wdm3", // 运行时路径,不应被持久化
 		Interface:     "wwan2",
@@ -38,6 +40,9 @@ func TestUpdateDeviceInFileDoesNotPersistRuntimePaths(t *testing.T) {
 	if d.ModemIMEI != "867383058993207" || d.DeviceBackend != "qmi" {
 		t.Fatalf("identity/intent fields lost: %+v", d)
 	}
+	if d.USBNetMode == nil || *d.USBNetMode != 2 {
+		t.Fatalf("verified usbnet mode lost: %+v", d)
+	}
 	if d.ControlDevice != "" || d.Interface != "" || d.ATPort != "" || d.USBPath != "" {
 		t.Fatalf("runtime paths must not be persisted, got: %+v", d)
 	}
@@ -49,8 +54,10 @@ func TestAddDeviceInFileDoesNotPersistRuntimePaths(t *testing.T) {
 	if err := os.WriteFile(path, []byte("devices: []\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	usbNetMode := 2
 	dev := DeviceConfig{
 		ID: "dev9", ModemIMEI: "861234567890123", DeviceBackend: "mbim",
+		USBNetMode:    &usbNetMode,
 		ControlDevice: "/dev/cdc-wdm5", Interface: "wwan5", ATPort: "/dev/ttyUSB1",
 		USBPath: "/sys/bus/usb/devices/2-1",
 	}
@@ -61,6 +68,9 @@ func TestAddDeviceInFileDoesNotPersistRuntimePaths(t *testing.T) {
 	d := got.Devices[0]
 	if d.ModemIMEI != "861234567890123" || d.DeviceBackend != "mbim" {
 		t.Fatalf("identity/intent lost: %+v", d)
+	}
+	if d.USBNetMode == nil || *d.USBNetMode != 2 {
+		t.Fatalf("verified usbnet mode lost: %+v", d)
 	}
 	if d.ControlDevice != "" || d.Interface != "" || d.ATPort != "" || d.USBPath != "" {
 		t.Fatalf("runtime paths must not be persisted, got: %+v", d)

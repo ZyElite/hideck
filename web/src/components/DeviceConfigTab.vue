@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import {
   Router24Regular,
   Delete24Regular,
   Save24Regular
 } from '@vicons/fluent'
 import type { DeviceConfigDTO, DeviceOverviewItem } from '../types/api'
-import { isWwanQmiControlPath } from '../utils/deviceBackend'
+import { normalizeManagedDeviceBackend } from '../utils/deviceBackend'
 
 const props = defineProps<{
   editConfig: DeviceConfigDTO | null
@@ -25,19 +25,9 @@ const activeInterface = computed(() => props.deviceStatus?.interface || props.ed
 const activeATPort = computed(() => props.deviceStatus?.at_port || props.editConfig?.at_port)
 const activeUsbPath = computed(() => props.deviceStatus?.usb_path || props.editConfig?.usb_path)
 
-const isQMIBackendOnly = computed(() => isWwanQmiControlPath(activeControlDevice.value))
-const isMBIMBackendOnly = computed(
-  () => String(props.editConfig?.device_backend || '').toLowerCase() === 'mbim'
-)
-
-watch(
-  isQMIBackendOnly,
-  (locked) => {
-    if (locked && props.editConfig) {
-      props.editConfig.device_backend = 'qmi'
-    }
-  },
-  { immediate: true }
+const configuredBackend = computed(() => String(props.editConfig?.device_backend || '').toLowerCase())
+const isManagedBackend = computed(
+	() => normalizeManagedDeviceBackend(configuredBackend.value) !== null
 )
 </script>
 
@@ -98,21 +88,19 @@ watch(
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm font-bold text-gray-800 dark:text-gray-100">设备运行模式</div>
-            <div class="text-xs text-gray-500 dark:text-gray-400">
-              {{ isQMIBackendOnly ? '此类设备固定 QMI，AT 口仅用于终端'
-                 : (isMBIMBackendOnly ? '此类设备固定 MBIM，AT 口仅用于终端'
-                 : 'AT=传统串口 / QMI=纯 QMI') }}
-            </div>
           </div>
-          <el-select
+          <el-radio-group
+            v-if="isManagedBackend"
             v-model="editConfig.device_backend"
-            style="width: 120px"
-            placeholder="AT"
-            :disabled="isQMIBackendOnly || isMBIMBackendOnly"
+            size="small"
+            :disabled="saving"
+            aria-label="设备运行模式"
           >
-            <el-option v-if="!isMBIMBackendOnly" label="AT" value="at" :disabled="isQMIBackendOnly" />
-            <el-option v-if="!isMBIMBackendOnly" label="QMI" value="qmi" :disabled="!activeControlDevice && editConfig.device_backend !== 'qmi'" />
-            <el-option v-if="isMBIMBackendOnly" label="MBIM" value="mbim" />
+            <el-radio-button value="qmi">QMI</el-radio-button>
+            <el-radio-button value="mbim">MBIM</el-radio-button>
+          </el-radio-group>
+          <el-select v-else v-model="editConfig.device_backend" style="width: 120px" disabled>
+            <el-option label="AT" value="at" />
           </el-select>
         </div>
       </div>

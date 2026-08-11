@@ -7,6 +7,10 @@ import axios from 'axios'
 type UpdateConfigResponse = {
   requires_restart?: boolean
   warning?: string
+  backend_switch?: {
+    target_backend?: string
+    worker_started?: boolean
+  }
 }
 
 type AddDeviceResponse = {
@@ -212,10 +216,16 @@ export const devicesService = {
   },
   updateConfig(id: string, config: DeviceConfigDTO) {
     return callService(async () => {
-      const res = await api.put<UpdateConfigResponse>(`/devices/${id}`, { config })
+	  const res = await api.put<UpdateConfigResponse>(`/devices/${id}`, { config }, { timeout: 55_000 })
       return {
         requiresRestart: !!res.data?.requires_restart,
-        warning: typeof res.data?.warning === 'string' ? res.data.warning : ''
+		warning: typeof res.data?.warning === 'string' ? res.data.warning : '',
+		backendSwitch: res.data?.backend_switch
+		  ? {
+			  targetBackend: String(res.data.backend_switch.target_backend || ''),
+			  workerStarted: res.data.backend_switch.worker_started === true
+		    }
+		  : undefined
       }
     })
   },

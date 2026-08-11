@@ -23,7 +23,7 @@ import { useEventStream } from '../composables/useEventStream'
 import { useDevicesStore } from '../stores/devices'
 import { debugCollector } from '../debug/collector'
 import { copyToClipboard } from '../utils/clipboard'
-import { isWwanQmiControlPath } from '../utils/deviceBackend'
+import { isManagedDeviceBackendSwitch, isWwanQmiControlPath } from '../utils/deviceBackend'
 import { isControlOnline, isRecoveryPhase } from '../utils/deviceLifecycle'
 import { getMccMncIndex, isoToFlagEmoji, type MccMncRow } from '../utils/mcc-mnc'
 import type { CardPolicy, CarrierWebsheetInfo, DeviceConfigDTO, DeviceMgmtListItem, DeviceOverviewItem, DiscoveredDevice, ModemStatus, PNNRecord, RealtimeTrafficSnapshot } from '../types/api'
@@ -555,12 +555,9 @@ async function syncEditConfigFromSelected(force = false) {
     if (!result.ok) throw new Error(result.error.message)
     editConfig.value = JSON.parse(JSON.stringify(storeConfig.value || {})) as DeviceConfigDTO
 
-    const activeControlDevice = selectedDetail.value?.control_device || editConfig.value.control_device
-    if (isWwanQmiControlPath(activeControlDevice)) {
-      editConfig.value.device_backend = 'qmi'
-    } else if (!editConfig.value.device_backend) {
-      editConfig.value.device_backend = 'at'
-    }
+	if (!editConfig.value.device_backend) {
+	  editConfig.value.device_backend = 'at'
+	}
     editBaseline.value = JSON.stringify(editConfig.value)
     editDirty.value = false
   } catch {
@@ -895,11 +892,29 @@ function openSms() {
 async function saveConfig() {
   const id = String(selectedId.value || '').trim()
   if (!id || !editConfig.value) return
+
+  const baseline = editBaseline.value
+    ? JSON.parse(editBaseline.value) as DeviceConfigDTO
+    : null
+  const previousBackend = String(baseline?.device_backend || '').toLowerCase()
+  const nextBackend = String(editConfig.value.device_backend || '').toLowerCase()
+	const switchingBackend = isManagedDeviceBackendSwitch(previousBackend, nextBackend)
+  if (switchingBackend) {
+    const confirmed = await ElMessageBox.confirm(
+      `确定将设备 ${id} 从 ${previousBackend.toUpperCase()} 切换为 ${nextBackend.toUpperCase()}？模组会重启并短暂离线。`,
+      '切换设备运行模式',
+      { confirmButtonText: '确认切换', cancelButtonText: '取消', type: 'warning' }
+    ).then(() => true).catch(() => false)
+    if (!confirmed) return
+  }
+
   saving.value = true
   try {
     const result = await devicesService.updateConfig(id, editConfig.value)
     if (!result.ok) throw new Error(result.error.message || '保存失败')
-    if (result.data.warning) {
+	if (result.data.backendSwitch?.workerStarted) {
+	  ElMessage.success(`设备已切换为 ${result.data.backendSwitch.targetBackend.toUpperCase()} 并重新上线`)
+	} else if (result.data.warning) {
       ElMessage.warning(result.data.warning)
     } else if (result.data.requiresRestart) {
       ElMessage.warning('配置已保存，但部分变更需要重启服务后生效')

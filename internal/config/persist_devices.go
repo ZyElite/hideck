@@ -37,6 +37,11 @@ func UpdateDeviceInFile(path string, deviceID string, newDevice DeviceConfig) er
 			deleteMapKey(n, "modem_imei")
 		}
 		setMapScalar(n, "device_backend", newDevice.DeviceBackend)
+		if newDevice.USBNetMode != nil {
+			setMapInt(n, "usbnet_mode", *newDevice.USBNetMode)
+		} else {
+			deleteMapKey(n, "usbnet_mode")
+		}
 		if newDevice.QMIUseProxy {
 			setMapBool(n, "qmi_use_proxy", true)
 		} else {
@@ -171,6 +176,9 @@ func deviceConfigToNode(d DeviceConfig) *yaml.Node {
 	}
 	if d.DeviceBackend != "" {
 		appendMapScalar(m, "device_backend", d.DeviceBackend)
+	}
+	if d.USBNetMode != nil {
+		appendMapInt(m, "usbnet_mode", *d.USBNetMode)
 	}
 	if d.QMIUseProxy {
 		appendMapBool(m, "qmi_use_proxy", true)
