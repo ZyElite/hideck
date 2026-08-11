@@ -875,7 +875,7 @@ func (s *Server) handleDeviceMgmtOverviewLite(c *gin.Context) {
 				VoWiFiActive:           false,
 				NetworkConnected:       false,
 				RegistrationStateLabel: registrationStateLabel(0),
-				Modem:                  modem.DeviceStatus{},
+				Modem:                  offlineModemStatus(id),
 				Traffic:                nil,
 			}
 			s.applyLifecycleToOverviewLiteItem(&item, nil, *dc)
@@ -2377,9 +2377,8 @@ func (s *Server) handleDeviceMgmtSetFlightMode(c *gin.Context) {
 
 	flightModeEnabled := req.Enabled
 
-	// 先落库卡策略（飞行模式跟卡走）：开飞行与 network/vowifi 互斥，关飞行仅清 airplane。
-	// best-effort：落库失败不阻断热切（与 network/vowifi 热切路径一致）。
-	s.patchCardPolicyForDevice(id, func(p *db.CardPolicy) {
+	// 卡策略持久化是硬件动作的前置条件，避免数据库与真实射频状态悄悄分叉。
+	if _, _, err := s.patchCardPolicyForDevice(id, func(p *db.CardPolicy) {
 		if flightModeEnabled {
 			p.AirplaneEnabled = true
 			p.VoWiFiEnabled = false
@@ -2387,7 +2386,10 @@ func (s *Server) handleDeviceMgmtSetFlightMode(c *gin.Context) {
 		} else {
 			p.AirplaneEnabled = false
 		}
-	})
+	}); err != nil {
+		writeCardPolicyMutationError(c, err)
+		return
+	}
 	// 同步 w.Config，使概览即时反映飞行/在线模式（setWorkerFlightMode 只切硬件不碰 Config）。
 	s.pool.SetWorkerAirplanePolicy(id, flightModeEnabled)
 
@@ -2612,7 +2614,7 @@ func (s *Server) handleDeviceMgmtOverviewStreamSingle(c *gin.Context) {
 				NetworkConnected:       false,
 				RegistrationStateLabel: registrationStateLabel(0),
 				RadioLiveOK:            &trueVal,
-				Modem:                  modem.DeviceStatus{},
+				Modem:                  offlineModemStatus(deviceID),
 				Traffic:                nil,
 				BackendMode:            resolveOfflineBackendMode(*md),
 			}
@@ -2662,6 +2664,10 @@ func (s *Server) handleDeviceMgmtOverviewStreamSingle(c *gin.Context) {
 			c.Writer.Flush()
 		}
 	}
+}
+
+func offlineModemStatus(deviceID string) modem.DeviceStatus {
+	return modem.DeviceStatus{ICCID: db.CurrentICCIDForDevice(deviceID)}
 }
 
 type overviewTrafficStreamState struct {

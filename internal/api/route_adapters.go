@@ -13,9 +13,9 @@ type enabledPatchRequest struct {
 }
 
 type networkPatchRequest struct {
-	Enabled   *bool  `json:"enabled"`
-	IPVersion string `json:"ip_version"`
-	APN       string `json:"apn"`
+	Enabled   *bool   `json:"enabled"`
+	IPVersion *string `json:"ip_version"`
+	APN       *string `json:"apn"`
 }
 
 func (s *Server) handleDeviceNetworkPatch(c *gin.Context) {
@@ -28,28 +28,40 @@ func (s *Server) handleDeviceNetworkPatch(c *gin.Context) {
 	deviceID := deviceIDParam(c)
 
 	if *req.Enabled {
-		// 落库：network_enabled=true + ip_version + apn（APN/IP 供下次连接生效）
-		ipVersion := strings.TrimSpace(req.IPVersion)
-		apn := strings.TrimSpace(req.APN)
-		iccid, _, _ := s.patchCardPolicyForDevice(deviceID, func(p *db.CardPolicy) {
+		ipVersion, err := normalizedOptionalIPVersion(req.IPVersion)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+			return
+		}
+		apn := trimmedOptionalString(req.APN)
+		effectiveIPVersion := ""
+		effectiveAPN := ""
+		_, _, err = s.patchCardPolicyForDevice(deviceID, func(p *db.CardPolicy) {
 			p.NetworkEnabled = true
 			if ipVersion != "" {
 				p.IPVersion = ipVersion
 			}
-			p.APN = apn
+			if req.APN != nil {
+				p.APN = apn
+			}
+			effectiveIPVersion = p.IPVersion
+			effectiveAPN = p.APN
 		})
-		// 同步 w.Config，使概览读到最新值（QMI APN 在下次连接时生效）
-		if iccid != "" {
-			s.pool.SetWorkerNetworkPolicy(deviceID, true, ipVersion, apn)
+		if err != nil {
+			writeCardPolicyMutationError(c, err)
+			return
 		}
+		s.pool.SetWorkerNetworkPolicy(deviceID, true, effectiveIPVersion, effectiveAPN)
 		s.handleDeviceMgmtStartNetwork(c)
 		return
 	}
 
-	// enabled=false：落库 network_enabled=false
-	s.patchCardPolicyForDevice(deviceID, func(p *db.CardPolicy) {
+	if _, _, err := s.patchCardPolicyForDevice(deviceID, func(p *db.CardPolicy) {
 		p.NetworkEnabled = false
-	})
+	}); err != nil {
+		writeCardPolicyMutationError(c, err)
+		return
+	}
 	s.handleDeviceMgmtStopNetwork(c)
 }
 
@@ -65,7 +77,10 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 	if *req.Enabled {
 		// 落库：仅置 vowifi_enabled=true。不碰 airplane_enabled——它是用户的纯飞行
 		// 意图，作为关闭 VoWiFi 后的回退依据；VoWiFi 接管射频由运行时投影派生。
-		s.patchCardPolicyForDevice(deviceID, vowifiEnablePolicyMutation)
+		if _, _, err := s.patchCardPolicyForDevice(deviceID, vowifiEnablePolicyMutation); err != nil {
+			writeCardPolicyMutationError(c, err)
+			return
+		}
 		// 同步 w.Config，使概览即时切到 VoWiFi 模式面板（EnableVoWiFi 不碰 Config）。
 		s.pool.SetWorkerVoWiFiPolicy(deviceID, true)
 		s.handleVoWiFiEnable(c)
@@ -74,7 +89,10 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 
 	// 落库：仅清 vowifi_enabled=false，保留 airplane_enabled（用户飞行意图）。
 	// 关闭 VoWiFi 后 DisableVoWiFi 会按当前卡策略重投影：之前是飞行则回飞行，否则回在线。
-	s.patchCardPolicyForDevice(deviceID, vowifiDisablePolicyMutation)
+	if _, _, err := s.patchCardPolicyForDevice(deviceID, vowifiDisablePolicyMutation); err != nil {
+		writeCardPolicyMutationError(c, err)
+		return
+	}
 	s.pool.SetWorkerVoWiFiPolicy(deviceID, false)
 	s.handleVoWiFiDisable(c)
 }
@@ -84,3 +102,17 @@ func vowifiEnablePolicyMutation(p *db.CardPolicy) { p.VoWiFiEnabled = true }
 
 // vowifiDisablePolicyMutation 关 VoWiFi 的落库副作用：只清 vowifi，保留用户飞行意图以便回退。
 func vowifiDisablePolicyMutation(p *db.CardPolicy) { p.VoWiFiEnabled = false }
+
+func normalizedOptionalIPVersion(value *string) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	return normalizeCardPolicyIPVersion(*value)
+}
+
+func trimmedOptionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}

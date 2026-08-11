@@ -51,3 +51,16 @@ func TestResolveOfflineDevicePolicyNoCardSafeDefault(t *testing.T) {
 		t.Fatalf("默认应 sms=on/ip=v4: %+v", got)
 	}
 }
+
+func TestOfflineModemStatusUsesPersistedICCID(t *testing.T) {
+	initPolicyTestDB(t)
+	iccid := "8986001234567890001"
+	if err := db.DB.Create(&db.Device{IMEI: "imei-offline", Alias: "wwan-offline", CurrentICCID: &iccid}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	got := offlineModemStatus("wwan-offline")
+	if got.ICCID != iccid {
+		t.Fatalf("ICCID=%q want %q", got.ICCID, iccid)
+	}
+}

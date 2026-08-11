@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, toRef } from 'vue'
 import { Sim24Regular } from '@vicons/fluent'
 import { Loading } from '@element-plus/icons-vue'
 import type { CardPolicy } from '../types/api'
 import { devicesService } from '../services/devices'
 import { useCardPolicyToggles, type PolicyMirror } from '../composables/useCardPolicyToggles'
+import { useCardPolicyFields } from '../composables/useCardPolicyFields'
+import { cardsService } from '../services/cards'
 
 const props = defineProps<{
   deviceId: string | undefined
@@ -17,11 +19,8 @@ const emit = defineEmits<{
   policyChanged: []
 }>()
 
-// ip/apn 仍由本组件独立持有（不进 composable）
-const ipVersion = ref<'v4' | 'v6' | 'v4v6'>('v4')
-const apn = ref('')
-
 const canToggle = computed(() => props.deviceOnline && !!props.iccid)
+const canEditPolicy = computed(() => !!props.iccid)
 
 // 上游 policy → 三开关镜像（喂给 composable）
 const mirror = computed<PolicyMirror | null>(() =>
@@ -34,16 +33,16 @@ const mirror = computed<PolicyMirror | null>(() =>
     : null
 )
 
-// 同步 ip/apn（这两项不参与 composable）
-watch(
-  () => props.policy,
-  (p) => {
-    if (!p) return
-    ipVersion.value = p.ip_version || 'v4'
-    apn.value = p.apn || ''
-  },
-  { immediate: true }
-)
+const { ipVersion, apn, pending: fieldPending, error: fieldError, errorField, saveIPVersion, saveAPN } =
+  useCardPolicyFields(toRef(props, 'policy'), async (patch) => {
+    if (!props.iccid) return { ok: false, error: { message: 'SIM 身份未就绪' } }
+    return cardsService.putPolicy(props.iccid, patch)
+  }, () => emit('policyChanged'))
+
+function onAPNEnter(event: KeyboardEvent) {
+  const target = event.target as HTMLInputElement | null
+  target?.blur()
+}
 
 // live 执行器：调设备动作端点，即时生效。network 携带本组件的 ip/apn。
 const {
@@ -108,7 +107,7 @@ const sourceLabel = computed(() => {
 
     <!-- 离线提示（有 ICCID 但设备离线） -->
     <div v-show="iccid && !deviceOnline" class="mb-3 px-3 py-2 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 text-xs text-yellow-700 dark:text-yellow-300">
-      设备离线，策略仅展示，切换操作已禁用
+      设备离线，运行模式开关已禁用；IP 版本和 APN 仍可保存
     </div>
 
     <!-- 用 v-show 让 el-switch 始终挂载，避免 element-plus 2.13 在挂载前访问未就绪 input 而崩溃 -->
@@ -126,19 +125,40 @@ const sourceLabel = computed(() => {
                 <!-- IP 版本 -->
         <div class="space-y-1">
           <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">IP 版本</label>
-          <el-select v-model="ipVersion" class="w-full" :disabled="!canToggle">
+          <el-select
+            v-model="ipVersion"
+            class="w-full"
+            :disabled="!canEditPolicy || fieldPending !== null"
+            @change="saveIPVersion"
+          >
             <el-option label="IPv4" value="v4" />
             <el-option label="IPv6" value="v6" />
             <el-option label="IPv4 + IPv6（双栈）" value="v4v6" />
           </el-select>
-          <div class="text-xs text-gray-400">下次开启网络时生效</div>
+          <div class="text-xs text-gray-400">
+            {{ fieldPending === 'ip_version' ? '正在保存...' : '修改后自动保存，下次开启网络时生效' }}
+          </div>
+          <div v-if="fieldError && errorField === 'ip_version'" role="alert" class="text-xs text-red-600 dark:text-red-400">
+            {{ fieldError }}，请重试
+          </div>
         </div>
 
         <!-- APN -->
         <div class="space-y-1">
           <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">APN（可选）</label>
-          <el-input v-model="apn" placeholder="留空自动识别" :disabled="!canToggle" />
-          <div class="text-xs text-gray-400">下次开启网络时生效</div>
+          <el-input
+            v-model="apn"
+            placeholder="留空自动识别"
+            :disabled="!canEditPolicy || fieldPending !== null"
+            @blur="saveAPN"
+            @keyup.enter="onAPNEnter"
+          />
+          <div class="text-xs text-gray-400">
+            {{ fieldPending === 'apn' ? '正在保存...' : '修改后自动保存，下次开启网络时生效' }}
+          </div>
+          <div v-if="fieldError && errorField === 'apn'" role="alert" class="text-xs text-red-600 dark:text-red-400">
+            {{ fieldError }}，请重试
+          </div>
         </div>
         <!-- 开启网络 -->
         <div

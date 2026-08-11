@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,6 +16,26 @@ import (
 	"github.com/iniwex5/vohive/internal/db"
 	"github.com/iniwex5/vohive/internal/device"
 )
+
+type cardPolicyStoreStub struct {
+	policy     db.CardPolicy
+	getErr     error
+	resolveErr error
+	upsertErr  error
+}
+
+func (s *cardPolicyStoreStub) Get(string) (db.CardPolicy, error) {
+	return s.policy, s.getErr
+}
+
+func (s *cardPolicyStoreStub) Resolve(string) (db.CardPolicy, error) {
+	return s.policy, s.resolveErr
+}
+
+func (s *cardPolicyStoreStub) Upsert(policy db.CardPolicy) error {
+	s.policy = policy
+	return s.upsertErr
+}
 
 // injectWorker 通过 unsafe 反射将 worker 注入到 pool 的内部 workers map，
 // 用于无需完整启动流程的测试场景。
@@ -87,6 +108,62 @@ func TestPutCardPolicyEndpoint(t *testing.T) {
 	}
 }
 
+func TestPutCardPolicyCanClearAPN(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &cardPolicyStoreStub{policy: db.CardPolicy{
+		ICCID: "8986005", IPVersion: "v4v6", APN: "ims", Source: "user",
+	}}
+	s := &Server{cardPolicies: store}
+	r := gin.New()
+	r.PUT("/api/cards/:iccid/policy", s.handlePutCardPolicy)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/cards/8986005/policy", strings.NewReader(`{"apn":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK || store.policy.APN != "" {
+		t.Fatalf("code=%d apn=%q body=%s", w.Code, store.policy.APN, w.Body.String())
+	}
+	if store.policy.IPVersion != "v4v6" {
+		t.Fatalf("omitted ip_version changed to %q", store.policy.IPVersion)
+	}
+}
+
+func TestPutCardPolicyRejectsInvalidIPVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &cardPolicyStoreStub{policy: db.CardPolicy{ICCID: "8986005", IPVersion: "v4"}}
+	s := &Server{cardPolicies: store}
+	r := gin.New()
+	r.PUT("/api/cards/:iccid/policy", s.handlePutCardPolicy)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/cards/8986005/policy", strings.NewReader(`{"ip_version":"v9"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest || store.policy.IPVersion != "v4" {
+		t.Fatalf("code=%d policy=%+v body=%s", w.Code, store.policy, w.Body.String())
+	}
+}
+
+func TestPutCardPolicyDoesNotHideReadFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &cardPolicyStoreStub{getErr: errors.New("database unavailable")}
+	s := &Server{cardPolicies: store}
+	r := gin.New()
+	r.PUT("/api/cards/:iccid/policy", s.handlePutCardPolicy)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/cards/8986005/policy", strings.NewReader(`{"network_enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "database unavailable") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 // TestPatchCardPolicyForDevice 验证 patchCardPolicyForDevice helper 正确解析 ICCID 并落库。
 func TestPatchCardPolicyForDevice(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -140,7 +217,7 @@ func TestPatchCardPolicyForDeviceNoICCID(t *testing.T) {
 		pol.NetworkEnabled = true
 	})
 
-	if err != nil {
+	if !errors.Is(err, errCardPolicyIdentityUnavailable) {
 		t.Fatalf("error=%v", err)
 	}
 	if applied {
@@ -148,6 +225,35 @@ func TestPatchCardPolicyForDeviceNoICCID(t *testing.T) {
 	}
 	if iccid != "" {
 		t.Fatalf("iccid=%q want empty", iccid)
+	}
+}
+
+func TestNetworkPatchStopsBeforeRuntimeMutationWhenPolicyWriteFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	p := device.NewPool(&config.Config{})
+	w := &device.Worker{ID: "wwan-fail", Config: config.DeviceConfig{ID: "wwan-fail", NetworkEnabled: true}}
+	setNestedPrivateField(t, w, []string{"state", "Identity", "ICCID"}, "8986fail001")
+	injectWorker(p, w)
+	s := &Server{
+		pool: p,
+		cardPolicies: &cardPolicyStoreStub{
+			policy:    db.CardPolicy{ICCID: "8986fail001", NetworkEnabled: true},
+			upsertErr: errors.New("write failed"),
+		},
+	}
+	r := gin.New()
+	r.PATCH("/api/devices/:device_id/network", s.handleDeviceNetworkPatch)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/devices/wwan-fail/network", strings.NewReader(`{"enabled":false}`))
+	request.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("code=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !w.Config.NetworkEnabled {
+		t.Fatal("runtime policy changed after persistence failure")
 	}
 }
 
