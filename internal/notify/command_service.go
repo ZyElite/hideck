@@ -18,6 +18,7 @@ type CommandDefinition struct {
 	Usage          string `json:"usage"`
 	Summary        string `json:"summary"`
 	Dangerous      bool   `json:"dangerous"`
+	Async          bool   `json:"async"`
 	DeviceArgument bool   `json:"device_argument"`
 }
 
@@ -64,6 +65,20 @@ func (s *CommandService) Execute(ctx CommandContext, input string) (string, erro
 		return "", fmt.Errorf("%w: /%s", ErrUnknownCommand, name)
 	}
 	return handler(ctx, args), nil
+}
+
+func (s *CommandService) DefinitionForInput(input string) (CommandDefinition, []string, error) {
+	name, args, err := parseCommand(input)
+	if err != nil {
+		return CommandDefinition{}, nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	definition, ok := s.definitions[name]
+	if !ok {
+		return CommandDefinition{}, nil, fmt.Errorf("%w: /%s", ErrUnknownCommand, name)
+	}
+	return definition, args, nil
 }
 
 func (s *CommandService) Handlers() map[string]CommandHandler {
@@ -135,12 +150,12 @@ func commandDefinitions() map[string]CommandDefinition {
 		{Name: "help", Usage: "/help", Summary: "查看命令帮助"},
 		{Name: "list", Usage: "/list", Summary: "查看设备列表"},
 		{Name: "status", Usage: "/status [设备ID]", Summary: "查看设备状态", DeviceArgument: true},
-		{Name: "send", Usage: "/send [设备ID] [手机号] [消息]", Summary: "发送短信", DeviceArgument: true},
+		{Name: "send", Usage: "/send [设备ID] [手机号] [消息]", Summary: "发送短信", Async: true, DeviceArgument: true},
 		{Name: "sms", Usage: "/sms [设备ID]", Summary: "查看最近短信", DeviceArgument: true},
 		{Name: "esim", Usage: "/esim [设备ID]", Summary: "查看 eSIM", DeviceArgument: true},
-		{Name: "switch", Usage: "/switch [设备ID] [序号或ICCID]", Summary: "切换 eSIM", Dangerous: true, DeviceArgument: true},
-		{Name: "vocall", Usage: "/vocall [设备ID] [号码] [秒数]", Summary: "发起 VoWiFi 通话", Dangerous: true, DeviceArgument: true},
-		{Name: "rotate", Usage: "/rotate [设备ID]", Summary: "切换公网 IP", Dangerous: true, DeviceArgument: true},
+		{Name: "switch", Usage: "/switch [设备ID] [序号或ICCID]", Summary: "切换 eSIM", Dangerous: true, Async: true, DeviceArgument: true},
+		{Name: "vocall", Usage: "/vocall [设备ID] [号码] [秒数]", Summary: "发起 VoWiFi 通话", Dangerous: true, Async: true, DeviceArgument: true},
+		{Name: "rotate", Usage: "/rotate [设备ID]", Summary: "切换公网 IP", Dangerous: true, Async: true, DeviceArgument: true},
 		{Name: "balance", Usage: "/balance [设备ID]", Summary: "查询运营商余额", DeviceArgument: true},
 	}
 	result := make(map[string]CommandDefinition, len(definitions))

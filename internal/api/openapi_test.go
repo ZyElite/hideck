@@ -23,4 +23,13 @@ func TestOpenAPIVoHiveYAMLValid(t *testing.T) {
 	if !ok || paths["/system/time"] == nil {
 		t.Fatal("openapi.vohive.yaml missing /system/time")
 	}
+	for _, path := range []string{
+		"/commands/catalog", "/commands/executions", "/commands/events",
+		"/commands/events/stream", "/commands/history", "/balance/queries",
+		"/balance/queries/{query_id}", "/balance/rules", "/balance/rules/{rule_id}",
+	} {
+		if paths[path] == nil {
+			t.Fatalf("openapi.vohive.yaml missing %s", path)
+		}
+	}
 }

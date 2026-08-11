@@ -73,6 +73,17 @@ func TestDangerousCommandMetadata(t *testing.T) {
 	}
 }
 
+func TestCommandServiceDefinitionForInput(t *testing.T) {
+	service := NewCommandService(nil)
+	definition, args, err := service.DefinitionForInput("/send wwan0 10086 hello")
+	if err != nil {
+		t.Fatalf("DefinitionForInput() error = %v", err)
+	}
+	if definition.Name != "send" || !definition.Async || len(args) != 3 {
+		t.Fatalf("DefinitionForInput() = %+v, %v", definition, args)
+	}
+}
+
 func joinArgs(args []string) string {
 	result := ""
 	for index, arg := range args {

@@ -113,6 +113,14 @@ func (s *Service) HandleInboundSMS(ctx context.Context, message InboundSMS) (boo
 	return s.repo.Complete(ctx, query.ID, parseResponse(rule, message.Content), message.Time)
 }
 
+func (s *Service) Get(ctx context.Context, id string) (Query, bool, error) {
+	return s.repo.Get(ctx, strings.TrimSpace(id))
+}
+
+func (s *Service) List(ctx context.Context, deviceID string, limit int, before *time.Time) ([]Query, error) {
+	return s.repo.List(ctx, strings.TrimSpace(deviceID), limit, before)
+}
+
 func (s *Service) RunExpiry(ctx context.Context) error {
 	if _, err := s.repo.ExpirePending(ctx, s.now()); err != nil {
 		return err

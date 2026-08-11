@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iniwex5/vohive/internal/balance"
+	"github.com/iniwex5/vohive/internal/commandcenter"
 	"github.com/iniwex5/vohive/internal/config"
 	"github.com/iniwex5/vohive/internal/data/repo"
 	"github.com/iniwex5/vohive/internal/db"
@@ -78,6 +80,8 @@ type Server struct {
 	proxySyncMu   sync.Mutex
 	voiceGW       *voicehost.Gateway
 	notifyMgr     *notify.Manager
+	commandCenter *commandcenter.Service
+	balance       *balance.Service
 	websheets     *vwebsheet.Broker
 	cardPolicies  cardPolicyStore
 	systemTime    systemTimeProvider
@@ -92,7 +96,8 @@ type Server struct {
 	smsLimiterMu sync.Mutex
 	smsLimiter   *smsRateLimiter
 
-	shutdownCh chan struct{}
+	shutdownCh       chan struct{}
+	backgroundCancel context.CancelFunc
 }
 
 type realtimeTrafficSubscriber interface {
@@ -129,8 +134,33 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 		shutdownCh: make(chan struct{}),
 	}
 	s.backendSwitch = newDeviceBackendSwitchService(pool, configPath)
+	s.initializeCommandCenter()
 
 	return s
+}
+
+func (s *Server) initializeCommandCenter() {
+	if db.DB == nil || s.pool == nil || s.notifyMgr == nil {
+		return
+	}
+	rules := balance.NewRules(balance.DBCustomRuleSource{})
+	s.balance = balance.NewService(balance.NewPoolGateway(s.pool), balance.NewDatabaseStore(db.DB), rules)
+	s.commandCenter = commandcenter.NewService(s.notifyMgr.CommandService(), commandcenter.NewDatabaseStore(db.DB))
+	_ = s.notifyMgr.SetBalanceCommandHandler(s.handleBalanceCommand)
+	s.pool.OnInboundSMS(func(message device.InboundSMS) error {
+		_, err := s.balance.HandleInboundSMS(context.Background(), balance.InboundSMS{
+			DeviceID: message.DeviceID, ICCID: message.ICCID, Sender: message.Sender,
+			Content: message.Content, Time: message.Time,
+		})
+		return err
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	s.backgroundCancel = cancel
+	go func() {
+		if err := s.balance.RunExpiry(ctx); err != nil {
+			logger.Error("余额查询超时任务退出", "err", err)
+		}
+	}()
 }
 
 func (s *Server) SetRealtimeTraffic(m *proxytraffic.RealtimeManager) {
@@ -364,6 +394,9 @@ func (s *Server) newRouter() *gin.Engine {
 		// ===== 日志 =====
 		api.GET("/logs/stream", s.handleLogStream)   // SSE 实时日志流
 		api.GET("/logs/history", s.handleLogHistory) // 获取历史日志
+
+		// ===== 命令中心与余额查询 =====
+		s.registerCommandCenterRoutes(api)
 	}
 	return r
 }
@@ -388,6 +421,9 @@ func (s *Server) Run() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.backgroundCancel != nil {
+		s.backgroundCancel()
+	}
 	// 广播关闭信号给所有内部持有的长连接（如 SSE），让它们主动退出
 	select {
 	case <-s.shutdownCh:
