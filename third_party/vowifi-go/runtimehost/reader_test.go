@@ -15,7 +15,11 @@ func (*readerAKAProviderStub) CalculateAKA(rand16, autn16 []byte) (enginesim.AKA
 func TestNewReaderSIMAdapterExposesInjectedAKAProvider(t *testing.T) {
 	provider := &readerAKAProviderStub{}
 	adapter := NewReaderSIMAdapter(provider)
-	if adapter == nil || adapter.AKAProvider() != provider {
-		t.Fatalf("AKAProvider() = %T, want injected provider", adapter.AKAProvider())
+	if adapter == nil || adapter.runtimeSIMAdapter() == nil {
+		t.Fatal("runtime SIM adapter is unavailable")
+	}
+	got := adapter.runtimeSIMAdapter().EPDGSIMProvider(runtimeAuthPlan(nil))
+	if got != provider {
+		t.Fatalf("EPDGSIMProvider() = %T, want injected provider", got)
 	}
 }

@@ -6,10 +6,11 @@ import (
 	"time"
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/access"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
-	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
 
@@ -22,7 +23,7 @@ func attachVoiceAgent(req StartRequest, inst *Instance, lifecycle IMSLifecycle) 
 	if req.VoiceGateway == nil {
 		return nil
 	}
-	adapter, ok := lifecycle.(*serviceAdapter)
+	adapter, ok := lifecycle.(*imscoreLifecycleAdapter)
 	if !ok || adapter.svc == nil {
 		return errors.New("runtimehost: voice requires the registered IMS service")
 	}
@@ -49,29 +50,29 @@ func newServiceAdapter(svc *imscore.Service) *serviceAdapter {
 }
 
 // Register runs the real IMS REGISTER flow.
-func (a *serviceAdapter) Register(ctx context.Context) error {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) Register(ctx context.Context) error {
+	if a.svc == nil {
 		return errNoService
 	}
 	return a.svc.Register(ctx)
 }
 
-func (a *serviceAdapter) RegistrationErrors() <-chan error {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) RegistrationErrors() <-chan error {
+	if a.svc == nil {
 		return nil
 	}
 	return a.svc.RegistrationErrors()
 }
 
-func (a *serviceAdapter) SMSReadiness() SMSReadiness {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) SMSReadiness() SMSReadiness {
+	if a.svc == nil {
 		return SMSReadiness{Reason: "IMS service is unavailable"}
 	}
 	return adaptSMSReadiness(a.svc.SMSReadiness())
 }
 
-func (a *serviceAdapter) SetOnSMSReadinessChanged(fn func(SMSReadiness)) {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) SetOnSMSReadinessChanged(fn func(SMSReadiness)) {
+	if a.svc == nil {
 		return
 	}
 	a.svc.SetOnSMSReadinessChanged(func(readiness imscore.SMSReadiness) {
@@ -90,8 +91,8 @@ func adaptSMSReadiness(readiness imscore.SMSReadiness) SMSReadiness {
 }
 
 // SendSMSWithOptions sends an SMS with options.
-func (a *serviceAdapter) SendSMSWithOptions(ctx context.Context, to, text string, opts messaging.SendOptions) (messaging.SendOutcome, error) {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) SendSMSWithOptions(ctx context.Context, to, text string, opts messaging.SendOptions) (messaging.SendOutcome, error) {
+	if a.svc == nil {
 		return messaging.SendOutcome{}, errNoService
 	}
 	if opts.SuppressSendTGSuccess {
@@ -102,8 +103,8 @@ func (a *serviceAdapter) SendSMSWithOptions(ctx context.Context, to, text string
 }
 
 // SendSMSWithResult sends an SMS.
-func (a *serviceAdapter) SendSMSWithResult(ctx context.Context, to, text string) (messaging.SendOutcome, error) {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) SendSMSWithResult(ctx context.Context, to, text string) (messaging.SendOutcome, error) {
+	if a.svc == nil {
 		return messaging.SendOutcome{}, errNoService
 	}
 	out, err := a.svc.SendSMSWithResult(ctx, to, text)
@@ -120,11 +121,11 @@ func adaptSMSSendOutcome(out imscore.SendOutcome) messaging.SendOutcome {
 }
 
 // GetSMSDeliveryStatus returns the delivery status of an SMS.
-func (a *serviceAdapter) GetSMSDeliveryStatus(ctx context.Context, ref string) (*messaging.DeliveryStatus, error) {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) GetSMSDeliveryStatus(ref string) (*messaging.DeliveryStatus, error) {
+	if a.svc == nil {
 		return nil, errNoService
 	}
-	st, err := a.svc.GetSMSDeliveryStatusContext(ctx, ref)
+	st, err := a.svc.GetSMSDeliveryStatus(ref)
 	if err != nil {
 		return nil, deliveryStoreErrorFromInternal(err)
 	}
@@ -132,8 +133,8 @@ func (a *serviceAdapter) GetSMSDeliveryStatus(ctx context.Context, ref string) (
 }
 
 // SendUSSD sends a USSD request.
-func (a *serviceAdapter) SendUSSD(ctx context.Context, code string) (*messaging.USSDResult, error) {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) SendUSSD(ctx context.Context, code string) (*messaging.USSDResult, error) {
+	if a.svc == nil {
 		return nil, errNoService
 	}
 	res, err := a.svc.SendUSSD(ctx, code)
@@ -144,8 +145,8 @@ func (a *serviceAdapter) SendUSSD(ctx context.Context, code string) (*messaging.
 }
 
 // ContinueUSSD continues a USSD session.
-func (a *serviceAdapter) ContinueUSSD(ctx context.Context, sessionID, input string) (*messaging.USSDResult, error) {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) ContinueUSSD(ctx context.Context, sessionID, input string) (*messaging.USSDResult, error) {
+	if a.svc == nil {
 		return nil, errNoService
 	}
 	res, err := a.svc.ContinueUSSD(ctx, sessionID, input)
@@ -166,33 +167,28 @@ func messagingUSSDResult(result *imscore.USSDResult) *messaging.USSDResult {
 }
 
 // CancelUSSD cancels a USSD session.
-func (a *serviceAdapter) CancelUSSD(ctx context.Context, sessionID string) error {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) CancelUSSD(ctx context.Context, sessionID string) error {
+	if a.svc == nil {
 		return errNoService
 	}
 	return a.svc.CancelUSSD(ctx, sessionID)
 }
 
-// Status returns the runtime status.
-func (a *serviceAdapter) Status() Status {
-	if a == nil || a.svc == nil {
-		return Status{}
+// Status returns the original map projection.
+func (a serviceAdapter) Status() map[string]interface{} {
+	if a.svc == nil {
+		return nil
 	}
 	status := a.messagingStatusSnapshot()
-	sms := a.svc.SMSReadiness()
-	return Status{State: State{
-		SessionState:   "established",
-		IMSState:       status.RegState,
-		RegStatus:      boolStatus(status.IsRegistered()),
-		DeviceID:       status.DeviceID,
-		IMSReady:       status.IsRegistered(),
-		SMSReady:       sms.Ready,
-		SMSReadyReason: sms.Reason,
-	}}
+	return map[string]interface{}{
+		"enabled": status.Enabled, "device_id": status.DeviceID,
+		"registered": status.IsRegistered(), "reg_status": status.RegStatus,
+		"registrar": status.Registrar, "local_addr": status.LocalAddr,
+	}
 }
 
-func (a *serviceAdapter) messagingStatusSnapshot() messaging.ServiceStatus {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) messagingStatusSnapshot() messaging.ServiceStatus {
+	if a.svc == nil {
 		return messaging.ServiceStatus{}
 	}
 	status := a.svc.StatusSnapshot()
@@ -213,22 +209,60 @@ func boolStatus(value bool) int {
 	return 0
 }
 
-// StatusSnapshot returns the runtime status snapshot.
-func (a *serviceAdapter) StatusSnapshot() Status {
-	return a.Status()
+// StatusSnapshot returns the original structured status snapshot.
+func (a serviceAdapter) StatusSnapshot() messaging.ServiceStatus {
+	return a.messagingStatusSnapshot()
 }
 
 // Stop shuts the service down.
-func (a *serviceAdapter) Stop() {
-	if a == nil || a.svc == nil {
-		return
+func (a serviceAdapter) Stop(ctx context.Context) error {
+	if a.svc == nil {
+		return nil
 	}
-	a.svc.StopCurrent()
+	return a.svc.Stop(ctx)
 }
 
 // TriggerRegisterImmediate triggers an immediate re-registration.
-func (a *serviceAdapter) TriggerRegisterImmediate() error {
-	if a == nil || a.svc == nil {
+func (a serviceAdapter) TriggerRegisterImmediate(reason string) {
+	if a.svc != nil {
+		a.svc.TriggerRegisterImmediate(reason)
+	}
+}
+
+func (a serviceAdapter) GetSMSDeliveryStatusContext(
+	ctx context.Context,
+	ref string,
+) (*messaging.DeliveryStatus, error) {
+	if a.svc == nil {
+		return nil, errNoService
+	}
+	status, err := a.svc.GetSMSDeliveryStatusContext(ctx, ref)
+	if err != nil {
+		return nil, deliveryStoreErrorFromInternal(err)
+	}
+	return deliveryStatusFromInternal(status), nil
+}
+
+func (a serviceAdapter) StatusCurrent() Status {
+	status := a.messagingStatusSnapshot()
+	sms := SMSReadiness{}
+	if a.svc != nil {
+		sms = adaptSMSReadiness(a.svc.SMSReadiness())
+	}
+	return Status{State: State{
+		Phase: "ready", DeviceID: status.DeviceID,
+		IMSReady: status.IsRegistered(), SMSReady: sms.Ready,
+		RegStatus: boolStatus(status.IsRegistered()), RegStatusText: status.RegStatus,
+		SessionState: "established", IMSState: status.RegState, SMSReadyReason: sms.Reason,
+	}}
+}
+
+func (a serviceAdapter) StopCurrent() {
+	_ = a.Stop(context.Background())
+}
+
+func (a serviceAdapter) TriggerRegisterImmediateCurrent() error {
+	if a.svc == nil {
 		return errNoService
 	}
 	return a.svc.TriggerRegisterImmediateCurrent()
@@ -482,19 +516,6 @@ func deliveryStatusToInternal(st *messaging.DeliveryStatus) *imscore.DeliverySta
 	return out
 }
 
-// instanceObserver observes runtime events.
-type instanceObserver struct {
-	inst *Instance
-}
-
-// OnRuntimeEvent handles a runtime event.
-func (o *instanceObserver) OnRuntimeEvent(ev Event) {
-	if o == nil || o.inst == nil {
-		return
-	}
-	o.inst.publish(ev)
-}
-
 // OnRuntimeHostEvent implements ObserverFunc as a method.
 func (f ObserverFunc) OnRuntimeHostEvent(ctx context.Context, ev Event) {
 	if f != nil {
@@ -504,23 +525,19 @@ func (f ObserverFunc) OnRuntimeHostEvent(ctx context.Context, ev Event) {
 
 // simAdapter adapts a SIM provider.
 type simAdapter struct {
-	provider SIMProvider
+	inner access.SIMAdapter
 }
 
-// runtimeSIMAdapter returns the underlying SIM provider.
-func (a *simAdapter) runtimeSIMAdapter() SIMProvider {
-	if a == nil {
-		return nil
-	}
-	return a.provider
+func (a simAdapter) runtimeSIMAdapter() access.SIMAdapter {
+	return a.inner
 }
 
-// AKAProvider returns the injected production SIM AKA provider.
-func (a *simAdapter) AKAProvider() enginesim.AKAProvider {
-	if a == nil {
+// AKAProvider preserves source compatibility for concrete adapter users.
+func (a simAdapter) AKAProvider() enginesim.AKAProvider {
+	if a.inner == nil {
 		return nil
 	}
-	return a.provider
+	return a.inner.EPDGSIMProvider(profile.AuthPlan{})
 }
 
 // SIMProvider computes AKA through the injected SIM implementation.
@@ -531,19 +548,24 @@ func apiErrorToInternal(err error) error {
 	return err
 }
 
-// authPlanToInternal converts an auth plan to an internal value.
-func authPlanToInternal(plan string) string {
-	return plan
-}
-
 // defaultMainReconnectDelay returns the default reconnect delay for main mode.
-func defaultMainReconnectDelay() time.Duration {
-	return 5 * time.Second
+func defaultMainReconnectDelay(attempt int) int64 {
+	if attempt < 1 {
+		return int64(5 * time.Second)
+	}
+	return int64(30 * time.Second)
 }
 
 // defaultReaderReconnectDelay returns the default reconnect delay for reader mode.
-func defaultReaderReconnectDelay() time.Duration {
-	return 10 * time.Second
+func defaultReaderReconnectDelay(attempt int) int64 {
+	switch {
+	case attempt < 1:
+		return int64(30 * time.Second)
+	case attempt == 1:
+		return int64(60 * time.Second)
+	default:
+		return int64(120 * time.Second)
+	}
 }
 
 // deliveryStoreErrorFromInternal converts an internal delivery error.
@@ -560,44 +582,4 @@ func deliveryStoreErrorToInternal(err error) error {
 		return errors.Join(smsdelivery.ErrDeliveryNotFound, err)
 	}
 	return err
-}
-
-// preparedSessionFromInternal converts an internal prepared session.
-func preparedSessionFromInternal(p *identity.PreparedSession) *identity.PreparedSession {
-	return p
-}
-
-// preparedSessionPtrToInternal converts a prepared session pointer.
-func preparedSessionPtrToInternal(p *identity.PreparedSession) *identity.PreparedSession {
-	return p
-}
-
-// sessionConfigFromInternal converts an internal session config.
-func sessionConfigFromInternal(c SessionConfig) SessionConfig {
-	return c
-}
-
-// startInstance starts a runtime host instance.
-func startInstance(ctx context.Context, req StartRequest) (*Instance, error) {
-	return Start(ctx, req)
-}
-
-// startInstanceAsync starts a runtime host instance asynchronously.
-func startInstanceAsync(ctx context.Context, req StartRequest) (<-chan *Instance, <-chan error) {
-	instCh := make(chan *Instance, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		inst, err := Start(ctx, req)
-		if err != nil {
-			errCh <- err
-			return
-		}
-		instCh <- inst
-	}()
-	return instCh, errCh
-}
-
-// startResultFromInternal converts an internal start result.
-func startResultFromInternal(inst *Instance, err error) (*Instance, error) {
-	return inst, err
 }

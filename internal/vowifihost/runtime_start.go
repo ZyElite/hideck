@@ -15,7 +15,7 @@ import (
 type runtimeStartFunc func(context.Context, runtimehost.StartRequest) (*runtimehost.Instance, error)
 
 func buildVoWiFiSIMAdapter(override runtimehost.SIMAdapter) (runtimehost.SIMAdapter, error) {
-	if override == nil || override.AKAProvider() == nil {
+	if override == nil {
 		return nil, fmt.Errorf("vowifi runtime start requires an injected SIM AKA provider")
 	}
 	return override, nil

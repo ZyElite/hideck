@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
+	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
 
 type stubService struct {
@@ -22,7 +23,7 @@ func (s *stubService) SendSMSWithOptions(ctx context.Context, to, text string, o
 func (s *stubService) SendSMSWithResult(ctx context.Context, to, text string) (SendOutcome, error) {
 	return s.SendSMSWithOptions(ctx, to, text, SendOptions{})
 }
-func (s *stubService) GetSMSDeliveryStatus(ctx context.Context, ref string) (*DeliveryStatus, error) {
+func (s *stubService) GetSMSDeliveryStatus(ref string) (*DeliveryStatus, error) {
 	return &DeliveryStatus{State: "delivered"}, nil
 }
 func (s *stubService) SendUSSD(ctx context.Context, code string) (*USSDResult, error) {
@@ -33,10 +34,10 @@ func (s *stubService) ContinueUSSD(ctx context.Context, sessionID, input string)
 	return &USSDResult{}, nil
 }
 func (s *stubService) CancelUSSD(ctx context.Context, sessionID string) error { return nil }
-func (s *stubService) Status() Status                                         { return Status{} }
-func (s *stubService) StatusSnapshot() Status                                 { return Status{} }
-func (s *stubService) Stop()                                                  {}
-func (s *stubService) TriggerRegisterImmediate() error                        { return s.registerErr }
+func (s *stubService) Status() map[string]interface{}                         { return nil }
+func (s *stubService) StatusSnapshot() messaging.ServiceStatus                { return messaging.ServiceStatus{} }
+func (s *stubService) Stop(context.Context) error                             { return nil }
+func (s *stubService) TriggerRegisterImmediate(string)                        {}
 
 func TestInstanceStateAndService(t *testing.T) {
 	i := &Instance{}
@@ -60,8 +61,8 @@ func TestInstanceStateAndService(t *testing.T) {
 func TestInstanceObservers(t *testing.T) {
 	i := &Instance{}
 	var got []Event
-	i.AddObserver(func(_ context.Context, ev Event) { got = append(got, ev) })
-	i.setState(State{SessionState: "connecting"})
+	i.AddObserver(ObserverFunc(func(_ context.Context, ev Event) { got = append(got, ev) }))
+	i.updateState(func(state *State) { state.SessionState = "connecting" })
 	if len(got) != 1 || got[0].Detail != "connecting" {
 		t.Errorf("observer events = %+v", got)
 	}
@@ -79,7 +80,7 @@ func TestInstanceSMSDelegation(t *testing.T) {
 	if err != nil || out.Ref != "ref-1" || !svc.sentSMS {
 		t.Errorf("SendSMSWithResult = %+v err %v", out, err)
 	}
-	ds, err := i.GetSMSDeliveryStatus(ctx, "ref-1")
+	ds, err := i.GetSMSDeliveryStatus("ref-1")
 	if err != nil || ds.State != "delivered" {
 		t.Errorf("delivery status = %+v err %v", ds, err)
 	}
@@ -106,7 +107,7 @@ func TestInstanceStopReleasesIMSBeforeTunnel(t *testing.T) {
 	tunnel := newLifecycleTunnel(nil)
 	tunnel.onShutdown = func() { order = append(order, "tunnel") }
 	service := &lifecycleIMS{onStop: func() { order = append(order, "ims") }}
-	instance := &Instance{tunnel: tunnel, service: service}
+	instance := &Instance{tunnel: tunnel, service: lifecycleServiceAdapter{lifecycle: service}}
 	if err := instance.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}

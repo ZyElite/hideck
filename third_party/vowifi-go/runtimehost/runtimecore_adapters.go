@@ -3,26 +3,11 @@ package runtimehost
 import (
 	"time"
 
-	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/profile"
-	"github.com/iniwex5/vowifi-go/internal/vowifi/simauth"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
 	"github.com/iniwex5/vowifi-go/runtimehost/eventhost"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
-
-type runtimeCoreSIMAdapter struct{ aka enginesim.AKAProvider }
-
-func (adapter runtimeCoreSIMAdapter) EPDGSIMProvider(profile.AuthPlan) enginesim.AKAProvider {
-	return adapter.aka
-}
-
-func (adapter runtimeCoreSIMAdapter) IMSAKAProvider(profile.AuthPlan) simauth.AKAProvider {
-	return adapter.aka
-}
-
-func (runtimeCoreSIMAdapter) IMSIdentityProvider() profile.Provider { return nil }
 
 func runtimeCoreDispatcher(dispatcher eventhost.Dispatcher) events.EventDispatcher {
 	if dispatcher == nil {

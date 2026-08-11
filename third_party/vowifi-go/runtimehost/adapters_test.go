@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/runtimecore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
 	"github.com/iniwex5/vowifi-go/runtimehost/eventhost"
-	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 )
@@ -110,7 +110,7 @@ func testSIPHeader(message, name string) string {
 func TestServiceAdapterStatus(t *testing.T) {
 	svc := newTestService(t)
 	adapter := newServiceAdapter(svc)
-	st := adapter.Status()
+	st := adapter.StatusCurrent()
 	if st.State.RegStatus != 1 {
 		t.Errorf("reg status = %d, want 1 (registered)", st.State.RegStatus)
 	}
@@ -177,7 +177,7 @@ func TestVoiceAgentAttachAndStopCleanup(t *testing.T) {
 	inst := &Instance{}
 	inst.setService(newServiceAdapter(svc))
 	req := StartRequest{DeviceID: "dev-1", VoiceGateway: gateway}
-	if err := attachVoiceAgent(req, inst, newServiceAdapter(svc)); err != nil {
+	if err := attachVoiceAgent(req, inst, &imscoreLifecycleAdapter{svc: svc}); err != nil {
 		t.Fatalf("attachVoiceAgent: %v", err)
 	}
 	if gateway.GetAgent("dev-1") == nil || gateway.DeviceStatusCurrent("dev-1")["ready"] != true {
@@ -207,7 +207,7 @@ func TestVoiceGatewaySimulateCallUsesProductionAdapterAndRTP(t *testing.T) {
 	defer gateway.Stop()
 	inst := &Instance{}
 	inst.setService(newServiceAdapter(svc))
-	if err := attachVoiceAgent(StartRequest{DeviceID: "dev-1", VoiceGateway: gateway}, inst, newServiceAdapter(svc)); err != nil {
+	if err := attachVoiceAgent(StartRequest{DeviceID: "dev-1", VoiceGateway: gateway}, inst, &imscoreLifecycleAdapter{svc: svc}); err != nil {
 		t.Fatal(err)
 	}
 	defer inst.Stop(context.Background())
@@ -269,7 +269,7 @@ func TestVoiceGatewayReceivesAndRejectsProductionIncomingCall(t *testing.T) {
 	gateway.SetIncomingCallHandler(func(call voicehost.IncomingCall) { incoming <- call })
 	inst := &Instance{}
 	inst.setService(newServiceAdapter(svc))
-	if err := attachVoiceAgent(StartRequest{DeviceID: "dev-1", VoiceGateway: gateway}, inst, newServiceAdapter(svc)); err != nil {
+	if err := attachVoiceAgent(StartRequest{DeviceID: "dev-1", VoiceGateway: gateway}, inst, &imscoreLifecycleAdapter{svc: svc}); err != nil {
 		t.Fatal(err)
 	}
 	defer inst.Stop(context.Background())
@@ -723,26 +723,23 @@ func TestDeliveryStatusConversion(t *testing.T) {
 }
 
 func TestStartInstanceAsync(t *testing.T) {
-	prepared := &identity.PreparedSession{
-		Profile:     identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},
-		IMSIdentity: identity.IMSIdentity{IMPI: "310260123456789@ims.example", IMPU: "sip:310260123456789@ims.example", Domain: "ims.example"},
-		EPDGAddr:    "epdg.example.com",
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	runner := func(ctx context.Context, _ runtimecore.RuntimeStartRequest) (StartResult, error) {
+		close(started)
+		<-ctx.Done()
+		return StartResult{TraceID: "trace-1"}, ctx.Err()
 	}
-	req := runtimeTestRequest(prepared, newLifecycleTunnel(nil))
-	req.Mode = StartModeReader
-	req.DeviceID = "dev-1"
-	instCh, errCh := startInstanceAsync(context.Background(), req)
+	instance, err := startInstanceAsync(ctx, runtimecore.RuntimeStartRequest{
+		DeviceID: "dev-1", TraceID: "trace-1",
+	}, runner, defaultReaderReconnectDelay)
+	if err != nil || instance == nil {
+		t.Fatalf("startInstanceAsync instance=%v err=%v", instance, err)
+	}
 	select {
-	case inst := <-instCh:
-		if inst == nil {
-			t.Fatal("nil instance")
-		}
-		if st := inst.State(); st.SessionState != "established" {
-			t.Errorf("session state = %q", st.SessionState)
-		}
-	case err := <-errCh:
-		t.Fatalf("start: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("start timed out")
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("runtime runner was not started")
 	}
+	cancel()
 }

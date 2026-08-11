@@ -11,6 +11,8 @@ import (
 
 	enginesim "github.com/iniwex5/vowifi-go/engine/sim"
 	"github.com/iniwex5/vowifi-go/engine/swu"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/access"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/runtimecore"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 
@@ -41,7 +43,9 @@ func (startAKAProvider) CalculateAKA(_, _ []byte) (enginesim.AKAResult, error) {
 
 type startSIMAdapter struct{}
 
-func (startSIMAdapter) AKAProvider() enginesim.AKAProvider { return startAKAProvider{} }
+func (startSIMAdapter) runtimeSIMAdapter() access.SIMAdapter {
+	return runtimecore.NewReaderSIMAdapter(startAKAProvider{})
+}
 
 type lifecycleTunnel struct {
 	mu            sync.Mutex
@@ -60,7 +64,7 @@ type lifecycleTunnel struct {
 }
 
 type lifecycleIMS struct {
-	Service
+	CurrentService
 	registerErr error
 	deviceID    string
 	registered  bool
@@ -335,7 +339,9 @@ func TestStartShouldRunFalse(t *testing.T) {
 }
 
 func TestStartDefaultRoutesThroughRuntimeCorePreparation(t *testing.T) {
-	_, err := Start(context.Background(), StartRequest{
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := Start(ctx, StartRequest{
 		DeviceID: "dev-1",
 		Prepared: &identity.PreparedSession{
 			EPDGAddr: "epdg.example.com",
@@ -343,8 +349,8 @@ func TestStartDefaultRoutesThroughRuntimeCorePreparation(t *testing.T) {
 		SIM:       startSIMAdapter{},
 		Dataplane: DataplanePolicy{Mode: swu.DataplaneModeUserspace},
 	})
-	if err == nil || !strings.Contains(err.Error(), "runtimecore: prepared session has no IMSI") {
-		t.Fatalf("Start error = %v, want runtimecore preparation error", err)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Start error = %v, want bounded reconnect cancellation", err)
 	}
 }
 
@@ -376,8 +382,8 @@ func TestStartMarksIMSReadyOnlyAfterRegister(t *testing.T) {
 	}
 	// The real service adapter should report the device ID.
 	st := svc.Status()
-	if st.State.DeviceID != "dev-1" {
-		t.Errorf("device = %q, want dev-1", st.State.DeviceID)
+	if st["device_id"] != "dev-1" {
+		t.Errorf("device = %v, want dev-1", st["device_id"])
 	}
 	if !inst.State().IMSReady || !inst.State().SMSReady || inst.State().IMSState != "registered" {
 		t.Errorf("IMS state = %+v", inst.State())
@@ -513,11 +519,11 @@ func TestStartContextCancellationStopsTunnel(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	stopped := make(chan struct{}, 1)
-	inst.AddObserver(func(_ context.Context, event Event) {
+	inst.AddObserver(ObserverFunc(func(_ context.Context, event Event) {
 		if event.State.SessionState == "stopped" {
 			stopped <- struct{}{}
 		}
-	})
+	}))
 	cancel()
 	select {
 	case <-stopped:

@@ -28,45 +28,39 @@ const (
 	defaultIMSSIPPort        = 5060
 )
 
-// StartMode selects the runtime host mode.
-type StartMode string
+// StartMode preserves the additive name without changing the recovered string field.
+type StartMode = string
 
 const (
 	// StartModeMain runs the full IMS host.
-	StartModeMain StartMode = "main"
+	StartModeMain = "main"
 	// StartModeReader runs a SIM-reader-only host.
-	StartModeReader StartMode = "reader"
+	StartModeReader = "reader"
 )
-
-// DeliveryStore persists SMS delivery state.
-type DeliveryStore interface {
-	// (recovered as needed)
-}
-
-// EventDispatcher dispatches runtime events.
-type EventDispatcher interface {
-	Dispatch(event Event)
-}
 
 // StartRequest configures a runtime host start.
 type StartRequest struct {
-	Mode          StartMode
+	Mode          string
 	DeviceID      string
 	TraceID       string
 	Profile       identity.Profile
 	Prepared      *identity.PreparedSession
+	IMSIdentity   identity.IMSIdentityResult
 	NetworkMode   string
 	VoiceGateway  *voicehost.Gateway
 	SIM           SIMAdapter
-	Access        ModemAccessAdapter
+	Access        identity.AccessAdapter
 	Dataplane     DataplanePolicy
 	Proxy         *ProxyConfig
+	DNSServer     string
 	DeliveryStore messaging.DeliveryStore
 	Dispatch      eventhost.Dispatcher
-	TunnelFactory TunnelFactory
-	IMSFactory    IMSFactory
 	BeforeStart   func(context.Context, SessionConfig) error
 	ShouldRun     func() bool
+	runner        func(context.Context, runtimecore.RuntimeStartRequest) (StartResult, error)
+
+	TunnelFactory TunnelFactory
+	IMSFactory    IMSFactory
 }
 
 // ModemAccessAdapter preserves the current name for the identity access ABI.
@@ -85,17 +79,40 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := validateCommonStartRequest(req); err != nil {
+		return nil, err
+	}
+	if req.TunnelFactory != nil || req.IMSFactory != nil {
+		return startCurrent(ctx, req)
+	}
+	waitForReady, delay := req.startPolicy()
+	coreRequest := req.coreRequest()
+	if !waitForReady {
+		instance, err := startInstanceAsync(ctx, coreRequest, req.runner, delay)
+		applyRequestMetadata(instance, req)
+		return instance, err
+	}
+	instance, err := startInstance(ctx, coreRequest, req.runner, delay)
+	applyRequestMetadata(instance, req)
+	return instance, err
+}
+
+func (req StartRequest) startPolicy() (bool, reconnectDelay) {
+	if req.Mode == StartModeReader {
+		return false, defaultReaderReconnectDelay
+	}
+	return true, defaultMainReconnectDelay
+}
+
+func startCurrent(ctx context.Context, req StartRequest) (*Instance, error) {
 	if req.ShouldRun != nil && !req.ShouldRun() {
 		return nil, errors.New("runtimehost: start cancelled by ShouldRun")
 	}
-	if err := validateStartRequest(req); err != nil {
+	if err := validateCurrentStartRequest(req); err != nil {
 		return nil, err
 	}
-	if req.TunnelFactory == nil && req.IMSFactory == nil {
-		return startRuntimeCore(ctx, req)
-	}
 	if req.BeforeStart != nil {
-		if err := req.BeforeStart(ctx, SessionConfig{DataplaneMode: req.Dataplane.Mode}); err != nil {
+		if err := req.BeforeStart(ctx, currentSessionConfig(ctx, req)); err != nil {
 			return nil, err
 		}
 	}
@@ -121,7 +138,7 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 	if err != nil {
 		return failIMSStart(inst, err)
 	}
-	inst.setService(ims)
+	inst.setService(lifecycleServiceAdapter{lifecycle: ims})
 	wireSMSReadiness(inst, ims)
 	registrationCtx, registrationCancel := context.WithTimeout(runCtx, imsRegistrationTimeout)
 	err = ims.Register(registrationCtx)
@@ -138,6 +155,19 @@ func Start(ctx context.Context, req StartRequest) (*Instance, error) {
 	go monitorRegistrationFailures(runCtx, inst, ims)
 	go stopRuntimeOnContext(runCtx, inst)
 	return inst, nil
+}
+
+func applyRequestMetadata(instance *Instance, request StartRequest) {
+	if instance == nil {
+		return
+	}
+	instance.mu.Lock()
+	instance.state.NetworkMode = request.NetworkMode
+	instance.state.EPDGAddress = epdgOf(request)
+	if instance.state.DataplaneMode == "" {
+		instance.state.DataplaneMode = request.Dataplane.Mode
+	}
+	instance.mu.Unlock()
 }
 
 func monitorTunnelFailure(ctx context.Context, inst *Instance, tunnel Tunnel) {
@@ -207,17 +237,11 @@ func failIMSStart(inst *Instance, err error) (*Instance, error) {
 	return inst, err
 }
 
-func validateStartRequest(req StartRequest) error {
+func validateCommonStartRequest(req StartRequest) error {
 	if strings.TrimSpace(req.DeviceID) == "" {
 		return errors.New("runtimehost: device_id is empty")
 	}
-	if req.Prepared == nil {
-		return errors.New("runtimehost: prepared session is required")
-	}
-	if strings.TrimSpace(req.Prepared.EPDGAddr) == "" {
-		return errors.New("runtimehost: prepared session has no ePDG address")
-	}
-	if req.SIM == nil || req.SIM.AKAProvider() == nil {
+	if req.SIM == nil || req.SIM.runtimeSIMAdapter() == nil {
 		return errors.New("runtimehost: SIM AKA provider is required")
 	}
 	mode := strings.TrimSpace(req.Dataplane.Mode)
@@ -230,17 +254,40 @@ func validateStartRequest(req StartRequest) error {
 	return nil
 }
 
+func validateCurrentStartRequest(req StartRequest) error {
+	if req.Prepared == nil {
+		return errors.New("runtimehost: prepared session is required")
+	}
+	if strings.TrimSpace(req.Prepared.EPDGAddr) == "" {
+		return errors.New("runtimehost: prepared session has no ePDG address")
+	}
+	provider := req.SIM.runtimeSIMAdapter().EPDGSIMProvider(runtimeAuthPlan(req.Prepared))
+	if provider == nil {
+		return errors.New("runtimehost: SIM AKA provider is required")
+	}
+	return nil
+}
+
+func currentSessionConfig(ctx context.Context, req StartRequest) SessionConfig {
+	return SessionConfig{
+		Ctx: ctx, DeviceID: req.DeviceID, TraceID: req.TraceID, Prepared: *req.Prepared,
+		DataplaneMode: req.Dataplane.Mode, TUNName: req.Dataplane.TUNName,
+		Proxy: req.Proxy, DNSServer: req.DNSServer,
+	}
+}
+
 func initialState(req StartRequest) State {
 	return State{
-		SessionState: "starting",
-		DeviceID:     req.DeviceID, EPDGAddress: epdgOf(req), NetworkMode: req.NetworkMode,
+		Phase: "starting", SessionState: "starting", LastEvent: "starting",
+		DeviceID: req.DeviceID, EPDGAddress: epdgOf(req), NetworkMode: req.NetworkMode,
 		DataplaneMode: req.Dataplane.Mode, SIMReady: true, AccessReady: req.Access != nil,
 	}
 }
 
 func newTunnel(req StartRequest, inst *Instance) (Tunnel, error) {
 	prepared := preparedForRuntimeCore(req.Prepared)
-	cfg, err := runtimecore.BuildCompatibilitySWUConfig(prepared, req.SIM.AKAProvider())
+	provider := req.SIM.runtimeSIMAdapter().EPDGSIMProvider(runtimeAuthPlan(req.Prepared))
+	cfg, err := runtimecore.BuildCompatibilitySWUConfig(prepared, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -270,10 +317,7 @@ func newTunnel(req StartRequest, inst *Instance) (Tunnel, error) {
 }
 
 func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.PreparedSessionStart {
-	authPlan := profile.NewAuthPlan(prepared.AuthPlan.EPDGApp, prepared.AuthPlan.IMSApp)
-	if prepared.AuthPlan == (identity.AuthPlan{}) {
-		authPlan = authPlanForPreference(string(prepared.IMSIdentity.AKAAppPreference))
-	}
+	authPlan := runtimeAuthPlan(prepared)
 	return &runtimecore.PreparedSessionStart{
 		Profile: profile.Profile{
 			IMSI: prepared.Profile.IMSI, MCC: prepared.Profile.MCC, MNC: prepared.Profile.MNC,
@@ -299,6 +343,16 @@ func preparedForRuntimeCore(prepared *identity.PreparedSession) *runtimecore.Pre
 		Carrier:            prepared.ResolvedCarrierConfig(),
 		IdentityIMEISource: prepared.IdentityIMEISource,
 	}
+}
+
+func runtimeAuthPlan(prepared *identity.PreparedSession) profile.AuthPlan {
+	if prepared == nil {
+		return profile.AuthPlan{}
+	}
+	if prepared.AuthPlan != (identity.AuthPlan{}) {
+		return authPlanToInternal(prepared.AuthPlan).Normalize()
+	}
+	return authPlanForPreference(prepared.IMSIdentity.AKAAppPreference)
 }
 
 func authPlanForPreference(preference string) profile.AuthPlan {
@@ -337,7 +391,7 @@ func newIMS(req StartRequest, tunnel Tunnel) (IMSLifecycle, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newServiceAdapter(svc), nil
+	return &imscoreLifecycleAdapter{svc: svc}, nil
 }
 
 // imscoreFromPrepared builds an imscore.Service from the prepared session.
@@ -392,7 +446,7 @@ func imscoreFromPrepared(req StartRequest, tunnel Tunnel) (*imscore.Service, err
 		Transport:   registerTemplate.Transport,
 		Expires:     registerTemplate.Expires,
 		TraceID:     req.TraceID,
-		AKAProvider: req.SIM.AKAProvider(),
+		AKAProvider: req.SIM.runtimeSIMAdapter().EPDGSIMProvider(runtimeAuthPlan(req.Prepared)),
 		IMSNetwork:  imsNetwork,
 		UserAgent:   userAgent,
 		CellularNetworkInfo: imscore.GenerateDefaultCellularNetworkInfo(

@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/runtimecore"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )
 
@@ -26,23 +28,37 @@ func (i *Instance) Service() Service {
 }
 
 // AddObserver registers an observer that receives runtime events.
-func (i *Instance) AddObserver(obs ObserverFunc) {
+func (i *Instance) AddObserver(obs Observer) func() {
+	if i == nil || obs == nil {
+		return func() {}
+	}
 	i.mu.Lock()
-	defer i.mu.Unlock()
 	i.observers = append(i.observers, obs)
+	index := len(i.observers) - 1
+	i.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			i.mu.Lock()
+			if index < len(i.observers) {
+				i.observers[index] = nil
+			}
+			i.mu.Unlock()
+		})
+	}
 }
 
 // SetNotifier installs the session notifier.
 func (i *Instance) SetNotifier(n Notifier) {
 	i.mu.Lock()
-	i.notifier = n
+	i.onNotify = n
 	i.mu.Unlock()
 }
 
 // SetSMSNotifier installs the SMS notifier.
 func (i *Instance) SetSMSNotifier(n SMSNotifier) {
 	i.mu.Lock()
-	i.smsNotifier = n
+	i.onSMS = n
 	i.mu.Unlock()
 }
 
@@ -64,6 +80,8 @@ func (i *Instance) Stop(ctx context.Context) error {
 	tunnel := i.tunnel
 	cancel := i.cancel
 	voiceDetach := i.voiceDetach
+	i.service = nil
+	i.session = nil
 	i.tunnel = nil
 	i.cancel = nil
 	i.voiceDetach = nil
@@ -76,12 +94,14 @@ func (i *Instance) Stop(ctx context.Context) error {
 		stopErr = voiceDetach()
 	}
 	if svc != nil {
-		svc.Stop()
+		stopErr = errors.Join(stopErr, svc.Stop(ctx))
 	}
 	if tunnel != nil {
 		tunnel.Shutdown()
 	}
-	i.updateState(func(state *State) {
+	i.updateStateWithEvent(ctx, "stopped", func(state *State) {
+		state.Phase = "stopped"
+		state.LastEvent = "stopped"
 		state.SessionState = "stopped"
 		state.DataPlaneUp = false
 		state.TunnelReady = false
@@ -108,19 +128,25 @@ func (i *Instance) RuntimeState() State {
 // Status returns a human-readable status string.
 func (i *Instance) Status() string {
 	st := i.State()
-	if st.Error != "" {
-		return "VoWiFi: " + st.Error
+	if st.LastError != "" {
+		return "VoWiFi: " + st.LastError
 	}
-	if st.SessionState == "" {
+	phase := firstNonEmptyString(st.Phase, st.SessionState)
+	if phase == "" {
 		return "VoWiFi: STOPPED"
 	}
-	return "VoWiFi: " + st.SessionState
+	return "VoWiFi: " + phase
 }
 
 // Obs returns an observation map of the runtime state.
 func (i *Instance) Obs() map[string]interface{} {
 	st := i.State()
 	return map[string]interface{}{
+		"phase":         st.Phase,
+		"device_id":     st.DeviceID,
+		"tunnel_ready":  st.TunnelReady,
+		"ims_ready":     st.IMSReady,
+		"sms_ready":     st.SMSReady,
 		"session_state": st.SessionState,
 		"ims_state":     st.IMSState,
 		"epdg":          st.EPDGAddress,
@@ -128,22 +154,35 @@ func (i *Instance) Obs() map[string]interface{} {
 	}
 }
 
-// setState updates the runtime state and publishes the change.
+// setState updates the runtime state.
 func (i *Instance) setState(s State) {
-	s.UpdatedAt = time.Now()
+	if s.UpdatedAt.IsZero() {
+		s.UpdatedAt = time.Now()
+	}
 	i.mu.Lock()
 	i.state = s
 	i.mu.Unlock()
-	i.publish(Event{Type: "state", Detail: s.SessionState, State: s, Session: i})
 }
 
 func (i *Instance) updateState(update func(*State)) {
+	i.updateStateWithEvent(context.Background(), "state", update)
+}
+
+func (i *Instance) updateStateWithEvent(
+	ctx context.Context,
+	kind string,
+	update func(*State),
+) {
 	i.mu.Lock()
 	update(&i.state)
 	i.state.UpdatedAt = time.Now()
 	state := i.state
 	i.mu.Unlock()
-	i.publish(Event{Type: "state", Detail: state.SessionState, State: state, Session: i})
+	detail := firstNonEmptyString(state.Phase, state.SessionState)
+	i.publish(ctx, Event{
+		Kind: kind, DeviceID: state.DeviceID, Reason: state.LastReason, State: state,
+		Type: kind, Detail: detail, Session: i,
+	})
 }
 
 func (i *Instance) attachTunnel(tunnel Tunnel, cancel context.CancelFunc) {
@@ -155,6 +194,8 @@ func (i *Instance) attachTunnel(tunnel Tunnel, cancel context.CancelFunc) {
 
 func (i *Instance) updateTunnelState(sessionState string) {
 	i.updateState(func(state *State) {
+		state.Phase = sessionState
+		state.LastEvent = sessionState
 		state.SessionState = sessionState
 		state.TunnelReady = sessionState == "established"
 		state.DataPlaneUp = state.TunnelReady
@@ -170,6 +211,8 @@ func (i *Instance) updateTunnelState(sessionState string) {
 
 func (i *Instance) markTunnelReadyForIMS() {
 	i.updateState(func(state *State) {
+		state.Phase = "ipsec_up"
+		state.LastEvent = "ipsec_up"
 		state.SessionState = "registering"
 		state.IMSState = "registering"
 		state.TunnelReady = true
@@ -180,6 +223,8 @@ func (i *Instance) markTunnelReadyForIMS() {
 
 func (i *Instance) markIMSRegistered() {
 	i.updateState(func(state *State) {
+		state.Phase = "ims_ready"
+		state.LastEvent = "ims_registered"
 		state.SessionState = "established"
 		state.IMSState = "registered"
 		state.IMSReady = true
@@ -195,11 +240,17 @@ func (i *Instance) updateSMSReadiness(readiness SMSReadiness) {
 	i.updateState(func(state *State) {
 		state.SMSReady = state.IMSReady && readiness.Ready
 		state.SMSReadyReason = readiness.Reason
+		if state.SMSReady {
+			state.Phase = "sms_ready"
+			state.LastEvent = "sms_ready"
+		}
 	})
 }
 
 func (i *Instance) setStartFailure(err error) {
 	i.updateState(func(state *State) {
+		state.Phase = "error"
+		state.LastEvent = "terminal_error"
 		state.SessionState = "error"
 		state.Error = err.Error()
 		state.LastError = err.Error()
@@ -212,6 +263,8 @@ func (i *Instance) setStartFailure(err error) {
 
 func (i *Instance) setIMSFailure(err error) {
 	i.updateState(func(state *State) {
+		state.Phase = "error"
+		state.LastEvent = "terminal_error"
 		state.SessionState = "error"
 		state.IMSState = "failed"
 		state.Error = err.Error()
@@ -229,6 +282,8 @@ func (i *Instance) setIMSFailure(err error) {
 
 func (i *Instance) setIMSRefreshFailure(err error) {
 	i.updateState(func(state *State) {
+		state.Phase = "error"
+		state.LastEvent = "terminal_error"
 		state.SessionState = "error"
 		state.IMSState = "failed"
 		state.Error = err.Error()
@@ -244,6 +299,8 @@ func (i *Instance) setIMSRefreshFailure(err error) {
 
 func (i *Instance) setTunnelControlFailure(err error) {
 	i.updateState(func(state *State) {
+		state.Phase = "error"
+		state.LastEvent = "terminal_error"
 		state.SessionState = "error"
 		state.IMSState = "failed"
 		state.Error = err.Error()
@@ -261,6 +318,8 @@ func (i *Instance) setTunnelControlFailure(err error) {
 
 func (i *Instance) setTunnelReauthenticationRequired(err error) {
 	i.updateState(func(state *State) {
+		state.Phase = "restarting"
+		state.LastEvent = "interrupted"
 		state.SessionState = "error"
 		state.IMSState = "restarting"
 		state.Error = err.Error()
@@ -277,7 +336,7 @@ func (i *Instance) setTunnelReauthenticationRequired(err error) {
 }
 
 // setService installs the IMS service.
-func (i *Instance) setService(s Service) {
+func (i *Instance) setService(s messaging.Service) {
 	i.mu.Lock()
 	i.service = s
 	i.mu.Unlock()
@@ -290,27 +349,30 @@ func (i *Instance) setVoiceDetach(detach func() error) {
 }
 
 // setSession wires a new session into the host.
-func (i *Instance) setSession(s Service) {
-	i.setService(s)
+func (i *Instance) setSession(session *runtimecore.SessionResult) {
+	i.mu.Lock()
+	i.session = session
+	if session != nil && i.startedAt.IsZero() {
+		i.startedAt = time.Now()
+	}
+	i.mu.Unlock()
 }
 
-// publish delivers an event to all observers and the notifier.
-func (i *Instance) publish(ev Event) {
+// publish delivers an event to a stable observer snapshot.
+func (i *Instance) publish(ctx context.Context, ev Event) {
+	if i == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	i.mu.RLock()
-	obs := append([]ObserverFunc{}, i.observers...)
-	notifier := i.notifier
-	smsNotifier := i.smsNotifier
+	obs := append([]Observer(nil), i.observers...)
 	i.mu.RUnlock()
 	for _, o := range obs {
 		if o != nil {
-			o(context.Background(), ev)
+			o.OnRuntimeHostEvent(ctx, ev)
 		}
-	}
-	if notifier != nil {
-		notifier(ev.Detail)
-	}
-	if smsNotifier != nil {
-		smsNotifier("", "", ev.Detail, time.Now())
 	}
 }
 
@@ -335,12 +397,29 @@ func (i *Instance) SendSMSWithOptions(ctx context.Context, to, text string, opts
 }
 
 // GetSMSDeliveryStatus returns the delivery status of a previously sent SMS.
-func (i *Instance) GetSMSDeliveryStatus(ctx context.Context, ref string) (*messaging.DeliveryStatus, error) {
+func (i *Instance) GetSMSDeliveryStatus(ref string) (*messaging.DeliveryStatus, error) {
 	svc := i.Service()
 	if svc == nil {
 		return nil, errNoService
 	}
-	return svc.GetSMSDeliveryStatus(ctx, ref)
+	return svc.GetSMSDeliveryStatus(ref)
+}
+
+// GetSMSDeliveryStatusContext retains the displaced context-aware query API.
+func (i *Instance) GetSMSDeliveryStatusContext(
+	ctx context.Context,
+	ref string,
+) (*messaging.DeliveryStatus, error) {
+	svc := i.Service()
+	if svc == nil {
+		return nil, errNoService
+	}
+	if contextual, ok := svc.(interface {
+		GetSMSDeliveryStatusContext(context.Context, string) (*messaging.DeliveryStatus, error)
+	}); ok {
+		return contextual.GetSMSDeliveryStatusContext(ctx, ref)
+	}
+	return svc.GetSMSDeliveryStatus(ref)
 }
 
 // SendUSSD sends a USSD request.
@@ -379,11 +458,18 @@ func (i *Instance) TriggerMOBIKE(oldIP, newIP string) error {
 	}
 	i.mu.RLock()
 	tunnel := i.tunnel
+	session := i.session
 	i.mu.RUnlock()
-	if tunnel == nil {
+	if tunnel == nil && (session == nil || session.Session == nil) {
 		return errors.New("runtimehost: no SWu tunnel installed")
 	}
-	if err := tunnel.UpdateAddresses(oldAddress, newAddress); err != nil {
+	var err error
+	if tunnel != nil {
+		err = tunnel.UpdateAddresses(oldAddress, newAddress)
+	} else {
+		err = session.Session.UpdateAddresses(oldAddress, newAddress)
+	}
+	if err != nil {
 		wrapped := fmt.Errorf("runtimehost: MOBIKE address update failed: %w", err)
 		i.setTunnelControlFailure(wrapped)
 		return wrapped
