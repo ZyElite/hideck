@@ -33,6 +33,7 @@ export default defineConfig(({ mode }) => {
             if (id.includes('/src/views/Devices.vue') || id.includes('/src/stores/devices') || id.includes('/src/services/devices')) return 'route-devices'
             if (id.includes('/src/views/Sms.vue') || id.includes('/src/stores/sms') || id.includes('/src/services/sms')) return 'route-sms'
             if (id.includes('/src/views/Logs.vue') || id.includes('/src/stores/logs') || id.includes('/src/services/logs')) return 'route-logs'
+            if (id.includes('/src/views/Commands.vue') || id.includes('/src/components/commands') || id.includes('/src/services/commands')) return 'route-commands'
             if (!id.includes('node_modules')) return
             if (id.includes('echarts') || id.includes('zrender') || id.includes('vue-echarts')) return 'echarts'
             if (id.includes('element-plus')) return 'element-plus'

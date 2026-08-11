@@ -1735,6 +1735,13 @@ paths:
       summary: 按游标读取命令事件
       parameters:
         - $ref: '#/components/parameters/AfterEventID'
+        - in: query
+          name: before_id
+          description: 向前读取此事件 ID 之前的历史；传 0 读取最新一页。
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
         - $ref: '#/components/parameters/EventLimit'
       responses:
         '200':

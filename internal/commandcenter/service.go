@@ -49,6 +49,10 @@ func (s *Service) ListEvents(ctx context.Context, after uint64, limit int) ([]Ev
 	return s.store.ListEvents(ctx, after, limit)
 }
 
+func (s *Service) ListEventsBefore(ctx context.Context, before uint64, limit int) ([]Event, error) {
+	return s.store.ListEventsBefore(ctx, before, limit)
+}
+
 func (s *Service) ClearCompleted(ctx context.Context) (int64, error) {
 	return s.store.ClearCompleted(ctx)
 }

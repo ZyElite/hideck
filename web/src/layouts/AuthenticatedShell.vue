@@ -14,7 +14,8 @@ import {
   Board24Regular,
   Phone24Regular,
   Globe24Regular,
-  DocumentText24Regular
+  DocumentText24Regular,
+  Chat24Regular
 } from '@vicons/fluent'
 
 defineProps({
@@ -40,6 +41,7 @@ const menuItems = [
   { index: '/devices', label: '设备管理', icon: Phone24Regular },
   { index: '/proxy', label: '代理管理', icon: Globe24Regular },
   { index: '/sms', label: '短信中心', icon: Mail24Regular },
+  { index: '/commands', label: '命令中心', icon: Chat24Regular },
   { index: '/logs', label: '实时日志', icon: DocumentText24Regular },
   { index: '/settings', label: '系统设置', icon: Settings24Regular }
 ]

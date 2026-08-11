@@ -63,6 +63,26 @@ func TestServiceCursorAndClearPreserveRunning(t *testing.T) {
 	}
 }
 
+func TestServiceListsLatestEventsBeforeCursor(t *testing.T) {
+	service := newTestService(t, map[string]notify.CommandHandler{
+		"list": func(_ notify.CommandContext, _ []string) string { return "设备列表 / 完成" },
+	})
+	for range 3 {
+		if _, err := service.Execute(context.Background(), ExecuteRequest{Input: "/list"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all := waitForEvents(t, service, 0, 6)
+	latest, err := service.ListEventsBefore(context.Background(), 0, 2)
+	if err != nil || latest[0].ID != all[4].ID || latest[1].ID != all[5].ID {
+		t.Fatalf("latest events = %+v, %v", latest, err)
+	}
+	earlier, err := service.ListEventsBefore(context.Background(), latest[0].ID, 2)
+	if err != nil || earlier[1].ID != all[3].ID {
+		t.Fatalf("earlier events = %+v, %v", earlier, err)
+	}
+}
+
 func newTestService(t *testing.T, handlers map[string]notify.CommandHandler) *Service {
 	t.Helper()
 	database, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})

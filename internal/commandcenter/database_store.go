@@ -66,6 +66,20 @@ func (s *DatabaseStore) ListEvents(ctx context.Context, after uint64, limit int)
 	return s.hydrateEvents(ctx, events)
 }
 
+func (s *DatabaseStore) ListEventsBefore(ctx context.Context, before uint64, limit int) ([]Event, error) {
+	limit = clampLimit(limit)
+	query := s.db.WithContext(ctx).Order("id desc").Limit(limit)
+	if before > 0 {
+		query = query.Where("id < ?", before)
+	}
+	var records []appdb.CommandEvent
+	if err := query.Find(&records).Error; err != nil {
+		return nil, err
+	}
+	reverseEvents(records)
+	return s.hydrateEvents(ctx, records)
+}
+
 func (s *DatabaseStore) ClearCompleted(ctx context.Context) (int64, error) {
 	var deleted int64
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -87,14 +101,23 @@ func (s *DatabaseStore) ClearCompleted(ctx context.Context) (int64, error) {
 }
 
 func (s *DatabaseStore) hydrateEvents(ctx context.Context, records []appdb.CommandEvent) ([]Event, error) {
-	result := make([]Event, 0, len(records))
+	ids := make([]string, 0, len(records))
 	for _, record := range records {
-		var execution appdb.CommandExecution
-		err := s.db.WithContext(ctx).First(&execution, "id = ?", record.ExecutionID).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		ids = append(ids, record.ExecutionID)
+	}
+	var executions []appdb.CommandExecution
+	if len(ids) > 0 {
+		if err := s.db.WithContext(ctx).Where("id IN ?", ids).Find(&executions).Error; err != nil {
 			return nil, err
 		}
-		result = append(result, eventFromRecords(record, &execution))
+	}
+	byID := make(map[string]*appdb.CommandExecution, len(executions))
+	for index := range executions {
+		byID[executions[index].ID] = &executions[index]
+	}
+	result := make([]Event, 0, len(records))
+	for _, record := range records {
+		result = append(result, eventFromRecords(record, byID[record.ExecutionID]))
 	}
 	return result, nil
 }
@@ -112,4 +135,10 @@ func clampLimit(limit int) int {
 		return 200
 	}
 	return limit
+}
+
+func reverseEvents(events []appdb.CommandEvent) {
+	for left, right := 0, len(events)-1; left < right; left, right = left+1, right-1 {
+		events[left], events[right] = events[right], events[left]
+	}
 }

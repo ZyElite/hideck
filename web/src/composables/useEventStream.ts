@@ -18,6 +18,7 @@ export function useEventStream<T>(options: EventStreamOptions<T>) {
   const lastError = ref('')
   const abortCtrl = ref<AbortController | null>(null)
   const reconnectTimer = ref<number | null>(null)
+  const lastEventId = ref('')
 
   const queryRef = ref<Record<string, string | number | boolean | undefined>>(options.query || {})
 
@@ -50,7 +51,11 @@ export function useEventStream<T>(options: EventStreamOptions<T>) {
     try {
       const res = await fetch(buildUrl(), {
         method: 'GET',
-        headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'text/event-stream',
+          ...(lastEventId.value ? { 'Last-Event-ID': lastEventId.value } : {})
+        },
         signal: controller.signal
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -65,6 +70,7 @@ export function useEventStream<T>(options: EventStreamOptions<T>) {
       let buffer = ''
       let eventName = ''
       let dataLines: string[] = []
+      let eventId = ''
 
       while (true) {
         const { value, done } = await reader.read()
@@ -80,6 +86,7 @@ export function useEventStream<T>(options: EventStreamOptions<T>) {
 
           if (line === '') {
             const payload = dataLines.join('\n')
+            if (eventId) lastEventId.value = eventId
             if (eventName === options.eventName) {
               options.onEvent(options.parse(payload))
             }
@@ -88,6 +95,7 @@ export function useEventStream<T>(options: EventStreamOptions<T>) {
             }
             eventName = ''
             dataLines = []
+            eventId = ''
             continue
           }
           if (line.startsWith('event:')) {
@@ -97,6 +105,9 @@ export function useEventStream<T>(options: EventStreamOptions<T>) {
           if (line.startsWith('data:')) {
             dataLines.push(line.slice('data:'.length).replace(/^\s*/, ''))
             continue
+          }
+          if (line.startsWith('id:')) {
+            eventId = line.slice('id:'.length).trim()
           }
         }
       }
@@ -136,5 +147,9 @@ export function useEventStream<T>(options: EventStreamOptions<T>) {
     queryRef.value = next || {}
   }
 
-  return { connected, paused, lastError, connect, disconnect, setPaused, setQuery }
+  function setLastEventId(value: string | number) {
+    lastEventId.value = String(value || '')
+  }
+
+  return { connected, paused, lastError, lastEventId, connect, disconnect, setPaused, setQuery, setLastEventId }
 }

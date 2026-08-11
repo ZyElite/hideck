@@ -11,8 +11,11 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    BalancePanel: typeof import('./components/commands/BalancePanel.vue')['default']
     CardPolicyPanel: typeof import('./components/CardPolicyPanel.vue')['default']
     CarrierWebsheetDialog: typeof import('./components/CarrierWebsheetDialog.vue')['default']
+    CommandComposer: typeof import('./components/commands/CommandComposer.vue')['default']
+    CommandTimeline: typeof import('./components/commands/CommandTimeline.vue')['default']
     DebugPanel: typeof import('./components/DebugPanel.vue')['default']
     DeviceAddDialog: typeof import('./components/DeviceAddDialog.vue')['default']
     DeviceAtTab: typeof import('./components/DeviceAtTab.vue')['default']
@@ -68,6 +71,7 @@ declare module 'vue' {
     RefreshButton: typeof import('./components/RefreshButton.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    RuleEditorDrawer: typeof import('./components/commands/RuleEditorDrawer.vue')['default']
     StatusLight: typeof import('./components/StatusLight.vue')['default']
     SwitchDark: typeof import('./components/SwitchDark.vue')['default']
     TrafficAnalysisPanel: typeof import('./components/TrafficAnalysisPanel.vue')['default']

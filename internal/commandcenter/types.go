@@ -39,5 +39,6 @@ type Store interface {
 	AddEvent(context.Context, db.CommandEvent) (Event, error)
 	Finish(context.Context, string, string, string, time.Time) error
 	ListEvents(context.Context, uint64, int) ([]Event, error)
+	ListEventsBefore(context.Context, uint64, int) ([]Event, error)
 	ClearCompleted(context.Context) (int64, error)
 }

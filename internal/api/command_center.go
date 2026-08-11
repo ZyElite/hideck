@@ -66,7 +66,17 @@ func (s *Server) handleCommandEvents(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
-	events, err := s.commandCenter.ListEvents(c.Request.Context(), after, limit)
+	var events []commandcenter.Event
+	if rawBefore := strings.TrimSpace(c.Query("before_id")); rawBefore != "" {
+		before, parseErr := strconv.ParseUint(rawBefore, 10, 64)
+		if parseErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "before_id 无效"})
+			return
+		}
+		events, err = s.commandCenter.ListEventsBefore(c.Request.Context(), before, limit)
+	} else {
+		events, err = s.commandCenter.ListEvents(c.Request.Context(), after, limit)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
 		return
