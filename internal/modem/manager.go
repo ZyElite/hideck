@@ -28,6 +28,9 @@ import (
 // SMSCallback 短信回调函数类型
 type SMSCallback func(sender, content string, timestamp time.Time)
 
+// SMSProcessor 只有返回 nil 时，管理器才会删除已读取的模组短信。
+type SMSProcessor func(sender, content string, timestamp time.Time) error
+
 // rxMsg 串口接收到的消息包装
 type rxMsg struct {
 	Data string
@@ -106,6 +109,8 @@ type Manager struct {
 
 	// 回调
 	smsCallback            SMSCallback
+	smsProcessor           SMSProcessor
+	smsReadinessCheck      func() error
 	newSMSHandler          func(index string) // 处理新短信索引的回调 (用于 bubble up URC)
 	disableURCRead         bool               // 如果启用 QMI，禁用 AT 自动读取
 	simStatusHandler       func(inserted *bool, state string)
@@ -309,7 +314,21 @@ func currentProcessTaskPIDSet() map[int]struct{} {
 
 // SetSMSCallback 设置短信接收回调
 func (m *Manager) SetSMSCallback(cb SMSCallback) {
+	m.infoMu.Lock()
 	m.smsCallback = cb
+	m.infoMu.Unlock()
+}
+
+func (m *Manager) SetSMSProcessor(processor SMSProcessor) {
+	m.infoMu.Lock()
+	m.smsProcessor = processor
+	m.infoMu.Unlock()
+}
+
+func (m *Manager) SetSMSReadinessCheck(check func() error) {
+	m.infoMu.Lock()
+	m.smsReadinessCheck = check
+	m.infoMu.Unlock()
 }
 
 // SetNewSMSHandler 设置新短信索引回调 (当收到 URC 时调用，用于接管读取流程)
@@ -1469,6 +1488,10 @@ func (m *Manager) readAndProcessSMSFromStorage(storage, index string) {
 		logger.Warn(fmt.Sprintf("[%s] 短信索引非法，跳过读取", m.cfg.ID), "index", index)
 		return
 	}
+	if err := m.checkSMSReadiness(); err != nil {
+		logger.Warn(fmt.Sprintf("[%s] 短信身份未就绪，保留模组短信", m.cfg.ID), "index", index, "err", err)
+		return
+	}
 
 	normalizedStorage, hasStorage := normalizeSMSStorage(storage)
 	if hasStorage {
@@ -1515,13 +1538,37 @@ func (m *Manager) readAndProcessSMSFromStorage(storage, index string) {
 
 	logger.Debug(fmt.Sprintf("[%s] 短信内容", m.cfg.ID), "sender", sender, "content", content)
 
-	// 回调通知
-	if m.smsCallback != nil {
-		m.smsCallback(sender, content, timestamp)
+	if err := m.processDecodedSMS(sender, content, timestamp); err != nil {
+		logger.Warn(fmt.Sprintf("[%s] 短信处理失败，保留模组短信", m.cfg.ID), "index", index, "err", err)
+		return
 	}
 
 	// 删除已读短信
 	m.ExecuteAT("AT+CMGD="+index, 3*time.Second)
+}
+
+func (m *Manager) checkSMSReadiness() error {
+	m.infoMu.RLock()
+	check := m.smsReadinessCheck
+	m.infoMu.RUnlock()
+	if check == nil {
+		return nil
+	}
+	return check()
+}
+
+func (m *Manager) processDecodedSMS(sender, content string, timestamp time.Time) error {
+	m.infoMu.RLock()
+	processor := m.smsProcessor
+	callback := m.smsCallback
+	m.infoMu.RUnlock()
+	if processor != nil {
+		return processor(sender, content, timestamp)
+	}
+	if callback != nil {
+		callback(sender, content, timestamp)
+	}
+	return nil
 }
 
 func normalizeSMSIndex(index string) (string, bool) {
@@ -1928,6 +1975,10 @@ func (m *Manager) CheckAllSMS() {
 	if m.IsBusy() {
 		return
 	}
+	if err := m.checkSMSReadiness(); err != nil {
+		logger.Warn(fmt.Sprintf("[%s] 短信身份未就绪，跳过轮询并保留模组短信", m.cfg.ID), "err", err)
+		return
+	}
 
 	pdus, err := m.SMSListAllPDU()
 	if err != nil {
@@ -1939,15 +1990,22 @@ func (m *Manager) CheckAllSMS() {
 		return
 	}
 
+	processed := true
 	for _, pduHex := range pdus {
 		sender, content, timestamp := m.decodePDU(pduHex)
-		if m.smsCallback != nil && content != "" {
-			m.smsCallback(sender, content, timestamp)
+		if content == "" {
+			continue
+		}
+		if err := m.processDecodedSMS(sender, content, timestamp); err != nil {
+			logger.Warn(fmt.Sprintf("[%s] 轮询短信处理失败，保留全部模组短信", m.cfg.ID), "err", err)
+			processed = false
+			break
 		}
 	}
 
-	// 删除所有短信
-	_ = m.SMSDeleteAll()
+	if processed {
+		_ = m.SMSDeleteAll()
+	}
 }
 
 // DeleteSMS 删除指定索引的短信

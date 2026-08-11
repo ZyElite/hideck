@@ -203,6 +203,7 @@ type Pool struct {
 	udevWatcher    *UdevWatcher
 	startOnce      sync.Once
 	policyResolver cardpolicy.Resolver
+	smsIdentities  smsIdentityStore
 }
 
 func NewPool(cfg *config.Config) *Pool {
@@ -224,6 +225,7 @@ func NewPool(cfg *config.Config) *Pool {
 		switchContexts:        make(map[string]esimSwitchContext),
 		switchTokens:          make(map[string]uint64),
 		lifecycle:             newLifecycleCoordinator(),
+		smsIdentities:         databaseSMSIdentityStore{},
 	}
 	p.transportRecovery = NewTransportRecoveryController(p)
 	p.voWiFiHost().ConfigureAdapter(p)

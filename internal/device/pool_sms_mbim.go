@@ -46,6 +46,10 @@ func (w *Worker) drainMBIMInbox(ctx context.Context, reason string) {
 	if !ok {
 		return
 	}
+	if _, err := w.resolveSMSIdentity(); err != nil {
+		logger.Warn(fmt.Sprintf("[%s] MBIM 短信身份未就绪，保留模组短信", w.ID), "reason", reason, "err", err)
+		return
+	}
 
 	summaries, err := lister.ListSMS(ctx)
 	if err != nil {
@@ -70,7 +74,10 @@ func (w *Worker) drainMBIMInbox(ctx context.Context, reason string) {
 			if ts.IsZero() {
 				ts = time.Now()
 			}
-			w.processSMS(sender, full, ts)
+			if err := w.processSMS(sender, full, ts); err != nil {
+				logger.Warn(fmt.Sprintf("[%s] MBIM 短信未处理，保留在模组", w.ID), "index", summary.Index, "err", err)
+				continue
+			}
 		}
 		if err := lister.DeleteSMS(ctx, summary.Index); err != nil {
 			logger.Debug(fmt.Sprintf("[%s] MBIM 删除已读短信失败", w.ID), "index", summary.Index, "err", err)

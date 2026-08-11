@@ -126,7 +126,8 @@ func TestDrainMBIMInboxReassemblesAndDeletesSegments(t *testing.T) {
 	}
 
 	notifier := &mbimInboxNotifierStub{}
-	pool := &Pool{notifier: notifier}
+	pool, _ := smsTestPool("dev1", SMSIdentity{ICCID: "mbim-card", IMSI: "mbim-imsi"})
+	pool.notifier = notifier
 	backendStub := &mbimInboxBackendStub{
 		list: []backend.SMSSummary{{Index: 1, Tag: 1}},
 		readByIdx: map[int]*backend.SMS{
@@ -139,6 +140,8 @@ func TestDrainMBIMInboxReassemblesAndDeletesSegments(t *testing.T) {
 		Pool:        pool,
 		reassembler: smscodec.NewReassembler(),
 	}
+	setWorkerSMSIdentity(w, SMSIdentity{ICCID: "mbim-card", IMSI: "mbim-imsi"})
+	pool.workers[w.ID] = w
 	w.reassembler.Add(sender, smscodec.ConcatInfo{IsConcat: true, Ref: concat.Ref, Total: 4, Seq: 1}, "part1-")
 	w.reassembler.Add(sender, smscodec.ConcatInfo{IsConcat: true, Ref: concat.Ref, Total: 4, Seq: 3}, "-part3")
 	w.reassembler.Add(sender, smscodec.ConcatInfo{IsConcat: true, Ref: concat.Ref, Total: 4, Seq: 4}, "-part4")
@@ -159,6 +162,24 @@ func TestDrainMBIMInboxReassemblesAndDeletesSegments(t *testing.T) {
 	}
 	if len(backendStub.deletedIdx) != 1 || backendStub.deletedIdx[0] != 1 {
 		t.Fatalf("deletedIdx = %v, want [1]", backendStub.deletedIdx)
+	}
+}
+
+func TestDrainMBIMInboxRetainsMessageWhenIdentityUnknown(t *testing.T) {
+	backendStub := &mbimInboxBackendStub{
+		list: []backend.SMSSummary{{Index: 7, Tag: 1}},
+		readByIdx: map[int]*backend.SMS{
+			7: {Index: 7, Content: "0004038101F100006250724190410A02C834"},
+		},
+	}
+	pool := &Pool{workers: make(map[string]*Worker), smsIdentities: &smsIdentityStoreStub{}}
+	worker := &Worker{ID: "unknown", Backend: backendStub, Pool: pool, reassembler: smscodec.NewReassembler()}
+	pool.workers[worker.ID] = worker
+
+	worker.drainMBIMInbox(context.Background(), "test_unknown_identity")
+
+	if len(backendStub.deletedIdx) != 0 {
+		t.Fatalf("deletedIdx=%v, want message retained", backendStub.deletedIdx)
 	}
 }
 

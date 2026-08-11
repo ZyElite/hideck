@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -28,6 +29,69 @@ func TestGetICCIDForIMSI(t *testing.T) {
 	// 空 IMSI
 	if got := GetICCIDForIMSI(""); got != "" {
 		t.Fatalf("空 IMSI 应返回空串: %q", got)
+	}
+}
+
+func TestSaveSMSForIdentityKeepsCardsSeparateWhenIMSIIsShared(t *testing.T) {
+	openTestDB(t)
+	for _, iccid := range []string{"ICC_SHARED_A", "ICC_SHARED_B"} {
+		if err := DB.Create(&SIMCard{ICCID: iccid, IMSI: "IMSI_SHARED"}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveSMSForIdentity(SMSRecord{
+			Identity: SMSIdentity{ICCID: iccid, IMSI: "IMSI_SHARED"},
+			Sender:   "+10086", Content: iccid, Type: 1, Status: 0, Timestamp: time.Now(),
+		}); err != nil {
+			t.Fatalf("SaveSMSForIdentity(%s) error=%v", iccid, err)
+		}
+	}
+
+	for _, iccid := range []string{"ICC_SHARED_A", "ICC_SHARED_B"} {
+		contacts, err := GetSMSContactsByICCID(iccid, 10, nil, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(contacts) != 1 || contacts[0].ICCID != iccid {
+			t.Fatalf("contacts for %s=%+v", iccid, contacts)
+		}
+	}
+}
+
+func TestResolveICCIDForIMSIRejectsAmbiguousHistory(t *testing.T) {
+	openTestDB(t)
+	for _, iccid := range []string{"ICC_OLD", "ICC_NEW"} {
+		if err := DB.Create(&SIMCard{ICCID: iccid, IMSI: "IMSI_REUSED"}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := ResolveICCIDForIMSI("IMSI_REUSED")
+
+	if !errors.Is(err, ErrSMSIdentityConflict) {
+		t.Fatalf("ResolveICCIDForIMSI() error=%v, want conflict", err)
+	}
+}
+
+func TestSaveSMSForIdentityRejectsICCIDIMSIConflict(t *testing.T) {
+	openTestDB(t)
+	if err := DB.Create(&SIMCard{ICCID: "ICC_BOUND", IMSI: "IMSI_BOUND"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := SaveSMSForIdentity(SMSRecord{
+		Identity: SMSIdentity{ICCID: "ICC_BOUND", IMSI: "IMSI_OTHER"},
+		Sender:   "+10086", Content: "wrong card", Type: 1, Status: 0, Timestamp: time.Now(),
+	})
+
+	if !errors.Is(err, ErrSMSIdentityConflict) {
+		t.Fatalf("SaveSMSForIdentity() error=%v, want conflict", err)
+	}
+	var count int64
+	if err := DB.Model(&SMS{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("sms count=%d, want 0", count)
 	}
 }
 

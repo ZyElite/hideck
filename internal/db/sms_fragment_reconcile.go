@@ -127,7 +127,7 @@ func reconcileReceivedMultipartSMS(
 	}).Error; err != nil {
 		return ReceivedMultipartSMSResult{}, err
 	}
-	if _, err := rebuildSMSContactTx(tx, existing.IMSI, existing.Peer); err != nil {
+	if _, err := rebuildSMSContactTx(tx, existing.ICCID, existing.Peer); err != nil {
 		return ReceivedMultipartSMSResult{}, err
 	}
 	return ReceivedMultipartSMSResult{SMSID: existing.ID, Reconciled: true}, nil

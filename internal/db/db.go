@@ -97,11 +97,11 @@ type SMS struct {
 }
 
 type SMSContact struct {
-	IMSI          string    `gorm:"column:imsi;primaryKey;index:idx_sms_contact_imsi_last_ts,priority:1" json:"imsi"`
-	ICCID         string    `gorm:"column:iccid;index" json:"iccid"`
+	IMSI          string    `gorm:"column:imsi;index:idx_sms_contact_imsi_last_ts,priority:1" json:"imsi"`
+	ICCID         string    `gorm:"column:iccid;primaryKey;index:idx_sms_contact_iccid_last_ts,priority:1" json:"iccid"`
 	Peer          string    `gorm:"column:peer;primaryKey" json:"peer"`
 	LastSMSID     uint      `gorm:"column:last_sms_id" json:"last_sms_id"`
-	LastTimestamp time.Time `gorm:"column:last_timestamp;index:idx_sms_contact_imsi_last_ts,priority:2,sort:desc;index:idx_sms_contact_last_ts,sort:desc" json:"last_timestamp"`
+	LastTimestamp time.Time `gorm:"column:last_timestamp;index:idx_sms_contact_imsi_last_ts,priority:2,sort:desc;index:idx_sms_contact_iccid_last_ts,priority:2,sort:desc;index:idx_sms_contact_last_ts,sort:desc" json:"last_timestamp"`
 	LastContent   string    `gorm:"column:last_content" json:"last_content"`
 	LastType      int       `gorm:"column:last_type" json:"last_type"`
 	UnreadCount   int       `gorm:"column:unread_count" json:"unread_count"`
@@ -142,6 +142,9 @@ func Init(dbPath string) error {
 	sqlDB.SetConnMaxLifetime(0)
 
 	if err := applySQLitePragmas(DB); err != nil {
+		return err
+	}
+	if err := MigrateSMSContactIdentityKey(DB); err != nil {
 		return err
 	}
 
@@ -553,37 +556,10 @@ func HasDuplicateReceivedSMS(imsi, localPhone, sender, recipient, content string
 // SaveSMSWithLocalPhone 保存短信记录并显式写入本机号码。
 // localPhone 为空时会按方向自动推导，并在必要时回退到订阅手机号。
 func SaveSMSWithLocalPhone(imsi, localPhone, sender, recipient, content string, smsType, status int, timestamp time.Time) error {
-	if DB == nil {
-		return nil
-	}
-	imsi = strings.TrimSpace(imsi)
-	sender = strings.TrimSpace(sender)
-	recipient = strings.TrimSpace(recipient)
-
-	peer := normalizeSMSPeer(smsType, sender, recipient)
-	localPhone = normalizeSMSLocalPhone(imsi, smsType, localPhone, sender, recipient)
-	// 运行时即解析 ICCID（与 P4 回填同一约定：无真实映射回退 "imsi:" 前缀），
-	// 否则新短信 iccid 为空，按 ICCID 维度的查询/删除会全部落空。
-	sms := SMS{
-		IMSI:       imsi,
-		ICCID:      GetICCIDForIMSI(imsi),
-		Peer:       peer,
-		LocalPhone: localPhone,
-		Sender:     sender,
-		Recipient:  recipient,
-		Content:    content,
-		Type:       smsType,
-		Status:     status,
-		Timestamp:  timestamp.Truncate(time.Second),
-	}
-	return DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&sms).Error; err != nil {
-			return err
-		}
-		if peer == "" {
-			return nil
-		}
-		return upsertSMSContactFromSMS(tx, &sms)
+	return SaveSMSForIdentity(SMSRecord{
+		Identity:   SMSIdentity{IMSI: imsi, ICCID: GetICCIDForIMSI(imsi)},
+		LocalPhone: localPhone, Sender: sender, Recipient: recipient, Content: content,
+		Type: smsType, Status: status, Timestamp: timestamp,
 	})
 }
 
@@ -704,7 +680,7 @@ func upsertSMSContactFromSMS(tx *gorm.DB, sms *SMS) error {
 
 	doUpdates := clause.AssignmentColumns([]string{"iccid", "last_sms_id", "last_timestamp", "last_content", "last_type", "updated_at"})
 	onConflict := clause.OnConflict{
-		Columns:   []clause.Column{{Name: "imsi"}, {Name: "peer"}},
+		Columns:   []clause.Column{{Name: "iccid"}, {Name: "peer"}},
 		DoUpdates: doUpdates,
 	}
 
@@ -971,20 +947,20 @@ func UpdateDeviceIPsV6(imei, publicV4, publicV6, privateV4, privateV6 string) er
 	return DB.Model(&Device{}).Where("imei = ?", imei).Updates(updates).Error
 }
 
-func rebuildSMSContactTx(tx *gorm.DB, imsi, peer string) (bool, error) {
-	imsi = strings.TrimSpace(imsi)
+func rebuildSMSContactTx(tx *gorm.DB, iccid, peer string) (bool, error) {
+	iccid = CanonicalICCID(iccid)
 	peer = strings.TrimSpace(peer)
-	if imsi == "" || peer == "" {
+	if iccid == "" || peer == "" {
 		return true, nil
 	}
 
 	var latest SMS
-	err := tx.Where("imsi = ? AND peer = ?", imsi, peer).
+	err := tx.Where("iccid = ? AND peer = ?", iccid, peer).
 		Order("timestamp desc, id desc").
 		First(&latest).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if err := tx.Where("imsi = ? AND peer = ?", imsi, peer).Delete(&SMSContact{}).Error; err != nil {
+			if err := tx.Where("iccid = ? AND peer = ?", iccid, peer).Delete(&SMSContact{}).Error; err != nil {
 				return true, err
 			}
 			return true, nil
@@ -994,14 +970,14 @@ func rebuildSMSContactTx(tx *gorm.DB, imsi, peer string) (bool, error) {
 
 	var unreadCount int64
 	if err := tx.Model(&SMS{}).
-		Where("imsi = ? AND peer = ? AND type = ? AND status = ?", imsi, peer, 1, 0).
+		Where("iccid = ? AND peer = ? AND type = ? AND status = ?", iccid, peer, 1, 0).
 		Count(&unreadCount).Error; err != nil {
 		return false, err
 	}
 
 	now := time.Now()
 	contact := SMSContact{
-		IMSI:          imsi,
+		IMSI:          latest.IMSI,
 		ICCID:         latest.ICCID,
 		Peer:          peer,
 		LastSMSID:     latest.ID,
@@ -1012,8 +988,9 @@ func rebuildSMSContactTx(tx *gorm.DB, imsi, peer string) (bool, error) {
 		UpdatedAt:     now,
 	}
 	return false, tx.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "imsi"}, {Name: "peer"}},
+		Columns: []clause.Column{{Name: "iccid"}, {Name: "peer"}},
 		DoUpdates: clause.Assignments(map[string]any{
+			"imsi":           contact.IMSI,
 			"iccid":          contact.ICCID,
 			"last_sms_id":    contact.LastSMSID,
 			"last_timestamp": contact.LastTimestamp,
@@ -1029,10 +1006,17 @@ func RebuildSMSContact(imsi, peer string) (bool, error) {
 	if DB == nil {
 		return true, nil
 	}
+	return RebuildSMSContactByICCID(GetICCIDForIMSI(imsi), peer)
+}
+
+func RebuildSMSContactByICCID(iccid, peer string) (bool, error) {
+	if DB == nil {
+		return true, nil
+	}
 	var threadEmpty bool
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var err error
-		threadEmpty, err = rebuildSMSContactTx(tx, imsi, peer)
+		threadEmpty, err = rebuildSMSContactTx(tx, iccid, peer)
 		return err
 	})
 	return threadEmpty, err
@@ -1046,6 +1030,7 @@ func DeleteSMSByID(id uint) (bool, string, string, error) {
 	var (
 		threadEmpty bool
 		imsi        string
+		iccid       string
 		peer        string
 	)
 	err := DB.Transaction(func(tx *gorm.DB) error {
@@ -1057,12 +1042,13 @@ func DeleteSMSByID(id uint) (bool, string, string, error) {
 			return err
 		}
 		imsi = strings.TrimSpace(sms.IMSI)
+		iccid = CanonicalICCID(sms.ICCID)
 		peer = strings.TrimSpace(sms.Peer)
 		if err := tx.Delete(&SMS{}, id).Error; err != nil {
 			return err
 		}
 		var err error
-		threadEmpty, err = rebuildSMSContactTx(tx, imsi, peer)
+		threadEmpty, err = rebuildSMSContactTx(tx, iccid, peer)
 		return err
 	})
 	return threadEmpty, imsi, peer, err

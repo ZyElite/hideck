@@ -99,6 +99,14 @@ func qmiRawSMSFixtureDirectTPDU(t *testing.T) []byte {
 	return append([]byte(nil), raw[1+smscLen:]...)
 }
 
+func qmiSMSWorker(stub *qmiSMSCoreStub) *Worker {
+	pool, _ := smsTestPool("wwan0", SMSIdentity{ICCID: "qmi-card", IMSI: "qmi-imsi"})
+	worker := &Worker{ID: "wwan0", Pool: pool, qmiSMS: stub, reassembler: smscodec.NewReassembler()}
+	setWorkerSMSIdentity(worker, SMSIdentity{ICCID: "qmi-card", IMSI: "qmi-imsi"})
+	pool.workers[worker.ID] = worker
+	return worker
+}
+
 func TestHandleNewSMSQMIUsesIndicatedStorageAndDeletesSameStorage(t *testing.T) {
 	stub := &qmiSMSCoreStub{
 		readResults: map[string]*qmimanager.DecodedSMS{
@@ -111,12 +119,7 @@ func TestHandleNewSMSQMIUsesIndicatedStorageAndDeletesSameStorage(t *testing.T) 
 			},
 		},
 	}
-	worker := &Worker{
-		ID:          "wwan0",
-		Pool:        &Pool{},
-		qmiSMS:      stub,
-		reassembler: smscodec.NewReassembler(),
-	}
+	worker := qmiSMSWorker(stub)
 
 	worker.handleNewSMSQMI(0, 7)
 
@@ -149,12 +152,7 @@ func TestHandleNewSMSQMIFallsBackToAlternateStorageWhenIndexExistsThere(t *testi
 			"0:9": errors.New("storage miss"),
 		},
 	}
-	worker := &Worker{
-		ID:          "wwan0",
-		Pool:        &Pool{},
-		qmiSMS:      stub,
-		reassembler: smscodec.NewReassembler(),
-	}
+	worker := qmiSMSWorker(stub)
 
 	worker.handleNewSMSQMI(0, 9)
 
@@ -195,12 +193,7 @@ func TestCheckAllSMSQMIReadsUnreadFromBothStorages(t *testing.T) {
 			},
 		},
 	}
-	worker := &Worker{
-		ID:          "wwan0",
-		Pool:        &Pool{},
-		qmiSMS:      stub,
-		reassembler: smscodec.NewReassembler(),
-	}
+	worker := qmiSMSWorker(stub)
 
 	if err := worker.CheckAllSMSQMI(); err != nil {
 		t.Fatalf("CheckAllSMSQMI() error=%v", err)
@@ -224,12 +217,7 @@ func TestCheckAllSMSQMICleansReadResidualsFromBothStorages(t *testing.T) {
 			},
 		},
 	}
-	worker := &Worker{
-		ID:          "wwan0",
-		Pool:        &Pool{},
-		qmiSMS:      stub,
-		reassembler: smscodec.NewReassembler(),
-	}
+	worker := qmiSMSWorker(stub)
 
 	if err := worker.CheckAllSMSQMI(); err != nil {
 		t.Fatalf("CheckAllSMSQMI() error=%v", err)
@@ -253,14 +241,41 @@ func TestCheckAllSMSQMICleansReadResidualsFromBothStorages(t *testing.T) {
 	}
 }
 
+func TestCheckAllSMSQMIRetainsReadResidualsWhenIdentityUnknown(t *testing.T) {
+	stub := &qmiSMSCoreStub{
+		listByStorage: map[uint8][]struct {
+			Index uint32
+			Tag   qmi.MessageTagType
+		}{1: {{Index: 21, Tag: qmi.TagTypeMTRead}}},
+	}
+	pool := &Pool{workers: make(map[string]*Worker), smsIdentities: &smsIdentityStoreStub{}}
+	worker := &Worker{ID: "unknown", Pool: pool, qmiSMS: stub, reassembler: smscodec.NewReassembler()}
+	pool.workers[worker.ID] = worker
+
+	if err := worker.CheckAllSMSQMI(); err != nil {
+		t.Fatalf("CheckAllSMSQMI() error=%v", err)
+	}
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("deleteCalls=%v, want residual retained", stub.deleteCalls)
+	}
+}
+
+func TestHandleNewSMSQMIDoesNotReadWhenIdentityUnknown(t *testing.T) {
+	stub := &qmiSMSCoreStub{}
+	pool := &Pool{workers: make(map[string]*Worker), smsIdentities: &smsIdentityStoreStub{}}
+	worker := &Worker{ID: "unknown", Pool: pool, qmiSMS: stub, reassembler: smscodec.NewReassembler()}
+	pool.workers[worker.ID] = worker
+
+	worker.handleNewSMSQMI(1, 22)
+
+	if len(stub.readCalls) != 0 || len(stub.deleteCalls) != 0 {
+		t.Fatalf("read=%v delete=%v, want untouched message", stub.readCalls, stub.deleteCalls)
+	}
+}
+
 func TestHandleRawSMSQMIProcessesAndAcksDirectPDU(t *testing.T) {
 	stub := &qmiSMSCoreStub{}
-	worker := &Worker{
-		ID:          "wwan0",
-		Pool:        &Pool{},
-		qmiSMS:      stub,
-		reassembler: smscodec.NewReassembler(),
-	}
+	worker := qmiSMSWorker(stub)
 
 	worker.handleNewSMSRawQMI(qmicore.RawSMSIndication{
 		PDU:           qmiRawSMSFixtureDirectTPDU(t),

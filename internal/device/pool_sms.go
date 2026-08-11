@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/iniwex5/vohive/internal/backend"
-	"github.com/iniwex5/vohive/internal/db"
 	"github.com/iniwex5/vohive/internal/modem"
 	qmicore "github.com/iniwex5/vohive/internal/qmi"
 	"github.com/iniwex5/vohive/internal/smsnotify"
@@ -160,6 +159,13 @@ func (w *Worker) CheckAllSMSQMI() error {
 	if len(readResiduals) > 0 {
 		logger.Info(fmt.Sprintf("[%s] QMI 轮询清理 %d 条已读残留短信", w.ID, len(readResiduals)))
 	}
+	if len(readResiduals) > 0 {
+		if _, err := w.resolveSMSIdentity(); err != nil {
+			logger.Warn(fmt.Sprintf("[%s] QMI 短信身份未就绪，保留已读残留短信", w.ID),
+				"count", len(readResiduals), "err", err)
+			return nil
+		}
+	}
 	for _, msg := range readResiduals {
 		if err := smsCore.WMSDeleteMessage(context.Background(), msg.storage, msg.index); err != nil {
 			logger.Warn(fmt.Sprintf("[%s] 清理已读残留短信失败 (QMI)", w.ID), "index", msg.index, "storage", msg.storage, "err", err)
@@ -175,6 +181,12 @@ func (w *Worker) handleNewSMSQMI(storage uint8, index uint32) {
 			"device", w.ID, "index", index, "storage", storage)
 		return
 	}
+	identity, err := w.resolveSMSIdentity()
+	if err != nil {
+		logger.Warn(fmt.Sprintf("[%s] QMI 短信身份未就绪，保留在模组", w.ID),
+			"index", index, "storage", storage, "err", err)
+		return
+	}
 
 	sms, actualStorage, err := w.readIncomingSMSQMI(storage, index)
 	if err != nil {
@@ -182,7 +194,11 @@ func (w *Worker) handleNewSMSQMI(storage uint8, index uint32) {
 		return
 	}
 
-	w.processDecodedSMSQMI(sms)
+	if err := w.processDecodedSMSQMIWithIdentity(identity, sms); err != nil {
+		logger.Warn(fmt.Sprintf("[%s] QMI 短信未处理，保留在模组", w.ID),
+			"index", index, "storage", actualStorage, "err", err)
+		return
+	}
 
 	if smsCore := w.smsQMICore(); smsCore != nil {
 		if err := smsCore.WMSDeleteMessage(context.Background(), actualStorage, index); err != nil {
@@ -231,7 +247,11 @@ func (w *Worker) handleNewSMSRawQMI(info qmicore.RawSMSIndication) {
 		return
 	}
 
-	w.processDecodedSMSQMI(sms)
+	if err := w.processDecodedSMSQMI(sms); err != nil {
+		logger.Warn(fmt.Sprintf("[%s] QMI 原始短信未处理，不发送 ACK", w.ID),
+			"transaction_id", info.TransactionID, "err", err)
+		return
+	}
 	w.ackRawSMSQMI(info, "processed")
 }
 
@@ -266,9 +286,17 @@ func rawSMSPDUHexForLog(pdu []byte) string {
 	return strings.ToUpper(hex.EncodeToString(pdu[:maxRawSMSLogBytes])) + "...(truncated)"
 }
 
-func (w *Worker) processDecodedSMSQMI(sms *qmimanager.DecodedSMS) {
+func (w *Worker) processDecodedSMSQMI(sms *qmimanager.DecodedSMS) error {
+	identity, err := w.resolveSMSIdentity()
+	if err != nil {
+		return err
+	}
+	return w.processDecodedSMSQMIWithIdentity(identity, sms)
+}
+
+func (w *Worker) processDecodedSMSQMIWithIdentity(identity SMSIdentity, sms *qmimanager.DecodedSMS) error {
 	if sms == nil {
-		return
+		return errors.New("QMI 短信为空")
 	}
 
 	if sms.IsConcat {
@@ -281,13 +309,15 @@ func (w *Worker) processDecodedSMSQMI(sms *qmimanager.DecodedSMS) {
 		logger.Debug(fmt.Sprintf("[%s] 收到 QMI 短信分片", w.ID), "ref", sms.ConcatRef, "seq", sms.ConcatSeq, "total", sms.ConcatTotal)
 		complete, full := w.reassembler.Add(sms.Sender, concat, sms.Message)
 		if !complete {
-			return
+			return nil
 		}
 		sms.Message = full
 		logger.Info(fmt.Sprintf("[%s] QMI 长短信重组完成", w.ID), "total", sms.ConcatTotal)
 	}
 
-	w.processSMS(sms.Sender, sms.Message, sms.Timestamp)
+	return w.processSMSWithIdentity(identity, inboundSMSRecord{
+		Sender: sms.Sender, Content: sms.Message, Timestamp: sms.Timestamp,
+	})
 }
 
 func (w *Worker) cleanupFragmentCache(ttl time.Duration) {
@@ -435,32 +465,30 @@ func (w *Worker) ProbeDeviceHealth() (bool, error) {
 	return false, nil
 }
 
-func (w *Worker) processSMS(sender, content string, timestamp time.Time) {
-	logger.Info(fmt.Sprintf("[%s] 处理新短信", w.ID), "sender", sender, "content_len", len(content))
+func (w *Worker) processSMS(sender, content string, timestamp time.Time) error {
+	identity, err := w.resolveSMSIdentity()
+	if err != nil {
+		return err
+	}
+	return w.processSMSWithIdentity(identity, inboundSMSRecord{
+		Sender: sender, Content: content, Timestamp: timestamp,
+	})
+}
 
-	if smsnotify.ShouldSuppressReceivedSMS(content) {
-		logger.Info(fmt.Sprintf("[%s] 短信已过滤（运营商 OTA/不可解码二进制包）", w.ID), "sender", sender)
-		return
+func (w *Worker) processSMSWithIdentity(identity SMSIdentity, message inboundSMSRecord) error {
+	logger.Info(fmt.Sprintf("[%s] 处理新短信", w.ID), "sender", message.Sender, "content_len", len(message.Content))
+
+	if smsnotify.ShouldSuppressReceivedSMS(message.Content) {
+		logger.Info(fmt.Sprintf("[%s] 短信已过滤（运营商 OTA/不可解码二进制包）", w.ID), "sender", message.Sender)
+		return nil
 	}
 
-	imsi := w.GetCachedIMSI()
-	if imsi == "" {
-		if w.Backend != nil {
-			if v, err := w.Backend.GetIMSI(context.Background()); err == nil {
-				imsi = v
-			}
-		}
-		if imsi == "" && w.Modem != nil {
-			imsi = w.Modem.GetIMSI()
-		}
-	}
-	if imsi != "" {
-		if err := db.SaveSMS(imsi, sender, "", content, 1, 0, timestamp); err != nil {
-			logger.Warn(fmt.Sprintf("[%s] 保存短信到数据库失败", w.ID), "err", err)
-		}
+	if err := w.persistReceivedSMS(identity, message); err != nil {
+		return fmt.Errorf("保存短信到数据库失败: %w", err)
 	}
 
 	if notifier := w.Pool.getNotifier(); notifier != nil {
-		notifier.NotifySMS(w.ID, sender, content, timestamp)
+		notifier.NotifySMS(w.ID, message.Sender, message.Content, message.Timestamp)
 	}
+	return nil
 }

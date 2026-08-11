@@ -1262,29 +1262,6 @@ type SMSContactWithDevice struct {
 	LocalPhone string `json:"local_phone"` // 本机号码（收件人手机号），来自订阅手机号
 }
 
-// resolveSMSICCID 将 device_id 或 imsi 查询参数解析为 ICCID，供 ICCID 维度的 SMS 查询使用。
-// 对于 ?imsi= 路径，通过 sim_cards 映射转换为 ICCID（无映射时使用 "imsi:" 前缀合成键）。
-func (s *Server) resolveSMSICCID(deviceID, imsi string) (string, int, string) {
-	deviceID = strings.TrimSpace(deviceID)
-	imsi = strings.TrimSpace(imsi)
-	if deviceID == "" || deviceID == "all" {
-		if imsi == "" {
-			return "", http.StatusBadRequest, "缺少 imsi 参数（device_id=all 时必须指定）"
-		}
-		return db.GetICCIDForIMSI(imsi), 0, ""
-	}
-
-	worker := s.pool.GetWorker(deviceID)
-	if worker == nil {
-		return "", http.StatusNotFound, "设备未找到: " + deviceID
-	}
-	iccid := worker.CurrentICCID()
-	if iccid == "" {
-		return "", http.StatusBadRequest, "该设备未识别到 SIM 卡 ICCID"
-	}
-	return iccid, 0, ""
-}
-
 func (s *Server) handleGetSMSContacts(c *gin.Context) {
 	deviceID := c.Query("device_id")
 	imsi := c.Query("imsi")
@@ -1323,37 +1300,7 @@ func (s *Server) handleGetSMSContacts(c *gin.Context) {
 		return
 	}
 
-	iccidDevice := make(map[string]struct {
-		id   string
-		name string
-	})
-	cfgByID := map[string]config.DeviceConfig{}
-	{
-		managed := config.ListDevices()
-		for _, d := range managed {
-			cfgByID[d.ID] = d
-		}
-	}
-	workers := s.pool.GetAllWorkers()
-	for _, w := range workers {
-		wICCID := w.CurrentICCID()
-		if wICCID == "" {
-			continue
-		}
-		name := ""
-		if v, ok := cfgByID[w.ID]; ok {
-			name = v.Name
-		} else {
-			name = w.Config.Name
-		}
-		if name == "" {
-			name = w.ID
-		}
-		iccidDevice[wICCID] = struct {
-			id   string
-			name string
-		}{id: w.ID, name: name}
-	}
+	iccidDevice := s.smsDeviceInfoByICCID()
 
 	// 手机号仍通过 IMSI 从 sim_subscriptions 查询（sim_subscriptions 主键尚为 IMSI）。
 	imsiPhone := make(map[string]string)
@@ -1418,28 +1365,7 @@ func (s *Server) handleGetSMSThread(c *gin.Context) {
 		return
 	}
 
-	devName := ""
-	cfgByID := map[string]config.DeviceConfig{}
-	{
-		managed := config.ListDevices()
-		for _, d := range managed {
-			cfgByID[d.ID] = d
-		}
-	}
-	workers := s.pool.GetAllWorkers()
-	for _, w := range workers {
-		if w.CurrentICCID() == iccid {
-			if v, ok := cfgByID[w.ID]; ok {
-				devName = v.Name
-			} else {
-				devName = w.Config.Name
-			}
-			if devName == "" {
-				devName = w.ID
-			}
-			break
-		}
-	}
+	devName := s.smsDeviceInfoByICCID()[iccid].name
 
 	enriched := make([]SMSWithDevice, 0, len(list))
 	for _, sms := range list {
