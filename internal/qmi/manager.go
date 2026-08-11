@@ -1632,6 +1632,23 @@ func (m *Manager) Connect() error {
 	return m.qmiMgr.Connect()
 }
 
+// ApplyNetworkConfig updates the data-call policy while preserving the QMI
+// control plane and its SMS/SIM services.
+func (m *Manager) ApplyNetworkConfig(cfg config.DeviceConfig) (bool, error) {
+	if m == nil || m.qmiMgr == nil {
+		return false, fmt.Errorf("qmi_manager_not_available")
+	}
+	enableV4, enableV6, err := config.ResolveIPFamily(cfg.IPVersion)
+	if err != nil {
+		return false, err
+	}
+	return m.qmiMgr.SetDataConfig(qmimanager.DataConfig{
+		APN:        strings.TrimSpace(cfg.APN),
+		EnableIPv4: enableV4,
+		EnableIPv6: enableV6,
+	})
+}
+
 // Disconnect 断开数据连接，但保留 QMI Core。
 func (m *Manager) Disconnect() error {
 	logger.Info(fmt.Sprintf("[%s] 断开数据连接", m.cfg.ID))

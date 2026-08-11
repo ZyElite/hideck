@@ -140,6 +140,9 @@ func (notifier *imsRegisteredNotifier) SetSession(session *SessionResult) {
 	if pending && session != nil && session.IMSService != nil && notifier.voice != nil {
 		notifier.voice.AttachIfReady(session.IMSService)
 	}
+	if pending && session != nil {
+		notifier.emitRegistered(session)
+	}
 }
 
 func (notifier *imsRegisteredNotifier) OnIMSRegistered() {
@@ -150,6 +153,8 @@ func (notifier *imsRegisteredNotifier) OnIMSRegistered() {
 	session := notifier.session
 	if session == nil {
 		notifier.pending = true
+		notifier.mu.Unlock()
+		return
 	}
 	notifier.mu.Unlock()
 	if session != nil && session.IMSService != nil && notifier.voice != nil {

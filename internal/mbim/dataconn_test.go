@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iniwex5/vohive/internal/config"
 	"github.com/iniwex5/vohive/pkg/mbim"
 )
 
@@ -46,6 +47,22 @@ func TestSetDataConfigStoresValues(t *testing.T) {
 	m.SetDataConfig(DataConfig{APN: "internet", Interface: "wwan0", IPVersion: "v4v6"})
 	if m.dataCfg.APN != "internet" || m.dataCfg.Interface != "wwan0" || m.dataCfg.IPVersion != "v4v6" {
 		t.Fatalf("dataCfg not stored: %+v", m.dataCfg)
+	}
+}
+
+func TestApplyNetworkConfigReportsEffectiveChange(t *testing.T) {
+	m := New("/dev/cdc-wdm0", "auto")
+	cfg := config.DeviceConfig{APN: " internet ", Interface: " wwan0 ", IPVersion: "v4v6"}
+	changed, err := m.ApplyNetworkConfig(cfg)
+	if err != nil || !changed {
+		t.Fatalf("ApplyNetworkConfig changed=%v err=%v", changed, err)
+	}
+	changed, err = m.ApplyNetworkConfig(cfg)
+	if err != nil || changed {
+		t.Fatalf("same ApplyNetworkConfig changed=%v err=%v", changed, err)
+	}
+	if m.dataCfg.APN != "internet" || m.dataCfg.Interface != "wwan0" || m.dataCfg.IPVersion != "v4v6" {
+		t.Fatalf("dataCfg not normalized: %+v", m.dataCfg)
 	}
 }
 

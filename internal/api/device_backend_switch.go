@@ -11,7 +11,8 @@ import (
 	"github.com/iniwex5/vohive/internal/device"
 )
 
-const backendSwitchDiscoveryTimeout = 12 * time.Second
+// EC25 切换 USBNet 后可能经历两次枚举；实机稳定节点约 20 秒后才出现。
+const backendSwitchDiscoveryTimeout = 30 * time.Second
 
 type deviceBackendSwitcher interface {
 	Switch(context.Context, backendSwitchRequest) (backendSwitchResult, error)
@@ -24,7 +25,7 @@ type backendSwitchPool interface {
 }
 
 type backendAttachmentWaiter interface {
-	Wait(context.Context, string, string) (device.BackendAttachment, error)
+	WaitWithHint(context.Context, device.BackendAttachmentQuery) (device.BackendAttachment, error)
 }
 
 type backendSwitchRequest struct {
@@ -34,15 +35,22 @@ type backendSwitchRequest struct {
 }
 
 type backendSwitchResult struct {
-	DeviceID          string                   `json:"device_id"`
-	TargetBackend     string                   `json:"target_backend"`
-	ConfiguredBackend string                   `json:"configured_backend"`
-	ActualBackend     string                   `json:"actual_backend,omitempty"`
-	HardwareChanged   bool                     `json:"hardware_changed"`
-	HardwareVerified  bool                     `json:"hardware_verified"`
-	Persisted         bool                     `json:"persisted"`
-	WorkerStarted     bool                     `json:"worker_started"`
-	Attachment        device.BackendAttachment `json:"attachment,omitempty"`
+	DeviceID          string                    `json:"device_id"`
+	TargetBackend     string                    `json:"target_backend"`
+	ConfiguredBackend string                    `json:"configured_backend"`
+	ActualBackend     string                    `json:"actual_backend,omitempty"`
+	HardwareChanged   bool                      `json:"hardware_changed"`
+	HardwareVerified  bool                      `json:"hardware_verified"`
+	Persisted         bool                      `json:"persisted"`
+	WorkerStarted     bool                      `json:"worker_started"`
+	CurrentAttachment *device.BackendAttachment `json:"current_attachment,omitempty"`
+	Attachment        device.BackendAttachment  `json:"attachment,omitempty"`
+}
+
+type backendSwitchVerification struct {
+	Request    backendSwitchRequest
+	Result     backendSwitchResult
+	ATPortHint string
 }
 
 type backendSwitchFailure struct {
@@ -99,6 +107,7 @@ func (s *backendSwitchService) Switch(
 		return result, backendSwitchError("discover_current", result, err)
 	}
 	result.ActualBackend = currentAttachment.Backend
+	result.CurrentAttachment = &currentAttachment
 	if worker != nil {
 		if err := s.pool.RemoveWorker(req.Current.ID); err != nil {
 			return result, backendSwitchError("stop_worker", result, err)
@@ -111,15 +120,24 @@ func (s *backendSwitchService) Switch(
 	if err != nil {
 		return result, backendSwitchError("apply_hardware", result, err)
 	}
-	return s.verifyPersistAndStart(ctx, req, result)
+	return s.verifyPersistAndStart(ctx, backendSwitchVerification{
+		Request:    req,
+		Result:     result,
+		ATPortHint: currentAttachment.ATPort,
+	})
 }
 
 func (s *backendSwitchService) verifyPersistAndStart(
 	ctx context.Context,
-	req backendSwitchRequest,
-	result backendSwitchResult,
+	verification backendSwitchVerification,
 ) (backendSwitchResult, error) {
-	verified, err := s.waitAttachment(ctx, req.Current.ModemIMEI, result.TargetBackend)
+	req := verification.Request
+	result := verification.Result
+	verified, err := s.waitAttachment(ctx, device.BackendAttachmentQuery{
+		IMEI:          req.Current.ModemIMEI,
+		TargetBackend: result.TargetBackend,
+		ATPortHint:    verification.ATPortHint,
+	})
 	if err != nil {
 		return result, backendSwitchError("verify_reenumeration", result, err)
 	}
@@ -152,7 +170,11 @@ func (s *backendSwitchService) resolveCurrentAttachment(
 ) (device.BackendAttachment, *device.Worker, error) {
 	worker := s.pool.GetWorker(cfg.ID)
 	if worker == nil {
-		attachment, err := s.waitAttachment(ctx, cfg.ModemIMEI, "")
+		attachment, err := s.waitAttachment(ctx, device.BackendAttachmentQuery{
+			IMEI:                    cfg.ModemIMEI,
+			ATPortHint:              cfg.ATPort,
+			AllowATIdentityRecovery: true,
+		})
 		return attachment, nil, err
 	}
 
@@ -218,12 +240,11 @@ func validateBackendSwitchRequest(req backendSwitchRequest) (backendSwitchResult
 
 func (s *backendSwitchService) waitAttachment(
 	ctx context.Context,
-	imei string,
-	target string,
+	query device.BackendAttachmentQuery,
 ) (device.BackendAttachment, error) {
 	discoveryCtx, cancel := context.WithTimeout(ctx, backendSwitchDiscoveryTimeout)
 	defer cancel()
-	return s.discovery.Wait(discoveryCtx, imei, target)
+	return s.discovery.WaitWithHint(discoveryCtx, query)
 }
 
 func applyVerifiedBackendAttachment(

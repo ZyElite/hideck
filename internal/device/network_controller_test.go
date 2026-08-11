@@ -18,6 +18,13 @@ type fakeController struct {
 	dataInterface  string
 	connectHook    func()
 	disconnectHook func()
+	configChanged  bool
+	appliedConfig  config.DeviceConfig
+}
+
+func (f *fakeController) ApplyNetworkConfig(cfg config.DeviceConfig) (bool, error) {
+	f.appliedConfig = cfg
+	return f.configChanged, nil
 }
 
 func (f *fakeController) Connect() error {
@@ -74,6 +81,38 @@ func TestWorkerStartNetworkUsesController(t *testing.T) {
 	}
 	if fc.connected {
 		t.Fatal("controller.Disconnect was not called")
+	}
+}
+
+func TestWorkerStartNetworkReconnectsChangedDataConfig(t *testing.T) {
+	events := make([]string, 0, 2)
+	fc := &fakeController{
+		connected:     true,
+		configChanged: true,
+		disconnectHook: func() {
+			events = append(events, "disconnect")
+		},
+		connectHook: func() {
+			events = append(events, "connect")
+		},
+	}
+	w := &Worker{
+		netOverride: fc,
+		Config: config.DeviceConfig{
+			NetworkEnabled: true,
+			IPVersion:      "v4v6",
+			APN:            "ims",
+		},
+	}
+
+	if err := w.StartNetwork(); err != nil {
+		t.Fatalf("StartNetwork: %v", err)
+	}
+	if got := strings.Join(events, ","); got != "disconnect,connect" {
+		t.Fatalf("events=%q, want disconnect,connect", got)
+	}
+	if fc.appliedConfig.IPVersion != "v4v6" || fc.appliedConfig.APN != "ims" {
+		t.Fatalf("applied config = %+v", fc.appliedConfig)
 	}
 }
 

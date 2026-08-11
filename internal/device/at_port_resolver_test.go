@@ -1,11 +1,39 @@
 package device
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"testing"
 	"time"
 )
+
+func TestResolveATPortForDeviceContextStopsAfterCancellation(t *testing.T) {
+	original := probeIMEICachedContextFn
+	defer func() { probeIMEICachedContextFn = original }()
+
+	var probed []string
+	probeIMEICachedContextFn = func(ctx context.Context, atPort string, _ time.Duration) (string, error) {
+		probed = append(probed, atPort)
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+
+	atPort, imei := ResolveATPortForDeviceContext(
+		ctx,
+		"/dev/ttyUSB6",
+		[]string{"/dev/ttyUSB6", "/dev/ttyUSB7"},
+		50*time.Millisecond,
+	)
+	if atPort != "" || imei != "" {
+		t.Fatalf("ResolveATPortForDeviceContext()=(%q,%q), want empty", atPort, imei)
+	}
+	if !reflect.DeepEqual(probed, []string{"/dev/ttyUSB6"}) {
+		t.Fatalf("probed=%v, want cancellation before second port", probed)
+	}
+}
 
 func TestOrderedATPortCandidatesPrefersHintWithinDevicePorts(t *testing.T) {
 	got := orderedATPortCandidates("/dev/ttyUSB3", []string{"/dev/ttyUSB2", "/dev/ttyUSB3"})

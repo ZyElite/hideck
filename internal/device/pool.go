@@ -2028,6 +2028,15 @@ func (w *Worker) StartNetwork() error {
 	if w == nil || nc == nil {
 		return fmt.Errorf("network_not_available")
 	}
+	configChanged, err := nc.ApplyNetworkConfig(w.Config)
+	if err != nil {
+		return fmt.Errorf("应用数据网络配置失败: %w", err)
+	}
+	if configChanged && nc.IsConnected() {
+		if err := nc.Disconnect(); err != nil {
+			return fmt.Errorf("重配数据网络前断开旧承载失败: %w", err)
+		}
+	}
 	if w.QMICore != nil {
 		if err := w.EnsureQMIRegistration(context.Background(), true); err != nil {
 			return err

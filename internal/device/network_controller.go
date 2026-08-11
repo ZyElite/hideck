@@ -1,11 +1,13 @@
 package device
 
 import (
+	"github.com/iniwex5/vohive/internal/config"
 	mbimcore "github.com/iniwex5/vohive/internal/mbim"
 	qmicore "github.com/iniwex5/vohive/internal/qmi"
 )
 
 type NetworkController interface {
+	ApplyNetworkConfig(config.DeviceConfig) (changed bool, err error)
 	Connect() error
 	Disconnect() error
 	IsConnected() bool

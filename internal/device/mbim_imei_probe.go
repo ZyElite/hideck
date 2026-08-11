@@ -9,11 +9,14 @@ import (
 	"strings"
 	"time"
 
-	mbimcore "github.com/iniwex5/vohive/internal/mbim"
 	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/iniwex5/vohive/pkg/mbim"
 )
 
-const mbimProxyAbstractSocket = "@mbim-proxy"
+const (
+	mbimProxyAbstractSocket        = "@mbim-proxy"
+	mbimIdentityMaxControlTransfer = 4096
+)
 
 // ProbeIMEIViaMBIM 通过 MBIM DeviceCaps 探测设备 IMEI。
 // 适用于 cdc_mbim 驱动的设备，替代 QMI 协议探测。
@@ -23,26 +26,35 @@ const mbimProxyAbstractSocket = "@mbim-proxy"
 // 串话,读回垃圾(EM7430 上表现为 934 字节乱码)。mbim-proxy 独占并串行化该会话,
 // 等价于 `mbimcli -p`,能稳定取到 DeviceCaps。
 func ProbeIMEIViaMBIM(controlPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return ProbeIMEIViaMBIMContext(ctx, controlPath)
+}
+
+// ProbeIMEIViaMBIMContext 继承调用方生命周期，避免重枚举后继续占用失效控制口。
+func ProbeIMEIViaMBIMContext(ctx context.Context, controlPath string) (string, error) {
 	controlPath = strings.TrimSpace(controlPath)
 	if controlPath == "" {
 		return "", fmt.Errorf("MBIM control path is empty")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	ensureMBIMProxyRunning()
+	ensureMBIMProxyRunningContext(ctx)
 
-	openCtx, openCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer openCancel()
-
-	m := mbimcore.New(controlPath, "auto")
-	if err := m.Open(openCtx); err != nil {
+	transport, err := openMBIMIdentityTransport(ctx, controlPath)
+	if err != nil {
 		return "", fmt.Errorf("打开 MBIM 设备 %s 失败: %w", controlPath, err)
 	}
-	defer m.Close()
+	dev := mbim.NewDevice(transport)
+	if err := dev.Open(ctx, mbimIdentityMaxControlTransfer); err != nil {
+		_ = dev.Close()
+		return "", fmt.Errorf("打开 MBIM 设备 %s 失败: %w", controlPath, err)
+	}
+	defer dev.Close()
 
-	capsCtx, capsCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer capsCancel()
-
-	caps, err := m.DeviceCaps(capsCtx)
+	caps, err := mbim.DeviceCaps(ctx, dev)
 	if err != nil {
 		return "", fmt.Errorf("MBIM DeviceCaps 获取 IMEI 失败: %w", err)
 	}
@@ -54,6 +66,33 @@ func ProbeIMEIViaMBIM(controlPath string) (string, error) {
 
 	logger.Debug("MBIM IMEI 探测成功", "control_path", controlPath, "imei", imei)
 	return imei, nil
+}
+
+type mbimIdentityDialResult struct {
+	transport mbim.Transport
+	err       error
+}
+
+func openMBIMIdentityTransport(ctx context.Context, controlPath string) (mbim.Transport, error) {
+	result := make(chan mbimIdentityDialResult, 1)
+	go func() {
+		transport, err := mbim.Dial("auto", controlPath)
+		result <- mbimIdentityDialResult{transport: transport, err: err}
+	}()
+	select {
+	case opened := <-result:
+		return opened.transport, opened.err
+	case <-ctx.Done():
+		go closeLateMBIMIdentityTransport(result)
+		return nil, ctx.Err()
+	}
+}
+
+func closeLateMBIMIdentityTransport(result <-chan mbimIdentityDialResult) {
+	opened := <-result
+	if opened.transport != nil {
+		_ = opened.transport.Close()
+	}
 }
 
 // mbimProxyCandidatePaths 是 mbim-proxy 二进制的查找顺序。libmbim 在多数发行版把它
@@ -81,7 +120,7 @@ func resolveMBIMProxyBinary() string {
 // ensureMBIMProxyRunning 尽力保证 mbim-proxy 守护进程在运行(等价于 mbimcli 的 -p):
 // 抽象套接字已就绪则直接返回;否则后台拉起 mbim-proxy 并等待套接字可用。
 // 任何失败只记日志——调用方用 transport=auto,会自动回退到 direct,不阻断探测。
-func ensureMBIMProxyRunning() {
+func ensureMBIMProxyRunningContext(ctx context.Context) {
 	if mbimProxySocketReady() {
 		return
 	}
@@ -101,7 +140,13 @@ func ensureMBIMProxyRunning() {
 		if mbimProxySocketReady() {
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
 	logger.Debug("等待 mbim-proxy 抽象套接字就绪超时,MBIM IMEI 探测将回退 direct")
 }

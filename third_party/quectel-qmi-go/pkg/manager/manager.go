@@ -90,6 +90,14 @@ type Config struct {
 	ClientOptions   qmi.ClientOptions
 }
 
+// DataConfig contains the fields that may change while the QMI control plane
+// remains running. SetDataConfig serializes updates with data-plane operations.
+type DataConfig struct {
+	APN        string
+	EnableIPv4 bool
+	EnableIPv6 bool
+}
+
 type TimeoutConfig struct {
 	Init               time.Duration
 	Dial               time.Duration
@@ -146,6 +154,7 @@ type Manager struct {
 	cfg                 Config
 	log                 Logger
 	networkConfigurator netcfg.NetworkConfigurator
+	dataOpMu            sync.Mutex
 
 	// QMI services / QMI服务
 	client *qmi.Client
@@ -659,6 +668,36 @@ func (m *Manager) Connect() error {
 	m.mu.Unlock()
 
 	return m.doConnect()
+}
+
+// SetDataConfig updates the next data call without restarting the QMI control
+// plane. It returns whether the effective configuration changed.
+func (m *Manager) SetDataConfig(cfg DataConfig) (bool, error) {
+	if !cfg.EnableIPv4 && !cfg.EnableIPv6 {
+		return false, fmt.Errorf("at least one IP family must be enabled")
+	}
+
+	m.dataOpMu.Lock()
+	defer m.dataOpMu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	changed := m.cfg.APN != cfg.APN ||
+		m.cfg.EnableIPv4 != cfg.EnableIPv4 ||
+		m.cfg.EnableIPv6 != cfg.EnableIPv6
+	m.cfg.APN = cfg.APN
+	m.cfg.EnableIPv4 = cfg.EnableIPv4
+	m.cfg.EnableIPv6 = cfg.EnableIPv6
+	return changed, nil
+}
+
+func (m *Manager) dataConfig() DataConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return DataConfig{
+		APN:        m.cfg.APN,
+		EnableIPv4: m.cfg.EnableIPv4,
+		EnableIPv6: m.cfg.EnableIPv6,
+	}
 }
 
 // Disconnect tears down the current data call but keeps the QMI core available.
@@ -1184,7 +1223,8 @@ func (m *Manager) createVOICEService(ctx context.Context) (*qmi.VOICEService, er
 }
 
 func (m *Manager) shouldAllocateWDA() bool {
-	return strings.TrimSpace(m.cfg.Device.NetInterface) != "" && (m.cfg.EnableIPv4 || m.cfg.EnableIPv6)
+	dataCfg := m.dataConfig()
+	return strings.TrimSpace(m.cfg.Device.NetInterface) != "" && (dataCfg.EnableIPv4 || dataCfg.EnableIPv6)
 }
 
 func (m *Manager) shouldAllocateDataPlaneAtStart() bool {
@@ -1203,8 +1243,9 @@ func (m *Manager) ensureDataPlaneServices(ctx context.Context) error {
 		return ErrServiceNotReady("data-plane")
 	}
 
+	dataCfg := m.dataConfig()
 	var err error
-	if m.cfg.EnableIPv4 && m.wds == nil {
+	if dataCfg.EnableIPv4 && m.wds == nil {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -1216,7 +1257,7 @@ func (m *Manager) ensureDataPlaneServices(ctx context.Context) error {
 		m.log.Debug("Allocated WDS client for IPv4")
 	}
 
-	if m.cfg.EnableIPv6 && m.wdsV6 == nil {
+	if dataCfg.EnableIPv6 && m.wdsV6 == nil {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -2112,6 +2153,10 @@ func (m *Manager) GetNativeMCCMNC(ctx context.Context) (mcc, mnc string, err err
 
 // RotateIP disconnects and reconnects to get a new IP address / RotateIP 断开并重新连接以获取新 IP 地址
 func (m *Manager) RotateIP() error {
+	m.dataOpMu.Lock()
+	defer m.dataOpMu.Unlock()
+	dataCfg := m.dataConfig()
+
 	m.mu.Lock()
 	if m.state != StateConnected {
 		m.mu.Unlock()
@@ -2149,7 +2194,7 @@ func (m *Manager) RotateIP() error {
 
 	// 3. Reconnect / 3. 重新连接
 	handle, err := m.wds.StartNetworkInterface(ctx,
-		m.cfg.APN, m.cfg.Username, m.cfg.Password,
+		dataCfg.APN, m.cfg.Username, m.cfg.Password,
 		m.cfg.AuthType, qmi.IpFamilyV4)
 	if err != nil {
 		return m.rotateViaRadioReset()
@@ -2267,7 +2312,7 @@ registered:
 
 	// 5. Reconnect / 6. 重新连接
 	handle, err := m.wds.StartNetworkInterface(ctx,
-		m.cfg.APN, m.cfg.Username, m.cfg.Password,
+		m.dataConfig().APN, m.cfg.Username, m.cfg.Password,
 		m.cfg.AuthType, qmi.IpFamilyV4)
 	if err != nil {
 		return fmt.Errorf("redial after radio reset failed: %w", err)
@@ -3322,6 +3367,9 @@ func jitteredFullCheckInterval(base time.Duration) time.Duration {
 }
 
 func (m *Manager) doConnect() error {
+	m.dataOpMu.Lock()
+	defer m.dataOpMu.Unlock()
+
 	m.mu.Lock()
 	if !m.desiredConnection {
 		m.mu.Unlock()
@@ -3337,6 +3385,7 @@ func (m *Manager) doConnect() error {
 	}
 	m.state = StateConnecting
 	m.mu.Unlock()
+	dataCfg := m.dataConfig()
 
 	dialCtx, cancelDial := m.opContext(m.cfg.Timeouts.Dial)
 	defer cancelDial()
@@ -3451,10 +3500,10 @@ func (m *Manager) doConnect() error {
 	}
 
 	// Start IPv4 data call / 启动IPv4数据呼叫
-	if m.cfg.EnableIPv4 {
+	if dataCfg.EnableIPv4 {
 		m.log.Info("Starting IPv4 data call...")
 		handle, err := m.wds.StartNetworkInterface(dialCtx,
-			m.cfg.APN, m.cfg.Username, m.cfg.Password, m.cfg.AuthType, qmi.IpFamilyV4)
+			dataCfg.APN, m.cfg.Username, m.cfg.Password, m.cfg.AuthType, qmi.IpFamilyV4)
 		if err != nil {
 			m.log.WithError(err).Error("IPv4 dial failed")
 			m.handleDialFailure(err)
@@ -3465,10 +3514,10 @@ func (m *Manager) doConnect() error {
 	}
 
 	// Start IPv6 data call / 启动IPv6数据呼叫
-	if m.cfg.EnableIPv6 && m.wdsV6 != nil {
+	if dataCfg.EnableIPv6 && m.wdsV6 != nil {
 		m.log.Info("Starting IPv6 data call...")
 		handle, err := m.wdsV6.StartNetworkInterface(dialCtx,
-			m.cfg.APN, m.cfg.Username, m.cfg.Password, m.cfg.AuthType, qmi.IpFamilyV6)
+			dataCfg.APN, m.cfg.Username, m.cfg.Password, m.cfg.AuthType, qmi.IpFamilyV6)
 		if err != nil {
 			err = fmt.Errorf("IPv6 dial failed: %w", err)
 			m.log.WithError(err).Error("IPv6 data call required by configuration")
@@ -3500,6 +3549,8 @@ func (m *Manager) doConnect() error {
 }
 
 func (m *Manager) doDisconnect() error {
+	m.dataOpMu.Lock()
+	defer m.dataOpMu.Unlock()
 	m.log.Info("Disconnecting...")
 	err := m.cleanupDataPlane(true)
 	m.setState(StateDisconnected)

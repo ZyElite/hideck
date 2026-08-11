@@ -386,23 +386,43 @@ func readHexFile16(path string) uint16 {
 // ProbeIMEIViaQMI 通过 QMI DMS.GetDeviceSerialNumbers 探测设备 IMEI
 // 用于纯 QMI 设备（无 AT 端口）的设备发现
 func ProbeIMEIViaQMI(controlPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return ProbeIMEIViaQMIContext(ctx, controlPath)
+}
+
+// ProbeIMEIViaQMIContext 继承调用方生命周期，避免 USB 重枚举后遗留控制口探测。
+func ProbeIMEIViaQMIContext(ctx context.Context, controlPath string) (string, error) {
 	clientOptions, ok := qmicore.DiscoveryClientOptionsForControlDevice(controlPath)
 	if !ok {
 		return "", fmt.Errorf("QMI control path %s is already held by a non-proxy process", strings.TrimSpace(controlPath))
 	}
-	return ProbeIMEIViaQMIWithOptions(controlPath, clientOptions)
+	// 身份探测只需要 DMS，跳过启动同步和版本枚举，避免耗尽重枚举窗口。
+	clientOptions.SyncOnOpen = false
+	clientOptions.QueryVersionOnOpen = false
+	return ProbeIMEIViaQMIWithOptionsContext(ctx, controlPath, clientOptions)
 }
 
 func ProbeIMEIViaQMIWithOptions(controlPath string, clientOptions qmi.ClientOptions) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return ProbeIMEIViaQMIWithOptionsContext(ctx, controlPath, clientOptions)
+}
+
+func ProbeIMEIViaQMIWithOptionsContext(
+	ctx context.Context,
+	controlPath string,
+	clientOptions qmi.ClientOptions,
+) (string, error) {
 	controlPath = strings.TrimSpace(controlPath)
 	if controlPath == "" {
 		return "", fmt.Errorf("QMI control path is empty")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	openCtx, openCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer openCancel()
-
-	client, err := qmi.NewClientWithOptions(openCtx, controlPath, clientOptions)
+	client, err := qmi.NewClientWithOptions(ctx, controlPath, clientOptions)
 	if err != nil {
 		return "", fmt.Errorf("打开 QMI 设备 %s 失败: %w", controlPath, err)
 	}
@@ -413,9 +433,6 @@ func ProbeIMEIViaQMIWithOptions(controlPath string, clientOptions qmi.ClientOpti
 		return "", fmt.Errorf("初始化 DMS service 失败: %w", err)
 	}
 	defer dms.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
 
 	info, err := dms.GetDeviceSerialNumbers(ctx)
 	if err != nil {

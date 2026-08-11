@@ -122,6 +122,32 @@ lsusb
 持久化配置。当前用户也必须拥有该串口的读写权限。`usbcfg` 参数含义参见
 [Quectel EC2x/EG2x/EG9x/EM05 QCFG AT Commands Manual](https://quectel.com/content/uploads/2024/02/Quectel_EC2xEG2xEG9xEM05_Series_QCFG_AT_Commands_Manual_V1.0.pdf)。
 
+## AT、QMI 与 MBIM
+
+三者不是互相替代的同一层协议：
+
+| 通道 | Linux 常见节点/驱动 | 用途 |
+| --- | --- | --- |
+| AT | `/dev/ttyUSB*`、`/dev/ttyACM*` | 模组配置、诊断、短信及人工命令 |
+| QMI | `/dev/cdc-wdm*` + `qmi_wwan` | 高通系模组的控制面、SIM、短信和蜂窝数据拨号 |
+| MBIM | `/dev/cdc-wdm*` + `cdc_mbim` | USB-IF 标准化的模组控制和蜂窝数据拨号 |
+
+同一块模组可以始终保留 AT 串口，同时将网络控制组合配置为 QMI 或 MBIM。VoHive
+在 QMI 模式通过 QMI 管理控制面和数据面；在 MBIM 模式通过 MBIM 管理网络，短信和
+人工 AT 命令仍由同一个 AT 调度器串行执行。
+
+是否支持 MBIM 由具体硬件和固件 USB 组合共同决定，不能只看产品系列或
+`AT+QCFG="usbnet"` 是否接受参数。切换后至少要同时确认：
+
+1. 网卡由 `cdc_mbim` 驱动并出现 `/dev/cdc-wdm*`；
+2. 标准 MBIM `OPEN` 能收到 `OPEN_DONE`；
+3. `DeviceCaps` 能返回当前模组 IMEI。
+
+只出现 `cdc_mbim` 接口仍不足以证明协议可用。当前测试使用的 Baiwang 定制 EC25
+在 `usbnet=2` 时可以枚举 `cdc_mbim`，但标准 `OPEN` 无响应，因此 VoHive 会拒绝把
+该状态持久化为 MBIM，并保留/恢复 QMI 配置。其他 EC25 或其他型号必须按上述握手
+逐台验证，不能套用这一固件结论。
+
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm--Noncommercial--1.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](go.mod)
 [![Vue 3](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js)](web/package.json)

@@ -1,6 +1,7 @@
 package device
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 
 // probeIMEICachedFn 允许测试替换底层 IMEI 探测实现。
 var probeIMEICachedFn = modem.ProbeIMEICached
+var probeIMEICachedContextFn = modem.ProbeIMEICachedContext
 
 // orderedATPortCandidates 按“单设备定界”规则生成探测顺序。
 // 只允许在当前设备自己的 ATPorts 集合内排序和前置候选口；
@@ -53,6 +55,25 @@ func ResolveATPortForDevice(candidate string, atPorts []string, timeout time.Dur
 	return "", ""
 }
 
+// ResolveATPortForDeviceContext 限定在单台设备端口内探测，并响应 USB 重枚举取消。
+func ResolveATPortForDeviceContext(
+	ctx context.Context,
+	candidate string,
+	atPorts []string,
+	timeout time.Duration,
+) (atPort, imei string) {
+	for _, port := range orderedATPortCandidates(candidate, atPorts) {
+		imei, err := probeIMEICachedContextFn(ctx, port, timeout)
+		if err == nil && imei != "" {
+			return port, imei
+		}
+		if ctx.Err() != nil {
+			return "", ""
+		}
+	}
+	return "", ""
+}
+
 func containsPort(ports []string, target string) bool {
 	for _, port := range ports {
 		if port == target {
@@ -74,6 +95,20 @@ func ResolveQMIDeviceATPort(dev QMIDevice, timeout time.Duration) (QMIDevice, st
 // 行为与 QMI 设备一致，同样只允许在该设备自己的 ATPorts 范围内探测。
 func ResolveCompatibleModemATPort(dev CompatibleModem, timeout time.Duration) (CompatibleModem, string) {
 	atPort, imei := ResolveATPortForDevice(dev.ATPort, dev.ATPorts, timeout)
+	dev.ATPort = atPort
+	if imei != "" {
+		dev.IMEI = imei
+	}
+	return dev, imei
+}
+
+// ResolveCompatibleModemATPortContext 是后端切换发现器使用的可取消版本。
+func ResolveCompatibleModemATPortContext(
+	ctx context.Context,
+	dev CompatibleModem,
+	timeout time.Duration,
+) (CompatibleModem, string) {
+	atPort, imei := ResolveATPortForDeviceContext(ctx, dev.ATPort, dev.ATPorts, timeout)
 	dev.ATPort = atPort
 	if imei != "" {
 		dev.IMEI = imei

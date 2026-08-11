@@ -32,7 +32,7 @@ func TestBackendAttachmentDiscoveryWaitRejectsAmbiguousIMEI(t *testing.T) {
 		backendAttachmentTestModem("1-3", "/dev/cdc-wdm1", "wwan1"),
 	})
 	discovery.PollInterval = time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	_, err := discovery.Wait(ctx, "866069053342612", "qmi")
@@ -61,16 +61,141 @@ func TestBackendAttachmentDiscoveryWaitRejectsUnknownTarget(t *testing.T) {
 	}
 }
 
+func TestBackendAttachmentDiscoveryWaitCancelsBlockedResolver(t *testing.T) {
+	discovery := backendAttachmentTestDiscovery([]CompatibleModem{
+		backendAttachmentTestModem("1-2", "/dev/cdc-wdm1", "wwan1"),
+	})
+	discovery.Resolve = func(ctx context.Context, modem CompatibleModem, _ time.Duration) (CompatibleModem, string) {
+		<-ctx.Done()
+		return modem, ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	_, err := discovery.Wait(ctx, "866069053342612", "qmi")
+	if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("Wait() cancellation took %v", elapsed)
+	}
+}
+
+func TestBackendAttachmentDiscoveryWaitCancelsBlockedIdentityProbe(t *testing.T) {
+	discovery := backendAttachmentTestDiscovery([]CompatibleModem{
+		backendAttachmentTestModem("1-2", "/dev/cdc-wdm1", "wwan1"),
+	})
+	discovery.ProbeIdentity = func(ctx context.Context, _ CompatibleModem, _ time.Duration) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := discovery.Wait(ctx, "866069053342612", "qmi")
+	if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("Wait() cancellation took %v", elapsed)
+	}
+}
+
+func TestBackendAttachmentDiscoveryUsesOwnedATPortHintAfterProtocolIdentity(t *testing.T) {
+	modem := backendAttachmentTestModem("1-2", "/dev/cdc-wdm1", "wwan1")
+	modem.ATPort = "/dev/ttyUSB4"
+	modem.ATPorts = []string{"/dev/ttyUSB4", "/dev/ttyUSB6"}
+	discovery := backendAttachmentTestDiscovery([]CompatibleModem{modem})
+	discovery.Resolve = func(context.Context, CompatibleModem, time.Duration) (CompatibleModem, string) {
+		t.Fatal("AT resolver must not run when the owned port hint is present")
+		return CompatibleModem{}, ""
+	}
+
+	got, err := discovery.WaitWithHint(
+		context.Background(),
+		BackendAttachmentQuery{
+			IMEI:          "866069053342612",
+			TargetBackend: "qmi",
+			ATPortHint:    "/dev/ttyUSB6",
+		},
+	)
+	if err != nil {
+		t.Fatalf("WaitWithHint() error = %v", err)
+	}
+	if got.ATPort != "/dev/ttyUSB6" {
+		t.Fatalf("ATPort = %q, want /dev/ttyUSB6", got.ATPort)
+	}
+}
+
+func TestBackendAttachmentDiscoveryRebindsWhenATPortNumberChanges(t *testing.T) {
+	modem := backendAttachmentTestModem("1-2", "/dev/cdc-wdm1", "wwan1")
+	modem.ATPort = "/dev/ttyUSB8"
+	modem.ATPorts = []string{"/dev/ttyUSB8", "/dev/ttyUSB9"}
+	discovery := backendAttachmentTestDiscovery([]CompatibleModem{modem})
+	discovery.Resolve = func(_ context.Context, candidate CompatibleModem, _ time.Duration) (CompatibleModem, string) {
+		candidate.ATPort = "/dev/ttyUSB8"
+		return candidate, "866069053342612"
+	}
+
+	got, err := discovery.WaitWithHint(
+		context.Background(),
+		BackendAttachmentQuery{
+			IMEI:          "866069053342612",
+			TargetBackend: "qmi",
+			ATPortHint:    "/dev/ttyUSB6",
+		},
+	)
+	if err != nil {
+		t.Fatalf("WaitWithHint() error = %v", err)
+	}
+	if got.ATPort != "/dev/ttyUSB8" {
+		t.Fatalf("ATPort = %q, want /dev/ttyUSB8", got.ATPort)
+	}
+}
+
+func TestBackendAttachmentDiscoveryUsesExplicitATIdentityRecovery(t *testing.T) {
+	modem := backendAttachmentTestModem("1-2", "/dev/cdc-wdm1", "wwan1")
+	modem.TransportType = "mbim"
+	modem.ATPorts = []string{"/dev/ttyUSB6"}
+	discovery := backendAttachmentTestDiscovery([]CompatibleModem{modem})
+	discovery.ProbeIdentity = func(context.Context, CompatibleModem, time.Duration) (string, error) {
+		return "", context.DeadlineExceeded
+	}
+	discovery.Resolve = func(_ context.Context, candidate CompatibleModem, _ time.Duration) (CompatibleModem, string) {
+		candidate.ATPort = "/dev/ttyUSB6"
+		return candidate, "866069053342612"
+	}
+
+	got, err := discovery.WaitWithHint(context.Background(), BackendAttachmentQuery{
+		IMEI:                    "866069053342612",
+		TargetBackend:           "mbim",
+		ATPortHint:              "/dev/ttyUSB6",
+		AllowATIdentityRecovery: true,
+	})
+	if err != nil {
+		t.Fatalf("WaitWithHint() error = %v", err)
+	}
+	if got.IdentitySource != "at_recovery" || !strings.Contains(got.IdentityWarning, "deadline exceeded") {
+		t.Fatalf("identity evidence = source %q warning %q", got.IdentitySource, got.IdentityWarning)
+	}
+}
+
 func backendAttachmentTestDiscovery(modems []CompatibleModem) BackendAttachmentDiscovery {
 	return BackendAttachmentDiscovery{
 		Scan: func() ([]CompatibleModem, error) {
 			return modems, nil
 		},
-		Resolve: func(modem CompatibleModem, _ time.Duration) (CompatibleModem, string) {
+		ProbeIdentity: func(_ context.Context, modem CompatibleModem, _ time.Duration) (string, error) {
+			return modem.IMEI, nil
+		},
+		Resolve: func(_ context.Context, modem CompatibleModem, _ time.Duration) (CompatibleModem, string) {
 			return modem, modem.IMEI
 		},
-		PollInterval: time.Millisecond,
-		ProbeTimeout: time.Millisecond,
+		PollInterval:         time.Millisecond,
+		ProbeTimeout:         time.Millisecond,
+		IdentityProbeTimeout: time.Millisecond,
 	}
 }
 

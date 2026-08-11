@@ -9,31 +9,48 @@ import (
 	"github.com/iniwex5/vohive/internal/config"
 )
 
-const defaultBackendAttachmentPollInterval = 500 * time.Millisecond
+const (
+	defaultBackendAttachmentPollInterval = 500 * time.Millisecond
+	defaultBackendAttachmentProbeTimeout = 2 * time.Second
+	defaultBackendIdentityProbeTimeout   = 5 * time.Second
+)
 
 // BackendAttachment is the verified runtime attachment for one managed modem.
 type BackendAttachment struct {
-	Backend       string `json:"backend"`
-	IMEI          string `json:"imei"`
-	ControlDevice string `json:"control_device"`
-	Interface     string `json:"interface"`
-	USBPath       string `json:"usb_path"`
-	ATPort        string `json:"at_port"`
+	Backend         string `json:"backend"`
+	IMEI            string `json:"imei"`
+	IdentitySource  string `json:"identity_source,omitempty"`
+	IdentityWarning string `json:"identity_warning,omitempty"`
+	ControlDevice   string `json:"control_device"`
+	Interface       string `json:"interface"`
+	USBPath         string `json:"usb_path"`
+	ATPort          string `json:"at_port"`
+}
+
+type BackendAttachmentQuery struct {
+	IMEI                    string
+	TargetBackend           string
+	ATPortHint              string
+	AllowATIdentityRecovery bool
 }
 
 type BackendAttachmentDiscovery struct {
-	Scan         func() ([]CompatibleModem, error)
-	Resolve      func(CompatibleModem, time.Duration) (CompatibleModem, string)
-	PollInterval time.Duration
-	ProbeTimeout time.Duration
+	Scan                 func() ([]CompatibleModem, error)
+	ProbeIdentity        func(context.Context, CompatibleModem, time.Duration) (string, error)
+	Resolve              func(context.Context, CompatibleModem, time.Duration) (CompatibleModem, string)
+	PollInterval         time.Duration
+	ProbeTimeout         time.Duration
+	IdentityProbeTimeout time.Duration
 }
 
 func NewBackendAttachmentDiscovery() BackendAttachmentDiscovery {
 	return BackendAttachmentDiscovery{
-		Scan:         DiscoverCompatibleModems,
-		Resolve:      ResolveCompatibleModemATPort,
-		PollInterval: defaultBackendAttachmentPollInterval,
-		ProbeTimeout: 1200 * time.Millisecond,
+		Scan:                 DiscoverCompatibleModems,
+		ProbeIdentity:        ProbeCompatibleModemIdentityContext,
+		Resolve:              ResolveCompatibleModemATPortContext,
+		PollInterval:         defaultBackendAttachmentPollInterval,
+		ProbeTimeout:         defaultBackendAttachmentProbeTimeout,
+		IdentityProbeTimeout: defaultBackendIdentityProbeTimeout,
 	}
 }
 
@@ -42,14 +59,26 @@ func (d BackendAttachmentDiscovery) Wait(
 	imei string,
 	targetBackend string,
 ) (BackendAttachment, error) {
-	if config.NormalizeIMEI(imei) == "" {
+	return d.WaitWithHint(ctx, BackendAttachmentQuery{IMEI: imei, TargetBackend: targetBackend})
+}
+
+// WaitWithHint 优先复用同一 USB 设备已有的管理口，端口改号时自动重新探测。
+func (d BackendAttachmentDiscovery) WaitWithHint(
+	ctx context.Context,
+	query BackendAttachmentQuery,
+) (BackendAttachment, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if config.NormalizeIMEI(query.IMEI) == "" {
 		return BackendAttachment{}, fmt.Errorf("IMEI 无效，无法验证重枚举设备")
 	}
-	target, err := normalizeAttachmentBackend(targetBackend)
+	target, err := normalizeAttachmentBackend(query.TargetBackend)
 	if err != nil {
 		return BackendAttachment{}, err
 	}
-	if d.Scan == nil || d.Resolve == nil {
+	query.TargetBackend = target
+	if d.Scan == nil || d.ProbeIdentity == nil || d.Resolve == nil {
 		return BackendAttachment{}, fmt.Errorf("设备发现器未初始化")
 	}
 
@@ -59,7 +88,7 @@ func (d BackendAttachmentDiscovery) Wait(
 	}
 	var lastErr error
 	for {
-		attachment, findErr := d.findOnce(imei, target)
+		attachment, findErr := d.findOnce(ctx, query)
 		if findErr == nil {
 			return attachment, nil
 		}
@@ -85,48 +114,56 @@ func normalizeAttachmentBackend(raw string) (string, error) {
 	}
 }
 
-func (d BackendAttachmentDiscovery) findOnce(imei, target string) (BackendAttachment, error) {
+func (d BackendAttachmentDiscovery) findOnce(
+	ctx context.Context,
+	query BackendAttachmentQuery,
+) (BackendAttachment, error) {
 	modems, err := d.Scan()
 	if err != nil {
 		return BackendAttachment{}, fmt.Errorf("扫描设备失败: %w", err)
 	}
 
 	matches := make(map[string]BackendAttachment)
+	var lastProbeErr error
 	for _, raw := range modems {
-		mode := strings.ToLower(strings.TrimSpace(raw.TransportType))
-		if mode == "" {
-			mode = strings.ToLower(strings.TrimSpace(raw.Mode))
-		}
+		mode := compatibleModemBackend(raw)
 		if mode != "qmi" && mode != "mbim" {
 			continue
 		}
-		if target != "" && mode != target {
+		if query.TargetBackend != "" && mode != query.TargetBackend {
 			continue
 		}
 
-		resolved, probedIMEI := d.Resolve(raw, d.probeTimeout())
-		resolvedIMEI := strings.TrimSpace(probedIMEI)
-		if resolvedIMEI == "" {
-			resolvedIMEI = strings.TrimSpace(resolved.IMEI)
+		candidate := attachmentCandidate{
+			Modem:                   raw,
+			ExpectedIMEI:            query.IMEI,
+			Backend:                 mode,
+			ATPortHint:              query.ATPortHint,
+			AllowATIdentityRecovery: query.AllowATIdentityRecovery,
 		}
-		if !config.IMEIMatches(imei, resolvedIMEI) {
+		attachment, matched, resolveErr := d.resolveCandidate(ctx, candidate)
+		if resolveErr != nil {
+			lastProbeErr = resolveErr
 			continue
 		}
-		attachment, attachmentErr := attachmentFromCompatibleModem(resolved, resolvedIMEI, mode)
-		if attachmentErr != nil {
-			return BackendAttachment{}, attachmentErr
+		if !matched {
+			continue
 		}
 		matches[attachmentKey(attachment)] = attachment
 	}
 
 	if len(matches) == 0 {
-		if target == "" {
-			return BackendAttachment{}, fmt.Errorf("未发现 IMEI %s 对应的 QMI/MBIM 设备", imei)
+		if query.TargetBackend == "" {
+			return BackendAttachment{}, attachmentNotFoundError(query.IMEI, "QMI/MBIM", lastProbeErr)
 		}
-		return BackendAttachment{}, fmt.Errorf("未发现 IMEI %s 对应的 %s 设备", imei, strings.ToUpper(target))
+		return BackendAttachment{}, attachmentNotFoundError(
+			query.IMEI,
+			strings.ToUpper(query.TargetBackend),
+			lastProbeErr,
+		)
 	}
 	if len(matches) > 1 {
-		return BackendAttachment{}, fmt.Errorf("IMEI %s 对应到 %d 个设备路径，拒绝自动选择", imei, len(matches))
+		return BackendAttachment{}, fmt.Errorf("IMEI %s 对应到 %d 个设备路径，拒绝自动选择", query.IMEI, len(matches))
 	}
 	for _, attachment := range matches {
 		return attachment, nil
@@ -134,11 +171,11 @@ func (d BackendAttachmentDiscovery) findOnce(imei, target string) (BackendAttach
 	return BackendAttachment{}, fmt.Errorf("设备发现结果为空")
 }
 
-func (d BackendAttachmentDiscovery) probeTimeout() time.Duration {
-	if d.ProbeTimeout > 0 {
-		return d.ProbeTimeout
+func attachmentNotFoundError(imei, backend string, probeErr error) error {
+	if probeErr == nil {
+		return fmt.Errorf("未发现 IMEI %s 对应的 %s 设备", imei, backend)
 	}
-	return 1200 * time.Millisecond
+	return fmt.Errorf("未发现 IMEI %s 对应的 %s 设备（最后探测错误: %v）", imei, backend, probeErr)
 }
 
 func attachmentFromCompatibleModem(

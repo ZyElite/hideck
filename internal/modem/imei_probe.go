@@ -1,6 +1,7 @@
 package modem
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -23,39 +24,62 @@ var imeiCache struct {
 
 // ProbeIMEICached 在 10 分钟缓存有效期内优先从内存缓存中获取指定 AT 串口的 IMEI；若未命中或过期，则调用底层串口方法探测
 func ProbeIMEICached(atPort string, timeout time.Duration) (string, error) {
+	return ProbeIMEICachedContext(context.Background(), atPort, timeout)
+}
+
+// ProbeIMEICachedContext 提供可取消的缓存 IMEI 探测。
+func ProbeIMEICachedContext(ctx context.Context, atPort string, timeout time.Duration) (string, error) {
 	atPort = strings.TrimSpace(atPort)
 	if atPort == "" {
 		return "", errors.New("empty at port")
 	}
-
-	imeiCache.mu.RLock()
-	if imeiCache.m != nil {
-		if it, ok := imeiCache.m[atPort]; ok {
-			if it.IMEI != "" && time.Since(it.TS) < 10*time.Minute {
-				imeiCache.mu.RUnlock()
-				return it.IMEI, nil
-			}
-		}
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	imeiCache.mu.RUnlock()
 
-	imei, err := ProbeIMEI(atPort, timeout)
+	if imei := loadCachedIMEI(atPort); imei != "" {
+		return imei, nil
+	}
+
+	imei, err := ProbeIMEIContext(ctx, atPort, timeout)
 	if err == nil && imei != "" {
-		imeiCache.mu.Lock()
-		if imeiCache.m == nil {
-			imeiCache.m = make(map[string]imeiCacheItem)
-		}
-		imeiCache.m[atPort] = imeiCacheItem{IMEI: imei, TS: time.Now()}
-		imeiCache.mu.Unlock()
+		storeCachedIMEI(atPort, imei)
 	}
 	return imei, err
 }
 
+func loadCachedIMEI(atPort string) string {
+	imeiCache.mu.RLock()
+	defer imeiCache.mu.RUnlock()
+	item, ok := imeiCache.m[atPort]
+	if !ok || item.IMEI == "" || time.Since(item.TS) >= 10*time.Minute {
+		return ""
+	}
+	return item.IMEI
+}
+
+func storeCachedIMEI(atPort, imei string) {
+	imeiCache.mu.Lock()
+	defer imeiCache.mu.Unlock()
+	if imeiCache.m == nil {
+		imeiCache.m = make(map[string]imeiCacheItem)
+	}
+	imeiCache.m[atPort] = imeiCacheItem{IMEI: imei, TS: time.Now()}
+}
+
 // ProbeIMEI 通过打开底层 TTY 串口设备并执行 `AT+CGSN` 指令来实时探测模组的 IMEI 串号
 func ProbeIMEI(atPort string, timeout time.Duration) (string, error) {
+	return ProbeIMEIContext(context.Background(), atPort, timeout)
+}
+
+// ProbeIMEIContext 在取消时主动关闭串口，避免 USB 重枚举期间阻塞设备恢复。
+func ProbeIMEIContext(ctx context.Context, atPort string, timeout time.Duration) (string, error) {
 	atPort = strings.TrimSpace(atPort)
 	if atPort == "" {
 		return "", errors.New("empty at port")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if timeout <= 0 {
 		timeout = 1500 * time.Millisecond
@@ -69,15 +93,19 @@ func ProbeIMEI(atPort string, timeout time.Duration) (string, error) {
 		Parity:   serial.NoParity,
 	}
 
-	p, err := serial.Open(atPort, mode)
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	p, err := openIMEISerialPort(probeCtx, atPort, mode)
 	if err != nil {
 		return "", err
 	}
 	defer p.Close()
+	stopClose := make(chan struct{})
+	go closeIMEISerialPortOnCancel(probeCtx, p, stopClose)
+	defer close(stopClose)
 
 	_ = p.SetReadTimeout(80 * time.Millisecond)
 
-	deadline := time.Now().Add(timeout)
 	buf := make([]byte, 1024)
 	var acc strings.Builder
 
@@ -91,7 +119,7 @@ func ProbeIMEI(atPort string, timeout time.Duration) (string, error) {
 	write("AT+CGSN\r\n")
 
 	// 在指定的截止时间内轮询并解析串口输出内容
-	for time.Now().Before(deadline) {
+	for probeCtx.Err() == nil {
 		n, rerr := p.Read(buf)
 		if n > 0 {
 			acc.Write(buf[:n])
@@ -100,6 +128,9 @@ func ProbeIMEI(atPort string, timeout time.Duration) (string, error) {
 			}
 		}
 		if rerr != nil {
+			if probeCtx.Err() != nil {
+				return "", probeCtx.Err()
+			}
 			if strings.Contains(strings.ToLower(rerr.Error()), "timeout") {
 				continue
 			}
@@ -110,5 +141,43 @@ func ProbeIMEI(atPort string, timeout time.Duration) (string, error) {
 	if imei := parseIMEI(acc.String()); imei != "" {
 		return imei, nil
 	}
+	if err := probeCtx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		return "", err
+	}
 	return "", errors.New("imei probe timeout")
+}
+
+type imeiSerialOpenResult struct {
+	port serial.Port
+	err  error
+}
+
+func openIMEISerialPort(ctx context.Context, atPort string, mode *serial.Mode) (serial.Port, error) {
+	result := make(chan imeiSerialOpenResult, 1)
+	go func() {
+		port, err := serial.Open(atPort, mode)
+		result <- imeiSerialOpenResult{port: port, err: err}
+	}()
+	select {
+	case opened := <-result:
+		return opened.port, opened.err
+	case <-ctx.Done():
+		go closeLateIMEISerialPort(result)
+		return nil, ctx.Err()
+	}
+}
+
+func closeLateIMEISerialPort(result <-chan imeiSerialOpenResult) {
+	opened := <-result
+	if opened.port != nil {
+		_ = opened.port.Close()
+	}
+}
+
+func closeIMEISerialPortOnCancel(ctx context.Context, port serial.Port, stop <-chan struct{}) {
+	select {
+	case <-ctx.Done():
+		_ = port.Close()
+	case <-stop:
+	}
 }

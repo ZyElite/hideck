@@ -45,6 +45,29 @@ type DataConfig struct {
 	Password  string
 }
 
+// ApplyNetworkConfig updates the next MBIM data session and reports whether a
+// connected session must be re-established.
+func (m *Manager) ApplyNetworkConfig(cfg config.DeviceConfig) (bool, error) {
+	if _, _, err := config.ResolveIPFamily(cfg.IPVersion); err != nil {
+		return false, err
+	}
+	next := DataConfig{
+		APN:       strings.TrimSpace(cfg.APN),
+		Interface: strings.TrimSpace(cfg.Interface),
+		IPVersion: strings.TrimSpace(cfg.IPVersion),
+	}
+	m.dataMu.Lock()
+	defer m.dataMu.Unlock()
+	m.mu.Lock()
+	changed := m.dataCfg != next
+	m.dataCfg = next
+	if m.netcfg == nil {
+		m.netcfg = realNetConfigurator{}
+	}
+	m.mu.Unlock()
+	return changed, nil
+}
+
 func ipTypeFromVersion(v string) uint32 {
 	enableV4, enableV6, err := config.ResolveIPFamily(v)
 	switch {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -41,29 +42,32 @@ func (p *backendSwitchPoolStub) AddWorkerFromConfig(cfg config.DeviceConfig) (*d
 }
 
 type backendAttachmentWaiterStub struct {
-	attachments []device.BackendAttachment
-	errors      []error
-	targets     []string
-	calls       int
+	attachments       []device.BackendAttachment
+	errors            []error
+	targets           []string
+	atPortHints       []string
+	allowATRecoveries []bool
+	calls             int
 }
 
-func (w *backendAttachmentWaiterStub) Wait(
+func (w *backendAttachmentWaiterStub) WaitWithHint(
 	_ context.Context,
-	_ string,
-	target string,
+	query device.BackendAttachmentQuery,
 ) (device.BackendAttachment, error) {
-	w.targets = append(w.targets, target)
+	w.targets = append(w.targets, query.TargetBackend)
+	w.atPortHints = append(w.atPortHints, query.ATPortHint)
+	w.allowATRecoveries = append(w.allowATRecoveries, query.AllowATIdentityRecovery)
 	index := w.calls
 	w.calls++
 	if index < len(w.errors) && w.errors[index] != nil {
 		return device.BackendAttachment{}, w.errors[index]
 	}
 	for _, attachment := range w.attachments {
-		if target == "" || attachment.Backend == target {
+		if query.TargetBackend == "" || attachment.Backend == query.TargetBackend {
 			return attachment, nil
 		}
 	}
-	return device.BackendAttachment{}, fmt.Errorf("unexpected discovery target %q on call %d", target, index)
+	return device.BackendAttachment{}, fmt.Errorf("unexpected discovery target %q on call %d", query.TargetBackend, index)
 }
 
 type backendSwitchATStub struct {
@@ -104,6 +108,9 @@ func TestBackendSwitchServiceBidirectional(t *testing.T) {
 			if !result.HardwareChanged || !result.HardwareVerified || !result.Persisted || !result.WorkerStarted {
 				t.Fatalf("Switch() result = %+v", result)
 			}
+			if result.CurrentAttachment == nil || result.CurrentAttachment.ATPort != "/dev/ttyUSB6" {
+				t.Fatalf("current attachment = %+v", result.CurrentAttachment)
+			}
 			if *persistCalls != 1 || pool.removeCalls != 1 || pool.addCalls != 1 {
 				t.Fatalf("calls persist=%d remove=%d add=%d", *persistCalls, pool.removeCalls, pool.addCalls)
 			}
@@ -116,6 +123,9 @@ func TestBackendSwitchServiceBidirectional(t *testing.T) {
 			}
 			if len(waiter.targets) != 1 || waiter.targets[0] != tt.target {
 				t.Fatalf("discovery targets = %v", waiter.targets)
+			}
+			if len(waiter.atPortHints) != 1 || waiter.atPortHints[0] != "/dev/ttyUSB6" {
+				t.Fatalf("discovery AT port hints = %v", waiter.atPortHints)
 			}
 		})
 	}
@@ -174,7 +184,7 @@ func TestBackendSwitchServiceStartFailureDoesNotHidePersistedState(t *testing.T)
 }
 
 func TestBackendSwitchServiceRepairsAfterRestartWithoutWorker(t *testing.T) {
-	service, pool, _, _, persistCalls := newBackendSwitchTestService("qmi", "mbim", 2)
+	service, pool, waiter, _, persistCalls := newBackendSwitchTestService("qmi", "mbim", 2)
 	pool.worker = nil
 
 	result, err := service.Switch(context.Background(), backendSwitchTestRequest("qmi", "mbim"))
@@ -183,6 +193,9 @@ func TestBackendSwitchServiceRepairsAfterRestartWithoutWorker(t *testing.T) {
 	}
 	if result.HardwareChanged || pool.removeCalls != 0 || pool.addCalls != 1 || *persistCalls != 1 {
 		t.Fatalf("result=%+v remove=%d add=%d persist=%d", result, pool.removeCalls, pool.addCalls, *persistCalls)
+	}
+	if !reflect.DeepEqual(waiter.allowATRecoveries, []bool{true, false}) {
+		t.Fatalf("AT identity recovery flags = %v", waiter.allowATRecoveries)
 	}
 }
 

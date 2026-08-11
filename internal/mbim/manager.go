@@ -283,6 +283,8 @@ func (m *Manager) Close() error {
 }
 
 func (m *Manager) SetDataConfig(c DataConfig) {
+	m.dataMu.Lock()
+	defer m.dataMu.Unlock()
 	m.mu.Lock()
 	m.dataCfg = c
 	if m.netcfg == nil {
