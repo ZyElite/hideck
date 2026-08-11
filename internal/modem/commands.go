@@ -186,7 +186,12 @@ func (m *Manager) SMSReadPDU(index string) (string, error) {
 	return pdu, nil
 }
 
-func (m *Manager) SMSListAllPDU() ([]string, error) {
+type SMSPDURecord struct {
+	Index int
+	PDU   string
+}
+
+func (m *Manager) SMSListAllPDURecords() ([]SMSPDURecord, error) {
 	resp, err := m.ExecuteAT("AT+CMGL=4", 10*time.Second)
 	if err != nil {
 		return nil, err
@@ -194,7 +199,19 @@ func (m *Manager) SMSListAllPDU() ([]string, error) {
 	if strings.TrimSpace(resp) == "OK" {
 		return nil, nil
 	}
-	return extractAllSMSPDUsAfterPrefix(resp, "+CMGL:"), nil
+	return extractSMSPDURecordsAfterPrefix(resp, "+CMGL:"), nil
+}
+
+func (m *Manager) SMSListAllPDU() ([]string, error) {
+	records, err := m.SMSListAllPDURecords()
+	if err != nil {
+		return nil, err
+	}
+	pdus := make([]string, 0, len(records))
+	for _, record := range records {
+		pdus = append(pdus, record.PDU)
+	}
+	return pdus, nil
 }
 
 func (m *Manager) SMSDeleteAll() error {
@@ -209,6 +226,30 @@ func (m *Manager) QuerySMSC() (string, error) {
 		return "", err
 	}
 	return parseCSCA(resp), nil
+}
+
+func (m *Manager) SetSMSC(smsc string) error {
+	smsc = strings.TrimSpace(smsc)
+	if !validSMSCNumber(smsc) {
+		return fmt.Errorf("无效的 SMSC 号码: %q", smsc)
+	}
+	_, err := m.ExecuteAT(fmt.Sprintf("AT+CSCA=\"%s\"", smsc), 5*time.Second)
+	return err
+}
+
+func validSMSCNumber(smsc string) bool {
+	if smsc == "" {
+		return false
+	}
+	for i, r := range smsc {
+		if r == '+' && i == 0 {
+			continue
+		}
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return smsc != "+"
 }
 
 // QueryMSISDN 查询本机号码 (AT+CNUM)

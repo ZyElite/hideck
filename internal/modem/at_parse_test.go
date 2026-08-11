@@ -108,6 +108,16 @@ func TestExtractAllSMSPDUsAfterPrefixTrimsCMGLPadding(t *testing.T) {
 	}
 }
 
+func TestExtractSMSPDURecordsPreservesCMGLIndexes(t *testing.T) {
+	valid := "079144872000302320048102020000625061028204401AD9775D0E72D7DBE2B21C949E8360B75A4E7683D16AB71B"
+	resp := "\r\n+CMGL: 3,1,,38\r\n" + valid + "\r\n+CMGL: 9,0,,38\r\n" + valid + "\r\nOK\r\n"
+
+	records := extractSMSPDURecordsAfterPrefix(resp, "+CMGL:")
+	if len(records) != 2 || records[0].Index != 3 || records[1].Index != 9 {
+		t.Fatalf("records = %+v, want indexes 3 and 9", records)
+	}
+}
+
 func TestParseServingCellLTEInfoIncludesRadio(t *testing.T) {
 	info, ok := parseServingCellLTEInfo("\r\n+QENG: \"servingcell\",\"NOCONN\",\"LTE\",\"FDD\",460,01,8401A29,132,3740,8,3,3,-95,5992,-75,-8,-50,11,44\r\n\r\nOK\r\n")
 	if !ok {

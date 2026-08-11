@@ -4,14 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
+	"github.com/iniwex5/vohive/internal/config"
+	"github.com/iniwex5/vohive/internal/modem"
 	"github.com/iniwex5/vohive/internal/simaid"
 	"github.com/iniwex5/vohive/pkg/mbim"
 	"github.com/iniwex5/vohive/pkg/smscodec"
-	"github.com/warthog618/sms/encoding/tpdu"
 )
 
 type fakeMBIMSource struct {
@@ -37,15 +39,11 @@ type fakeMBIMSource struct {
 	powerOffCalls     int
 	powerOnCalls      int
 
-	sendFn     func(pdu []byte) (uint32, error)
-	listFn     func() ([]mbim.SMSRecord, error)
-	openFn     func([]byte) (uint32, error)
-	apduFn     func(uint32, []byte) ([]byte, error)
-	smscFn     func(context.Context) (string, error)
-	setSMSCArg string
-	efFn       func(uint16) ([]byte, error)
-	efRecFn    func(uint16, uint32) ([]byte, error)
-	aidFn      func([]byte) ([]byte, error)
+	openFn  func([]byte) (uint32, error)
+	apduFn  func(uint32, []byte) ([]byte, error)
+	efFn    func(uint16) ([]byte, error)
+	efRecFn func(uint16, uint32) ([]byte, error)
+	aidFn   func([]byte) ([]byte, error)
 
 	resetCalled bool
 	resetErr    error
@@ -182,33 +180,6 @@ func (f *fakeMBIMSource) SetRadioState(_ context.Context, sw mbim.RadioSwitch) (
 }
 func (f *fakeMBIMSource) Snapshot() mbim.Snapshot        { return mbim.Snapshot{} }
 func (f *fakeMBIMSource) Capability() *mbim.Capabilities { return f.capability }
-func (f *fakeMBIMSource) SendSMS(_ context.Context, pdu []byte) (uint32, error) {
-	if f.sendFn != nil {
-		return f.sendFn(pdu)
-	}
-	return 0, nil
-}
-func (f *fakeMBIMSource) ReadSMS(context.Context, uint32) (mbim.SMSRecord, error) {
-	return mbim.SMSRecord{}, nil
-}
-func (f *fakeMBIMSource) ListSMS(context.Context) ([]mbim.SMSRecord, error) {
-	if f.listFn != nil {
-		return f.listFn()
-	}
-	return nil, nil
-}
-func (f *fakeMBIMSource) DeleteSMS(context.Context, uint32) error { return nil }
-func (f *fakeMBIMSource) DeleteAllSMS(context.Context) error      { return nil }
-func (f *fakeMBIMSource) GetSMSC(ctx context.Context) (string, error) {
-	if f.smscFn != nil {
-		return f.smscFn(ctx)
-	}
-	return "", nil
-}
-func (f *fakeMBIMSource) SetSMSC(_ context.Context, smsc string) error {
-	f.setSMSCArg = smsc
-	return nil
-}
 func (f *fakeMBIMSource) ExecuteUSSD(_ context.Context, command string, timeout time.Duration) (mbim.USSDResult, error) {
 	f.ussdCommand = command
 	f.ussdTimeout = timeout
@@ -435,42 +406,82 @@ func TestMBIMBackendOperatingMode(t *testing.T) {
 	}
 }
 
-func TestMBIMBackendSendSMS(t *testing.T) {
-	var sent [][]byte
-	src := &fakeMBIMSource{}
-	src.sendFn = func(pdu []byte) (uint32, error) { sent = append(sent, pdu); return 1, nil }
-	b := NewMBIMBackend("", src)
-	if err := b.SendSMS(context.Background(), "+8613800138000", "hello"); err != nil {
-		t.Fatalf("SendSMS: %v", err)
+type fakeATSMSProvider struct {
+	to           string
+	body         string
+	opts         smscodec.SubmitOptions
+	read         *SMS
+	list         []SMSSummary
+	deleted      []int
+	deleteAll    bool
+	smsc         string
+	setSMSC      string
+	usedWithOpts bool
+}
+
+func (f *fakeATSMSProvider) SendSMS(_ context.Context, to, body string) error {
+	f.to, f.body = to, body
+	return nil
+}
+
+func (f *fakeATSMSProvider) SendSMSWithOptions(_ context.Context, to, body string, opts smscodec.SubmitOptions) error {
+	f.to, f.body, f.opts, f.usedWithOpts = to, body, opts, true
+	return nil
+}
+
+func (f *fakeATSMSProvider) ReadSMS(context.Context, int) (*SMS, error) { return f.read, nil }
+func (f *fakeATSMSProvider) ListSMS(context.Context) ([]SMSSummary, error) {
+	return append([]SMSSummary(nil), f.list...), nil
+}
+func (f *fakeATSMSProvider) DeleteSMS(_ context.Context, index int) error {
+	f.deleted = append(f.deleted, index)
+	return nil
+}
+func (f *fakeATSMSProvider) DeleteAllSMS(context.Context) error      { f.deleteAll = true; return nil }
+func (f *fakeATSMSProvider) GetSMSC(context.Context) (string, error) { return f.smsc, nil }
+func (f *fakeATSMSProvider) SetSMSC(_ context.Context, value string) error {
+	f.setSMSC = value
+	return nil
+}
+
+func TestMBIMBackendDelegatesSMSAndSMSCToATScheduler(t *testing.T) {
+	provider := &fakeATSMSProvider{
+		read: &SMS{Index: 3, Content: "pdu"},
+		list: []SMSSummary{{Index: 3, Tag: 1}},
+		smsc: "+8613800138000",
 	}
-	if len(sent) == 0 {
-		t.Fatal("no PDU sent")
+	b := NewMBIMBackendWithSMS("", &fakeMBIMSource{}, provider)
+	opts := smscodec.SubmitOptions{Encoding: smscodec.SMSEncodingUCS2}
+	if err := b.SendSMSWithOptions(context.Background(), "10086", "hello", opts); err != nil {
+		t.Fatalf("SendSMSWithOptions: %v", err)
 	}
-	if sent[0][0] != 0x00 {
-		t.Fatalf("PDU first byte should be SMSC length 0x00, got 0x%02x", sent[0][0])
+	if !provider.usedWithOpts || provider.to != "10086" || provider.body != "hello" || provider.opts != opts {
+		t.Fatalf("AT provider send = %+v", provider)
+	}
+	if got, err := b.ReadSMS(context.Background(), 3); err != nil || got != provider.read {
+		t.Fatalf("ReadSMS() = (%+v, %v)", got, err)
+	}
+	if got, err := b.ListSMS(context.Background()); err != nil || len(got) != 1 || got[0].Index != 3 {
+		t.Fatalf("ListSMS() = (%+v, %v)", got, err)
+	}
+	if err := b.DeleteSMS(context.Background(), 3); err != nil || len(provider.deleted) != 1 {
+		t.Fatalf("DeleteSMS() error=%v deleted=%v", err, provider.deleted)
+	}
+	if err := b.DeleteAllSMS(context.Background()); err != nil || !provider.deleteAll {
+		t.Fatalf("DeleteAllSMS() error=%v called=%v", err, provider.deleteAll)
+	}
+	if got, err := b.GetSMSC(context.Background()); err != nil || got != provider.smsc {
+		t.Fatalf("GetSMSC() = (%q, %v)", got, err)
+	}
+	if err := b.SetSMSC(context.Background(), "+123"); err != nil || provider.setSMSC != "+123" {
+		t.Fatalf("SetSMSC() error=%v value=%q", err, provider.setSMSC)
 	}
 }
 
-func TestMBIMBackendSendSMSWithOptionsForcesUCS2(t *testing.T) {
-	var sent [][]byte
-	src := &fakeMBIMSource{}
-	src.sendFn = func(pdu []byte) (uint32, error) { sent = append(sent, pdu); return 1, nil }
-	b := NewMBIMBackend("", src)
-	if err := b.SendSMSWithOptions(context.Background(), "10086", "hello", smscodec.SubmitOptions{Encoding: smscodec.SMSEncodingUCS2}); err != nil {
-		t.Fatalf("SendSMSWithOptions: %v", err)
-	}
-	if len(sent) != 1 {
-		t.Fatalf("send count = %d, want 1", len(sent))
-	}
-	if len(sent[0]) < 2 || sent[0][0] != 0x00 {
-		t.Fatalf("unexpected PDU with SMSC header: %x", sent[0])
-	}
-	pdu := &tpdu.TPDU{Direction: tpdu.MO}
-	if err := pdu.UnmarshalBinary(sent[0][1:]); err != nil {
-		t.Fatalf("UnmarshalBinary() error = %v", err)
-	}
-	if pdu.DCS != tpdu.DcsUCS2Data {
-		t.Fatalf("DCS=0x%02x want 0x%02x", byte(pdu.DCS), byte(tpdu.DcsUCS2Data))
+func TestMBIMBackendRejectsNativeSMSWithoutATScheduler(t *testing.T) {
+	b := NewMBIMBackend("", &fakeMBIMSource{})
+	if err := b.SendSMS(context.Background(), "10086", "hello"); err == nil || !strings.Contains(err.Error(), "原生短信路径已禁用") {
+		t.Fatalf("SendSMS() error=%v", err)
 	}
 }
 
@@ -555,49 +566,6 @@ func TestMBIMBackendCalculateAKADoesNotMarkDeadOnSyncFailure(t *testing.T) {
 	}
 	if !caps.AuthAKAUsable() {
 		t.Fatal("status=35(AUTH_SYNC_FAILURE) 是合法认证响应，不应熔断 Auth 服务")
-	}
-}
-
-func TestMBIMBackendListSMS(t *testing.T) {
-	src := &fakeMBIMSource{listFn: func() ([]mbim.SMSRecord, error) {
-		return []mbim.SMSRecord{{Index: 3, Status: 1, PDU: []byte{0xAA}}}, nil
-	}}
-	b := NewMBIMBackend("", src)
-	list, err := b.ListSMS(context.Background())
-	if err != nil {
-		t.Fatalf("ListSMS: %v", err)
-	}
-	if len(list) != 1 || list[0].Index != 3 || list[0].Tag != 1 {
-		t.Fatalf("list = %+v", list)
-	}
-}
-
-func TestMBIMBackendGetSMSCDelegates(t *testing.T) {
-	src := &fakeMBIMSource{
-		smscFn: func(context.Context) (string, error) {
-			return "+8613800138000", nil
-		},
-	}
-	var _ SMSCProvider = (*MBIMBackend)(nil)
-
-	b := NewMBIMBackend("", src)
-	smsc, err := b.GetSMSC(context.Background())
-	if err != nil {
-		t.Fatalf("GetSMSC: %v", err)
-	}
-	if smsc != "+8613800138000" {
-		t.Fatalf("SMSC = %q, want %q", smsc, "+8613800138000")
-	}
-}
-
-func TestMBIMBackendSetSMSCDelegates(t *testing.T) {
-	src := &fakeMBIMSource{}
-	b := NewMBIMBackend("", src)
-	if err := b.SetSMSC(context.Background(), "+8613800138000"); err != nil {
-		t.Fatalf("SetSMSC: %v", err)
-	}
-	if src.setSMSCArg != "+8613800138000" {
-		t.Fatalf("setSMSCArg = %q, want %q", src.setSMSCArg, "+8613800138000")
 	}
 }
 
@@ -714,7 +682,11 @@ func TestNormalizeAndValidateMBIM(t *testing.T) {
 
 func TestNewBackendMBIM(t *testing.T) {
 	src := &fakeMBIMSource{caps: mbim.Caps{DeviceID: "123"}}
-	be, err := NewBackend(BackendMBIM, "/dev/cdc-wdm0", nil, nil, src)
+	m, err := modem.NewSMSAuxiliary(config.DeviceConfig{DeviceBackend: BackendMBIM, ATPort: "/dev/ttyUSB2"})
+	if err != nil {
+		t.Fatalf("modem.New(): %v", err)
+	}
+	be, err := NewBackend(BackendMBIM, "/dev/cdc-wdm0", m, nil, src)
 	if err != nil {
 		t.Fatalf("NewBackend(mbim): %v", err)
 	}

@@ -28,18 +28,18 @@ func (p *Pool) restoreSMSModeAfterVoWiFiTeardown(w *Worker) {
 		return
 	}
 
-	if w.Backend != nil && w.Backend.Mode() != "at" {
+	mode := backend.BackendAT
+	if w.Backend != nil {
+		mode = backend.NormalizeBackendMode(w.Backend.Mode())
+	}
+	if mode == backend.BackendQMI {
 		w.smsMode = smsModeQMI
 		if w.Modem != nil {
 			w.Modem.SetDisableURCRead(true)
 		}
 	} else {
-		w.smsMode = smsModeAT
-		if w.Modem != nil {
-			w.Modem.SetDisableURCRead(false)
-			w.Modem.ExecuteATSilent("AT+CNMI=2,1,0,0,0", 2*time.Second)
-			w.Modem.SetSMSReadinessCheck(func() error { _, err := w.resolveSMSIdentity(); return err })
-			w.Modem.SetSMSProcessor(w.processSMS)
+		if err := resumeWorkerATSMS(w); err != nil {
+			logger.Warn("恢复 AT 短信 URC 失败", "device", w.ID, "backend", mode, "err", err)
 		}
 	}
 

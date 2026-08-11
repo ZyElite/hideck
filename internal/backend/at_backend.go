@@ -168,6 +168,10 @@ func (a *ATBackend) GetSMSC(ctx context.Context) (string, error) {
 	return a.modem.QuerySMSC()
 }
 
+func (a *ATBackend) SetSMSC(ctx context.Context, smsc string) error {
+	return a.modem.SetSMSC(smsc)
+}
+
 // ============================================================================
 // SMSProvider 实现
 // ============================================================================
@@ -203,14 +207,13 @@ func (a *ATBackend) DeleteSMS(ctx context.Context, index int) error {
 }
 
 func (a *ATBackend) ListSMS(ctx context.Context) ([]SMSSummary, error) {
-	pdus, err := a.modem.SMSListAllPDU()
+	records, err := a.modem.SMSListAllPDURecords()
 	if err != nil {
 		return nil, err
 	}
-	// 返回 PDU 数量的概要；实际索引需解析 +CMGL 响应
-	result := make([]SMSSummary, 0, len(pdus))
-	for i := range pdus {
-		result = append(result, SMSSummary{Index: i})
+	result := make([]SMSSummary, 0, len(records))
+	for _, record := range records {
+		result = append(result, SMSSummary{Index: record.Index})
 	}
 	return result, nil
 }

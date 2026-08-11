@@ -15,12 +15,17 @@ import (
 type MBIMBackend struct {
 	source      MBIMSource
 	controlPath string
+	sms         SMSProvider
 }
 
 var _ DeviceBackend = (*MBIMBackend)(nil)
 
 func NewMBIMBackend(controlPath string, source MBIMSource) *MBIMBackend {
 	return &MBIMBackend{source: source, controlPath: controlPath}
+}
+
+func NewMBIMBackendWithSMS(controlPath string, source MBIMSource, sms SMSProvider) *MBIMBackend {
+	return &MBIMBackend{source: source, controlPath: controlPath, sms: sms}
 }
 
 func (b *MBIMBackend) Mode() string { return BackendMBIM }

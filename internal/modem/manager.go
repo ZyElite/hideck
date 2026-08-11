@@ -58,6 +58,7 @@ type Manager struct {
 	atPort   string
 	port     serial.Port
 	portMode *serial.Mode
+	role     runtimeRole
 
 	// 通道驱动的异步架构
 	stop        chan struct{}
@@ -69,6 +70,8 @@ type Manager struct {
 	triggerChan chan struct{} // 短信触发信号
 	ready       chan struct{}
 	readyOnce   sync.Once
+	initErrMu   sync.RWMutex
+	initErr     error
 
 	// 资源池
 	reqPool sync.Pool
@@ -165,9 +168,21 @@ func (m *Manager) pureQMIBackend() bool {
 }
 
 func New(cfg config.DeviceConfig) (*Manager, error) {
+	return newManager(cfg, runtimeRoleDefault)
+}
+
+// NewSMSAuxiliary creates the single AT runtime used by an MBIM worker for
+// SMS, SMSC, URCs, and manual AT commands. Network, identity, and APDU remain
+// owned by the MBIM backend.
+func NewSMSAuxiliary(cfg config.DeviceConfig) (*Manager, error) {
+	return newManager(cfg, runtimeRoleSMSAuxiliary)
+}
+
+func newManager(cfg config.DeviceConfig, role runtimeRole) (*Manager, error) {
 	m := &Manager{
 		cfg:          cfg,
 		atPort:       cfg.ATPort,
+		role:         role,
 		stop:         make(chan struct{}),
 		cmdChan:      make(chan commandRequest, 10),
 		cmdChanHigh:  make(chan commandRequest, 5),
@@ -194,7 +209,7 @@ func New(cfg config.DeviceConfig) (*Manager, error) {
 	}
 	// QMI 后端模式下允许 AT 端口为空（模组不依赖 AT 串口）
 	// AT 模式仍然要求 AT 端口非空
-	if m.atPort == "" && !pureQMIBackendConfig(cfg) {
+	if m.atPort == "" && m.runsATRuntime() {
 		return nil, errors.New("AT port not configured")
 	}
 
@@ -203,6 +218,20 @@ func New(cfg config.DeviceConfig) (*Manager, error) {
 	}
 
 	return m, nil
+}
+
+// InitializationError reports a real auxiliary-runtime initialization failure
+// after WaitReady returns. Full AT mode preserves its existing best-effort init.
+func (m *Manager) InitializationError() error {
+	m.initErrMu.RLock()
+	defer m.initErrMu.RUnlock()
+	return m.initErr
+}
+
+func (m *Manager) setInitializationError(err error) {
+	m.initErrMu.Lock()
+	m.initErr = err
+	m.initErrMu.Unlock()
 }
 
 func (m *Manager) markReady() {
@@ -473,7 +502,7 @@ func (m *Manager) tripATTimeoutWatchdog(cmd string, failures int) {
 
 // Start 启动 AT 管理器的后台协程
 func (m *Manager) Start() error {
-	if m.pureQMIBackend() {
+	if !m.runsATRuntime() {
 		logger.Info(fmt.Sprintf("[%s] 纯 QMI 模式，跳过 AT 管理器启动", m.cfg.ID), "at_port", m.atPort)
 		m.running = false
 		m.markReady()
@@ -863,7 +892,7 @@ func (m *Manager) readLoop() {
 
 // initModem 初始化模组
 func (m *Manager) initModem() {
-	if m.pureQMIBackend() {
+	if !m.runsATRuntime() {
 		m.markReady()
 		return
 	}
@@ -874,26 +903,38 @@ func (m *Manager) initModem() {
 	_, err := m.ExecuteATSilent("AT", 2*time.Second)
 	if err != nil {
 		logger.Warn(fmt.Sprintf("[%s] AT 探测失败", m.cfg.ID), "err", err)
+		if m.role == runtimeRoleSMSAuxiliary {
+			m.setInitializationError(fmt.Errorf("MBIM 短信辅助 AT 探测失败: %w", err))
+		}
 		m.markReady()
 		return
 	}
 
 	// 2. 初始化命令序列
-	initCmds := []string{
-		"ATE0",              // 关闭回显
-		"AT+CMGF=0",         // PDU 模式
-		"AT+CNMI=2,1,0,0,0", // 新短信上报 +CMTI
-		"AT+CLIP=1",         // 启用来电号码显示 (+CLIP URC)
-		"AT+QPCMV=1,2",      // 开启 UAC 语音模式 (PCM → ALSA 桥接必须)
-	}
-
-	for _, cmd := range initCmds {
+	var initErrs []error
+	for _, cmd := range m.initializationCommands() {
 		// 这些初始化命令使用 ExecuteATSilent 降低日志噪音，避免用户误解全在走 AT
-		m.ExecuteATSilent(cmd, 2*time.Second)
+		if _, err := m.ExecuteATSilent(cmd, 2*time.Second); err != nil {
+			logger.Warn(fmt.Sprintf("[%s] AT 初始化命令失败", m.cfg.ID), "cmd", cmd, "err", err)
+			if m.role == runtimeRoleSMSAuxiliary {
+				initErrs = append(initErrs, fmt.Errorf("%s: %w", cmd, err))
+			}
+		}
 		time.Sleep(100 * time.Millisecond)
+	}
+	if len(initErrs) > 0 {
+		m.setInitializationError(fmt.Errorf("MBIM 短信辅助 AT 初始化失败: %w", errors.Join(initErrs...)))
 	}
 
 	m.markReady()
+	if m.role == runtimeRoleSMSAuxiliary {
+		if err := m.InitializationError(); err != nil {
+			logger.Error(fmt.Sprintf("[%s] MBIM 短信辅助 AT 管理器初始化失败", m.cfg.ID), "port", m.atPort, "err", err)
+			return
+		}
+		logger.Info(fmt.Sprintf("[%s] MBIM 短信辅助 AT 管理器初始化完成", m.cfg.ID), "port", m.atPort)
+		return
+	}
 
 	// 3. 采集设备信息
 	m.collectDeviceInfo()
@@ -1841,7 +1882,7 @@ func (m *Manager) ATPort() string {
 
 // CanExecuteAT 返回当前管理器是否已启动，可接受 AT 命令。
 func (m *Manager) CanExecuteAT() bool {
-	return !m.pureQMIBackend() && m.HasATPort() && m.running
+	return m.runsATRuntime() && m.HasATPort() && m.running
 }
 
 func (m *Manager) SetAPDUArbiter(arbiter *apduarbiter.Arbiter) {

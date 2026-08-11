@@ -3,6 +3,7 @@ package device
 import (
 	"testing"
 
+	"github.com/iniwex5/vohive/internal/backend"
 	"github.com/iniwex5/vohive/internal/config"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 )
@@ -64,5 +65,21 @@ func TestDisableVoWiFiRestoresSMSStateWithoutApp(t *testing.T) {
 	}
 	if worker.smsMode != smsModeAT {
 		t.Fatalf("expected smsMode to restore to %v, got %v", smsModeAT, worker.smsMode)
+	}
+}
+
+func TestVoWiFiTeardownRestoresMBIMToATSMSMode(t *testing.T) {
+	p := NewPool(&config.Config{})
+	worker := &Worker{
+		ID:      "wwan-mbim",
+		Backend: &workerStatusBackendStub{mode: backend.BackendMBIM},
+		smsMode: smsModeVoWiFi,
+	}
+	p.workers[worker.ID] = worker
+
+	p.restoreSMSModeAfterVoWiFiTeardown(worker)
+
+	if worker.smsMode != smsModeAT {
+		t.Fatalf("smsMode = %s, want AT for MBIM backend", worker.smsMode)
 	}
 }

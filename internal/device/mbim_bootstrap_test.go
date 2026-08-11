@@ -43,6 +43,23 @@ func TestResolvedBackendModeMBIM(t *testing.T) {
 	}
 }
 
+func TestNewWorkerModemUsesSMSAuxiliaryForMBIM(t *testing.T) {
+	m, err := newWorkerModem(config.DeviceConfig{
+		ID:            "dev-mbim",
+		DeviceBackend: backend.BackendMBIM,
+		ATPort:        "/dev/ttyUSB2",
+	}, backend.BackendMBIM)
+	if err != nil {
+		t.Fatalf("newWorkerModem() error = %v", err)
+	}
+	if !m.IsSMSAuxiliary() {
+		t.Fatal("MBIM worker modem is not the SMS auxiliary role")
+	}
+	if !backendUsesATRuntime(backend.BackendMBIM) {
+		t.Fatal("MBIM auxiliary AT runtime must participate in disconnect recovery")
+	}
+}
+
 func TestDeriveESIMTransportMBIM(t *testing.T) {
 	cfg := config.DeviceConfig{DeviceBackend: "mbim"}
 	if got := deriveESIMTransport(cfg); got != config.ESIMTransportMBIM {

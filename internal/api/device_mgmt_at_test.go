@@ -83,16 +83,15 @@ func TestExecuteManualATOnPortReturnsOpenError(t *testing.T) {
 	}
 }
 
-func TestHandleDeviceMgmtExecuteATUsesTransientSessionForMBIMBackend(t *testing.T) {
+func TestHandleDeviceMgmtExecuteATDoesNotOpenSecondSessionForMBIMBackend(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	orig := openManualATSession
 	defer func() { openManualATSession = orig }()
 
-	fake := &fakeManualATSession{resp: "OK\r\n"}
-	var gotPort string
+	opened := false
 	openManualATSession = func(port string) (manualATSession, error) {
-		gotPort = port
-		return fake, nil
+		opened = true
+		return nil, errors.New("must not open a second MBIM AT reader")
 	}
 
 	p := device.NewPool(&config.Config{})
@@ -114,20 +113,14 @@ func TestHandleDeviceMgmtExecuteATUsesTransientSessionForMBIMBackend(t *testing.
 
 	server.handleDeviceMgmtExecuteAT(ctx)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d want=%d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want=%d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
-	if gotPort != "/dev/ttyUSB9" {
-		t.Fatalf("open port = %q, want /dev/ttyUSB9", gotPort)
+	if opened {
+		t.Fatal("MBIM manual AT opened a transient serial session")
 	}
-	if fake.cmd != "AT+CSQ" || fake.timeout != 7*time.Second {
-		t.Fatalf("Execute() got cmd=%q timeout=%s", fake.cmd, fake.timeout)
-	}
-	if !fake.closed {
-		t.Fatal("manual AT session was not closed")
-	}
-	if !strings.Contains(rec.Body.String(), `"response":"OK\r\n"`) {
-		t.Fatalf("body=%s want AT response", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "没有可用 AT 管理器") {
+		t.Fatalf("body=%s want explicit scheduler error", rec.Body.String())
 	}
 }
 

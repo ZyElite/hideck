@@ -28,14 +28,6 @@ type MBIMSource interface {
 	Snapshot() mbim.Snapshot
 	Capability() *mbim.Capabilities
 
-	SendSMS(ctx context.Context, pdu []byte) (uint32, error)
-	ReadSMS(ctx context.Context, index uint32) (mbim.SMSRecord, error)
-	ListSMS(ctx context.Context) ([]mbim.SMSRecord, error)
-	DeleteSMS(ctx context.Context, index uint32) error
-	DeleteAllSMS(ctx context.Context) error
-	GetSMSC(ctx context.Context) (string, error)
-	SetSMSC(ctx context.Context, smsc string) error
-
 	ExecuteUSSD(ctx context.Context, command string, timeout time.Duration) (mbim.USSDResult, error)
 	ContinueUSSD(ctx context.Context, input string, timeout time.Duration) (mbim.USSDResult, error)
 	CancelUSSD(ctx context.Context) error

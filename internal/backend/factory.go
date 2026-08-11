@@ -67,8 +67,14 @@ func NewBackend(mode, controlPath string, m *modem.Manager, source QMISource, mb
 		if mbimSource == nil {
 			return nil, fmt.Errorf("MBIM 模式需要 MBIMSource")
 		}
+		if m == nil {
+			return nil, fmt.Errorf("MBIM 模式需要 AT 短信调度器")
+		}
+		if !m.IsSMSAuxiliary() {
+			return nil, fmt.Errorf("MBIM 模式需要短信辅助角色的 AT 调度器")
+		}
 		logger.Info("[backend] 使用 MBIM 后端模式", "control_path", controlPath)
-		return NewMBIMBackend(controlPath, mbimSource), nil
+		return NewMBIMBackendWithSMS(controlPath, mbimSource, NewATBackend(m)), nil
 
 	default:
 		return nil, fmt.Errorf("不支持的后端模式: %s", mode)

@@ -1644,7 +1644,7 @@ func (s *Server) handleDeviceMgmtExecuteAT(c *gin.Context) {
 }
 
 func isTransientATBackend(mode string) bool {
-	return mode == backend.BackendQMI || mode == backend.BackendMBIM
+	return mode == backend.BackendQMI
 }
 
 type setUSBNetModeRequest struct {

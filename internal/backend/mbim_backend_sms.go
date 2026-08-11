@@ -2,67 +2,92 @@ package backend
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 
-	"github.com/iniwex5/vohive/pkg/logger"
 	"github.com/iniwex5/vohive/pkg/smscodec"
 )
+
+func (b *MBIMBackend) smsProvider() (SMSProvider, error) {
+	if b.sms == nil {
+		return nil, fmt.Errorf("MBIM 原生短信路径已禁用，AT 短信调度器未配置")
+	}
+	return b.sms, nil
+}
 
 func (b *MBIMBackend) SendSMS(ctx context.Context, to, body string) error {
 	return b.SendSMSWithOptions(ctx, to, body, smscodec.SubmitOptions{})
 }
 
 func (b *MBIMBackend) SendSMSWithOptions(ctx context.Context, to, body string, opts smscodec.SubmitOptions) error {
-	tpdus, _, err := smscodec.BuildSubmitTPDUsWithOptions(to, body, opts)
+	provider, err := b.smsProvider()
 	if err != nil {
-		return fmt.Errorf("PDU 编码失败: %w", err)
+		return err
 	}
-	if len(tpdus) == 0 {
-		return fmt.Errorf("PDU 编码结果为空")
+	if sender, ok := provider.(interface {
+		SendSMSWithOptions(context.Context, string, string, smscodec.SubmitOptions) error
+	}); ok {
+		return sender.SendSMSWithOptions(ctx, to, body, opts)
 	}
-	for i, tpdu := range tpdus {
-		pdu := append([]byte{0x00}, tpdu...)
-		if _, err := b.source.SendSMS(ctx, pdu); err != nil {
-			return fmt.Errorf("发送第 %d/%d 段失败: %w", i+1, len(tpdus), err)
-		}
+	if encoding, _ := smscodec.NormalizeSMSEncoding(string(opts.Encoding)); encoding != smscodec.SMSEncodingAuto {
+		return fmt.Errorf("AT 短信调度器不支持编码选项: %s", opts.Encoding)
 	}
-	logger.Info("MBIM 短信发送成功", "to", to, "parts", len(tpdus))
-	return nil
+	return provider.SendSMS(ctx, to, body)
 }
 
 func (b *MBIMBackend) ReadSMS(ctx context.Context, index int) (*SMS, error) {
-	rec, err := b.source.ReadSMS(ctx, uint32(index))
+	provider, err := b.smsProvider()
 	if err != nil {
 		return nil, err
 	}
-	return &SMS{Index: index, Content: hex.EncodeToString(rec.PDU)}, nil
+	return provider.ReadSMS(ctx, index)
 }
 
 func (b *MBIMBackend) DeleteSMS(ctx context.Context, index int) error {
-	return b.source.DeleteSMS(ctx, uint32(index))
+	provider, err := b.smsProvider()
+	if err != nil {
+		return err
+	}
+	return provider.DeleteSMS(ctx, index)
 }
 
 func (b *MBIMBackend) ListSMS(ctx context.Context) ([]SMSSummary, error) {
-	recs, err := b.source.ListSMS(ctx)
+	provider, err := b.smsProvider()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]SMSSummary, 0, len(recs))
-	for _, r := range recs {
-		out = append(out, SMSSummary{Index: int(r.Index), Tag: int(r.Status)})
-	}
-	return out, nil
+	return provider.ListSMS(ctx)
 }
 
 func (b *MBIMBackend) DeleteAllSMS(ctx context.Context) error {
-	return b.source.DeleteAllSMS(ctx)
+	provider, err := b.smsProvider()
+	if err != nil {
+		return err
+	}
+	return provider.DeleteAllSMS(ctx)
 }
 
 func (b *MBIMBackend) GetSMSC(ctx context.Context) (string, error) {
-	return b.source.GetSMSC(ctx)
+	provider, err := b.smsProvider()
+	if err != nil {
+		return "", err
+	}
+	smsc, ok := provider.(SMSCProvider)
+	if !ok {
+		return "", fmt.Errorf("AT 短信调度器未实现 SMSCProvider")
+	}
+	return smsc.GetSMSC(ctx)
 }
 
 func (b *MBIMBackend) SetSMSC(ctx context.Context, smsc string) error {
-	return b.source.SetSMSC(ctx, smsc)
+	provider, err := b.smsProvider()
+	if err != nil {
+		return err
+	}
+	setter, ok := provider.(interface {
+		SetSMSC(context.Context, string) error
+	})
+	if !ok {
+		return fmt.Errorf("AT 短信调度器不支持设置 SMSC")
+	}
+	return setter.SetSMSC(ctx, smsc)
 }

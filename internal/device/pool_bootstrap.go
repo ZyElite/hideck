@@ -13,7 +13,6 @@ import (
 	"github.com/iniwex5/vohive/internal/config"
 	"github.com/iniwex5/vohive/internal/esim"
 	mbimcore "github.com/iniwex5/vohive/internal/mbim"
-	"github.com/iniwex5/vohive/internal/modem"
 	qmicore "github.com/iniwex5/vohive/internal/qmi"
 	"github.com/iniwex5/vohive/pkg/logger"
 	"github.com/iniwex5/vohive/pkg/smscodec"
@@ -350,12 +349,12 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 		devCfg = applyQMIManagedAttachment(devCfg, *matched)
 	}
 
-	m, err := modem.New(devCfg)
+	backendMode := resolvedBackendMode(devCfg)
+	m, err := newWorkerModem(devCfg, backendMode)
 	if err != nil {
 		return nil, fmt.Errorf("初始化 Modem 失败: %w", err)
 	}
 
-	backendMode := resolvedBackendMode(devCfg)
 	isQMIRequired := requiresQMICore(devCfg)
 	isMBIMRequired := requiresMBIMCore(devCfg)
 
@@ -555,21 +554,8 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 			})
 		}
 		// 纯 QMI 模式不监听 AT URC；AT 口仅保留给人工 AT 终端。
-	} else if backendMode == backend.BackendMBIM {
-		w.smsMode = smsModeMBIM
-		if mbimCore != nil {
-			mbimCore.OnNewSMS(func() {
-				logger.Info(fmt.Sprintf("[%s] 收到 MBIM 短信通知", w.ID))
-				w.handleNewSMSMBIM("indication")
-			})
-		}
-		// 纯 MBIM 模式不监听 AT URC；短信通过 MBIM SMS service 接收。
 	} else {
-		w.smsMode = smsModeAT
-		m.SetNewSMSHandler(nil)
-		m.SetDisableURCRead(false)
-		m.SetSMSReadinessCheck(func() error { _, err := w.resolveSMSIdentity(); return err })
-		m.SetSMSProcessor(w.processSMS)
+		configureWorkerATSMS(w)
 	}
 	logger.Info(fmt.Sprintf("[%s] 短信模式已配置", w.ID), "sms_mode", w.smsMode.String(), "backend", backendMode)
 
@@ -588,7 +574,21 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 	}
 
 	if !m.WaitReady(5 * time.Second) {
+		if backendMode == backend.BackendMBIM {
+			if mbimCore != nil {
+				_ = mbimCore.Close()
+			}
+			m.Stop()
+			return nil, fmt.Errorf("MBIM 短信辅助 AT 初始化超时")
+		}
 		logger.Warn(fmt.Sprintf("[%s] Modem 初始化超时，继续启动 QMI Core", devCfg.ID))
+	}
+	if err := m.InitializationError(); err != nil {
+		if mbimCore != nil {
+			_ = mbimCore.Close()
+		}
+		m.Stop()
+		return nil, err
 	}
 	if qmiCore == nil {
 		cleanupWorkerStartupSIMAuthLogicalChannels(w)
@@ -701,8 +701,6 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 							logger.Warn(fmt.Sprintf("[%s] QMI 轮询短信失败", worker.ID), "err", err)
 						}
 					}
-				case smsModeMBIM:
-					worker.handleNewSMSMBIM("poll")
 				case smsModeVoWiFi:
 				}
 			}

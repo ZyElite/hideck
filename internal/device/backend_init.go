@@ -5,8 +5,16 @@ import (
 	"strings"
 
 	"github.com/iniwex5/vohive/internal/backend"
+	"github.com/iniwex5/vohive/internal/config"
 	"github.com/iniwex5/vohive/internal/modem"
 )
+
+func newWorkerModem(cfg config.DeviceConfig, backendMode string) (*modem.Manager, error) {
+	if backend.NormalizeBackendMode(backendMode) == backend.BackendMBIM {
+		return modem.NewSMSAuxiliary(cfg)
+	}
+	return modem.New(cfg)
+}
 
 func newWorkerBackendStrict(deviceID, backendMode, controlDevice string, m *modem.Manager, source backend.QMISource, mbimSource backend.MBIMSource) (backend.DeviceBackend, error) {
 	be, err := backend.NewBackend(backendMode, controlDevice, m, source, mbimSource)
@@ -21,6 +29,6 @@ func newWorkerBackendStrict(deviceID, backendMode, controlDevice string, m *mode
 }
 
 func backendUsesATRuntime(mode string) bool {
-	return backend.NormalizeBackendMode(mode) == backend.BackendAT
+	normalized := backend.NormalizeBackendMode(mode)
+	return normalized == backend.BackendAT || normalized == backend.BackendMBIM
 }
-

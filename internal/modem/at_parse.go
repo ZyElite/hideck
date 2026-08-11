@@ -405,19 +405,35 @@ func extractSMSPDUAfterPrefix(resp string, prefix string) (string, bool) {
 }
 
 func extractAllSMSPDUsAfterPrefix(resp string, prefix string) []string {
+	records := extractSMSPDURecordsAfterPrefix(resp, prefix)
+	out := make([]string, 0, len(records))
+	for _, record := range records {
+		out = append(out, record.PDU)
+	}
+	return out
+}
+
+func extractSMSPDURecordsAfterPrefix(resp string, prefix string) []SMSPDURecord {
 	lines := splitLines(resp)
-	out := make([]string, 0)
+	out := make([]SMSPDURecord, 0)
 	for i := 0; i < len(lines); i++ {
-		if strings.HasPrefix(lines[i], prefix) {
-			if i+1 < len(lines) {
-				next := strings.TrimSpace(lines[i+1])
-				if next != "" && next != "OK" {
-					pdu, _ := smscodec.TrimFullPDUHexByATHeader(next, lines[i])
-					out = append(out, pdu)
-				}
+		if !strings.HasPrefix(lines[i], prefix) || i+1 >= len(lines) {
+			continue
+		}
+		next := strings.TrimSpace(lines[i+1])
+		if next != "" && next != "OK" {
+			fields := parseCommaFields(parseURCAfterColon(lines[i]))
+			if len(fields) == 0 {
 				i++
+				continue
+			}
+			index, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+			if err == nil {
+				pdu, _ := smscodec.TrimFullPDUHexByATHeader(next, lines[i])
+				out = append(out, SMSPDURecord{Index: index, PDU: pdu})
 			}
 		}
+		i++
 	}
 	return out
 }

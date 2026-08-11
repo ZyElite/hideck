@@ -37,7 +37,6 @@ const (
 	smsModeAT     smsMode = iota // AT URC 驱动（+CMTI → AT+CMGR）
 	smsModeQMI                   // QMI WMS 驱动（EventNewSMS + 定时轮询）
 	smsModeVoWiFi                // IMS 驱动，AT/QMI 短信全禁
-	smsModeMBIM                  // MBIM SMS service 驱动（SMS_READ indication + 定时轮询）
 )
 
 const qmiSMSStorageUnknown uint8 = 0xFF
@@ -84,8 +83,6 @@ func (m smsMode) String() string {
 		return "QMI"
 	case smsModeVoWiFi:
 		return "VoWiFi"
-	case smsModeMBIM:
-		return "MBIM"
 	default:
 		return "unknown"
 	}
@@ -139,7 +136,7 @@ type Worker struct {
 
 	reassembler *smscodec.Reassembler
 
-	// 短信工作模式：AT / QMI / VoWiFi（三模完全隔离）
+	// 短信工作模式：AT / QMI / VoWiFi（三模完全隔离）。MBIM 网络使用 AT 短信模式。
 	smsMode smsMode
 
 	// 记录离开 VoWiFi 后是否应按配置恢复数据网络。
