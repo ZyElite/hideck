@@ -33,6 +33,7 @@ type Monitor struct {
 	onUSSD            func(USSDResponse)
 	onSubscriberReady func(Snapshot)
 	onSlotInfoStatus  func(SlotInfoStatus)
+	onProtocolError   func(error)
 }
 
 // NewMonitor creates a Monitor bound to a Device.
@@ -51,6 +52,11 @@ func (m *Monitor) Run() {
 				return
 			}
 			m.apply(ind)
+		case err, ok := <-m.dev.ProtocolErrors():
+			if !ok {
+				return
+			}
+			m.dispatchProtocolError(err)
 		}
 	}
 }
@@ -101,6 +107,22 @@ func (m *Monitor) SetOnSlotInfoStatus(cb func(SlotInfoStatus)) {
 	m.mu.Lock()
 	m.onSlotInfoStatus = cb
 	m.mu.Unlock()
+}
+
+// SetOnProtocolError registers a callback for asynchronous MBIM wire errors.
+func (m *Monitor) SetOnProtocolError(cb func(error)) {
+	m.mu.Lock()
+	m.onProtocolError = cb
+	m.mu.Unlock()
+}
+
+func (m *Monitor) dispatchProtocolError(err error) {
+	m.mu.RLock()
+	callback := m.onProtocolError
+	m.mu.RUnlock()
+	if callback != nil {
+		callback(err)
+	}
 }
 
 func (m *Monitor) apply(ind Indication) {

@@ -2,6 +2,7 @@ package mbimcore
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,6 +13,19 @@ func TestManagerControlDevice(t *testing.T) {
 	m := New("/dev/cdc-wdm0", "auto")
 	if m.ControlDevice() != "/dev/cdc-wdm0" {
 		t.Fatalf("ControlDevice = %q", m.ControlDevice())
+	}
+}
+
+func TestManagerOpenHasBoundedControlTimeout(t *testing.T) {
+	manager := New("/dev/cdc-wdm0", "direct")
+	manager.controlOpenTimeout = 10 * time.Millisecond
+	manager.dial = func(string, string) (mbim.Transport, error) {
+		return mbim.NewFakeTransport(nil), nil
+	}
+
+	err := manager.Open(context.Background())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Open error = %v, want deadline exceeded", err)
 	}
 }
 

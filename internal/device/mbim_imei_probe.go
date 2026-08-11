@@ -16,6 +16,7 @@ import (
 const (
 	mbimProxyAbstractSocket        = "@mbim-proxy"
 	mbimIdentityMaxControlTransfer = 4096
+	mbimIdentityProbeTimeout       = 45 * time.Second
 )
 
 // ProbeIMEIViaMBIM 通过 MBIM DeviceCaps 探测设备 IMEI。
@@ -26,7 +27,7 @@ const (
 // 串话,读回垃圾(EM7430 上表现为 934 字节乱码)。mbim-proxy 独占并串行化该会话,
 // 等价于 `mbimcli -p`,能稳定取到 DeviceCaps。
 func ProbeIMEIViaMBIM(controlPath string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), mbimIdentityProbeTimeout)
 	defer cancel()
 	return ProbeIMEIViaMBIMContext(ctx, controlPath)
 }

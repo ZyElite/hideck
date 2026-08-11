@@ -13,6 +13,7 @@ const (
 	defaultBackendAttachmentPollInterval = 500 * time.Millisecond
 	defaultBackendAttachmentProbeTimeout = 2 * time.Second
 	defaultBackendIdentityProbeTimeout   = 5 * time.Second
+	defaultMBIMIdentityProbeTimeout      = 45 * time.Second
 )
 
 // BackendAttachment is the verified runtime attachment for one managed modem.
@@ -41,6 +42,7 @@ type BackendAttachmentDiscovery struct {
 	PollInterval         time.Duration
 	ProbeTimeout         time.Duration
 	IdentityProbeTimeout time.Duration
+	MBIMIdentityTimeout  time.Duration
 }
 
 func NewBackendAttachmentDiscovery() BackendAttachmentDiscovery {
@@ -51,6 +53,7 @@ func NewBackendAttachmentDiscovery() BackendAttachmentDiscovery {
 		PollInterval:         defaultBackendAttachmentPollInterval,
 		ProbeTimeout:         defaultBackendAttachmentProbeTimeout,
 		IdentityProbeTimeout: defaultBackendIdentityProbeTimeout,
+		MBIMIdentityTimeout:  defaultMBIMIdentityProbeTimeout,
 	}
 }
 

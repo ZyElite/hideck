@@ -11,8 +11,11 @@ import (
 	"github.com/iniwex5/vohive/internal/device"
 )
 
-// EC25 切换 USBNet 后可能经历两次枚举；实机稳定节点约 20 秒后才出现。
-const backendSwitchDiscoveryTimeout = 30 * time.Second
+const (
+	// USBNet 切换可能经历两次枚举，MBIM OPEN 还允许设备延迟初始化。
+	backendSwitchDiscoveryTimeout = 75 * time.Second
+	backendSwitchRequestTimeout   = 90 * time.Second
+)
 
 type deviceBackendSwitcher interface {
 	Switch(context.Context, backendSwitchRequest) (backendSwitchResult, error)

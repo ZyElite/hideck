@@ -39,8 +39,23 @@ func (s *scriptedTransport) WriteMessage(b []byte) error {
 	// 使所有 fake 都能快速通过初始化,而不必每个 reply 都显式处理该 CID。
 	if out, ok := defaultVersionAnswer(cp); ok {
 		s.toRead <- out
+		return nil
+	}
+	if out, ok := defaultCloseAnswer(cp); ok {
+		s.toRead <- out
 	}
 	return nil
+}
+
+func defaultCloseAnswer(written []byte) ([]byte, bool) {
+	header, err := decodeHeader(written)
+	if err != nil || header.Type != MessageTypeClose {
+		return nil, false
+	}
+	response := make([]byte, headerLen+4)
+	putHeader(response, MessageTypeCloseDone, uint32(len(response)), header.TransactionID)
+	le.PutUint32(response[headerLen:], 0)
+	return response, true
 }
 
 func defaultVersionAnswer(written []byte) ([]byte, bool) {

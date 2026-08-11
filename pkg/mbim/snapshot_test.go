@@ -70,6 +70,26 @@ func TestMonitorRunConsumesDeviceIndications(t *testing.T) {
 	}
 }
 
+func TestMonitorDispatchesProtocolErrors(t *testing.T) {
+	device := newDevice(newFakeTransport())
+	monitor := NewMonitor(device)
+	got := make(chan error, 1)
+	monitor.SetOnProtocolError(func(err error) { got <- err })
+	go monitor.Run()
+	defer monitor.Stop()
+
+	want := &ProtocolError{Code: ProtocolErrorMaxTransfer, TransactionID: 7}
+	device.reportProtocolError(want)
+	select {
+	case err := <-got:
+		if err != want {
+			t.Fatalf("protocol error = %v, want %v", err, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("protocol error callback was not invoked")
+	}
+}
+
 func TestMonitorSMSCallback(t *testing.T) {
 	ft := newFakeTransport()
 	ft.reply = func(w []byte) ([]byte, bool) {

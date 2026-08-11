@@ -22,7 +22,7 @@ func (d BackendAttachmentDiscovery) resolveCandidate(
 	candidate attachmentCandidate,
 ) (BackendAttachment, bool, error) {
 	raw := candidate.Modem
-	probedIMEI, err := d.ProbeIdentity(ctx, raw, d.identityProbeTimeout())
+	probedIMEI, err := d.ProbeIdentity(ctx, raw, d.identityProbeTimeout(candidate.Backend))
 	if err != nil {
 		if candidate.AllowATIdentityRecovery {
 			return d.resolveCandidateViaAT(ctx, candidate, err)
@@ -126,7 +126,13 @@ func (d BackendAttachmentDiscovery) probeTimeout() time.Duration {
 	return defaultBackendAttachmentProbeTimeout
 }
 
-func (d BackendAttachmentDiscovery) identityProbeTimeout() time.Duration {
+func (d BackendAttachmentDiscovery) identityProbeTimeout(backend string) time.Duration {
+	if strings.EqualFold(strings.TrimSpace(backend), "mbim") {
+		if d.MBIMIdentityTimeout > 0 {
+			return d.MBIMIdentityTimeout
+		}
+		return defaultMBIMIdentityProbeTimeout
+	}
 	if d.IdentityProbeTimeout > 0 {
 		return d.IdentityProbeTimeout
 	}

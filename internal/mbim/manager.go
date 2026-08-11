@@ -17,7 +17,10 @@ import (
 	"github.com/iniwex5/vohive/pkg/mbim"
 )
 
-const defaultMaxControlTransfer = 4096
+const (
+	defaultMaxControlTransfer = 4096
+	defaultControlOpenTimeout = 45 * time.Second
+)
 
 var (
 	errUSSDCanceled = errors.New("mbimcore: USSD canceled")
@@ -51,6 +54,7 @@ type Manager struct {
 
 	registrationTimeout time.Duration
 	connectTimeout      time.Duration
+	controlOpenTimeout  time.Duration
 	dataMu              sync.Mutex
 	activateRetryDelay  time.Duration
 	activateMaxAttempts int
@@ -92,6 +96,7 @@ func New(controlDevice, transportMode string) *Manager {
 		publicIPURLs:        append([]string(nil), defaultPublicIPURLs...),
 		registrationTimeout: 20 * time.Second,
 		connectTimeout:      defaultDataConnectCommandTimeout,
+		controlOpenTimeout:  defaultControlOpenTimeout,
 		activateRetryDelay:  time.Second,
 		activateMaxAttempts: 4,
 		dial:                mbim.Dial,
@@ -139,6 +144,15 @@ func (m *Manager) OnSlotStatus(cb func(slotIndex, state uint32)) {
 
 // Open dials and opens the MBIM control endpoint.
 func (m *Manager) Open(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	openTimeout := m.controlOpenTimeout
+	if openTimeout <= 0 {
+		openTimeout = defaultControlOpenTimeout
+	}
+	openCtx, cancel := context.WithTimeout(ctx, openTimeout)
+	defer cancel()
 	dialFn := m.dial
 	if dialFn == nil {
 		dialFn = mbim.Dial
@@ -147,7 +161,7 @@ func (m *Manager) Open(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("mbimcore: dial %s: %w", m.controlDevice, err)
 	}
-	return m.openWithTransport(ctx, tr)
+	return m.openWithTransport(openCtx, tr)
 }
 
 func (m *Manager) openWithTransport(ctx context.Context, tr mbim.Transport) error {
@@ -197,6 +211,9 @@ func (m *Manager) openWithTransport(ctx context.Context, tr mbim.Transport) erro
 	}
 	mon.SetOnUSSD(m.handleUSSDIndication)
 	mon.SetOnConnect(m.handleConnectIndication)
+	mon.SetOnProtocolError(func(err error) {
+		logger.Warn("[mbim] 控制协议错误", "control_device", m.controlDevice, "err", err)
+	})
 	m.dev, m.mon = dev, mon
 	m.caps = caps
 	m.healthDone = make(chan struct{})
@@ -496,7 +513,7 @@ func (m *Manager) sendUSSDAndWait(ctx context.Context, action uint32, text strin
 	dcs, payload := mbim.EncodeUSSDRequest(text)
 	resp, err := mbim.SendUSSD(ctx, d, action, dcs, payload)
 	if err != nil {
-		return mbim.USSDResult{}, err
+		return mbim.USSDResult{}, ussdCommandError(waiter, err)
 	}
 	if len(resp.Payload) > 0 || resp.Response != mbim.USSDRespActionRequired {
 		return mbim.NewUSSDResult(resp), nil
@@ -513,6 +530,15 @@ func (m *Manager) sendUSSDAndWait(ctx context.Context, action uint32, text strin
 		return mbim.USSDResult{}, ctx.Err()
 	case <-timer.C:
 		return mbim.USSDResult{}, fmt.Errorf("mbimcore: USSD response timeout")
+	}
+}
+
+func ussdCommandError(waiter *ussdWaiter, commandErr error) error {
+	select {
+	case abortErr := <-waiter.abort:
+		return abortErr
+	default:
+		return commandErr
 	}
 }
 

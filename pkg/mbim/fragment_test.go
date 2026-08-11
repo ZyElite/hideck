@@ -92,6 +92,18 @@ func TestReassembleRejectsTruncatedDeclaredInfo(t *testing.T) {
 	}
 }
 
+func TestReassembleRejectsInfoLongerThanDeclared(t *testing.T) {
+	fragment := makeCommandDoneFragment(7, 1, 0, 0, []byte{0x01, 0x02}, true)
+	le.PutUint32(fragment[44:], 1)
+	collector := newCollector()
+	if done, err := collector.add(fragment); err != nil || !done {
+		t.Fatalf("add done=%v error=%v", done, err)
+	}
+	if _, err := collector.commandDone(); protocolErrorCode(t, err) != ProtocolErrorLengthMismatch {
+		t.Fatalf("commandDone error = %v, want length mismatch", err)
+	}
+}
+
 func TestSplitCommandFitsSingle(t *testing.T) {
 	frags := splitCommand(1, UUIDBasicConnect, CIDBasicConnectDeviceCaps, CommandTypeQuery, nil, 4096)
 	if len(frags) != 1 {

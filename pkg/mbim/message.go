@@ -53,11 +53,19 @@ func decodeHeader(b []byte) (Header, error) {
 	if len(b) < headerLen {
 		return Header{}, fmt.Errorf("mbim: message shorter than header len=%d", len(b))
 	}
-	return Header{
+	header := Header{
 		Type:          MessageType(le.Uint32(b[0:])),
 		Length:        le.Uint32(b[4:]),
 		TransactionID: le.Uint32(b[8:]),
-	}, nil
+	}
+	if header.Length != uint32(len(b)) {
+		return header, &ProtocolError{
+			Code:          ProtocolErrorLengthMismatch,
+			TransactionID: header.TransactionID,
+			Detail:        fmt.Sprintf("message length field=%d actual=%d", header.Length, len(b)),
+		}
+	}
+	return header, nil
 }
 
 // CommandDone is a fully reassembled COMMAND_DONE message.

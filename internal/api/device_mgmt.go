@@ -1376,7 +1376,7 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 	oldBackend := strings.ToLower(strings.TrimSpace(oldCfg.DeviceBackend))
 	newBackend := strings.ToLower(strings.TrimSpace(newCfg.DeviceBackend))
 	if oldBackend != newBackend {
-		switchCtx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
+		switchCtx, cancel := context.WithTimeout(c.Request.Context(), backendSwitchRequestTimeout)
 		defer cancel()
 		result, switchErr := s.deviceBackendSwitcher().Switch(switchCtx, backendSwitchRequest{
 			Current: oldCfg,
@@ -1721,7 +1721,7 @@ func (s *Server) handleDeviceMgmtSetUSBNetMode(c *gin.Context) {
 	}
 	desired := *current
 	desired.DeviceBackend = target
-	switchCtx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
+	switchCtx, cancel := context.WithTimeout(c.Request.Context(), backendSwitchRequestTimeout)
 	defer cancel()
 	result, switchErr := s.deviceBackendSwitcher().Switch(switchCtx, backendSwitchRequest{
 		Current: *current,

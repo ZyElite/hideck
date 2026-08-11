@@ -182,6 +182,21 @@ func TestBackendAttachmentDiscoveryUsesExplicitATIdentityRecovery(t *testing.T) 
 	}
 }
 
+func TestBackendIdentityProbeTimeoutDependsOnProtocol(t *testing.T) {
+	discovery := BackendAttachmentDiscovery{}
+	if got := discovery.identityProbeTimeout("qmi"); got != defaultBackendIdentityProbeTimeout {
+		t.Fatalf("QMI identity timeout = %s, want %s", got, defaultBackendIdentityProbeTimeout)
+	}
+	if got := discovery.identityProbeTimeout("mbim"); got != defaultMBIMIdentityProbeTimeout {
+		t.Fatalf("MBIM identity timeout = %s, want %s", got, defaultMBIMIdentityProbeTimeout)
+	}
+
+	discovery.MBIMIdentityTimeout = 17 * time.Second
+	if got := discovery.identityProbeTimeout("MBIM"); got != 17*time.Second {
+		t.Fatalf("custom MBIM identity timeout = %s, want 17s", got)
+	}
+}
+
 func backendAttachmentTestDiscovery(modems []CompatibleModem) BackendAttachmentDiscovery {
 	return BackendAttachmentDiscovery{
 		Scan: func() ([]CompatibleModem, error) {

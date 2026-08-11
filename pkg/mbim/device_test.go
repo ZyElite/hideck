@@ -11,10 +11,11 @@ import (
 // fakeTransport is an in-memory Transport that replies only after writes,
 // keyed by the written transaction id so tests are race-free.
 type fakeTransport struct {
-	mu      sync.Mutex
-	written [][]byte
-	toRead  chan []byte
-	reply   func(written []byte) ([]byte, bool)
+	mu                  sync.Mutex
+	written             [][]byte
+	toRead              chan []byte
+	reply               func(written []byte) ([]byte, bool)
+	disableDefaultClose bool
 }
 
 func newFakeTransport() *fakeTransport {
@@ -31,7 +32,11 @@ func (f *fakeTransport) WriteMessage(b []byte) error {
 	if reply != nil {
 		if out, ok := reply(cp); ok {
 			f.toRead <- out
+			return nil
 		}
+	}
+	if h, err := decodeHeader(cp); err == nil && h.Type == MessageTypeClose && !f.disableDefaultClose {
+		f.toRead <- closeDoneMsg(h.TransactionID)
 	}
 	return nil
 }
@@ -48,6 +53,13 @@ func openDoneMsg(tx uint32) []byte {
 	b := make([]byte, headerLen+4)
 	putHeader(b, MessageTypeOpenDone, uint32(len(b)), tx)
 	le.PutUint32(b[12:], 0)
+	return b
+}
+
+func closeDoneMsg(tx uint32) []byte {
+	b := make([]byte, headerLen+4)
+	putHeader(b, MessageTypeCloseDone, uint32(len(b)), tx)
+	le.PutUint32(b[headerLen:], 0)
 	return b
 }
 

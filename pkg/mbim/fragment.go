@@ -26,17 +26,20 @@ func newCollector() *collector {
 
 func (c *collector) add(b []byte) (bool, error) {
 	if len(b) < headerLen+fragHdrLen {
-		return false, fmt.Errorf("mbim: fragment shorter than fragment header len=%d", len(b))
+		return false, fragmentError(ProtocolErrorLengthMismatch, "fragment shorter than header len=%d", len(b))
 	}
 
 	total := le.Uint32(b[12:])
 	current := le.Uint32(b[16:])
+	if total == 0 || current >= total {
+		return false, fragmentError(ProtocolErrorFragmentSequence, "invalid fragment %d/%d", current, total)
+	}
 	if !c.started {
 		if current != 0 {
-			return false, fmt.Errorf("mbim: first fragment current=%d, want 0", current)
+			return false, fragmentError(ProtocolErrorFragmentSequence, "first fragment current=%d, want 0", current)
 		}
 		if len(b) < fixedDoneOffset {
-			return false, fmt.Errorf("mbim: first fragment shorter than fixed fields len=%d", len(b))
+			return false, fragmentError(ProtocolErrorLengthMismatch, "first fragment shorter than fixed fields len=%d", len(b))
 		}
 		copy(c.service[:], b[20:36])
 		c.cid = le.Uint32(b[36:])
@@ -49,8 +52,11 @@ func (c *collector) add(b []byte) (bool, error) {
 		return c.next >= c.total, nil
 	}
 
+	if total != c.total {
+		return false, fragmentError(ProtocolErrorFragmentSequence, "fragment total changed from %d to %d", c.total, total)
+	}
 	if current != c.next {
-		return false, fmt.Errorf("mbim: fragment out of order got=%d want=%d", current, c.next)
+		return false, fragmentError(ProtocolErrorFragmentSequence, "fragment out of order got=%d want=%d", current, c.next)
 	}
 	c.next++
 	c.info = append(c.info, b[headerLen+fragHdrLen:]...)
@@ -59,21 +65,26 @@ func (c *collector) add(b []byte) (bool, error) {
 
 func (c *collector) commandDone() (CommandDone, error) {
 	if !c.started {
-		return CommandDone{}, fmt.Errorf("mbim: collector has no data")
+		return CommandDone{}, fragmentError(ProtocolErrorUnknown, "collector has no data")
 	}
-	if int(c.fullLen) > len(c.info) {
-		return CommandDone{}, fmt.Errorf("mbim: reassembled info shorter than declared length got=%d want=%d", len(c.info), c.fullLen)
-	}
-	info := c.info
-	if int(c.fullLen) <= len(info) {
-		info = info[:c.fullLen]
+	if int(c.fullLen) != len(c.info) {
+		return CommandDone{}, fragmentError(
+			ProtocolErrorLengthMismatch,
+			"reassembled info length=%d, declared=%d",
+			len(c.info),
+			c.fullLen,
+		)
 	}
 	return CommandDone{
 		Service:    c.service,
 		CID:        c.cid,
 		Status:     c.status,
-		InfoBuffer: info,
+		InfoBuffer: c.info,
 	}, nil
+}
+
+func fragmentError(code ProtocolErrorCode, format string, args ...any) error {
+	return &ProtocolError{Code: code, Detail: fmt.Sprintf(format, args...)}
 }
 
 func splitCommand(txID uint32, service UUID, cid uint32, ct CommandType, info []byte, maxControlTransfer uint32) [][]byte {
