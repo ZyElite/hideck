@@ -1,0 +1,17 @@
+{
+  "source_doc": "issues/web-command-balance/source.md",
+  "csv": "web-command-balance.csv",
+  "claims": [
+    {"claim_id":"CLAIM-001","source_ref":"source.md:11","promise":"Web 和通知渠道复用同一命令注册与执行逻辑，暴露十个批准命令。","covered_by":["PLAN-02","PLAN-04"],"evidence_required":"integration","production_path_required":true,"status":"pending"},
+    {"claim_id":"CLAIM-002","source_ref":"source.md:14","promise":"命令执行与事件持久化，支持分页、清空和 SSE 断线续传。","covered_by":["PLAN-01","PLAN-04"],"evidence_required":"integration","production_path_required":true,"status":"pending"},
+    {"claim_id":"CLAIM-003","source_ref":"source.md:20","promise":"余额查询按 VoWiFi 或当前后端真实路由执行且不改变网络状态、不重试。","covered_by":["PLAN-03"],"evidence_required":"integration","production_path_required":true,"status":"pending"},
+    {"claim_id":"CLAIM-004","source_ref":"source.md:22","promise":"同一 ICCID 仅一个待处理查询，短信等待五分钟并按 ICCID、时间和发送方关联。","covered_by":["PLAN-03"],"evidence_required":"integration","production_path_required":true,"status":"pending"},
+    {"claim_id":"CLAIM-005","source_ref":"source.md:23","promise":"余额结构化结果和运营商原文同时持久化，解析失败明确显示为未解析。","covered_by":["PLAN-01","PLAN-03","PLAN-05"],"evidence_required":"integration","production_path_required":true,"status":"pending"},
+    {"claim_id":"CLAIM-006","source_ref":"source.md:31","promise":"16 个现有运营商预设都有可审计规则或明确不支持说明。","covered_by":["PLAN-01","PLAN-06"],"evidence_required":"unit","production_path_required":true,"status":"pending"},
+    {"claim_id":"CLAIM-007","source_ref":"source.md:25","promise":"内置规则只读，自定义规则可增删改并使用 RE2 校验。","covered_by":["PLAN-01","PLAN-04","PLAN-05"],"evidence_required":"integration","production_path_required":true,"status":"pending"},
+    {"claim_id":"CLAIM-008","source_ref":"source.md:51","promise":"独立命令中心页面提供补全、设备选择、危险动作确认、响应式布局和实时事件。","covered_by":["PLAN-05"],"evidence_required":"real_e2e","production_path_required":true,"status":"pending"},
+    {"claim_id":"CLAIM-009","source_ref":"source.md:47","promise":"全部 API 使用现有 Bearer 鉴权并在 OpenAPI 中声明。","covered_by":["PLAN-04","PLAN-06"],"evidence_required":"integration","production_path_required":true,"status":"pending"},
+    {"claim_id":"CLAIM-010","source_ref":"source.md:61","promise":"Linux amd64 构建部署到远端并完成无副作用冒烟验证。","covered_by":["PLAN-07"],"evidence_required":"real_e2e","production_path_required":true,"status":"pending"},
+    {"claim_id":"CLAIM-011","source_ref":"source.md:62","promise":"真实 CTExcel 和 giffgaff 查询不在未授权情况下发送。","covered_by":["PLAN-07"],"evidence_required":"limited_allowed","production_path_required":false,"status":"pending"}
+  ]
+}
