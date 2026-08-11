@@ -30,6 +30,12 @@ func (d poolVoWiFiRuntimeDispatcher) Dispatch(ctx context.Context, e eventhost.E
 			logger.Warn("VoWiFi 上层入库入站短信失败", "device", v.DevID, "sender", v.Sender, "err", err)
 		}
 		recordResult = res
+		if res.Stored && !v.Incomplete {
+			d.pool.notifyInboundSMS(InboundSMS{
+				DeviceID: v.DevID, ICCID: recorder.resolveICCID(v.DevID),
+				Sender: v.Sender, Content: v.Content, Time: v.Time,
+			})
+		}
 	case eventhost.SMSSent:
 		if err := recorder.RecordSent(v); err != nil {
 			logger.Warn("VoWiFi 上层入库出站短信失败", "device", v.DevID, "to", v.TargetURI, "err", err)

@@ -486,6 +486,10 @@ func (w *Worker) processSMSWithIdentity(identity SMSIdentity, message inboundSMS
 	if err := w.persistReceivedSMS(identity, message); err != nil {
 		return fmt.Errorf("保存短信到数据库失败: %w", err)
 	}
+	w.Pool.notifyInboundSMS(InboundSMS{
+		DeviceID: w.ID, ICCID: identity.ICCID, Sender: message.Sender,
+		Content: message.Content, Time: message.Timestamp,
+	})
 
 	if notifier := w.Pool.getNotifier(); notifier != nil {
 		notifier.NotifySMS(w.ID, message.Sender, message.Content, message.Timestamp)

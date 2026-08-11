@@ -58,7 +58,14 @@ func (r vowifiSMSHistoryRecorder) resolveICCID(devID string) string {
 	if w == nil {
 		return ""
 	}
-	return strings.TrimSpace(w.GetCachedDeviceStatus().ICCID)
+	if iccid := strings.TrimSpace(w.GetCachedDeviceStatus().ICCID); iccid != "" {
+		return iccid
+	}
+	iccid, err := db.ResolveICCIDForIMSI(r.resolveIMSI(devID, ""))
+	if err != nil || strings.HasPrefix(iccid, "imsi:") {
+		return ""
+	}
+	return strings.TrimSpace(iccid)
 }
 
 func (r vowifiSMSHistoryRecorder) localPhone(imsi string) string {

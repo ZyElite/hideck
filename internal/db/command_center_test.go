@@ -18,6 +18,9 @@ func TestCommandCenterSchemaAndCustomRuleRoundTrip(t *testing.T) {
 			t.Fatalf("missing migrated table for %T", model)
 		}
 	}
+	if !DB.Migrator().HasColumn(&BalanceQuery{}, "iccid") {
+		t.Fatal("balance_queries is missing canonical iccid column")
+	}
 
 	rule := carrierquery.Rule{ID: "custom-balance", MCC: "234", MNC: "10", Operator: "Custom",
 		Transport: carrierquery.TransportSMS, Destination: "123", Payload: "BAL",

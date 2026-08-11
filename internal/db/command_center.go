@@ -35,7 +35,7 @@ type CommandEvent struct {
 type BalanceQuery struct {
 	ID            string     `gorm:"primaryKey" json:"id"`
 	DeviceID      string     `gorm:"index;not null" json:"device_id"`
-	ICCID         string     `gorm:"index:idx_balance_iccid_state,priority:1;not null" json:"iccid"`
+	ICCID         string     `gorm:"column:iccid;index:idx_balance_iccid_state,priority:1;not null" json:"iccid"`
 	RuleID        string     `gorm:"index;not null" json:"rule_id"`
 	Transport     string     `gorm:"not null" json:"transport"`
 	State         string     `gorm:"index:idx_balance_iccid_state,priority:2;not null" json:"state"`

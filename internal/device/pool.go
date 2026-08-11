@@ -176,6 +176,8 @@ type Pool struct {
 	cancel                    context.CancelFunc
 	dataConnectHandlersMu     sync.RWMutex
 	dataConnectHandlers       []func(deviceID string)
+	inboundSMSHandlersMu      sync.RWMutex
+	inboundSMSHandlers        []InboundSMSHandler
 	rescanAndReconnectForTest func() error
 
 	voiceGateway *voicehost.Gateway
