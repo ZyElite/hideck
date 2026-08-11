@@ -18,6 +18,10 @@ NRestarts=0
 ExecStart=/home/yibai/vohive/vohive-open/dist/vohive_vf2afd2d_linux_amd64 -c /home/yibai/vohive/vohive-open/config/config.yaml
 rollback_backup=present
 upload_temp=removed
+delayed_recheck_same_pid=true
+delayed_recheck_nrestarts=0
+warnings_after_convergence=0
+errors_since_activation=0
 ```
 
 服务切换后第一次 `/ping` 在监听建立前返回连接拒绝，下一次成功；部署脚本在成功探测后才结束。最终 `/ping` 和 `/commands` 均为 HTTP 200。
