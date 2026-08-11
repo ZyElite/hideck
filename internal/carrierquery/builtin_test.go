@@ -39,6 +39,22 @@ func TestBuiltInRulesReturnDefensiveCopies(t *testing.T) {
 	}
 }
 
+func TestCTExcelRuleDoesNotOverstateHistoricalEvidence(t *testing.T) {
+	rule, ok := FindBuiltIn("234", "33")
+	if !ok {
+		t.Fatal("CTExcel rule not found")
+	}
+	if rule.EvidenceType != projectObservation {
+		t.Fatalf("EvidenceType = %q, want %q", rule.EvidenceType, projectObservation)
+	}
+	if rule.CostStatus != costUnknown {
+		t.Fatalf("CostStatus = %q, want %q", rule.CostStatus, costUnknown)
+	}
+	if len(rule.Limitations) == 0 {
+		t.Fatal("CTExcel observation must retain an explicit limitation")
+	}
+}
+
 func TestRuleValidationRejectsInvalidParser(t *testing.T) {
 	rule := BuiltInRules()[0]
 	rule.ID = "custom-rule"

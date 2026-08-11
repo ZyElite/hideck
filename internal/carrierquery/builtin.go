@@ -1,10 +1,10 @@
 package carrierquery
 
 const (
-	verifiedFree = "verified_free"
-	costUnknown  = "unknown"
-	official     = "official"
-	projectTest  = "project_real_test"
+	verifiedFree       = "verified_free"
+	costUnknown        = "unknown"
+	official           = "official"
+	projectObservation = "project_observation"
 )
 
 var builtInRules = []Rule{
@@ -16,8 +16,8 @@ var builtInRules = []Rule{
 		"https://www.att.com/support/article-modal/wireless/KM1048283/", []string{"AT&T"}, "USSD 请求后由运营商短信返回结果"),
 	unsupportedRule("csl_454000", "454", "000", "CSL Hong Kong", "不同预付卡产品使用 *109# 或 ##122#，需先确认卡产品",
 		"https://www.hkcsl.com/en/Recharge-method/", "查询码按产品变化，不能自动选择"),
-	smsProjectRule("cteuk_23433", "234", "33", "CTExcel UK", "888", "BAL", "GBP", []string{"888", "CTExcel"},
-		"VoHive 实机验证：BAL 发往 888；官网仅确认 888 为免费服务热线"),
+	smsObservedRule("cteuk_23433", "234", "33", "CTExcel UK", "888", "BAL", "GBP", []string{"888", "CTExcel"},
+		"历史项目记录观察到 BAL 发往 888 并收到 888 回复；本功能本轮未重新发送，资费状态仍未知"),
 	smsRule("giffgaff_23410", "234", "10", "giffgaff", "85075", "INFO", "GBP", costUnknown,
 		"https://help.giffgaff.com/en/articles/258872-guide-to-the-usage-statement", []string{"85075", "giffgaff"}),
 	unsupportedRule("o2_de_26203", "262", "03", "O2 Germany", "S/M/L 套餐使用 *105#，其他套餐使用 *101#",
@@ -76,9 +76,9 @@ func smsRule(id, mcc, mnc, operator, destination, payload, currency, cost, sourc
 		Currency: currency, CostStatus: cost, EvidenceType: official, EvidenceURL: source, Enabled: true, BuiltIn: true}
 }
 
-func smsProjectRule(id, mcc, mnc, operator, destination, payload, currency string, senders []string, note string) Rule {
+func smsObservedRule(id, mcc, mnc, operator, destination, payload, currency string, senders []string, note string) Rule {
 	rule := smsRule(id, mcc, mnc, operator, destination, payload, currency, costUnknown, "", senders)
-	rule.EvidenceType = projectTest
+	rule.EvidenceType = projectObservation
 	rule.Limitations = []string{note}
 	return rule
 }
