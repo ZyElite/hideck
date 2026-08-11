@@ -4,6 +4,7 @@ import ErrorState from './ErrorState.vue'
 import RefreshButton from './RefreshButton.vue'
 import type { AppError } from '../types/domain'
 import type { TrafficAnalysis, TrafficRange } from '../services/traffic'
+import { formatDeviceDate, formatDeviceDateTime, formatDeviceMonthDay, formatDeviceTime } from '../utils/deviceTime'
 
 type TrafficAnalysisMode = 'global' | 'device'
 type TooltipParam = {
@@ -150,47 +151,24 @@ function formatBytes(bytes: unknown) {
   return `${val.toFixed(i === 0 ? 0 : 2)} ${units[i]}`
 }
 
-function parsePeriodStart(value: unknown): Date | null {
-  if (typeof value !== 'string' || !value.trim()) return null
-  const date = new Date(value)
-  return Number.isFinite(date.getTime()) ? date : null
-}
-
-function pad2(value: number) {
-  return String(value).padStart(2, '0')
-}
-
-function formatLocalDate(date: Date) {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
-}
-
-function formatLocalHour(date: Date) {
-  return `${pad2(date.getHours())}:00`
-}
-
-function formatLocalDateHour(date: Date) {
-  return `${formatLocalDate(date)} ${formatLocalHour(date)}`
-}
-
 function formatTrafficAxisTime(periodStart: unknown, fallback: string) {
-  const date = parsePeriodStart(periodStart)
-  if (!date) return fallback
-  if (props.range === 'day') return formatLocalHour(date)
-  return `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+  if (typeof periodStart !== 'string') return fallback
+  if (props.range === 'day') return formatDeviceTime(periodStart, { fallback }).slice(0, 5)
+  return formatDeviceMonthDay(periodStart, { fallback })
 }
 
 function formatTrafficTooltipTime(periodStart: unknown, fallback: string | number | undefined) {
-  const date = parsePeriodStart(periodStart)
-  if (!date) return fallback ?? ''
-  if (props.range === 'day') return formatLocalDateHour(date)
-  return formatLocalDate(date)
+  const fallbackText = String(fallback ?? '')
+  if (typeof periodStart !== 'string') return fallbackText
+  if (props.range === 'day') return formatDeviceDateTime(periodStart, { fallback: fallbackText }).slice(0, 16)
+  return formatDeviceDate(periodStart, { fallback: fallbackText })
 }
 
 function formatTrafficBucketTime(bucket: { period_start?: string; bucket?: string }) {
-  const date = parsePeriodStart(bucket?.period_start)
-  if (!date) return bucket?.bucket || ''
-  if (props.range === 'day') return formatLocalDateHour(date)
-  return formatLocalDate(date)
+  const fallback = bucket?.bucket || ''
+  if (!bucket?.period_start) return fallback
+  if (props.range === 'day') return formatDeviceDateTime(bucket.period_start, { fallback }).slice(0, 16)
+  return formatDeviceDate(bucket.period_start, { fallback })
 }
 
 const analysisTotal = computed(() => {

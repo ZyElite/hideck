@@ -3,8 +3,11 @@ import { computed, defineAsyncComponent, ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import LoadingScreen from './components/LoadingScreen.vue'
+import ErrorState from './components/ErrorState.vue'
 import { ElMessage } from 'element-plus'
 import { shouldShowDisclaimer } from './disclaimer'
+import { systemService } from './services/system'
+import { configureDeviceTime, deviceNow, resetDeviceTime } from './utils/deviceTime'
 
 const DISCLAIMER_AGREED_AT_KEY = 'vohive_disclaimer_agreed_at'
 
@@ -16,6 +19,9 @@ const showDisclaimer = ref(false)
 const confirmText = ref('')
 const expectedConfirmText = '我同意并确认'
 const canAccept = computed(() => confirmText.value === expectedConfirmText)
+const deviceTimeState = ref<'idle' | 'loading' | 'ready' | 'error'>(auth.isAuthenticated ? 'loading' : 'idle')
+const deviceTimeError = ref('')
+let deviceTimeGeneration = 0
 
 function toggleTheme() {
   isDark.value = !isDark.value
@@ -40,11 +46,11 @@ onMounted(() => {
 
 // 监听登录状态，每周首次登录弹一次（同意状态持久化在 localStorage，
 // 跨会话/跨标签页生效，距上次同意满一周后再次登录才会重新弹出）
-watch(() => auth.isAuthenticated, (isAuthenticated) => {
-  if (isAuthenticated) {
+watch([() => auth.isAuthenticated, deviceTimeState], ([isAuthenticated, timeState]) => {
+  if (isAuthenticated && timeState === 'ready') {
     const agreedAtRaw = localStorage.getItem(DISCLAIMER_AGREED_AT_KEY)
     const agreedAt = agreedAtRaw === null ? null : Number(agreedAtRaw)
-    if (shouldShowDisclaimer(agreedAt, Date.now())) {
+    if (shouldShowDisclaimer(agreedAt, deviceNow())) {
       confirmText.value = ''
       showDisclaimer.value = true
     }
@@ -53,9 +59,42 @@ watch(() => auth.isAuthenticated, (isAuthenticated) => {
   }
 }, { immediate: true })
 
+async function syncDeviceTime() {
+  const generation = ++deviceTimeGeneration
+  deviceTimeState.value = 'loading'
+  deviceTimeError.value = ''
+  const requestStartedAt = Date.now()
+  const result = await systemService.getTime()
+  const responseReceivedAt = Date.now()
+  if (generation !== deviceTimeGeneration || !auth.isAuthenticated) return
+  if (!result.ok) {
+    deviceTimeState.value = 'error'
+    deviceTimeError.value = result.error.message
+    return
+  }
+  try {
+    configureDeviceTime(result.data, requestStartedAt, responseReceivedAt)
+    deviceTimeState.value = 'ready'
+  } catch (error) {
+    deviceTimeState.value = 'error'
+    deviceTimeError.value = error instanceof Error ? error.message : '设备时间同步失败'
+  }
+}
+
+watch(() => auth.isAuthenticated, (isAuthenticated) => {
+  if (isAuthenticated) {
+    void syncDeviceTime()
+    return
+  }
+  deviceTimeGeneration++
+  resetDeviceTime()
+  deviceTimeState.value = 'idle'
+  deviceTimeError.value = ''
+}, { immediate: true })
+
 function acceptDisclaimer() {
   if (!canAccept.value) return
-  localStorage.setItem(DISCLAIMER_AGREED_AT_KEY, String(Date.now()))
+  localStorage.setItem(DISCLAIMER_AGREED_AT_KEY, String(deviceNow()))
   showDisclaimer.value = false
 }
 
@@ -76,11 +115,12 @@ const UnauthenticatedShell = defineAsyncComponent(() => import('./layouts/Unauth
 const shell = computed(() =>
   auth.isAuthenticated && route.name !== 'Login' ? AuthenticatedShell : UnauthenticatedShell
 )
+const canRenderShell = computed(() => !auth.isAuthenticated || deviceTimeState.value === 'ready')
 </script>
 
 <template>
   <div class="h-screen w-screen overflow-hidden bg-gray-50 dark:bg-[#101014] text-gray-900 dark:text-gray-100 font-sans selection:bg-indigo-500 selection:text-white transition-colors duration-300">
-    <Suspense>
+    <Suspense v-if="canRenderShell">
       <template #default>
         <component :is="shell" :is-dark="isDark" @toggle-theme="toggleTheme" />
       </template>
@@ -88,6 +128,16 @@ const shell = computed(() =>
         <LoadingScreen />
       </template>
     </Suspense>
+    <LoadingScreen v-else-if="deviceTimeState === 'loading'" />
+    <div v-else class="h-full flex items-center justify-center p-6">
+      <ErrorState
+        class="w-full max-w-xl"
+        title="设备时间同步失败"
+        :message="deviceTimeError"
+        retry-text="重试"
+        @retry="syncDeviceTime"
+      />
+    </div>
 
     <!-- 高级感全屏免责声明弹窗 -->
     <Transition name="fade-slide">

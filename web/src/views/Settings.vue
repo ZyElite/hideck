@@ -14,6 +14,7 @@ import {
   Delete20Regular,
   DocumentText24Regular
 } from '@vicons/fluent'
+import { formatDeviceDateTime } from '../utils/deviceTime'
 
 const settingsStore = useSettingsStore()
 const { systemInfo, loadingNotifications, savingNotifications, testingWebhook, testingBark, testingEmail, changingPassword, passwordForm, telegramForm, feishuForm, qqForm, webhookSettings, barkSettings, emailForm, pushplusForm } = storeToRefs(settingsStore)
@@ -393,7 +394,11 @@ onBeforeUnmount(() => {
                </el-button>
             </div>
             <div class="p-3 bg-gray-50 dark:bg-white/5 rounded-lg">
-              <FieldRow label="构建时间" :value="systemInfo.build_time" monospace />
+              <FieldRow
+                label="构建时间"
+                :value="formatDeviceDateTime(systemInfo.build_time, { fallback: systemInfo.build_time })"
+                monospace
+              />
             </div>
             <div class="p-3 bg-gray-50 dark:bg-white/5 rounded-lg">
               <FieldRow label="配置路径" :value="systemInfo.config" monospace copyable />

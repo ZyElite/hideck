@@ -593,6 +593,20 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /system/time:
+    get:
+      tags: [settings]
+      summary: 获取设备当前时间和时区
+      responses:
+        '200':
+          description: 设备时间快照
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemTimeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /devices:
     get:
       tags: [devices]
@@ -1764,6 +1778,25 @@ components:
           type: string
         docs:
           $ref: '#/components/schemas/DocsLinks'
+
+    SystemTimeResponse:
+      type: object
+      required: [now, timezone, offset_seconds, source]
+      properties:
+        now:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+          description: 可解析时为 IANA 时区名；仅能确定固定偏移时为空
+          example: Asia/Shanghai
+        offset_seconds:
+          type: integer
+          description: 当前时刻相对 UTC 的秒偏移
+          example: 28800
+        source:
+          type: string
+          enum: [runtime_location, env_tz, etc_timezone, etc_localtime, fixed_offset]
 
     LoginRequest:
       type: object

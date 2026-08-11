@@ -80,6 +80,7 @@ type Server struct {
 	notifyMgr    *notify.Manager
 	websheets    *vwebsheet.Broker
 	cardPolicies cardPolicyStore
+	systemTime   systemTimeProvider
 
 	httpSrvMu sync.Mutex
 	httpSrv   *http.Server
@@ -118,6 +119,7 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 		notifyMgr:     notifyMgr,
 		proxyRepo:     repo.NewDBRepo(),
 		cardPolicies:  databaseCardPolicyStore{},
+		systemTime:    newOSSystemTimeProvider(),
 		websheets:     vwebsheet.New(vwebsheet.Config{BasePath: "/api/websheets"}),
 		loginAttempts: make(map[string]loginAttempt),
 		smsLimiter: newSMSRateLimiterWithConfig(
@@ -286,6 +288,7 @@ func (s *Server) newRouter() *gin.Engine {
 		api.POST("/settings/notifications/email/test", s.handleTestEmailNotification)
 		api.POST("/settings/password", s.handleChangePassword) // 修改登录密码
 		api.GET("/system/info", s.handleSystemInfo)            // 获取系统运行与版本信息
+		api.GET("/system/time", s.handleSystemTime)            // 获取设备时间和时区
 		api.GET("/system/update/check", s.handleCheckUpdate)   // 检查系统更新
 		api.POST("/system/update/apply", s.handleApplyUpdate)  // 应用系统更新
 

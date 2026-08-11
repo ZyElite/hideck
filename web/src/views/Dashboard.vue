@@ -12,6 +12,7 @@ import TrafficAnalysisPanel from '../components/TrafficAnalysisPanel.vue'
 import { usePollingScheduler } from '../composables/usePollingScheduler'
 import { useDashboardStore } from '../stores/dashboard'
 import type { TrafficRange } from '../services/traffic'
+import { formatDeviceTime } from '../utils/deviceTime'
 
 const dashboard = useDashboardStore()
 const router = useRouter()
@@ -108,7 +109,7 @@ onMounted(() => {
       <div class="ui-panel p-4">
         <div class="text-xs text-gray-400">最近刷新</div>
         <div class="text-sm font-mono mt-2 text-gray-600 dark:text-gray-300">
-          {{ lastUpdatedAt ? new Date(lastUpdatedAt).toLocaleTimeString() : '--:--:--' }}
+          {{ lastUpdatedAt ? formatDeviceTime(lastUpdatedAt, { clientClock: true }) : '--:--:--' }}
         </div>
       </div>
     </div>

@@ -6,6 +6,7 @@ import PageHeader from '../components/PageHeader.vue'
 import { ArrowDownload24Regular, Delete24Regular, Pause24Regular, Play24Regular } from '@vicons/fluent'
 import { useLogsStore } from '../stores/logs'
 import { useEventStream } from '../composables/useEventStream'
+import { deviceNow, formatDeviceDate, formatDeviceDateTime } from '../utils/deviceTime'
 
 // 日志条目类型
 interface LogEntry {
@@ -98,7 +99,7 @@ function clearLogs() {
 // 导出日志
 function exportLogs() {
   const content = filteredLogs.value.map(log => {
-    const time = new Date(log.time).toLocaleString()
+    const time = formatDeviceDateTime(log.time, { fallback: log.time })
     const fields = log.fields ? ` ${log.fields}` : ''
     return `[${time}] ${log.level.toUpperCase().padEnd(5)} ${log.caller} ${log.message}${fields}`
   }).join('\n')
@@ -107,7 +108,7 @@ function exportLogs() {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `logs-${new Date().toISOString().slice(0, 10)}.txt`
+  a.download = `logs-${formatDeviceDate(deviceNow())}.txt`
   a.click()
   URL.revokeObjectURL(url)
   ElMessage.success('已导出日志')
@@ -127,18 +128,7 @@ function getLevelClass(level: string): string {
 
 // 格式化日期时间
 function formatDateTime(isoTime: string): string {
-  try {
-    const d = new Date(isoTime)
-    const yyyy = d.getFullYear()
-    const MM = String(d.getMonth() + 1).padStart(2, '0')
-    const dd = String(d.getDate()).padStart(2, '0')
-    const HH = String(d.getHours()).padStart(2, '0')
-    const mm = String(d.getMinutes()).padStart(2, '0')
-    const ss = String(d.getSeconds()).padStart(2, '0')
-    return `${yyyy}-${MM}-${dd} ${HH}:${mm}:${ss}`
-  } catch {
-    return isoTime
-  }
+  return formatDeviceDateTime(isoTime, { fallback: isoTime })
 }
 
 // 加载历史日志

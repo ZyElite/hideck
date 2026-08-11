@@ -16,6 +16,7 @@ import type { DeviceMgmtListItem, SMSMessage } from '../types/api'
 import { Delete24Regular, Mail24Regular, Send24Regular } from '@vicons/fluent'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
+import { formatDeviceDate, formatDeviceDateTime, formatDeviceTime } from '../utils/deviceTime'
 
 type SmsThread = {
   key: string
@@ -63,13 +64,11 @@ function parseTs(s: string) {
 }
 
 function formatClock(ms: number) {
-  return ms ? new Date(ms).toLocaleTimeString() : ''
+  return ms ? formatDeviceTime(ms) : ''
 }
 
-function dateKey(ms: number) {
-  const t = new Date(ms)
-  if (!Number.isFinite(t.getTime())) return '未知日期'
-  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
+function dateKey(timestamp: string) {
+  return formatDeviceDate(timestamp, { fallback: '未知日期' })
 }
 
 function lastSeenKey(threadKey: string) {
@@ -120,7 +119,7 @@ const selectedThreadGroups = computed(() => {
   const out: Array<{ date: string; items: SMSMessage[] }> = []
   let last = ''
   for (const m of threadMessages.value) {
-    const key = dateKey(parseTs(m.timestamp))
+    const key = dateKey(m.timestamp)
     if (!out.length || key !== last) {
       out.push({ date: key, items: [m] })
       last = key
@@ -927,7 +926,7 @@ async function confirmDeleteThread(thread: SmsThread) {
                       <span v-if="m.device_name" class="text-[10px] font-bold text-gray-400 bg-gray-100 dark:bg-white/5 px-1.5 py-0.5 rounded">
                         {{ m.device_name }}
                       </span>
-                      <span class="text-[11px] text-gray-400 font-mono">{{ new Date(m.timestamp).toLocaleString() }}</span>
+                      <span class="text-[11px] text-gray-400 font-mono">{{ formatDeviceDateTime(m.timestamp) }}</span>
                       <span v-if="m.type === 2 && m.status === 2" class="text-green-500 text-xs" title="发送成功">✓</span>
                       <span v-else-if="m.type === 2 && m.status === 3" class="text-red-500 text-xs" title="发送失败">✗</span>
                       <el-button

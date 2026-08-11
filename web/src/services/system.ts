@@ -1,5 +1,6 @@
 import { api } from '../stores/auth'
 import { callService } from './http'
+import type { DeviceTimeInfo } from '../utils/deviceTime'
 
 export type DocsLinks = {
   swagger_ui: string
@@ -200,6 +201,12 @@ export type TestEmailResponse = {
 }
 
 export const systemService = {
+  getTime() {
+    return callService(async () => {
+      const res = await api.get('/system/time')
+      return res.data as DeviceTimeInfo
+    })
+  },
   getInfo() {
     return callService(async () => {
       const res = await api.get('/system/info')

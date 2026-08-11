@@ -19,4 +19,8 @@ func TestOpenAPIVoHiveYAMLValid(t *testing.T) {
 	if doc["openapi"] == "" {
 		t.Fatalf("openapi.vohive.yaml missing openapi version")
 	}
+	paths, ok := doc["paths"].(map[string]any)
+	if !ok || paths["/system/time"] == nil {
+		t.Fatal("openapi.vohive.yaml missing /system/time")
+	}
 }
