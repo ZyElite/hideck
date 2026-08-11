@@ -3,6 +3,8 @@ import { createPinia } from 'pinia'
 import router from './router'
 import App from './App.vue'
 import { debugCollector } from './debug/collector'
+import 'vfonts/FiraSans.css'
+import 'vfonts/FiraCode.css'
 import 'element-plus/dist/index.css'
 // Element Plus: 暗色主题变量（全局需要）
 import 'element-plus/theme-chalk/dark/css-vars.css'
@@ -115,11 +117,6 @@ window.addEventListener('unhandledrejection', (e) => {
   }
 })
 
-function loadFonts() {
-  import('vfonts/FiraSans.css')
-  import('vfonts/FiraCode.css')
-}
-
 const app = createApp(App)
 
 app.config.errorHandler = (err) => {
@@ -139,10 +136,3 @@ router.onError((err) => {
 
 app.mount('#app')
 bootFinished = true
-
-if ('requestIdleCallback' in window) {
-  const win = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number }
-  win.requestIdleCallback?.(loadFonts, { timeout: 2000 })
-} else {
-  setTimeout(loadFonts, 0)
-}

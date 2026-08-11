@@ -245,7 +245,7 @@ const activePath = computed(() => route.path)
 
 <style scoped>
 .sidebar-shell {
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "v-sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   --sidebar-menu-text: #475569;
@@ -256,7 +256,7 @@ const activePath = computed(() => route.path)
 }
 
 .sidebar-brand-title {
-  font-family: "Space Grotesk", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "v-sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 1.62rem;
   font-weight: 600;
   letter-spacing: -0.03em;
@@ -283,14 +283,14 @@ const activePath = computed(() => route.path)
   flex-shrink: 0;
   background: linear-gradient(135deg, #06b6d4, #14b8a6);
   color: #fff;
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "v-sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 0.84rem;
   font-weight: 700;
   box-shadow: 0 6px 14px rgba(6, 182, 212, 0.18);
 }
 
 .sidebar-menu-label {
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "v-sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-weight: 500;
   letter-spacing: -0.01em;
 }
