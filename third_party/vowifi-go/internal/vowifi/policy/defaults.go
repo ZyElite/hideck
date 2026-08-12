@@ -17,6 +17,7 @@ const (
 	defaultVoiceAcceptContact    = `*;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"`
 	defaultVoicePreferredService = "urn:urn-7:3gpp-service.ims.icsi.mmtel"
 	defaultICSIRef               = "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel," +
+		"urn%3Aurn-7%3A3gpp-service.ims.icsi.sms," +
 		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.msg," +
 		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.sms"
 )
