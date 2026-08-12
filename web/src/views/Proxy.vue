@@ -497,7 +497,7 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
 </script>
 
 <template>
-  <div class="max-w-7xl mx-auto">
+  <div class="app-page proxy-page">
     <PageHeader title="代理管理" subtitle="管理本地出站代理和 VoWiFi 漫游前置代理" />
 
     <!-- Tab 切换 -->
@@ -538,10 +538,10 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
         @retry="fetchUpstream"
       />
 
-      <div class="ui-card p-6">
+      <div class="ui-card p-4 sm:p-5">
         <div class="flex items-center justify-between mb-4">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white flex items-center justify-center shadow-lg shadow-violet-500/25">
+            <div class="section-icon section-icon-communication">
               <el-icon size="20"><Earth24Regular /></el-icon>
             </div>
             <div>
@@ -625,10 +625,10 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
         @retry="fetchOverview"
       />
 
-      <div class="ui-card p-6">
+      <div class="ui-card p-4 sm:p-5">
         <div class="flex items-center justify-between mb-4">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 text-white flex items-center justify-center shadow-lg shadow-indigo-500/25">
+            <div class="section-icon section-icon-primary">
               <el-icon size="20"><Router24Regular /></el-icon>
             </div>
             <div>
@@ -708,7 +708,7 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
       <div class="space-y-6 pb-6">
         <div class="space-y-4">
           <div class="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <div class="w-1 h-4 bg-indigo-500 rounded-full"></div>
+            <div class="drawer-section-marker"></div>
             <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">基础设置</h3>
           </div>
 
@@ -802,7 +802,7 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
       <div class="space-y-6 pb-6">
         <div class="space-y-4">
           <div class="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <div class="w-1 h-4 bg-violet-500 rounded-full"></div>
+            <div class="drawer-section-marker"></div>
             <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">代理信息</h3>
           </div>
 
@@ -948,9 +948,38 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
 
 <style scoped>
 .proxy-tabs :deep(.el-tabs__header) {
-  margin-bottom: 0;
+  margin-bottom: 10px;
 }
 .proxy-tabs :deep(.el-tabs__nav-wrap::after) {
   height: 1px;
+}
+
+.proxy-tabs :deep(.el-tabs__item) {
+  height: 48px;
+  color: var(--ui-text-muted);
+  font-weight: 600;
+}
+
+.proxy-page :deep(.ui-card) {
+  border-radius: 18px;
+}
+
+.proxy-page :deep(.ui-panel-muted) {
+  border-radius: 14px;
+}
+
+.proxy-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--ui-primary);
+}
+
+.proxy-tabs :deep(.el-tabs__active-bar) {
+  background: var(--ui-primary);
+}
+
+.drawer-section-marker {
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--ui-primary);
 }
 </style>

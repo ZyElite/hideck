@@ -6,8 +6,8 @@ defineProps<{
 </script>
 
 <template>
-  <div class="p-12 text-center rounded-2xl border border-dashed border-gray-300 dark:border-gray-700 ui-surface-muted">
-    <div class="mx-auto w-12 h-12 rounded-2xl bg-gray-100/80 dark:bg-white/5 flex items-center justify-center text-gray-500 dark:text-gray-300">
+  <div class="empty-state p-10 text-center border border-dashed ui-surface-muted">
+    <div class="empty-state-icon mx-auto w-11 h-11 flex items-center justify-center">
       <slot name="icon">
         <span class="text-xl font-bold">∅</span>
       </slot>
@@ -19,3 +19,17 @@ defineProps<{
     </div>
   </div>
 </template>
+
+<style scoped>
+.empty-state {
+  border-color: var(--ui-border);
+  border-radius: 6px;
+}
+
+.empty-state-icon {
+  border: 1px solid var(--ui-border);
+  border-radius: 5px;
+  background: var(--ui-surface);
+  color: var(--ui-text-muted);
+}
+</style>

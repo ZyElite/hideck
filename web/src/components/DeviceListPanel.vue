@@ -76,7 +76,7 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 </script>
 
 <template>
-  <div class="ui-card p-5">
+  <aside class="device-list-panel ui-card p-4">
     <div class="flex items-center gap-3 mb-4">
       <el-input v-model="modelQuery" placeholder="搜索设备 / ICCID / IMEI / 网卡" />
     </div>
@@ -116,10 +116,10 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
         <div v-for="d in filteredDevices" :key="d.id" class="device-list-item">
           <button
             type="button"
-            class="w-full h-full text-left p-3 rounded-xl border transition-all"
+            class="device-list-button w-full h-full text-left p-3 border transition-all"
             :class="selectedId === d.id
-              ? 'border-indigo-200 dark:border-indigo-500/30 bg-indigo-50/70 dark:bg-indigo-500/10'
-              : 'border-gray-100 dark:border-white/10 hover:bg-gray-50/60 dark:hover:bg-white/5'"
+              ? 'device-list-button-active'
+              : 'device-list-button-idle'"
             @click="emit('select-device', d.id)"
           >
             <div class="flex items-start justify-between gap-2">
@@ -141,7 +141,7 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
         </div>
       </div>
     </div>
-  </div>
+  </aside>
 </template>
 
 <style scoped>
@@ -157,6 +157,36 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 
 .device-list-item {
   min-width: 0;
+}
+
+.device-list-panel {
+  align-self: start;
+  padding: 16px;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, var(--ui-primary) 8%, transparent), transparent 36%),
+    var(--ui-surface);
+}
+
+.device-list-button {
+  min-height: 86px;
+  border-radius: 12px;
+}
+
+.device-list-button-active {
+  border-color: color-mix(in srgb, var(--ui-primary) 38%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-primary) 9%, var(--ui-surface));
+  box-shadow: inset 3px 0 0 var(--ui-primary), 0 0 28px color-mix(in srgb, var(--ui-primary) 7%, transparent);
+}
+
+.device-list-button-idle {
+  border-color: var(--ui-border-muted);
+  background: var(--ui-surface);
+}
+
+.device-list-button-idle:hover {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-muted);
 }
 
 @container (min-width: 700px) {

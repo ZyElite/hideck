@@ -13,7 +13,7 @@ const emit = defineEmits(['toggle-theme'])
 </script>
 
 <template>
-  <div class="h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-950 transition-colors duration-300">
+  <div class="unauthenticated-shell h-screen flex items-center justify-center transition-colors duration-300">
     <div class="absolute top-4 right-4 z-50">
       <SwitchDark :is-dark="isDark" @toggle="(e) => emit('toggle-theme', e)" />
     </div>
@@ -29,3 +29,16 @@ const emit = defineEmits(['toggle-theme'])
     </router-view>
   </div>
 </template>
+
+<style scoped>
+.unauthenticated-shell {
+  padding: 20px;
+  background: #07181b;
+}
+
+@media (max-width: 640px) {
+  .unauthenticated-shell {
+    padding: 12px;
+  }
+}
+</style>

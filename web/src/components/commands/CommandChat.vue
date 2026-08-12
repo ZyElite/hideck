@@ -36,6 +36,7 @@ const visibleEvents = computed(() => props.events.filter((event) => {
 const visibleBalanceQueries = computed(() => props.balanceQueries.filter((query) => (
   !props.selectedDevice || query.device_id === props.selectedDevice
 )))
+const deviceIds = computed(() => props.devices.map((device) => device.id))
 
 const emit = defineEmits<{
   'update:selectedDevice': [value: string]
@@ -108,6 +109,7 @@ function latestBalanceText(query?: BalanceQuery) {
         :definitions="definitions"
         :busy="busy"
         :selected-device="selectedDevice"
+        :device-ids="deviceIds"
         @submit="emit('submit', $event)"
         @dangerous="emit('dangerous', $event)"
       />
@@ -116,16 +118,16 @@ function latestBalanceText(query?: BalanceQuery) {
 </template>
 
 <style scoped>
-.chat-shell { min-width: 0; min-height: 0; height: 100%; overflow: hidden; border-radius: 8px; display: grid; grid-template-rows: auto minmax(0, 1fr); box-shadow: var(--ui-shadow-sm); }
-.chat-header { min-height: 68px; padding: 10px 12px 10px 14px; border-bottom: 1px solid var(--ui-border); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.chat-shell { min-width: 0; min-height: 0; height: 100%; overflow: hidden; border-radius: 20px; display: grid; grid-template-rows: auto minmax(0, 1fr); box-shadow: var(--ui-shadow-sm); background: radial-gradient(circle at 78% 16%, color-mix(in srgb, var(--ui-primary) 7%, transparent), transparent 34%), var(--ui-surface); }
+.chat-header { min-height: 78px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .chat-identity, .chat-actions, .chat-meta, .stream-state { display: flex; align-items: center; }
 .chat-identity { min-width: 0; gap: 10px; }
-.chat-avatar { width: 38px; height: 38px; flex: 0 0 38px; border-radius: 7px; background: #0f766e; color: #fff; display: grid; place-items: center; font-size: 21px; }
+.chat-avatar { width: 42px; height: 42px; flex: 0 0 42px; border: 1px solid color-mix(in srgb, var(--ui-primary) 42%, var(--ui-border)); border-radius: 13px; background: color-mix(in srgb, var(--ui-primary) 10%, transparent); color: var(--ui-primary); display: grid; place-items: center; font-size: 21px; box-shadow: 0 0 24px color-mix(in srgb, var(--ui-primary) 10%, transparent); }
 .chat-identity h3 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: 0; }
 .chat-meta { margin-top: 3px; gap: 10px; color: #64748b; font-size: 11px; }
-.latest-balance { max-width: 220px; color: #0f766e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.latest-balance { max-width: 220px; color: var(--ui-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stream-state { gap: 4px; color: #b45309; }
-.stream-state.online { color: #15803d; }
+.stream-state.online { color: var(--ui-success); }
 .chat-actions { flex: 0 0 auto; gap: 8px; }
 .chat-device-select { width: 180px; }
 .chat-actions :deep(.el-input__wrapper), .chat-actions :deep(.el-button) { min-height: 44px; }

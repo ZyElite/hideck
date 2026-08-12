@@ -5,7 +5,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="ui-surface rounded-2xl p-6">
+  <div class="ui-surface rounded-md p-4">
     <el-skeleton :rows="rows || 6" animated />
   </div>
 </template>

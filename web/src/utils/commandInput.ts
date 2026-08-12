@@ -21,12 +21,21 @@ export function commandTargetDevice(input: string, definitions: CommandDefinitio
   return parts[1] || ''
 }
 
-export function retargetDeviceCommand(input: string, definitions: CommandDefinition[], selectedDevice: string) {
-  const device = selectedDevice.trim()
+export type DeviceRetargetOptions = {
+  selectedDevice: string
+  knownDeviceIDs: readonly string[]
+  previousDevice?: string
+}
+
+export function retargetDeviceCommand(input: string, definitions: CommandDefinition[], options: DeviceRetargetOptions) {
+  const device = options.selectedDevice.trim()
   if (!device || commandTargetDevice(input, definitions) === null) return input
   const parts = input.trim().split(/\s+/)
   if (parts.length === 1) return `${parts[0]} ${device}`
-  return [parts[0], device, ...parts.slice(2)].join(' ')
+  const knownDevices = new Set(options.knownDeviceIDs.map((id) => id.trim()).filter(Boolean))
+  if (options.previousDevice?.trim()) knownDevices.add(options.previousDevice.trim())
+  const remainingArguments = knownDevices.has(parts[1]) ? parts.slice(2) : parts.slice(1)
+  return [parts[0], device, ...remainingArguments].join(' ')
 }
 
 export function carrierReplySenderError(responseMode: string, sendersText: string) {

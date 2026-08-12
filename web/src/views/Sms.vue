@@ -717,7 +717,7 @@ async function confirmDeleteThread(thread: SmsThread) {
 </script>
 
 <template>
-  <div ref="smsPageRef" class="sms-page h-[calc(100vh-140px)] flex flex-col">
+  <div ref="smsPageRef" class="app-page sms-page h-[calc(100vh-144px)] flex flex-col">
     <PageHeader title="短信中心" subtitle="按联系人聚合，点击进入会话明细">
       <template #actions>
         <div class="flex items-center gap-2">
@@ -757,7 +757,7 @@ async function confirmDeleteThread(thread: SmsThread) {
     />
 
     <div class="flex-1 ui-card overflow-hidden relative">
-      <div v-if="loading && threads.length === 0" class="absolute inset-0 z-20 flex items-center justify-center bg-white/50 dark:bg-black/20 backdrop-blur-sm">
+      <div v-if="loading && threads.length === 0" class="absolute inset-0 z-20 flex items-center justify-center bg-white/70 dark:bg-black/40">
         <el-icon class="is-loading" size="28"><Loading /></el-icon>
       </div>
 
@@ -771,10 +771,10 @@ async function confirmDeleteThread(thread: SmsThread) {
               v-for="d in deviceSidebarItems"
               :key="d.id"
               type="button"
-              class="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl border text-left transition-all"
+              class="sms-device-row w-full flex items-center justify-between gap-3 px-3 py-2 border text-left transition-all"
               :class="selectedDevice === d.id
-                ? 'border-indigo-200 dark:border-indigo-500/30 bg-indigo-50/70 dark:bg-indigo-500/10'
-                : 'border-transparent hover:bg-gray-50/60 dark:hover:bg-white/5'"
+                ? 'sms-device-row-active'
+                : 'border-transparent'"
               @click="void handleSelectDevice(d.id)"
             >
               <div class="min-w-0">
@@ -829,7 +829,7 @@ async function confirmDeleteThread(thread: SmsThread) {
                       <div class="min-w-0">
                         <div class="flex items-center gap-2">
                           <div class="font-extrabold text-gray-900 dark:text-white truncate">{{ t.peer }}</div>
-                          <span v-if="isUnread(t)" class="w-2 h-2 rounded-full bg-indigo-500" />
+                          <span v-if="isUnread(t)" class="w-2 h-2 rounded-full bg-blue-500" />
                         </div>
                         <div class="text-xs text-gray-500 dark:text-gray-400 truncate mt-1">{{ t.lastMessage }}</div>
                       </div>
@@ -944,10 +944,10 @@ async function confirmDeleteThread(thread: SmsThread) {
                       </el-button>
                     </div>
                     <div
-                      class="px-5 py-4 rounded-2xl text-sm leading-[1.75] shadow-sm border"
+                      class="px-5 py-4 rounded-lg text-sm leading-[1.75] shadow-sm border"
                       :class="m.type === 1
                         ? 'bg-white/90 dark:bg-white/5 text-gray-700 dark:text-gray-200 border-gray-100 dark:border-white/10'
-                        : 'bg-indigo-50 dark:bg-indigo-500/10 text-gray-800 dark:text-gray-100 border-indigo-100 dark:border-indigo-500/20'"
+                        : 'bg-blue-50 dark:bg-blue-500/10 text-gray-800 dark:text-gray-100 border-blue-100 dark:border-blue-500/20'"
                     >
                       {{ m.content }}
                     </div>
@@ -1044,6 +1044,13 @@ async function confirmDeleteThread(thread: SmsThread) {
   min-height: 0;
 }
 
+.sms-page > .ui-card {
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 82% 12%, color-mix(in srgb, var(--ui-primary) 7%, transparent), transparent 31%),
+    var(--ui-surface);
+}
+
 .sms-msg-wrapper {
   width: 100%;
   max-width: min(620px, 88%);
@@ -1064,7 +1071,7 @@ async function confirmDeleteThread(thread: SmsThread) {
 }
 
 .sms-thread-item-shell-active {
-  background: color-mix(in srgb, var(--color-primary, #6366f1) 10%, transparent);
+  background: color-mix(in srgb, var(--ui-primary) 9%, transparent);
   position: relative;
   z-index: 1;
 }
@@ -1076,7 +1083,7 @@ async function confirmDeleteThread(thread: SmsThread) {
   right: 0;
   top: -1px;
   height: 1px;
-  background: color-mix(in srgb, var(--color-primary, #6366f1) 10%, transparent);
+  background: color-mix(in srgb, var(--ui-primary) 9%, transparent);
 }
 
 .sms-thread-row-active {
@@ -1116,16 +1123,31 @@ async function confirmDeleteThread(thread: SmsThread) {
 
 .sms-action-sheet {
   width: min(520px, 100%);
-  background: color-mix(in srgb, var(--color-surface, #fff) 92%, transparent);
-  border-top-left-radius: 16px;
-  border-top-right-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--color-border, #e5e7eb) 90%, transparent);
+  background: var(--ui-surface-strong);
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  border: 1px solid var(--ui-border);
   border-bottom: none;
-  backdrop-filter: blur(14px);
+  box-shadow: var(--ui-shadow-lg);
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.sms-device-row {
+  min-height: 52px;
+  border-radius: 12px;
+}
+
+.sms-device-row:hover {
+  background: var(--ui-surface-muted);
+}
+
+.sms-device-row-active {
+  border-color: color-mix(in srgb, var(--ui-primary) 35%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-primary) 9%, var(--ui-surface));
+  box-shadow: inset 3px 0 0 var(--ui-primary), 0 0 24px color-mix(in srgb, var(--ui-primary) 7%, transparent);
 }
 
 .sms-action-sheet-title {

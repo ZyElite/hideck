@@ -29,11 +29,17 @@ test('creates a command template that is ready for required arguments', () => {
 })
 
 test('retargets device commands while preserving global commands', () => {
+  const options = { selectedDevice: 'wwan1', knownDeviceIDs: ['wwan0', 'wwan1'] }
   assert.equal(commandTargetDevice('/send wwan0 447700900123 hello', definitions), 'wwan0')
   assert.equal(commandTargetDevice('/list', definitions), null)
-  assert.equal(retargetDeviceCommand('/send wwan0 447700900123 hello', definitions, 'wwan1'), '/send wwan1 447700900123 hello')
-  assert.equal(retargetDeviceCommand('/sms', definitions, 'wwan1'), '/sms wwan1')
-  assert.equal(retargetDeviceCommand('/list', definitions, 'wwan1'), '/list')
+  assert.equal(retargetDeviceCommand('/send wwan0 447700900123 hello', definitions, options), '/send wwan1 447700900123 hello')
+  assert.equal(retargetDeviceCommand('/send 447700900123 hello', definitions, options), '/send wwan1 447700900123 hello')
+  assert.equal(retargetDeviceCommand('/send removed-device 447700900123 hello', definitions, {
+    ...options,
+    previousDevice: 'removed-device'
+  }), '/send wwan1 447700900123 hello')
+  assert.equal(retargetDeviceCommand('/sms', definitions, options), '/sms wwan1')
+  assert.equal(retargetDeviceCommand('/list', definitions, options), '/list')
 })
 
 test('requires a sender only for SMS reply rules', () => {

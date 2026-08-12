@@ -94,7 +94,7 @@ function clearATHistory() {
     </div>
 
     <template v-if="!canUseATTerminal">
-      <div class="mt-4 p-8 flex flex-col items-center justify-center bg-orange-50 dark:bg-orange-900/20 border border-orange-100 dark:border-orange-900/50 rounded-xl">
+      <div class="mt-4 p-8 flex flex-col items-center justify-center bg-orange-50 dark:bg-orange-900/20 border border-orange-100 dark:border-orange-900/50 rounded-md">
         <el-icon size="48" class="text-orange-400 mb-4"><Warning24Regular /></el-icon>
         <div class="text-lg font-bold text-orange-700 dark:text-orange-400">{{ unavailableTitle }}</div>
         <div class="text-sm text-orange-600 dark:text-orange-300 mt-2 text-center max-w-md">
@@ -105,7 +105,7 @@ function clearATHistory() {
     
     <template v-else>
       <!-- 交互历史面板 -->
-    <div class="ui-panel-muted mt-4 p-4 h-[320px] overflow-auto flex flex-col gap-3 rounded-xl border border-gray-100 dark:border-white/10 relative">
+    <div class="ui-panel-muted mt-4 p-4 h-[320px] overflow-auto flex flex-col gap-3 rounded-md border relative">
       <div v-if="atHistory.length === 0 && !atSending" class="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
         暂无 AT 会话记录
       </div>
@@ -113,15 +113,15 @@ function clearATHistory() {
         
         <!-- 请求记录（右侧气泡） -->
         <div class="flex w-full justify-end">
-          <div class="max-w-[80%] bg-indigo-500 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-sm">
+          <div class="max-w-[80%] bg-teal-700 dark:bg-teal-600 text-white rounded-lg rounded-tr-sm px-4 py-2.5 shadow-sm">
             <div class="text-sm font-mono break-words">{{ h.cmd }}</div>
-            <div class="text-[10px] text-indigo-100 mt-1 text-right">{{ formatDeviceTime(h.ts, { clientClock: true }) }}</div>
+            <div class="text-[10px] text-teal-100 mt-1 text-right">{{ formatDeviceTime(h.ts, { clientClock: true }) }}</div>
           </div>
         </div>
 
         <!-- 响应/错误记录（左侧气泡） -->
         <div class="flex w-full justify-start">
-          <div class="max-w-[80%] rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm" :class="!h.ok ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-100 dark:border-red-900/50' : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-100 dark:border-white/5'">
+          <div class="max-w-[80%] rounded-lg rounded-tl-sm px-4 py-2.5 shadow-sm" :class="!h.ok ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-100 dark:border-red-900/50' : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-100 dark:border-white/5'">
             <div class="text-sm whitespace-pre-wrap break-words font-mono">{{ h.response }}</div>
             <div class="text-[10px] mt-1 text-gray-400 flex items-center gap-2">
               <span>{{ formatDeviceTime(h.ts, { clientClock: true }) }}</span>
@@ -133,11 +133,11 @@ function clearATHistory() {
 
       <!-- 发送中等待状态（左侧呼吸气泡） -->
       <div v-if="atSending" class="flex w-full justify-start mt-2">
-        <div class="max-w-[80%] bg-white dark:bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100 dark:border-white/5 flex items-center gap-2">
+        <div class="max-w-[80%] bg-white dark:bg-gray-800 rounded-lg rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100 dark:border-white/5 flex items-center gap-2">
           <div class="flex space-x-1">
-            <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-            <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-            <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></div>
+            <div class="w-1.5 h-1.5 bg-teal-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+            <div class="w-1.5 h-1.5 bg-teal-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+            <div class="w-1.5 h-1.5 bg-teal-400 rounded-full animate-bounce"></div>
           </div>
           <span class="text-xs text-gray-400 ml-1">等待模组响应...</span>
         </div>

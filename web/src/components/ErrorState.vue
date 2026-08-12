@@ -30,7 +30,7 @@ const metaText = computed(() => {
 </script>
 
 <template>
-  <div class="p-6 bg-red-50/70 dark:bg-red-500/10 rounded-2xl border border-red-100 dark:border-red-500/20">
+  <div class="error-state p-5 border">
     <div class="flex items-start justify-between gap-4">
       <div class="min-w-0">
         <div class="text-sm font-extrabold text-red-700 dark:text-red-300">{{ title || '加载失败' }}</div>
@@ -46,3 +46,12 @@ const metaText = computed(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.error-state {
+  border-color: color-mix(in srgb, var(--ui-danger) 28%, var(--ui-border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ui-danger) 8%, var(--ui-surface));
+  box-shadow: inset 3px 0 0 var(--ui-danger);
+}
+</style>

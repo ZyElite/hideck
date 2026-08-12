@@ -15,8 +15,30 @@ function onToggle() {
 </script>
 
 <template>
-  <el-button circle @click="onToggle" class="!border-0 !bg-gray-100/70 dark:!bg-white/5">
-    <el-icon v-if="isDark"><WeatherSunny24Regular /></el-icon>
-    <el-icon v-else><WeatherMoon24Regular /></el-icon>
-  </el-button>
+  <el-tooltip :content="isDark ? '切换到浅色模式' : '切换到深色模式'" placement="bottom">
+    <el-button
+      circle
+      class="theme-toggle"
+      :aria-label="isDark ? '切换到浅色模式' : '切换到深色模式'"
+      @click="onToggle"
+    >
+      <el-icon v-if="isDark"><WeatherSunny24Regular /></el-icon>
+      <el-icon v-else><WeatherMoon24Regular /></el-icon>
+    </el-button>
+  </el-tooltip>
 </template>
+
+<style scoped>
+.theme-toggle {
+  width: 38px;
+  height: 38px;
+  border-color: var(--ui-border);
+  background: color-mix(in srgb, var(--ui-surface-muted) 82%, transparent);
+  color: var(--ui-text-muted);
+}
+
+.theme-toggle:hover {
+  border-color: color-mix(in srgb, var(--ui-primary) 48%, var(--ui-border));
+  color: var(--ui-primary);
+}
+</style>

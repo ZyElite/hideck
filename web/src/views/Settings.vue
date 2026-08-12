@@ -356,16 +356,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="max-w-5xl mx-auto">
+  <div class="app-page settings-page max-w-[1440px] mx-auto">
     <PageHeader title="系统设置" subtitle="管理网关参数与运行信息" />
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <!-- Security Card -->
-      <div class="ui-card p-8 relative overflow-hidden group">
-         <div class="absolute top-0 right-0 w-40 h-40 bg-indigo-500/5 rounded-bl-full -mr-10 -mt-10 transition-transform group-hover:scale-110"></div>
+      <div class="ui-card p-5 sm:p-6 relative overflow-hidden group">
          
          <div class="flex items-center gap-3 mb-6 relative z-10">
-            <div class="w-12 h-12 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+            <div class="section-icon section-icon-primary">
                <el-icon size="24"><Key24Regular /></el-icon>
             </div>
             <div>
@@ -398,11 +397,10 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- System Info Card -->
-      <div class="ui-card p-8 relative overflow-hidden group">
-         <div class="absolute top-0 right-0 w-40 h-40 bg-green-500/5 rounded-bl-full -mr-10 -mt-10 transition-transform group-hover:scale-110"></div>
+      <div class="ui-card p-5 sm:p-6 relative overflow-hidden group">
 
          <div class="flex items-center gap-3 mb-6 relative z-10">
-            <div class="w-12 h-12 rounded-xl bg-green-50 dark:bg-green-500/10 flex items-center justify-center text-green-600 dark:text-green-400">
+            <div class="section-icon section-icon-success">
                <el-icon size="24"><Server24Regular /></el-icon>
             </div>
             <div>
@@ -451,7 +449,7 @@ onBeforeUnmount(() => {
               <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div class="min-w-0">
                   <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                    <div class="w-9 h-9 rounded-md bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">
                       <el-icon size="18"><DocumentText24Regular /></el-icon>
                     </div>
                     <div>
@@ -487,12 +485,10 @@ onBeforeUnmount(() => {
          </div>
       </div>
 
-      <div class="notify-card ui-card p-8 relative overflow-hidden group lg:col-span-2">
-         <div class="absolute top-0 right-0 w-40 h-40 bg-purple-500/5 rounded-bl-full -mr-10 -mt-10 transition-transform group-hover:scale-110"></div>
-
-         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 relative z-10">
+      <div class="notify-card ui-card p-8 lg:col-span-2">
+         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
             <div class="flex items-center gap-3">
-               <div class="w-12 h-12 rounded-xl bg-purple-50 dark:bg-purple-500/10 flex items-center justify-center text-purple-600 dark:text-purple-400">
+               <div class="w-12 h-12 rounded-md bg-teal-50 dark:bg-teal-500/10 flex items-center justify-center text-teal-700 dark:text-teal-300">
                   <el-icon size="24"><Alert24Regular /></el-icon>
                </div>
                <div>
@@ -508,7 +504,7 @@ onBeforeUnmount(() => {
 
          <div v-if="loadingNotifications" class="p-6 text-sm text-gray-500 dark:text-gray-400">正在加载通知配置…</div>
 
-         <div v-else class="relative z-10 w-full overflow-hidden">
+         <div v-else class="w-full overflow-hidden">
             <el-tabs v-model="activeNotifyTab" class="settings-notify-tabs">
               <!-- Telegram -->
               <el-tab-pane label="Telegram Bot" name="telegram" class="pt-2">
@@ -572,7 +568,7 @@ onBeforeUnmount(() => {
                     <el-input v-model="feishuForm.chat_ids" :disabled="!feishuForm.enabled" placeholder="多个群组用英文逗号分隔" />
                     <div class="text-[10px] text-gray-400 mt-1">飞书群聊的 Chat ID (oc_xxxx)，可通过飞书开放平台 API 获取，支持逗号分隔多个群组。</div>
                   </div>
-                  <div class="p-3 rounded-xl bg-blue-50/50 dark:bg-blue-500/5 text-xs text-blue-600 dark:text-blue-400/80 leading-relaxed border border-blue-100/50 dark:border-blue-500/10">
+                  <div class="p-3 rounded-md bg-blue-50/50 dark:bg-blue-500/5 text-xs text-blue-600 dark:text-blue-400/80 leading-relaxed border border-blue-100/50 dark:border-blue-500/10">
                     <strong>配置说明：</strong>
                     <ol class="list-decimal ml-4 mt-1 space-y-1">
                       <li>在<a href="https://open.feishu.cn" target="_blank" class="underline hover:text-blue-700">飞书开放平台</a>创建自建应用，启用「机器人」能力</li>
@@ -613,7 +609,7 @@ onBeforeUnmount(() => {
                       <el-input v-model="qqForm.direct_ids" :disabled="!qqForm.enabled" placeholder="用户 OpenID，多个使用逗号分隔" />
                     </div>
                   </div>
-                  <div class="p-3 rounded-xl bg-amber-50/50 dark:bg-amber-500/5 text-xs text-amber-700 dark:text-amber-400/80 leading-relaxed border border-amber-100/50 dark:border-amber-500/10">
+                  <div class="p-3 rounded-md bg-amber-50/50 dark:bg-amber-500/5 text-xs text-amber-700 dark:text-amber-400/80 leading-relaxed border border-amber-100/50 dark:border-amber-500/10">
                     <ol class="list-decimal ml-4 mt-1 space-y-1">
                       <li>QQbot申请地址：<a href="https://q.qq.com/qqbot/openclaw/index.html" target="_blank" class="underline hover:text-amber-800">官方控制台</a></li>
                       <li>向机器人发送消息后，去系统日志查看 OpenID，填入后 Bot 只对匹配的会话进行回复和推送。</li>
@@ -922,10 +918,10 @@ onBeforeUnmount(() => {
   height: 38px;
   line-height: 38px;
   padding: 0 20px !important;
-  border-radius: 8px;
+  border-radius: 9px;
   margin-right: 4px;
   color: var(--el-text-color-regular);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background-color 160ms ease, color 160ms ease;
   font-weight: 500;
 }
 :deep(.settings-notify-tabs .el-tabs__item:last-child) {
@@ -938,6 +934,23 @@ onBeforeUnmount(() => {
   background-color: var(--el-bg-color);
   color: var(--el-color-primary);
   font-weight: 600;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05), 0 2px 8px rgba(0, 0, 0, 0.03);
+  box-shadow: inset 0 0 0 1px var(--ui-border);
+}
+
+.settings-page :deep(.el-form-item__label),
+.settings-page label {
+  color: var(--ui-text-muted);
+  letter-spacing: 0;
+}
+
+.settings-page > .grid > .ui-card {
+  border-radius: 18px;
+}
+
+.settings-page .notify-card {
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 84% 8%, color-mix(in srgb, var(--ui-primary) 7%, transparent), transparent 28%),
+    var(--ui-surface);
 }
 </style>

@@ -36,4 +36,7 @@ test('command realtime stream starts before secondary page data finishes', () =>
   assert.ok(historyIndex > pageDataIndex)
   assert.ok(connectIndex > historyIndex)
   assert.ok(pageDataAwaitIndex > connectIndex)
+  assert.match(commandsView, /await loadEvents\(\)\s+if \(disposed\) return/)
+  assert.match(commandsView, /await pageData\s+if \(disposed\) return/)
+  assert.match(commandsView, /onUnmounted\(\(\) => \{\s+disposed = true/)
 })

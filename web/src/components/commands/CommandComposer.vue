@@ -8,6 +8,7 @@ const props = defineProps<{
   definitions: CommandDefinition[]
   busy: boolean
   selectedDevice: string
+  deviceIds: string[]
 }>()
 
 const emit = defineEmits<{
@@ -18,8 +19,12 @@ const emit = defineEmits<{
 const input = ref('')
 const suggestions = computed(() => commandSuggestions(input.value, props.definitions))
 
-watch(() => props.selectedDevice, (device) => {
-  input.value = retargetDeviceCommand(input.value, props.definitions, device)
+watch(() => props.selectedDevice, (device, previousDevice) => {
+  input.value = retargetDeviceCommand(input.value, props.definitions, {
+    selectedDevice: device,
+    knownDeviceIDs: props.deviceIds,
+    previousDevice
+  })
 })
 
 function choose(definition: CommandDefinition) {
@@ -31,7 +36,10 @@ function choose(definition: CommandDefinition) {
 }
 
 function submit() {
-  const value = retargetDeviceCommand(input.value, props.definitions, props.selectedDevice).trim()
+  const value = retargetDeviceCommand(input.value, props.definitions, {
+    selectedDevice: props.selectedDevice,
+    knownDeviceIDs: props.deviceIds
+  }).trim()
   if (!value || props.busy) return
   emit('submit', value)
   input.value = ''
@@ -82,10 +90,10 @@ function submit() {
 </template>
 
 <style scoped>
-.composer { position: relative; padding: 10px 12px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--ui-border); background: var(--ui-surface-strong); }
+.composer { position: relative; padding: 12px 14px calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-surface-strong) 92%, transparent); }
 .quick-list { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 9px; scrollbar-width: thin; }
-.quick-list button { min-height: 44px; padding: 0 10px; border: 1px solid var(--ui-border); border-radius: 6px; background: transparent; color: #475569; font: 12px "v-mono", monospace; white-space: nowrap; }
-.quick-list button:hover, .quick-list button:focus-visible { border-color: #0d9488; color: #0f766e; outline: none; }
+.quick-list button { min-height: 40px; padding: 0 11px; border: 1px solid var(--ui-border); border-radius: 10px; background: transparent; color: #475569; font: 12px "v-mono", monospace; white-space: nowrap; }
+.quick-list button:hover, .quick-list button:focus-visible { border-color: var(--ui-primary); color: var(--ui-primary); outline: none; }
 .quick-list button.dangerous { color: #b45309; }
 .input-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 8px; }
 .send-button { width: 44px; height: 44px; padding: 0; }

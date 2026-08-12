@@ -1209,7 +1209,7 @@ usePollingScheduler(async () => {
 </script>
 
 <template>
-  <div class="devices-page max-w-7xl mx-auto">
+  <div class="app-page devices-page">
     <PageHeader title="设备管理" subtitle="查看设备信息、编辑配置、执行 AT 指令">
       <template #actions>
         <div class="flex items-center gap-2">
@@ -1270,7 +1270,7 @@ usePollingScheduler(async () => {
           @open-sms="openSms"
         />
 
-        <div class="ui-card p-6">
+        <div class="ui-card p-4 sm:p-5">
           <el-tabs v-model="activeTab" class="device-detail-tabs">
             <el-tab-pane label="概览" name="overview">
               <div class="space-y-6">
@@ -1372,17 +1372,39 @@ usePollingScheduler(async () => {
 .devices-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 1.5rem;
+  gap: 1.25rem;
 }
 
 @container (min-width: 980px) {
   .devices-layout {
-    grid-template-columns: 270px minmax(0, 1fr);
+    grid-template-columns: 284px minmax(0, 1fr);
   }
 }
 
 .device-detail-tabs :deep(.el-tabs__content) {
   overflow: visible;
+}
+
+.device-detail-tabs :deep(.el-tabs__header) {
+  margin-bottom: 22px;
+}
+
+.device-detail-tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+  background: var(--ui-border);
+}
+
+.device-detail-tabs :deep(.el-tabs__item) {
+  height: 46px;
+  color: var(--ui-text-muted);
+}
+
+.device-detail-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--ui-primary);
+}
+
+.devices-page :deep(.ui-card) {
+  border-radius: 18px;
 }
 
 .device-detail-tabs :deep(.el-tab-pane) {

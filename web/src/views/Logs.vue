@@ -117,7 +117,7 @@ function exportLogs() {
 // 日志级别颜色
 function getLevelClass(level: string): string {
   switch (level.toLowerCase()) {
-    case 'debug': return 'text-purple-500'
+    case 'debug': return 'text-gray-400'
     case 'info': return 'text-blue-500'
     case 'warn': return 'text-yellow-500'
     case 'error': return 'text-red-500'
@@ -158,7 +158,7 @@ watch(levelFilter, () => {
 </script>
 
 <template>
-  <div class="max-w-7xl mx-auto">
+  <div class="app-page logs-page">
     <PageHeader title="实时日志" subtitle="查看系统运行日志，支持过滤和搜索">
       <template #actions>
         <div class="flex items-center gap-2">
@@ -179,10 +179,10 @@ watch(levelFilter, () => {
     </PageHeader>
 
     <!-- 连接状态 -->
-    <div class="flex items-center gap-4 mb-4">
+    <div class="logs-statusbar flex items-center gap-4 mb-3">
       <div class="flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full" :class="connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'" />
-        <span class="text-sm text-gray-500">{{ connected ? '已连接' : '未连接' }}</span>
+        <span class="logs-connection-dot" :class="connected ? 'is-connected' : 'is-disconnected'" />
+        <span class="text-sm font-semibold">{{ connected ? '已连接' : '未连接' }}</span>
       </div>
       <span class="text-sm text-gray-400">{{ logs.length }} 条日志</span>
       <span v-if="!connected && lastConnectError" class="text-sm text-red-500 truncate" :title="lastConnectError">{{ lastConnectError }}</span>
@@ -191,7 +191,7 @@ watch(levelFilter, () => {
     </div>
 
     <!-- 过滤器 -->
-    <div class="ui-card p-4 mb-4">
+    <div class="logs-toolbar ui-card p-3 mb-3">
       <div class="flex flex-wrap items-center gap-4">
         <el-select v-model="levelFilter" placeholder="日志级别" class="w-32">
           <el-option label="全部" value="all" />
@@ -211,10 +211,10 @@ watch(levelFilter, () => {
     </div>
 
     <!-- 日志列表 -->
-    <div class="ui-card overflow-hidden">
+    <div class="log-frame ui-card overflow-hidden">
       <div
         ref="logContainer"
-        class="h-[60vh] overflow-auto font-mono text-sm bg-gray-900 dark:bg-black text-gray-100 p-4"
+        class="log-console h-[calc(100dvh-292px)] min-h-[420px] overflow-auto font-mono text-sm text-gray-100 p-4"
       >
         <div v-if="filteredLogs.length === 0" class="text-gray-500 text-center py-8">
           {{ connected ? '等待日志...' : '未连接到日志流' }}
@@ -222,7 +222,7 @@ watch(levelFilter, () => {
         <div
           v-for="(log, idx) in filteredLogs"
           :key="idx"
-          class="py-0.5 hover:bg-white/5 px-2 -mx-2 rounded whitespace-nowrap"
+          class="log-row py-0.5 px-2 -mx-2 whitespace-nowrap"
         >
           <span class="text-gray-500">[{{ formatDateTime(log.time) }}]</span>
           <span class="font-bold ml-1 inline-block w-14" :class="getLevelClass(log.level)">{{ log.level.toUpperCase().padEnd(5) }}</span>
@@ -234,3 +234,61 @@ watch(levelFilter, () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.logs-statusbar {
+  min-height: 38px;
+  padding: 0 4px;
+  color: var(--ui-text-muted);
+}
+
+.logs-connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.logs-connection-dot.is-connected {
+  background: var(--ui-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-success) 14%, transparent);
+}
+
+.logs-connection-dot.is-disconnected {
+  background: var(--ui-danger);
+}
+
+.logs-toolbar {
+  box-shadow: none;
+  border-radius: 14px;
+}
+
+.log-frame {
+  border-color: #263a40;
+  border-radius: 18px;
+}
+
+.log-console {
+  background:
+    linear-gradient(90deg, rgba(92, 234, 177, .025) 1px, transparent 1px),
+    #060b0e;
+  background-size: 36px 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.log-row {
+  border-left: 2px solid transparent;
+  border-radius: 2px;
+}
+
+.log-row:hover {
+  border-left-color: #38bdb4;
+  background: rgba(255, 255, 255, .045);
+}
+
+@media (max-width: 640px) {
+  .log-console {
+    height: calc(100dvh - 360px);
+    min-height: 360px;
+  }
+}
+</style>

@@ -500,7 +500,7 @@ onBeforeUnmount(() => {
       <div v-if="chipInfo" class="ui-panel-muted p-4 relative">
       <div class="flex items-center justify-between gap-3 mb-3">
         <div class="flex items-center gap-3 min-w-0">
-          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white text-xs font-bold flex items-center justify-center shadow-lg shadow-emerald-500/25">
+          <div class="section-icon section-icon-success text-xs font-bold">
             ESIM
           </div>
           <div>

@@ -144,15 +144,15 @@ function clearHistory() {
     </div>
 
     <!-- 交互历史面板 -->
-    <div class="ui-panel-muted mt-4 p-4 h-[320px] overflow-auto flex flex-col gap-3 rounded-xl border border-gray-100 dark:border-white/10 relative">
+    <div class="ui-panel-muted mt-4 p-4 h-[320px] overflow-auto flex flex-col gap-3 rounded-md border relative">
       <div v-if="history.length === 0 && !sending" class="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
         暂无 USSD 会话记录
       </div>
       <div v-for="(msg, i) in history" :key="i" class="flex w-full" :class="msg.type === 'req' ? 'justify-end' : 'justify-start'">
         <!-- 请求记录（右侧气泡） -->
-        <div v-if="msg.type === 'req'" class="max-w-[80%] bg-indigo-500 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-sm">
+        <div v-if="msg.type === 'req'" class="max-w-[80%] bg-teal-700 dark:bg-teal-600 text-white rounded-lg rounded-tr-sm px-4 py-2.5 shadow-sm">
           <div class="text-sm break-words">{{ msg.content }}</div>
-          <div class="text-[10px] text-indigo-100 mt-1 text-right">{{ formatDeviceTime(msg.ts, { clientClock: true }) }}</div>
+          <div class="text-[10px] text-teal-100 mt-1 text-right">{{ formatDeviceTime(msg.ts, { clientClock: true }) }}</div>
         </div>
         
         <!-- 系统消息（居中） -->
@@ -161,7 +161,7 @@ function clearHistory() {
         </div>
 
         <!-- 响应/错误记录（左侧气泡） -->
-        <div v-else class="max-w-[80%] rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm" :class="msg.type === 'err' ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-100 dark:border-red-900/50' : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-100 dark:border-white/5'">
+        <div v-else class="max-w-[80%] rounded-lg rounded-tl-sm px-4 py-2.5 shadow-sm" :class="msg.type === 'err' ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-100 dark:border-red-900/50' : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-100 dark:border-white/5'">
           <div class="text-sm whitespace-pre-wrap break-words font-mono">{{ msg.content }}</div>
           <div class="text-[10px] mt-1 text-gray-400 flex items-center gap-2">
             <span>{{ formatDeviceTime(msg.ts, { clientClock: true }) }}</span>
@@ -172,11 +172,11 @@ function clearHistory() {
       </div>
       <!-- 发送中等待状态（左侧呼吸气泡） -->
       <div v-if="sending" class="flex w-full justify-start mt-2">
-        <div class="max-w-[80%] bg-white dark:bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100 dark:border-white/5 flex items-center gap-2">
+        <div class="max-w-[80%] bg-white dark:bg-gray-800 rounded-lg rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100 dark:border-white/5 flex items-center gap-2">
           <div class="flex space-x-1">
-            <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-            <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-            <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></div>
+            <div class="w-1.5 h-1.5 bg-teal-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+            <div class="w-1.5 h-1.5 bg-teal-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+            <div class="w-1.5 h-1.5 bg-teal-400 rounded-full animate-bounce"></div>
           </div>
           <span class="text-xs text-gray-400 ml-1">等待网络响应...</span>
         </div>

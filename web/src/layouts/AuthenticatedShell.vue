@@ -30,7 +30,7 @@ const emit = defineEmits(['toggle-theme'])
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const collapsed = ref(false)
+const collapsed = ref(localStorage.getItem('sidebar_collapsed') === '1')
 const isMobile = ref(false)
 const drawerOpen = ref(false)
 const debugOpen = ref(false)
@@ -71,9 +71,10 @@ function syncIsMobile() {
 function handleNavToggle() {
   if (isMobile.value) {
     drawerOpen.value = true
-  } else {
-    collapsed.value = !collapsed.value
+    return
   }
+  collapsed.value = !collapsed.value
+  localStorage.setItem('sidebar_collapsed', collapsed.value ? '1' : '0')
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -122,19 +123,21 @@ watch(
 )
 
 const activePath = computed(() => route.path)
+const activeMenuItem = computed(() => menuItems.find((item) => item.index === route.path) || menuItems[0])
 </script>
 
 <template>
-  <el-container v-if="auth.isAuthenticated && route.name !== 'Login'" class="h-full">
+  <el-container v-if="auth.isAuthenticated && route.name !== 'Login'" class="h-full flow-shell">
     <el-aside
       v-if="!isMobile"
-      :width="collapsed ? '52px' : '232px'"
-      class="h-full ui-glass transition-[width] duration-200 relative sidebar-shell"
+      :width="collapsed ? '60px' : '216px'"
+      class="h-full transition-[width] duration-200 relative sidebar-shell app-sidebar"
     >
-      <div class="h-14 px-4 flex items-center" :class="collapsed ? 'justify-center px-0' : ''">
+      <div class="h-16 px-4 flex items-center sidebar-brand" :class="collapsed ? 'justify-center px-0' : ''">
         <div class="sidebar-brand-icon">V</div>
-        <div v-if="!collapsed" class="ml-3">
+        <div v-if="!collapsed" class="ml-3 min-w-0">
           <div class="sidebar-brand-title">VoHive</div>
+          <div class="sidebar-brand-subtitle">MODEM CONTROL</div>
         </div>
       </div>
 
@@ -151,16 +154,21 @@ const activePath = computed(() => route.path)
         </el-menu-item>
       </el-menu>
 
-      <div class="absolute bottom-4 w-full px-3" v-if="!collapsed">
-        <div class="ui-panel-muted p-3 flex items-center gap-3">
-          <div class="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-300">
-            <el-icon><Settings24Regular /></el-icon>
-          </div>
+      <div v-if="collapsed" class="sidebar-account-compact">
+        <el-tooltip content="退出登录" placement="right">
+          <button type="button" aria-label="退出登录" @click="handleLogout">
+            <el-icon><SignOut24Regular /></el-icon>
+          </button>
+        </el-tooltip>
+      </div>
+      <div v-else class="sidebar-account-expanded">
+        <div class="sidebar-account flex items-center gap-3">
+          <div class="sidebar-account-icon"><el-icon><Settings24Regular /></el-icon></div>
           <div class="flex-1 min-w-0">
-            <div class="text-sm font-bold truncate">Admin</div>
-            <div class="text-xs text-gray-400 truncate">Administrator</div>
+            <div class="text-sm font-semibold truncate text-white">Admin</div>
+            <div class="text-xs truncate sidebar-account-role">Administrator</div>
           </div>
-          <el-button text type="danger" @click="handleLogout">
+          <el-button text type="danger" aria-label="退出登录" @click="handleLogout">
             <el-icon><SignOut24Regular /></el-icon>
           </el-button>
         </div>
@@ -168,11 +176,12 @@ const activePath = computed(() => route.path)
     </el-aside>
 
     <el-drawer v-model="drawerOpen" direction="ltr" size="256px" :with-header="false" class="mobile-drawer">
-      <div class="h-full bg-white/95 dark:bg-[#141418]/95 backdrop-blur-md relative sidebar-shell">
+      <div class="h-full relative sidebar-shell app-sidebar">
         <div class="h-16 px-4 flex items-center">
           <div class="sidebar-brand-icon">V</div>
-          <div class="ml-3">
+          <div class="ml-3 min-w-0">
             <div class="sidebar-brand-title">VoHive</div>
+            <div class="sidebar-brand-subtitle">MODEM CONTROL</div>
           </div>
         </div>
 
@@ -189,14 +198,14 @@ const activePath = computed(() => route.path)
           </el-menu-item>
         </el-menu>
 
-        <div class="absolute bottom-4 w-full px-3">
-          <div class="ui-panel-muted p-3 flex items-center gap-3">
-            <div class="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-300">
+        <div class="absolute bottom-3 w-full px-3">
+          <div class="sidebar-account flex items-center gap-3">
+            <div class="sidebar-account-icon">
               <el-icon><Settings24Regular /></el-icon>
             </div>
             <div class="flex-1 min-w-0">
-              <div class="text-sm font-bold truncate">Admin</div>
-              <div class="text-xs text-gray-400 truncate">Administrator</div>
+              <div class="text-sm font-semibold truncate text-white">Admin</div>
+              <div class="text-xs truncate sidebar-account-role">Administrator</div>
             </div>
             <el-button text type="danger" @click="handleLogout">
               <el-icon><SignOut24Regular /></el-icon>
@@ -207,29 +216,29 @@ const activePath = computed(() => route.path)
     </el-drawer>
 
     <el-container class="h-full">
-      <el-header class="h-14 px-4 sm:px-5 flex items-center justify-between ui-glass border-b border-gray-100 dark:border-white/5 sticky top-0 z-10">
-        <div class="flex items-center gap-2">
-          <el-button text @click="handleNavToggle" class="!px-2">
+      <el-header class="app-topbar h-16 px-3 sm:px-5 flex items-center justify-between sticky top-0 z-10">
+        <div class="topbar-side topbar-side-left">
+          <el-button text :aria-label="isMobile ? '打开导航' : collapsed ? '展开侧边栏' : '收起侧边栏'" @click="handleNavToggle" class="nav-toggle !px-2">
             <el-icon>
-              <Fold v-if="!isMobile && !collapsed" />
-              <Expand v-else />
+              <Expand v-if="isMobile || collapsed" />
+              <Fold v-else />
             </el-icon>
           </el-button>
+          <span class="topbar-product">VOHIVE</span>
         </div>
 
-        <div class="flex items-center gap-3">
-          <SwitchDark :is-dark="isDark" @toggle="(e) => emit('toggle-theme', e)" />
+        <div class="topbar-route"><strong>{{ activeMenuItem.label }}</strong></div>
 
-          <div class="hidden sm:flex items-center justify-center w-7 h-7 rounded-full bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 shadow-sm">
-            <span class="relative flex h-2 w-2">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
+        <div class="topbar-side topbar-side-right">
+          <div class="hidden sm:flex service-state" aria-label="实时连接">
+            <span class="service-state-dot" />
+            <span>实时连接</span>
           </div>
+          <SwitchDark :is-dark="isDark" @toggle="(e) => emit('toggle-theme', e)" />
         </div>
       </el-header>
 
-      <el-main class="p-4 sm:p-6 overflow-auto bg-gray-50/50 dark:bg-transparent">
+      <el-main class="app-main px-4 pb-6 sm:px-7 sm:pb-8 overflow-auto">
         <div class="main-inner mx-auto w-full">
           <router-view v-slot="{ Component, route: r }">
             <ErrorBoundary v-if="Component" title="页面渲染失败">
@@ -250,59 +259,11 @@ const activePath = computed(() => route.path)
   font-family: "v-sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  --sidebar-menu-text: #475569;
-  --sidebar-menu-hover-bg: rgba(6, 182, 212, 0.08);
-  --sidebar-menu-active-bg: linear-gradient(135deg, rgba(6, 182, 212, 0.14), rgba(20, 184, 166, 0.1));
-  --sidebar-menu-active-color: #0f766e;
-  --sidebar-menu-active-ring: rgba(6, 182, 212, 0.16);
-}
-
-.sidebar-brand-title {
-  font-family: "v-sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 1.62rem;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  min-height: 1.75rem;
-  background: linear-gradient(135deg, #06b6d4, #8b5cf6);
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 2px 8px rgba(6, 182, 212, 0.18));
-  white-space: nowrap;
-  padding-right: 4px;
-}
-
-.sidebar-brand-icon {
-  width: 1.62rem;
-  height: 1.62rem;
-  border-radius: 0.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  background: linear-gradient(135deg, #06b6d4, #14b8a6);
-  color: #fff;
-  font-family: "v-sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 0.84rem;
-  font-weight: 700;
-  box-shadow: 0 6px 14px rgba(6, 182, 212, 0.18);
-}
-
-.sidebar-menu-label {
-  font-family: "v-sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-
-:global(html.dark) .sidebar-shell {
-  --sidebar-menu-text: rgba(255, 255, 255, 0.72);
-  --sidebar-menu-hover-bg: rgba(45, 212, 191, 0.1);
-  --sidebar-menu-active-bg: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(45, 212, 191, 0.12));
-  --sidebar-menu-active-color: #99f6e4;
-  --sidebar-menu-active-ring: rgba(103, 232, 249, 0.18);
+  --sidebar-menu-text: #9bb2b6;
+  --sidebar-menu-hover-bg: rgba(255, 255, 255, 0.06);
+  --sidebar-menu-active-bg: rgba(56, 189, 180, 0.14);
+  --sidebar-menu-active-color: #d8fffa;
+  --sidebar-menu-active-ring: rgba(56, 189, 180, 0.24);
 }
 
 :deep(.sidebar-menu) {
@@ -317,7 +278,7 @@ const activePath = computed(() => route.path)
   min-height: 40px;
   line-height: 40px;
   margin: 2px 8px;
-  border-radius: 10px;
+  border-radius: 4px;
   padding-left: 13px !important;
   padding-right: 13px !important;
   font-size: 0.94rem;
@@ -342,9 +303,21 @@ const activePath = computed(() => route.path)
 }
 
 :deep(.sidebar-menu .el-menu-item.is-active) {
+  position: relative;
   background: var(--sidebar-menu-active-bg);
   color: var(--sidebar-menu-active-color);
-  box-shadow: inset 0 0 0 1px var(--sidebar-menu-active-ring);
+  box-shadow: 0 0 24px rgba(92, 234, 177, 0.1);
+}
+
+:deep(.sidebar-menu .el-menu-item.is-active::before) {
+  position: absolute;
+  left: -8px;
+  width: 3px;
+  height: 24px;
+  border-radius: 0 3px 3px 0;
+  background: var(--ui-primary);
+  box-shadow: 0 0 14px var(--ui-primary);
+  content: "";
 }
 
 :deep(.sidebar-menu .el-menu-item.is-active .el-icon),
@@ -364,11 +337,11 @@ const activePath = computed(() => route.path)
 }
 
 :deep(.sidebar-menu.el-menu--collapse .el-menu-item) {
-  width: 36px;
-  height: 36px;
-  min-height: 36px;
-  line-height: 36px;
-  margin: 3px auto;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  line-height: 40px;
+  margin: 4px auto;
   border-radius: 10px;
   display: grid;
   place-items: center;
@@ -430,5 +403,206 @@ const activePath = computed(() => route.path)
 
 :deep(.mobile-drawer .el-drawer__body) {
   padding: 0 !important;
+}
+
+.app-sidebar {
+  border: 1px solid var(--ui-border);
+  border-radius: 0 22px 22px 0;
+  background: color-mix(in srgb, var(--ui-nav) 94%, transparent);
+  box-shadow: 16px 0 48px rgba(0, 0, 0, 0.18);
+  color: #fff;
+}
+
+.sidebar-brand {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-brand-title {
+  min-height: auto;
+  padding: 0;
+  background: none;
+  color: #f5fbfb;
+  filter: none;
+  -webkit-text-fill-color: currentColor;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
+.sidebar-brand-subtitle {
+  margin-top: 3px;
+  color: #7fa4a8;
+  font-family: "v-mono", ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.sidebar-brand-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(130, 232, 223, 0.34);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(92, 234, 177, 0.24), rgba(91, 225, 222, 0.08));
+  color: #8ff7cb;
+  box-shadow: inset 0 0 20px rgba(92, 234, 177, 0.08);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+:global(html.dark) .sidebar-shell {
+  --sidebar-menu-text: #93a8ad;
+  --sidebar-menu-hover-bg: rgba(255, 255, 255, 0.06);
+  --sidebar-menu-active-bg: rgba(56, 189, 180, 0.14);
+  --sidebar-menu-active-color: #d8fffa;
+  --sidebar-menu-active-ring: rgba(56, 189, 180, 0.24);
+}
+
+.sidebar-menu-label {
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.sidebar-account {
+  min-height: 52px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sidebar-account-compact {
+  position: absolute;
+  bottom: 20px;
+  left: 0;
+  width: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.sidebar-account-expanded {
+  position: absolute;
+  right: 12px;
+  bottom: 16px;
+  left: 12px;
+}
+
+.sidebar-account-compact button {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--sidebar-menu-text);
+  cursor: pointer;
+}
+
+.sidebar-account-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border-radius: 4px;
+  background: rgba(56, 189, 180, 0.12);
+  color: #83e0d8;
+}
+
+.sidebar-account-role {
+  color: #789398;
+}
+
+.app-topbar {
+  width: calc(100% - 40px);
+  margin: 18px 20px 20px !important;
+  padding: 0 20px !important;
+  flex: 0 0 64px;
+  border: 1px solid var(--ui-border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--ui-surface) 82%, transparent);
+  box-shadow: var(--ui-shadow-sm);
+  backdrop-filter: blur(18px);
+}
+
+.nav-toggle {
+  width: 40px;
+  color: var(--ui-text-muted);
+}
+
+.topbar-route {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.topbar-route strong {
+  color: var(--ui-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.topbar-side {
+  min-width: 180px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.topbar-side-right { justify-content: flex-end; }
+
+.topbar-product {
+  color: var(--ui-text-muted);
+  font-family: "v-mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+}
+
+.service-state {
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 0;
+  color: var(--ui-success);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.service-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-success) 16%, transparent);
+}
+
+.app-main {
+  background: var(--ui-bg);
+}
+
+.main-inner {
+  max-width: 1600px;
+}
+
+@media (min-width: 768px) {
+  .main-inner {
+    max-width: 1680px;
+  }
+}
+
+@media (max-width: 767px) {
+  .app-topbar {
+    width: calc(100% - 24px);
+    margin: 12px !important;
+    padding: 0 12px !important;
+  }
+
+  .topbar-side { min-width: auto; }
+  .topbar-product { display: none; }
 }
 </style>

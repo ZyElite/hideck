@@ -8,6 +8,7 @@ import { ElMessage } from 'element-plus'
 import { shouldShowDisclaimer } from './disclaimer'
 import { systemService } from './services/system'
 import { configureDeviceTime, deviceNow, resetDeviceTime } from './utils/deviceTime'
+import { Warning24Regular } from '@vicons/fluent'
 
 const DISCLAIMER_AGREED_AT_KEY = 'vohive_disclaimer_agreed_at'
 
@@ -39,9 +40,7 @@ function updateHtmlClass(mode: 'dark' | 'light') {
 }
 
 onMounted(() => {
-  if (isDark.value) {
-    updateHtmlClass('dark')
-  }
+  updateHtmlClass(isDark.value ? 'dark' : 'light')
 })
 
 // 监听登录状态，每周首次登录弹一次（同意状态持久化在 localStorage，
@@ -119,7 +118,7 @@ const canRenderShell = computed(() => !auth.isAuthenticated || deviceTimeState.v
 </script>
 
 <template>
-  <div class="h-screen w-screen overflow-hidden bg-gray-50 dark:bg-[#101014] text-gray-900 dark:text-gray-100 font-sans selection:bg-indigo-500 selection:text-white transition-colors duration-300">
+  <div class="app-root h-screen w-screen overflow-hidden font-sans transition-colors duration-300">
     <Suspense v-if="canRenderShell">
       <template #default>
         <component :is="shell" :is-dark="isDark" @toggle-theme="toggleTheme" />
@@ -141,49 +140,44 @@ const canRenderShell = computed(() => !auth.isAuthenticated || deviceTimeState.v
 
     <!-- 高级感全屏免责声明弹窗 -->
     <Transition name="fade-slide">
-      <div v-if="showDisclaimer" class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-md">
-        <div class="relative w-full max-w-lg p-8 mx-4 overflow-hidden bg-white/90 dark:bg-gray-900/90 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/20 dark:border-gray-700/50">
-          <!-- 装饰性渐变背景 -->
-          <div class="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-indigo-500/20 to-transparent pointer-events-none"></div>
-          
+      <div v-if="showDisclaimer" class="license-overlay fixed inset-0 z-[9999] flex items-center justify-center">
+        <div class="license-dialog relative w-full max-w-lg p-7 mx-4 overflow-hidden">
           <div class="relative z-10">
-            <div class="flex items-center justify-center w-16 h-16 mx-auto mb-6 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl shadow-lg shadow-indigo-500/30">
-              <svg class="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
+            <div class="license-icon flex items-center justify-center w-12 h-12 mx-auto mb-5">
+              <Warning24Regular class="w-6 h-6" />
             </div>
             
             <h2 class="mb-5 text-2xl font-extrabold text-center text-gray-900 dark:text-white tracking-tight">VoHive 最终用户许可与免责声明</h2>
             
             <div class="space-y-4 text-[14px] text-gray-600 dark:text-gray-300 leading-relaxed font-medium">
               <div class="flex items-start">
-                <div class="flex-shrink-0 flex items-center justify-center w-6 h-6 mt-0.5 mr-3 text-xs font-bold text-indigo-700 bg-indigo-100 rounded-full dark:text-indigo-300 dark:bg-indigo-900/60 shadow-sm">1</div>
-                <p>本软件（VoHive）属于个人开发者业余时间开发的工具软件，仅供技术研究、学习交流和个人内部测试使用。<strong class="text-indigo-600 dark:text-indigo-400">严禁用于任何商业用途</strong>，严禁作为生产环境的基础设施。</p>
+                <div class="license-index">1</div>
+                <p>本软件（VoHive）属于个人开发者业余时间开发的工具软件，仅供技术研究、学习交流和个人内部测试使用。<strong class="license-emphasis">严禁用于任何商业用途</strong>，严禁作为生产环境的基础设施。</p>
               </div>
               <div class="flex items-start">
-                <div class="flex-shrink-0 flex items-center justify-center w-6 h-6 mt-0.5 mr-3 text-xs font-bold text-indigo-700 bg-indigo-100 rounded-full dark:text-indigo-300 dark:bg-indigo-900/60 shadow-sm">2</div>
+                <div class="license-index">2</div>
                 <p>使用者承诺将严格遵守所在国家或地区的相关法律法规。<strong class="text-red-500 dark:text-red-400">严禁将本软件用于电信诈骗、垃圾短信发送、非法网络代理、渗透测试等任何非法或违规场景</strong>。</p>
               </div>
               <div class="flex items-start">
-                <div class="flex-shrink-0 flex items-center justify-center w-6 h-6 mt-0.5 mr-3 text-xs font-bold text-indigo-700 bg-indigo-100 rounded-full dark:text-indigo-300 dark:bg-indigo-900/60 shadow-sm">3</div>
+                <div class="license-index">3</div>
                 <p>本软件涉及底层 Modem 通信操作，可能包含未知的缺陷。对于因使用本软件引发的硬件损坏、通信资费异常、隐私泄露等直接或间接损失，<strong>由使用者自行承担所有责任</strong>。</p>
               </div>
               <div class="flex items-start">
-                <div class="flex-shrink-0 flex items-center justify-center w-6 h-6 mt-0.5 mr-3 text-xs font-bold text-indigo-700 bg-indigo-100 rounded-full dark:text-indigo-300 dark:bg-indigo-900/60 shadow-sm">4</div>
+                <div class="license-index">4</div>
                 <p>一旦点击继续即表示无条件接受本协议。如果您拒绝，本软件将立即触发自毁与环境清理机制以确保设备安全。</p>
               </div>
             </div>
             
             <div class="mt-6 pt-5 border-t border-gray-100 dark:border-gray-800">
               <p class="mb-3 text-xs font-bold text-center text-gray-500 dark:text-gray-400">
-                请输入「<span class="text-indigo-600 dark:text-indigo-400 select-all">{{ expectedConfirmText }}</span>」以解锁按钮
+                请输入「<span class="license-emphasis select-all">{{ expectedConfirmText }}</span>」以解锁按钮
               </p>
               
               <div class="mb-5">
                 <input 
                   type="text" 
                   v-model="confirmText" 
-                  class="w-full px-4 py-3 text-center text-sm font-semibold bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 outline-none transition-all dark:bg-gray-800/80 dark:border-gray-700 dark:text-white dark:focus:border-indigo-500 placeholder-gray-400 dark:placeholder-gray-500"
+                  class="license-input w-full px-4 py-3 text-center text-sm font-semibold outline-none transition-all"
                   :placeholder="`请输入：${expectedConfirmText}`"
                   @paste.prevent
                   autocomplete="off"
@@ -191,17 +185,17 @@ const canRenderShell = computed(() => !auth.isAuthenticated || deviceTimeState.v
               </div>
 
               <div class="flex gap-4">
-                <button @click="rejectDisclaimer" class="flex-1 px-4 py-3 text-sm font-bold tracking-wide text-gray-500 transition-all duration-300 bg-gray-50 border border-gray-200 rounded-xl hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700 dark:hover:bg-red-900/20 dark:hover:text-red-400 dark:hover:border-red-900/50">
+                <button @click="rejectDisclaimer" class="license-reject flex-1 px-4 py-3 text-sm font-bold transition-colors">
                   拒绝并卸载
                 </button>
                 <button 
                   @click="acceptDisclaimer" 
                   :disabled="!canAccept"
                   :class="[
-                    'flex-[1.5] px-4 py-3 text-sm font-bold tracking-wide transition-all duration-300 rounded-xl',
+                    'flex-[1.5] px-4 py-3 text-sm font-bold tracking-wide transition-all duration-300 rounded-md',
                     canAccept 
-                      ? 'text-white bg-gradient-to-r from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:-translate-y-0.5 active:translate-y-0 cursor-pointer' 
-                      : 'text-gray-400 dark:text-gray-500 bg-gray-200 dark:bg-gray-800 shadow-none cursor-not-allowed border border-gray-300 dark:border-gray-700 opacity-60'
+                      ? 'license-accept cursor-pointer'
+                      : 'license-accept license-accept-disabled cursor-not-allowed'
                   ]"
                 >
                   同意并继续
@@ -216,9 +210,104 @@ const canRenderShell = computed(() => !auth.isAuthenticated || deviceTimeState.v
 </template>
 
 <style>
+.app-root {
+  background: var(--ui-bg);
+  color: var(--ui-text);
+}
+
+.license-overlay {
+  padding: 16px;
+  background: rgba(4, 17, 20, 0.72);
+}
+
+.license-dialog {
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-surface-strong);
+  box-shadow: var(--ui-shadow-lg);
+}
+
+.license-dialog h2 {
+  color: var(--ui-text);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  letter-spacing: 0;
+}
+
+.license-icon {
+  border: 1px solid color-mix(in srgb, var(--ui-warning) 34%, var(--ui-border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ui-warning) 12%, var(--ui-surface));
+  color: var(--ui-warning);
+}
+
+.license-index {
+  width: 24px;
+  height: 24px;
+  margin: 2px 12px 0 0;
+  flex: 0 0 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ui-primary) 12%, var(--ui-surface));
+  color: var(--ui-primary);
+  font-family: "v-mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.license-emphasis {
+  color: var(--ui-primary);
+}
+
+.license-input {
+  border: 1px solid var(--ui-border);
+  border-radius: 4px;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+}
+
+.license-input:focus {
+  border-color: var(--ui-primary);
+  box-shadow: var(--ui-focus);
+}
+
+.license-reject,
+.license-accept {
+  border: 1px solid var(--ui-border);
+  border-radius: 4px;
+}
+
+.license-reject {
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-muted);
+}
+
+.license-reject:hover {
+  border-color: var(--ui-danger);
+  color: var(--ui-danger);
+}
+
+.license-accept {
+  border-color: var(--ui-primary);
+  background: var(--ui-primary-solid);
+  color: #fff;
+}
+
+.license-accept:hover {
+  background: var(--ui-primary-hover);
+}
+
+.license-accept-disabled {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-muted);
+  opacity: .58;
+}
+
 .fade-slide-enter-active,
 .fade-slide-leave-active {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: opacity 180ms ease, transform 180ms ease;
 }
 
 .fade-slide-enter-from {

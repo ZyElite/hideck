@@ -49,10 +49,12 @@ const props = withDefaults(defineProps<{
   subtitle?: string
   disabled?: boolean
   deviceLabel?: string
+  compact?: boolean
 }>(), {
   title: '流量分析',
   subtitle: '数据每分钟采样一次，按日/周/月聚合',
-  disabled: false
+  disabled: false,
+  compact: false
 })
 
 const emit = defineEmits<{
@@ -237,8 +239,8 @@ const deviceSeriesName = computed(() => {
 
 const panelClass = computed(() => (
   props.mode === 'device'
-    ? 'ui-panel-muted p-6 overflow-hidden'
-    : 'ui-card p-6 overflow-hidden'
+    ? 'traffic-analysis-panel ui-panel-muted p-6 overflow-hidden'
+    : 'traffic-analysis-panel ui-card p-6 overflow-hidden'
 ))
 
 const chartOption = computed(() => {
@@ -248,6 +250,15 @@ const chartOption = computed(() => {
   const { timestamps, devices, series, totalBytesByTs } = snapshot
   const maxBytes = Math.max(0, ...totalBytesByTs)
   const unit = pickUnit(maxBytes)
+
+  if (props.compact && props.mode === 'global') {
+    const rxBytes = analysisBuckets.value.map((bucket) => Number(bucket.rx_bytes) || 0)
+    const txBytes = analysisBuckets.value.map((bucket) => Number(bucket.tx_bytes) || 0)
+    const compactMaxBytes = Math.max(0, ...rxBytes, ...txBytes)
+    const compactUnit = pickUnit(compactMaxBytes)
+    const compactTimestamps = analysisBuckets.value.map((bucket) => formatTrafficBucketTime(bucket))
+    return buildCompactChartOption(compactTimestamps, rxBytes, txBytes, compactUnit)
+  }
 
   if (props.mode === 'device') {
     return {
@@ -422,6 +433,41 @@ const chartOption = computed(() => {
   }
 })
 
+type TrafficUnit = ReturnType<typeof pickUnit>
+
+function buildCompactChartOption(timestamps: string[], rxBytes: number[], txBytes: number[], unit: TrafficUnit) {
+  const line = (name: string, color: string, values: number[]) => ({
+    name,
+    type: 'line',
+    symbol: 'none',
+    smooth: true,
+    lineStyle: { width: 2, color },
+    emphasis: { focus: 'series' },
+    data: values.map((value) => value / unit.divisor)
+  })
+  return {
+    color: ['#246bce', '#198754'],
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['下载', '上传'], top: 0, right: 8 },
+    grid: { left: 12, right: 18, top: 38, bottom: 22, containLabel: true },
+    xAxis: [{
+      type: 'category',
+      boundaryGap: false,
+      data: timestamps,
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: '#9aabad' } }
+    }],
+    yAxis: [{
+      type: 'value',
+      name: `流量 (${unit.label})`,
+      splitLine: { lineStyle: { color: '#9aabad', type: 'dashed', opacity: 0.28 } }
+    }],
+    dataZoom: [{ type: 'inside', filterMode: 'none' }],
+    series: [line('下载', '#246bce', rxBytes), line('上传', '#198754', txBytes)],
+    backgroundColor: 'transparent'
+  }
+}
+
 watchEffect(() => {
   if (chartOption.value && !VChartComp.value && !chartLoadError.value) {
     void ensureChartLoaded()
@@ -443,12 +489,12 @@ function handleRangeChange(value: string | number | boolean | undefined) {
 
 <template>
   <div :class="panelClass">
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
+    <div class="traffic-panel-header">
       <div>
         <div class="text-lg font-extrabold text-gray-900 dark:text-white">{{ title }}</div>
         <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ subtitle }}</div>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="traffic-panel-actions">
         <el-radio-group :model-value="range" :disabled="disabled" @change="handleRangeChange">
           <el-radio-button label="day">日</el-radio-button>
           <el-radio-button label="week">周</el-radio-button>
@@ -476,7 +522,7 @@ function handleRangeChange(value: string | number | boolean | undefined) {
         @retry="emit('refresh')"
       />
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+      <div v-if="!compact" class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
         <div class="ui-panel-muted p-3">
           <div class="text-xs text-gray-400">{{ rangeText }}下载</div>
           <div class="text-lg font-mono font-bold mt-1">{{ formatBytes(analysisTotal.rx) }}</div>
@@ -491,7 +537,7 @@ function handleRangeChange(value: string | number | boolean | undefined) {
         </div>
       </div>
 
-      <div v-if="chartOption && VChartComp" class="mb-6 h-[300px] w-full">
+      <div v-if="chartOption && VChartComp" :class="compact ? 'compact-chart' : 'mb-6 h-[300px] w-full'">
         <component :is="VChartComp" class="chart" :option="chartOption" autoresize />
       </div>
       <ErrorState
@@ -504,18 +550,24 @@ function handleRangeChange(value: string | number | boolean | undefined) {
       />
       <div
         v-else-if="chartOption && chartLoading"
-        class="mb-6 h-[180px] ui-panel-muted rounded-xl border border-dashed border-gray-200 dark:border-white/10 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500"
+        class="traffic-chart-placeholder ui-panel-muted border border-dashed border-gray-200 dark:border-white/10"
       >
         流量图表加载中...
       </div>
       <div
         v-else
-        class="mb-6 h-[180px] ui-panel-muted rounded-xl border border-dashed border-gray-200 dark:border-white/10 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500"
+        class="traffic-chart-placeholder ui-panel-muted border border-dashed border-gray-200 dark:border-white/10"
       >
         暂无流量图表数据
       </div>
 
-      <el-table :data="analysisBuckets" size="small" stripe v-loading="!!loading" class="w-full">
+      <footer v-if="compact" class="traffic-summary">
+        <span>下载 <strong class="download-value">{{ formatBytes(analysisTotal.rx) }}</strong></span>
+        <span>上传 <strong class="upload-value">{{ formatBytes(analysisTotal.tx) }}</strong></span>
+        <span>总流量 <strong>{{ formatBytes(analysisTotal.total) }}</strong></span>
+      </footer>
+
+      <el-table v-else :data="analysisBuckets" size="small" stripe v-loading="!!loading" class="w-full">
         <el-table-column label="时间" min-width="140">
           <template #default="scope">{{ formatTrafficBucketTime(scope?.row || {}) }}</template>
         </el-table-column>
@@ -532,3 +584,85 @@ function handleRangeChange(value: string | number | boolean | undefined) {
     </template>
   </div>
 </template>
+
+<style scoped>
+.traffic-panel-header {
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.traffic-analysis-panel {
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 78% 10%, color-mix(in srgb, var(--ui-communication) 6%, transparent), transparent 32%),
+    var(--ui-surface);
+}
+
+.traffic-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compact-chart {
+  width: 100%;
+  height: 260px;
+}
+
+.traffic-chart-placeholder {
+  height: 180px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  color: var(--ui-text-muted);
+  font-size: 13px;
+}
+
+.traffic-summary {
+  min-height: 42px;
+  margin: 0 -24px -24px;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  border-top: 1px solid var(--ui-border);
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+
+.traffic-summary strong {
+  margin-left: 6px;
+  color: var(--ui-text);
+  font-family: "v-mono", ui-monospace, monospace;
+}
+
+.traffic-summary .download-value { color: var(--ui-communication); }
+.traffic-summary .upload-value { color: var(--ui-success); }
+
+@media (max-width: 639px) {
+  .traffic-panel-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .traffic-panel-actions {
+    justify-content: space-between;
+  }
+
+  .compact-chart {
+    height: 220px;
+  }
+
+  .traffic-summary {
+    padding: 10px 24px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+}
+</style>

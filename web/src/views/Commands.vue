@@ -31,6 +31,7 @@ const savingRule = ref(false)
 const dangerousDefinition = ref<CommandDefinition | null>(null)
 const dangerForm = reactive({ device: '', target: '', phone: '', duration: 15 })
 let balanceTimer: number | null = null
+let disposed = false
 
 const stream = useEventStream<CommandEvent>({
   path: '/command-center/stream',
@@ -51,10 +52,12 @@ const dangerousTitle = computed(() => {
 onMounted(async () => {
   const pageData = Promise.all([loadCatalog(), loadDevices(), refreshBalances(), loadRules()])
   await loadEvents()
+  if (disposed) return
   const latest = events.value.at(-1)?.id
   if (latest) stream.setLastEventId(latest)
   void stream.connect()
   await pageData
+  if (disposed) return
   balanceTimer = window.setInterval(() => {
     if (balances.value.some((query) => query.state === 'sending' || query.state === 'awaiting_reply')) {
       void refreshBalances(true)
@@ -64,6 +67,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true
   stream.disconnect()
   if (balanceTimer !== null) window.clearInterval(balanceTimer)
 })
@@ -227,8 +231,8 @@ async function deleteRule(id: string) {
 </script>
 
 <template>
-  <div class="commands-page">
-    <PageHeader title="命令中心" />
+  <div class="app-page commands-page">
+    <PageHeader title="命令中心" subtitle="通过设备会话执行查询、短信与 VoWiFi 操作" />
 
     <div class="commands-layout">
       <CommandChat
