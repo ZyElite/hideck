@@ -311,11 +311,10 @@ func GenerateDefaultCellularNetworkInfo(mcc, mnc string) string {
 	if err != nil || len(mcc) != 3 || mncValue < 0 || mncValue > 999 {
 		return ""
 	}
-	cellID := fmt.Sprintf("%s%03d0%s", mcc, mncValue, strings.ToUpper(randomHex(9)))
-	ageBytes := make([]byte, 2)
-	_, _ = rand.Read(ageBytes)
-	age := 1000 + (int(ageBytes[0]) << 8) + int(ageBytes[1])
-	return fmt.Sprintf("3GPP-E-UTRAN-TDD;utran-cell-id-3gpp=%s;cell-info-age=%d", cellID, age)
+	// Proper E-UTRAN FDD cell identity: MCC(3) + MNC(2) + TAC(4 hex) + CellID(4 hex).
+	// O2/giffgaff UK uses FDD, and a well-formed 13-char cell id.
+	cellID := fmt.Sprintf("%s%02d%s%s", mcc, mncValue, strings.ToUpper(randomHex(4)), strings.ToUpper(randomHex(4)))
+	return fmt.Sprintf("3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=%s;cell-info-age=3600", cellID)
 }
 
 func imeiCheckDigit(prefix string) byte {

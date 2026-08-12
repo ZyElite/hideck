@@ -54,6 +54,16 @@ func TestInboundRPErrorFailsSMSDelivery(t *testing.T) {
 	assertDeliveryEvents(t, subscriber, outcome.MessageID, "SMSDeliveryUpdated", "SMSDeliveryFailed")
 }
 
+func TestRPErrorReasonIncludesSubmitReportFailureCause(t *testing.T) {
+	rpdu := []byte{
+		0x05, 0x2b, 0x02, 0x45, 0x00,
+		0x41, 0x0a, 0x01, 0x90, 0x00, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23,
+	}
+	if got := rpErrorReason(rpdu, 69); got != "RP-ERROR cause 69, SMS-SUBMIT-REPORT FCS 0x90" {
+		t.Fatalf("reason = %q", got)
+	}
+}
+
 func TestInboundTPStatusReportMatchesTPMRAndSendsRPAck(t *testing.T) {
 	service, subscriber, store, outbound := newDeliveryReportTestService(t)
 	outcome := sendDeliveryTestSMS(t, service, subscriber, outbound, "hello")

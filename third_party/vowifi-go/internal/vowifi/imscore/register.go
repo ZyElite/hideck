@@ -501,6 +501,7 @@ func (s *Service) recordRegisterResponse(response *sipResponse) {
 	if response == nil {
 		return
 	}
+	s.logRegisterSMSCapabilityTrace(response)
 	s.lastSIPCode.Store(int32(response.StatusCode))
 	text := strings.TrimSpace(response.Reason)
 	if text == "" {

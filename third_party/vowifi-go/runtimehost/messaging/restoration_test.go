@@ -84,6 +84,21 @@ func TestRecoveredDeliveryTypePrefixes(t *testing.T) {
 	})
 }
 
+func TestRPCauseTextMatchesTS24011(t *testing.T) {
+	want := map[int]string{
+		0: "normal", 1: "unassigned number", 8: "operator determined barring",
+		10: "call barred", 21: "short message transfer rejected",
+		29: "facility rejected", 38: "network out of order", 41: "temporary failure",
+		69: "requested facility not implemented", 95: "semantically incorrect message",
+		111: "protocol error", 255: "unknown",
+	}
+	for cause, text := range want {
+		if got := RPCauseText(cause); got != text {
+			t.Errorf("RPCauseText(%d) = %q, want %q", cause, got, text)
+		}
+	}
+}
+
 func TestServiceStatusIsRegistered(t *testing.T) {
 	tests := []struct {
 		status ServiceStatus

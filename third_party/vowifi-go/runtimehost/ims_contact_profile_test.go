@@ -26,8 +26,12 @@ func TestIMSRegisterConfigForGiffgaff(t *testing.T) {
 	if !reflect.DeepEqual(template.ContactOrder, wantOrder) || template.AccessType != "wlan1" {
 		t.Fatalf("giffgaff IMS template = %+v", template)
 	}
+	wantICSIRef := "urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel," +
+		"urn%3Aurn-7%3A3gpp-service.ims.icsi.sms," +
+		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.msg," +
+		"urn%3Aurn-7%3A3gpp-service.ims.icsi.oma.cpm.sms"
 	if template.Expires != 600000*time.Second || template.SupportedHeader != "path,sec-agree" ||
-		template.ContactMode != "android_default" || len(template.ICSIRef) != 137 {
+		template.ContactMode != "android_default" || template.ICSIRef != wantICSIRef {
 		t.Fatalf("giffgaff IMS defaults = %+v", template)
 	}
 	if userAgent != "iOS/18.2.1 iPhone (iPhone15,4)" {

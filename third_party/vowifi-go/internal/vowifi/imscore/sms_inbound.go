@@ -11,6 +11,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/sipkit"
+	"github.com/warthog618/sms/encoding/tpdu"
 )
 
 const (
@@ -114,10 +115,23 @@ func (s *Service) routeDecodedInboundSMS(raw string, decoded *decodedInboundSMSR
 	case info.Kind == smscodec.RPDUKindAck && info.RawType == 0x03:
 		return s.handleInboundSMSReport(raw, info, "acked", "")
 	case info.Kind == smscodec.RPDUKindError && info.RawType == 0x05:
-		return s.handleInboundSMSReport(raw, info, "failed", fmt.Sprintf("RP-ERROR cause %d", info.Cause))
+		return s.handleInboundSMSReport(raw, info, "failed", rpErrorReason(rpdu, info.Cause))
 	default:
 		return s.inboundSMSProtocolError(raw, 400, info.MR, false, fmt.Errorf("unsupported inbound RPDU type 0x%02x", info.RawType))
 	}
+}
+
+func rpErrorReason(rpdu []byte, cause int) string {
+	reason := fmt.Sprintf("RP-ERROR cause %d", cause)
+	details, err := smscodec.ParseRPErrorDetails(rpdu)
+	if err != nil || len(details.UserData) == 0 {
+		return reason
+	}
+	report := tpdu.TPDU{Direction: tpdu.MT}
+	if err := report.UnmarshalBinary(details.UserData); err != nil || report.SmsType() != tpdu.SmsSubmitReport {
+		return reason
+	}
+	return fmt.Sprintf("%s, SMS-SUBMIT-REPORT FCS 0x%02x", reason, report.FCS)
 }
 
 func (s *Service) handleInboundSMSReport(

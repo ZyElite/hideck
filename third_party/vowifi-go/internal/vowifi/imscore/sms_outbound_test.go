@@ -472,6 +472,50 @@ func TestSendOutboundSMSFailsWhenRPMRRandomnessFails(t *testing.T) {
 	}
 }
 
+func TestResolveSendRouteUsesCarrierRoutingPolicy(t *testing.T) {
+	tests := []struct {
+		name, method, gateway, recipient, want string
+	}{
+		{name: "default SIP URI", recipient: "85075", want: "sip:85075@ims.example;user=phone"},
+		{name: "SIP URI without user phone", method: "sip_uri_no_user_phone", recipient: "447700900123", want: "sip:+447700900123@ims.example"},
+		{name: "TEL URI", method: "tel_uri_smsc", recipient: "85075", want: "tel:85075"},
+		{name: "IP-SM-GW", method: "ip_sm_gw", gateway: "sip:sms-gw.example;transport=tcp", recipient: "85075", want: "sip:sms-gw.example;transport=tcp"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &Service{cfg: &IMSConfig{
+				Domain: "ims.example", SMSRoutingMethod: test.method, SMSRoutingGW: test.gateway,
+			}}
+			got, err := service.resolveSendRoute(test.recipient)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("route = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestResolveSendRouteRejectsMissingCarrierRoute(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *IMSConfig
+	}{
+		{name: "nil config"},
+		{name: "missing domain", cfg: &IMSConfig{}},
+		{name: "missing IP-SM-GW", cfg: &IMSConfig{Domain: "ims.example", SMSRoutingMethod: "ip_sm_gw"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &Service{cfg: test.cfg}
+			if _, err := service.resolveSendRoute("85075"); err == nil {
+				t.Fatal("expected route resolution error")
+			}
+		})
+	}
+}
+
 func newOutboundSMSTestService(t *testing.T) (*Service, *captureIMSEventSubscriber, *captureDeliveryStore) {
 	t.Helper()
 	bus := NewEventBus()

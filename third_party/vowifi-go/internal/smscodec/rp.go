@@ -22,6 +22,15 @@ type RPDUInfo struct {
 	Cause   int
 }
 
+type RPErrorDetails struct {
+	MR          byte
+	Cause       byte
+	Diagnostics []byte
+	UserData    []byte
+}
+
+const rpUserDataIEI byte = 0x41
+
 // ParseRPData 解析 RP-DATA（RPDU）并提取 RP-MR 与 TPDU。
 func ParseRPData(body []byte) (byte, []byte, error) {
 	if len(body) < 3 {
@@ -87,21 +96,65 @@ func ClassifyRPDU(body []byte) RPDUInfo {
 
 // ParseRPErrorCause 解析 RP-ERROR cause（支持可变长度 Cause IE）。
 func ParseRPErrorCause(body []byte) (byte, error) {
+	details, _, err := parseRPErrorCauseDetails(body)
+	if err != nil {
+		return 0, err
+	}
+	return details.Cause, nil
+}
+
+// ParseRPErrorDetails decodes the mandatory RP-Cause and optional RP-User-Data.
+func ParseRPErrorDetails(body []byte) (RPErrorDetails, error) {
+	details, offset, err := parseRPErrorCauseDetails(body)
+	if err != nil {
+		return RPErrorDetails{}, err
+	}
+	userData, err := parseOptionalRPErrorUserData(body[offset:])
+	if err != nil {
+		return RPErrorDetails{}, err
+	}
+	details.UserData = userData
+	return details, nil
+}
+
+func parseRPErrorCauseDetails(body []byte) (RPErrorDetails, int, error) {
 	if len(body) < 4 {
-		return 0, fmt.Errorf("RP-ERROR 长度不足")
+		return RPErrorDetails{}, 0, fmt.Errorf("RP-ERROR 长度不足")
 	}
 	if body[0] != 0x04 && body[0] != 0x05 {
-		return 0, fmt.Errorf("非 RP-ERROR: mti=0x%02x", body[0])
+		return RPErrorDetails{}, 0, fmt.Errorf("非 RP-ERROR: mti=0x%02x", body[0])
 	}
 	causeIELen := int(body[2])
 	if causeIELen <= 0 {
-		return 0, fmt.Errorf("RP-ERROR cause IE 为空")
+		return RPErrorDetails{}, 0, fmt.Errorf("RP-ERROR cause IE 为空")
 	}
 	if 3+causeIELen > len(body) {
-		return 0, fmt.Errorf("RP-ERROR cause IE 越界")
+		return RPErrorDetails{}, 0, fmt.Errorf("RP-ERROR cause IE 越界")
 	}
 	// 3GPP TS 24.011 cause 为首字节低 7 位，后续诊断字节按需忽略。
-	return body[3] & 0x7F, nil
+	details := RPErrorDetails{
+		MR: body[1], Cause: body[3] & 0x7F,
+		Diagnostics: append([]byte(nil), body[4:3+causeIELen]...),
+	}
+	offset := 3 + causeIELen
+	return details, offset, nil
+}
+
+func parseOptionalRPErrorUserData(data []byte) ([]byte, error) {
+	if len(data) == 0 || (len(data) == 1 && data[0] == 0) {
+		return nil, nil
+	}
+	if data[0] != rpUserDataIEI {
+		return nil, fmt.Errorf("RP-ERROR user data IEI 非法: 0x%02x", data[0])
+	}
+	if len(data) < 2 {
+		return nil, fmt.Errorf("RP-ERROR user data IE 长度缺失")
+	}
+	userDataLength := int(data[1])
+	if userDataLength != len(data)-2 {
+		return nil, fmt.Errorf("RP-ERROR user data IE 长度不匹配")
+	}
+	return append([]byte(nil), data[2:]...), nil
 }
 
 func ParseRPDataWithAddresses(body []byte) (byte, string, string, []byte, error) {

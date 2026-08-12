@@ -14,6 +14,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/common"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
 )
 
 const (
@@ -102,12 +103,27 @@ func (s *Service) prepareSendEnv(
 }
 
 func (s *Service) resolveSendRoute(recipient string) (string, error) {
-	domain := ""
-	if s != nil && s.cfg != nil {
-		domain = strings.TrimSpace(s.cfg.Domain)
+	if s == nil || s.cfg == nil {
+		return "", errors.New("imscore: SMS route configuration is unavailable")
 	}
+	recipient = normalizeE164(recipient)
+	method := policy.NormalizeSMSRoutingMethod(s.cfg.SMSRoutingMethod)
+	if method == "ip_sm_gw" {
+		gateway := strings.TrimSpace(s.cfg.SMSRoutingGW)
+		if gateway == "" || strings.ContainsAny(gateway, "\r\n") {
+			return "", errors.New("imscore: SMS IP-SM-GW route is unavailable")
+		}
+		return gateway, nil
+	}
+	if method == "tel_uri_smsc" {
+		return "tel:" + recipient, nil
+	}
+	domain := strings.TrimSpace(s.cfg.Domain)
 	if domain == "" || strings.ContainsAny(domain, "\r\n") {
 		return "", errors.New("imscore: SMS route domain is unavailable")
+	}
+	if method == "sip_uri_no_user_phone" {
+		return fmt.Sprintf("sip:%s@%s", recipient, domain), nil
 	}
 	return fmt.Sprintf("sip:%s@%s;user=phone", recipient, domain), nil
 }
@@ -389,6 +405,7 @@ func (s *Service) dispatchSubmitPartWithRetry(
 	if err != nil {
 		return nil, nil, err
 	}
+	s.logMOSMSProtocolTrace(request)
 	cseq := uint32(0)
 	if request.CSeq() != nil {
 		cseq = request.CSeq().SeqNo

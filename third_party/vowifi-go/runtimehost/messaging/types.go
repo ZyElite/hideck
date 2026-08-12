@@ -125,7 +125,7 @@ func RPCauseText(rpCause int) string {
 	case 41:
 		return "temporary failure"
 	case 69:
-		return "insufficient resources"
+		return "requested facility not implemented"
 	case 95:
 		return "semantically incorrect message"
 	case 111:

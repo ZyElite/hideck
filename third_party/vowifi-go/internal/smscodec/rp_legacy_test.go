@@ -1,6 +1,9 @@
 package smscodec
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestClassifyRPDU(t *testing.T) {
 	tests := []struct {
@@ -40,11 +43,59 @@ func TestParseRPErrorCause_VariableLengthIE(t *testing.T) {
 	}
 }
 
+func TestParseRPErrorDetailsWithSubmitReport(t *testing.T) {
+	body := []byte{
+		0x05, 0x2b, 0x02, 0x45, 0x00,
+		0x41, 0x0a, 0x01, 0x90, 0x00, 0x51, 0x50, 0x71, 0x32, 0x20, 0x05, 0x23,
+	}
+	details, err := ParseRPErrorDetails(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.MR != 0x2b || details.Cause != 69 || !bytes.Equal(details.Diagnostics, []byte{0x00}) ||
+		!bytes.Equal(details.UserData, body[7:]) {
+		t.Fatalf("details = %+v", details)
+	}
+}
+
+func TestParseRPErrorDetailsAcceptsLegacyTerminator(t *testing.T) {
+	details, err := ParseRPErrorDetails([]byte{0x04, 0x22, 0x01, 0x29, 0x00})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.Cause != 41 || len(details.UserData) != 0 {
+		t.Fatalf("details = %+v", details)
+	}
+}
+
+func TestParseRPErrorDetailsRejectsMalformedUserDataTLV(t *testing.T) {
+	tests := [][]byte{
+		{0x05, 0x2b, 0x01, 0x45, 0x40, 0x01, 0x00},
+		{0x05, 0x2b, 0x01, 0x45, 0x41},
+		{0x05, 0x2b, 0x01, 0x45, 0x41, 0x02, 0x00},
+	}
+	for _, body := range tests {
+		if _, err := ParseRPErrorDetails(body); err == nil {
+			t.Fatalf("expected error for %x", body)
+		}
+	}
+}
+
 func TestParseRPErrorCause_Invalid(t *testing.T) {
 	if _, err := ParseRPErrorCause([]byte{0x04, 0x01, 0x00}); err == nil {
 		t.Fatalf("expected error for empty cause IE")
 	}
 	if _, err := ParseRPErrorCause([]byte{0x02, 0x01, 0x01, 0x29}); err == nil {
 		t.Fatalf("expected error for non RP-ERROR")
+	}
+}
+
+func TestParseRPErrorCauseIgnoresUnknownOptionalData(t *testing.T) {
+	cause, err := ParseRPErrorCause([]byte{0x05, 0x2b, 0x01, 0x45, 0xff})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cause != 69 {
+		t.Fatalf("cause = %d", cause)
 	}
 }
