@@ -37,6 +37,8 @@ func (p *Pool) restoreSMSModeAfterVoWiFiTeardown(w *Worker) {
 		if w.Modem != nil {
 			w.Modem.SetDisableURCRead(true)
 		}
+	} else if mode == backend.BackendPCSC {
+		w.smsMode = smsModeVoWiFi
 	} else {
 		if err := resumeWorkerATSMS(w); err != nil {
 			logger.Warn("恢复 AT 短信 URC 失败", "device", w.ID, "backend", mode, "err", err)
@@ -63,6 +65,10 @@ func (p *Pool) RestoreRadioAfterVoWiFi(deviceID string) error {
 		return fmt.Errorf("设备 %s 不存在", deviceID)
 	}
 	if w.Backend == nil {
+		return nil
+	}
+	if strings.EqualFold(w.Backend.Mode(), backend.BackendPCSC) {
+		w.setCellularRadioSuppressed(true)
 		return nil
 	}
 

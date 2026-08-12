@@ -136,7 +136,7 @@ export type DeviceConfigDTO = {
   usb_path?: string
   apn?: string
   ip_version?: 'v4' | 'v6' | 'v4v6'
-  esim_transport?: 'at' | 'qmi'
+  esim_transport?: 'at' | 'qmi' | 'mbim' | 'pcsc'
   network_enabled?: boolean
   at_port: string
   control_device: string
@@ -144,7 +144,10 @@ export type DeviceConfigDTO = {
   qmi_proxy_path?: string
   qmi_proxy_executable?: string
   vowifi_enabled?: boolean
-  device_backend?: 'at' | 'qmi' | 'mbim'
+  device_backend?: 'at' | 'qmi' | 'mbim' | 'pcsc'
+  pcsc_reader_name?: string
+  pcsc_usb_path?: string
+  sim_pin_env?: string
   operator_selection_mode?: string
   operator_selection_plmn?: string
   operator_selection_rat?: string
@@ -280,12 +283,21 @@ export type DiscoveredDevice = {
   driver_name: string
   at_ports: string[]
   at_port: string
-  mode?: 'qmi' | 'mbim' | 'ecm' | 'rndis' | 'ncm' | 'unknown'
+  mode?: 'qmi' | 'mbim' | 'ecm' | 'rndis' | 'ncm' | 'pcsc' | 'unknown'
+  hardware_kind?: 'pcsc'
+  reader_name?: string
+  card_present?: boolean
+  atr?: string
   network_capable?: boolean
   configured: boolean
   configured_id?: string
   degraded?: boolean
   usbnet_mode?: number
+}
+
+export type DiscoveredDevicesResponse = {
+  devices: DiscoveredDevice[]
+  pcsc_error?: string
 }
 
 export type DashboardDevice = {

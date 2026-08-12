@@ -11,6 +11,7 @@ func TestNormalizeESIMTransport(t *testing.T) {
 		{"AT", ESIMTransportAT},
 		{" qMi ", ESIMTransportQMI},
 		{" MBIM ", ESIMTransportMBIM},
+		{" PCSC ", ESIMTransportPCSC},
 	}
 
 	for _, tc := range tests {
@@ -26,6 +27,9 @@ func TestValidateESIMTransport(t *testing.T) {
 	}
 	if err := ValidateESIMTransport("mbim"); err != nil {
 		t.Fatalf("ValidateESIMTransport(mbim) returned error: %v", err)
+	}
+	if err := ValidateESIMTransport("pcsc"); err != nil {
+		t.Fatalf("ValidateESIMTransport(pcsc) returned error: %v", err)
 	}
 	if err := ValidateESIMTransport("bad"); err == nil {
 		t.Fatal("expected invalid transport error, got nil")

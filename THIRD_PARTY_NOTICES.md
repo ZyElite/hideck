@@ -15,6 +15,10 @@ repository or on release-only VoHive binaries.
 | `third_party/quectel-qmi-go` | `https://github.com/iniwex5/quectel-qmi-go` | `aaada14395c19ee4c8b4b15a373f41bd2ed14cf0` (`v0.6.0`) | MIT |
 | `third_party/vowifi-go` | `https://github.com/boa-z/vowifi-go` | `23459976796fb43b024c479b19b6edf8baf379d4` | AGPL-3.0 |
 
+The PC/SC reader backend dynamically loads `github.com/ebitengine/purego`
+(`v0.10.2`, Apache-2.0) to call the platform WinSCard/PCSC-Lite API without
+requiring CGO.
+
 The original `github.com/iniwex5/vowifi-go v1.1.2` module was not publicly
 accessible at the time this integration tree was assembled. The replacement
 under `third_party/vowifi-go` is an independent open implementation that uses

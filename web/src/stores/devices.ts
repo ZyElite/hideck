@@ -11,6 +11,7 @@ export const useDevicesStore = defineStore('devices', () => {
   const deviceLimit = ref<number>(0)
   const detail = ref<DeviceDetailVM | null>(null)
   const discovered = ref<DiscoveredDevice[]>([])
+  const pcscDiscoveryError = ref('')
   const config = ref<DeviceConfigDTO | null>(null)
 
   const loading = ref(false)
@@ -97,7 +98,10 @@ export const useDevicesStore = defineStore('devices', () => {
 
   async function fetchDiscovered() {
     const result = await devicesService.listDiscovered()
-    if (result.ok) discovered.value = Array.isArray(result.data) ? result.data : []
+    if (result.ok) {
+      discovered.value = Array.isArray(result.data.devices) ? result.data.devices : []
+      pcscDiscoveryError.value = result.data.pcscError
+    }
     return result
   }
 
@@ -106,6 +110,7 @@ export const useDevicesStore = defineStore('devices', () => {
     deviceLimit,
     detail,
     discovered,
+    pcscDiscoveryError,
     config,
     loading,
     lastOkAt,

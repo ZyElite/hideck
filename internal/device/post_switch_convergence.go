@@ -315,6 +315,9 @@ func (p *Pool) runPostSwitchConvergence(deviceID string, token uint64, worker *W
 	if worker == nil || worker.Backend == nil {
 		return postSwitchConvergenceResult{Degraded: true, Reason: "worker_or_backend_missing"}
 	}
+	if resolvedBackendMode(worker.Config) == backend.BackendPCSC {
+		return postSwitchConvergenceResult{Ready: true, Reason: "pcsc_card_reset_complete"}
+	}
 	readiness, ok := worker.Backend.(postSwitchReadinessProvider)
 	if !ok {
 		return postSwitchConvergenceResult{Degraded: true, Reason: "uim_readiness_not_supported"}

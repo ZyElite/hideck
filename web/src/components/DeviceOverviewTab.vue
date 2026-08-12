@@ -371,7 +371,7 @@ const networkPanelMessage = computed(() => {
           <span class="text-gray-500">飞行模式</span>
           <span>{{ flightModeStatusText }}</span>
         </div>
-        <FieldRow label="运行模式"  :value="device?.backend_mode === 'qmi' ? 'QMI' : device?.backend_mode === 'mbim' ? 'MBIM' : device?.backend_mode === 'at' ? 'AT' : 'Auto'" monospace />
+        <FieldRow label="运行模式"  :value="device?.backend_mode === 'qmi' ? 'QMI' : device?.backend_mode === 'mbim' ? 'MBIM' : device?.backend_mode === 'pcsc' ? 'PC/SC' : device?.backend_mode === 'at' ? 'AT' : 'Auto'" monospace />
       </div>
     </div>
 

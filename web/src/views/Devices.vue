@@ -40,7 +40,7 @@ import {
 const router = useRouter()
 const route = useRoute()
 const devicesStore = useDevicesStore()
-const { list: storeList, detail: storeDetail, discovered: storeDiscovered, config: storeConfig, deviceLimit } = storeToRefs(devicesStore)
+const { list: storeList, detail: storeDetail, discovered: storeDiscovered, pcscDiscoveryError, config: storeConfig, deviceLimit } = storeToRefs(devicesStore)
 
 let listAbort: AbortController | null = null
 let detailAbort: AbortController | null = null
@@ -988,9 +988,14 @@ async function refreshDiscoveredForAdd() {
     const result = await devicesStore.fetchDiscovered()
     if (result.ok) {
       discovered.value = Array.isArray(storeDiscovered.value) ? storeDiscovered.value : []
+      if (pcscDiscoveryError.value) {
+        ElMessage.warning(`PC/SC 读卡器探测失败: ${pcscDiscoveryError.value}`)
+      }
+    } else {
+      ElMessage.error(result.error.message)
     }
-  } catch {
-    // Ignore transient discovery errors; UI will keep previous list.
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : String(error))
   } finally {
     discovering.value = false
   }
@@ -1005,7 +1010,13 @@ function applyDiscoveredToAddConfig(d: DiscoveredDevice | null) {
   addConfig.value.usb_path = d.usb_path || ''
 
   const mode = String(d.mode || '').toLowerCase()
-  if (mode === 'mbim') {
+  if (mode === 'pcsc' || d.hardware_kind === 'pcsc') {
+    addConfig.value.device_backend = 'pcsc'
+    addConfig.value.esim_transport = 'pcsc'
+    addConfig.value.pcsc_reader_name = d.reader_name || d.control_path || ''
+    addConfig.value.pcsc_usb_path = d.usb_path || ''
+    addConfig.value.modem_imei = ''
+  } else if (mode === 'mbim') {
     addConfig.value.device_backend = 'mbim'
   } else if (isWwanQmiControlPath(d.control_path) || (mode === 'qmi' && d.control_path)) {
     addConfig.value.device_backend = 'qmi'
@@ -1016,7 +1027,7 @@ function applyDiscoveredToAddConfig(d: DiscoveredDevice | null) {
 
 function selectDiscoveredForAdd(d: DiscoveredDevice) {
   if (d.degraded) {
-    ElMessage.warning('无法读取该设备 IMEI（可能控制口挂死），请执行 AT!RESET 或切换组态后重试')
+    ElMessage.warning(d.hardware_kind === 'pcsc' ? '读卡器内没有可用卡片' : '无法读取该设备 IMEI（可能控制口挂死），请执行 AT!RESET 或切换组态后重试')
     return
   }
   addSelected.value = d

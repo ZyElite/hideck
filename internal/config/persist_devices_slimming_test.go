@@ -76,3 +76,51 @@ func TestAddDeviceInFileDoesNotPersistRuntimePaths(t *testing.T) {
 		t.Fatalf("runtime paths must not be persisted, got: %+v", d)
 	}
 }
+
+func TestAddDeviceInFilePersistsPCSCBindingAndPINReference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("devices: []\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	device := DeviceConfig{
+		ID: "reader1", DeviceBackend: ESIMTransportPCSC, ESIMTransport: ESIMTransportPCSC,
+		PCSCReaderName: "Example Reader 00 00", PCSCUSBPath: "/sys/bus/usb/devices/1-2",
+		SIMPINEnv: "VOHIVE_SIM_PIN_READER1",
+	}
+	if err := AddDeviceInFile(path, device); err != nil {
+		t.Fatalf("AddDeviceInFile() error = %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	got := loaded.Devices[0]
+	if got.DeviceBackend != ESIMTransportPCSC || got.PCSCReaderName != device.PCSCReaderName ||
+		got.PCSCUSBPath != device.PCSCUSBPath || got.SIMPINEnv != device.SIMPINEnv {
+		t.Fatalf("PC/SC binding fields were not preserved: %+v", got)
+	}
+}
+
+func TestUpdateDeviceInFilePersistsPCSCBindingAndPINReference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := "devices:\n- id: reader1\n  device_backend: pcsc\n  pcsc_reader_name: Old Reader\n  pcsc_usb_path: old-path\n  sim_pin_env: OLD_PIN\n"
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	updated := DeviceConfig{
+		ID: "reader1", DeviceBackend: ESIMTransportPCSC,
+		PCSCReaderName: "New Reader 00 00", PCSCUSBPath: "/sys/bus/usb/devices/2-3",
+		SIMPINEnv: "VOHIVE_SIM_PIN_READER1",
+	}
+	if err := UpdateDeviceInFile(path, "reader1", updated); err != nil {
+		t.Fatalf("UpdateDeviceInFile() error = %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	got := loaded.Devices[0]
+	if got.PCSCReaderName != updated.PCSCReaderName || got.PCSCUSBPath != updated.PCSCUSBPath || got.SIMPINEnv != updated.SIMPINEnv {
+		t.Fatalf("updated PC/SC fields were not preserved: %+v", got)
+	}
+}

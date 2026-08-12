@@ -129,7 +129,10 @@ export const devicesService = {
   listDiscovered() {
     return callService(async () => {
       const res = await api.get('/devices/discovered', { params: { with_imei: 1 } })
-      return (res.data?.devices || []) as DiscoveredDevice[]
+      return {
+        devices: (res.data?.devices || []) as DiscoveredDevice[],
+        pcscError: typeof res.data?.pcsc_error === 'string' ? res.data.pcsc_error : ''
+      }
     })
   },
   refreshInfo(id: string) {

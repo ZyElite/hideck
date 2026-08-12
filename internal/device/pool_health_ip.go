@@ -92,8 +92,15 @@ func (p *Pool) runHealthCheckTick() bool {
 		w.setCachedHealthy(healthy)
 		if healthy {
 			layer := HealthLayerAT
-			if w.Backend != nil && w.Backend.Mode() != backend.BackendAT {
-				layer = HealthLayerQMI
+			if w.Backend != nil {
+				switch w.Backend.Mode() {
+				case backend.BackendQMI:
+					layer = HealthLayerQMI
+				case backend.BackendMBIM:
+					layer = HealthLayerMBIM
+				case backend.BackendPCSC:
+					layer = HealthLayerPCSC
+				}
 			}
 			w.RecordWatchdogEvent(WatchdogEvent{
 				Layer:     layer,
@@ -178,6 +185,11 @@ func (p *Pool) runHealthCheckTick() bool {
 				hasWorker := p.workers[md.ID] != nil
 				p.mu.RUnlock()
 
+				if resolvedBackendMode(md) == backend.BackendPCSC && !hasWorker && !isRebuilding && !isRebootRecovering {
+					logger.Info("定时检查发现 PC/SC 设备缺少 Worker，将触发读卡器重扫", "device", md.ID)
+					needRescan = true
+					break
+				}
 				if md.ModemIMEI != "" && !hasWorker && !isRebuilding && !isRebootRecovering {
 					isQMIConf := strings.ToLower(strings.TrimSpace(md.DeviceBackend)) == "qmi" ||
 						(strings.TrimSpace(md.DeviceBackend) == "" && strings.TrimSpace(md.ControlDevice) != "")

@@ -37,6 +37,9 @@ func UpdateDeviceInFile(path string, deviceID string, newDevice DeviceConfig) er
 			deleteMapKey(n, "modem_imei")
 		}
 		setMapScalar(n, "device_backend", newDevice.DeviceBackend)
+		setOptionalMapScalar(n, "pcsc_reader_name", newDevice.PCSCReaderName)
+		setOptionalMapScalar(n, "pcsc_usb_path", newDevice.PCSCUSBPath)
+		setOptionalMapScalar(n, "sim_pin_env", newDevice.SIMPINEnv)
 		if newDevice.USBNetMode != nil {
 			setMapInt(n, "usbnet_mode", *newDevice.USBNetMode)
 		} else {
@@ -66,6 +69,14 @@ func UpdateDeviceInFile(path string, deviceID string, newDevice DeviceConfig) er
 
 		return devices, nil
 	})
+}
+
+func setOptionalMapScalar(node *yaml.Node, key, value string) {
+	if strings.TrimSpace(value) == "" {
+		deleteMapKey(node, key)
+		return
+	}
+	setMapScalar(node, key, value)
 }
 
 // UpdateDeviceIMEIInFile 仅回填 modem_imei,绝不触碰路径字段;IMEI 为空时跳过(不擦除已有值)。
@@ -180,6 +191,15 @@ func deviceConfigToNode(d DeviceConfig) *yaml.Node {
 	}
 	if d.DeviceBackend != "" {
 		appendMapScalar(m, "device_backend", d.DeviceBackend)
+	}
+	if d.PCSCReaderName != "" {
+		appendMapScalar(m, "pcsc_reader_name", d.PCSCReaderName)
+	}
+	if d.PCSCUSBPath != "" {
+		appendMapScalar(m, "pcsc_usb_path", d.PCSCUSBPath)
+	}
+	if d.SIMPINEnv != "" {
+		appendMapScalar(m, "sim_pin_env", d.SIMPINEnv)
 	}
 	if d.USBNetMode != nil {
 		appendMapInt(m, "usbnet_mode", *d.USBNetMode)

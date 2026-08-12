@@ -359,6 +359,34 @@ func TestNewModemAccessAdapter(t *testing.T) {
 		t.Error("nil modem should produce nil adapter")
 	}
 }
+
+type readerCapabilitiesModem struct{}
+
+func (readerCapabilitiesModem) CloseLogicalChannel(int) error { return nil }
+func (readerCapabilitiesModem) DeviceID() string              { return "reader-1" }
+func (readerCapabilitiesModem) ExecuteATSilent(string, time.Duration) (string, error) {
+	return "", nil
+}
+func (readerCapabilitiesModem) GetNetworkMode() string                   { return "reader" }
+func (readerCapabilitiesModem) GetRegStatus() (int, string)              { return 0, "reader" }
+func (readerCapabilitiesModem) IsHealthy() bool                          { return true }
+func (readerCapabilitiesModem) IsSimInserted() bool                      { return true }
+func (readerCapabilitiesModem) OpenLogicalChannel(string) (int, error)   { return 1, nil }
+func (readerCapabilitiesModem) QuerySIMInserted() (bool, error)          { return true, nil }
+func (readerCapabilitiesModem) Stop()                                    {}
+func (readerCapabilitiesModem) TransmitAPDU(int, string) (string, error) { return "9000", nil }
+
+func (readerCapabilitiesModem) Capabilities() ModemCapabilities {
+	return ModemCapabilities{SIM: true, Reader: true, HasUSIM: true}
+}
+
+func TestNewModemAccessAdapterPreservesReaderCapabilities(t *testing.T) {
+	adapter := NewModemAccessAdapter(readerCapabilitiesModem{})
+	capabilities := adapter.Capabilities()
+	if !capabilities.Reader || !capabilities.SIM || !capabilities.HasUSIM || capabilities.Modem {
+		t.Fatalf("reader capabilities = %+v", capabilities)
+	}
+}
 func TestStartMarksIMSReadyOnlyAfterRegister(t *testing.T) {
 	prepared := &identity.PreparedSession{
 		Profile: identity.Profile{IMSI: "310260123456789", MCC: "310", MNC: "260"},

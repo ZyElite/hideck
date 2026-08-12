@@ -90,6 +90,31 @@ func TestManagerStartRuntimeBuildsRequestAndClaimsInstance(t *testing.T) {
 	}
 }
 
+func TestManagerStartRuntimePreservesReaderMode(t *testing.T) {
+	manager := NewManager()
+	claim := manager.BeginStart("reader-1")
+	var captured runtimehost.StartRequest
+	manager.SetRuntimeStartForTest(func(_ context.Context, req runtimehost.StartRequest) (*runtimehost.Instance, error) {
+		captured = req
+		return &runtimehost.Instance{}, nil
+	})
+	_, err := manager.StartRuntime(context.Background(), RuntimeStartRequest{
+		DeviceID: "reader-1", Epoch: claim.Epoch,
+		Prepared: PreparedStart{
+			Mode:     runtimehost.StartModeReader,
+			SIM:      runtimehost.NewReaderSIMAdapter(simProviderStub{}),
+			Prepared: identity.PreparedSession{Profile: identity.Profile{IMSI: "001010000000001"}},
+		},
+		Modem: runtimeStartTestModem{},
+	})
+	if err != nil {
+		t.Fatalf("StartRuntime() error = %v", err)
+	}
+	if captured.Mode != runtimehost.StartModeReader {
+		t.Fatalf("StartRequest.Mode = %q, want reader", captured.Mode)
+	}
+}
+
 func TestManagerStartRuntimeBroadcastsClaimedState(t *testing.T) {
 	manager := NewManager()
 	deviceID := "dev-broadcast"

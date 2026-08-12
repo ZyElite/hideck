@@ -704,6 +704,9 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/DiscoveredDevice'
+                  pcsc_error:
+                    type: string
+                    description: PC/SC 探测失败原因；不影响其他类型设备的发现结果
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -3198,7 +3201,7 @@ components:
           type: string
         esim_transport:
           type: string
-          enum: [at, qmi]
+          enum: [at, qmi, mbim, pcsc]
         baud_rate:
           type: integer
         data_bits:
@@ -3217,7 +3220,14 @@ components:
           type: boolean
         device_backend:
           type: string
-          enum: [at, qmi]
+          enum: [at, qmi, mbim, pcsc]
+        pcsc_reader_name:
+          type: string
+        pcsc_usb_path:
+          type: string
+        sim_pin_env:
+          type: string
+          description: Name of the environment variable containing the SIM PIN; the PIN value is never returned.
 
     DeviceMgmtListModem:
       type: object
@@ -3370,6 +3380,16 @@ components:
         audio_device:
           type: string
         mode:
+          type: string
+          enum: [qmi, mbim, ecm, rndis, ncm, pcsc, unknown]
+        hardware_kind:
+          type: string
+          enum: [pcsc]
+        reader_name:
+          type: string
+        card_present:
+          type: boolean
+        atr:
           type: string
         network_capable:
           type: boolean

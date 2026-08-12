@@ -27,8 +27,9 @@ const activeUsbPath = computed(() => props.deviceStatus?.usb_path || props.editC
 
 const configuredBackend = computed(() => String(props.editConfig?.device_backend || '').toLowerCase())
 const isManagedBackend = computed(
-	() => normalizeManagedDeviceBackend(configuredBackend.value) !== null
+  () => normalizeManagedDeviceBackend(configuredBackend.value) !== null
 )
+const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
 </script>
 
 <template>
@@ -65,18 +66,18 @@ const isManagedBackend = computed(
         <el-input v-model="editConfig.name" placeholder="显示名称" />
       </div>
       <div class="space-y-1">
-        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">IMEI 绑定</label>
-        <el-input v-model="editConfig.modem_imei" disabled placeholder="自动识别（添加时绑定）" />
+        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">{{ isPCSCBackend ? '读卡器名称' : 'IMEI 绑定' }}</label>
+        <el-input :model-value="isPCSCBackend ? editConfig.pcsc_reader_name : editConfig.modem_imei" disabled placeholder="自动识别（添加时绑定）" />
       </div>
       <div class="space-y-1">
         <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">设备路径</label>
         <el-input :model-value="activeUsbPath || ''" disabled placeholder="由系统自动探测" />
       </div>
-      <div class="space-y-1">
+      <div v-if="!isPCSCBackend" class="space-y-1">
         <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">网卡接口</label>
         <el-input :model-value="activeInterface || ''" disabled placeholder="由系统自动探测" />
       </div>
-      <div class="space-y-1">
+      <div v-if="!isPCSCBackend" class="space-y-1">
         <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">AT 端口</label>
         <el-input :model-value="activeATPort || ''" disabled placeholder="由系统自动探测" />
       </div>
@@ -100,9 +101,14 @@ const isManagedBackend = computed(
             <el-radio-button value="mbim">MBIM</el-radio-button>
           </el-radio-group>
           <el-select v-else v-model="editConfig.device_backend" style="width: 120px" disabled>
+            <el-option v-if="isPCSCBackend" label="PC/SC" value="pcsc" />
             <el-option label="AT" value="at" />
           </el-select>
         </div>
+      </div>
+      <div v-if="isPCSCBackend" class="space-y-1">
+        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">SIM PIN 环境变量名</label>
+        <el-input v-model="editConfig.sim_pin_env" placeholder="例如 VOHIVE_SIM_PIN_READER1" />
       </div>
     </div>
   </div>

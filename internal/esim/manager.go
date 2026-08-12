@@ -305,10 +305,9 @@ type Manager struct {
 	postSwitchMinDelay   time.Duration
 	readQueueWaitTimeout time.Duration
 
-	// downloadCtx 是当前正在进行的下载操作的 context。
-	// 如果不为 nil，由 smartCardChannelFactory 新建的 QMIChannel 会自动继承该 context，
-	// 从而允许 BPP 安装阶段的长时延迟得到正确处理而不被默认超时中断。
-	downloadCtx atomic.Pointer[context.Context]
+	// channelCtx is inherited by context-aware APDU channels created for the
+	// active download or profile state transition.
+	channelCtx atomic.Pointer[context.Context]
 }
 
 // ErrOperationInProgress 表示当前有写操作（下载/切换/删除）正在进行中
@@ -513,7 +512,7 @@ func NewManager(opts ManagerOptions) (*Manager, error) {
 			ch := NewQMIChannel(opts.QMITransport, 1)
 			// 如果当前处于下载中，将下载的 ctx 注入给新建的通道，
 			// 使底层 APDU 传输能够直接继承该 ctx 的超时/取消语义。
-			if p := mgr.downloadCtx.Load(); p != nil {
+			if p := mgr.channelCtx.Load(); p != nil {
 				ch.SetContext(*p)
 			}
 			return ch, nil
@@ -571,6 +570,19 @@ func NewManagerWithChannelFactoryCallbacks(
 	return mgr
 }
 
+// NewManagerWithSmartCardChannelFactoryCallbacks builds a custom-transport
+// manager whose channels inherit the active operation context.
+func NewManagerWithSmartCardChannelFactoryCallbacks(
+	deviceID string,
+	factory func() (driver.SmartCardChannel, error),
+	clearFn func(),
+	callbacks ChannelFactorySwitchCallbacks,
+) *Manager {
+	mgr := NewManagerWithChannelFactoryCallbacks(deviceID, nil, clearFn, callbacks)
+	mgr.SetSmartCardChannelFactory(factory)
+	return mgr
+}
+
 // NewManagerWithChannelFactory 创建 eSIM 管理器（通用模式，支持 PC/SC 等任意通道）
 // channelFactory 负责创建和打开 LPA 客户端，clearFn 为可选的送前清理回调。
 func NewManagerWithChannelFactory(
@@ -603,11 +615,29 @@ func (m *Manager) newSmartCardChannel() (driver.SmartCardChannel, error) {
 	if m.smartCardChannelFactory == nil {
 		return nil, fmt.Errorf("未配置 APDU 通道工厂")
 	}
-	return m.smartCardChannelFactory()
+	channel, err := m.smartCardChannelFactory()
+	if err != nil {
+		return nil, err
+	}
+	if setter, ok := channel.(interface{ SetContext(context.Context) }); ok {
+		if active := m.channelCtx.Load(); active != nil {
+			setter.SetContext(*active)
+		}
+	}
+	return channel, nil
 }
 
 func (m *Manager) SetSmartCardChannelFactory(factory func() (driver.SmartCardChannel, error)) {
 	m.smartCardChannelFactory = factory
+	if m.transport == transportCustom {
+		m.channelFactory = func(aid []byte) (*lpa.Client, error) {
+			channel, err := m.newSmartCardChannel()
+			if err != nil {
+				return nil, err
+			}
+			return newLPAClientWithChannel(channel, aid)
+		}
+	}
 }
 
 func (m *Manager) SeedDiscoveredEUICCs(infos []EUICCInfo) {
@@ -2535,8 +2565,12 @@ func (m *Manager) SwitchProfile(ctx context.Context, targetICCID string, aidHex 
 
 func (m *Manager) SwitchProfileWithResult(ctx context.Context, targetICCID string, aidHex string) (SwitchProfileResult, error) {
 	const operation = SwitchOperationEnableProfile
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	result := SwitchProfileResult{TargetICCID: targetICCID}
 	m.opMu.Lock()
+	m.channelCtx.Store(&ctx)
 	writeStarted := time.Now()
 	switchSucceeded := false
 	switchStarted := false
@@ -2547,6 +2581,7 @@ func (m *Manager) SwitchProfileWithResult(ctx context.Context, targetICCID strin
 			m.emitSwitchPhase(operation, switchToken, SwitchPhaseFailed)
 		}
 		m.logWriteOperationHold("switch_profile", writeStarted)
+		m.channelCtx.Store(nil)
 		m.opMu.Unlock()
 		m.notifyWriteDone()
 		if !switchSucceeded && switchStarted && m.onSwitchFailed != nil {
@@ -2682,7 +2717,11 @@ func (m *Manager) SwitchProfileWithResult(ctx context.Context, targetICCID strin
 // aidHex 可选，前端已知时直接传入可跳过全量 AID 遍历。
 func (m *Manager) DisableProfile(ctx context.Context, targetICCID string, aidHex string) error {
 	const operation = SwitchOperationDisableProfile
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	m.opMu.Lock()
+	m.channelCtx.Store(&ctx)
 	writeStarted := time.Now()
 	disableSucceeded := false
 	disableStarted := false
@@ -2693,6 +2732,7 @@ func (m *Manager) DisableProfile(ctx context.Context, targetICCID string, aidHex
 			m.emitSwitchPhase(operation, switchToken, SwitchPhaseFailed)
 		}
 		m.logWriteOperationHold("disable_profile", writeStarted)
+		m.channelCtx.Store(nil)
 		m.opMu.Unlock()
 		m.notifyWriteDone()
 		if !disableSucceeded && disableStarted && m.onSwitchFailed != nil {
@@ -3512,6 +3552,9 @@ func (m *Manager) RetryNotification(sequenceNumber int64, aidHex string) error {
 // downloadIMEI 为可选的前端指定 IMEI；为空时使用设备真实 IMEI
 // progressFn 为可选进度回调，为 nil 时静默执行
 func (m *Manager) DownloadProfile(ctx context.Context, aidHex, smdp, matchingID, confirmationCode, downloadIMEI string, progressFn DownloadProgressFn) (DownloadProfileResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	report := func(step, msg string, pct int) {
 		if progressFn != nil {
 			progressFn(DownloadProgressEvent{Step: step, Msg: msg, Pct: pct})
@@ -3522,11 +3565,11 @@ func (m *Manager) DownloadProfile(ctx context.Context, aidHex, smdp, matchingID,
 	writeStarted := time.Now()
 	defer func() {
 		m.logWriteOperationHold("download_profile", writeStarted)
-		m.downloadCtx.Store(nil)
+		m.channelCtx.Store(nil)
 		m.opMu.Unlock()
 		m.notifyWriteDone()
 	}()
-	m.downloadCtx.Store(&ctx)
+	m.channelCtx.Store(&ctx)
 	var client *lpa.Client
 	var targetAID []byte
 	if aidHex != "" {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -34,5 +35,8 @@ func TestOpenAPIVoHiveYAMLValid(t *testing.T) {
 		if paths[path] == nil {
 			t.Fatalf("openapi.vohive.yaml missing %s", path)
 		}
+	}
+	if !strings.Contains(string(data), "enum: [at, qmi, mbim, pcsc]") {
+		t.Fatal("openapi.vohive.yaml missing MBIM/PCSC device and eSIM transport contract")
 	}
 }

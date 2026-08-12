@@ -445,6 +445,11 @@ func (w *Worker) IsDeviceHealthy() bool {
 }
 
 func (w *Worker) ProbeDeviceHealth() (bool, error) {
+	if w != nil && w.Backend != nil && w.Backend.Mode() == backend.BackendPCSC {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		return w.Backend.IsSimInserted(ctx)
+	}
 	if w.Backend != nil && w.Backend.Mode() != "at" {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()

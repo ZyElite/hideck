@@ -74,6 +74,22 @@ func TestDeviceConfigRequiresRestartIgnoresIMEIFormatOnly(t *testing.T) {
 	}
 }
 
+func TestPCRuntimeConfigChangesRequireRebuild(t *testing.T) {
+	base := config.DeviceConfig{
+		DeviceBackend: "pcsc", PCSCReaderName: "Reader A", PCSCUSBPath: "1-2", SIMPINEnv: "SIM_PIN_A",
+	}
+	tests := []config.DeviceConfig{
+		{DeviceBackend: "pcsc", PCSCReaderName: "Reader B", PCSCUSBPath: "1-2", SIMPINEnv: "SIM_PIN_A"},
+		{DeviceBackend: "pcsc", PCSCReaderName: "Reader A", PCSCUSBPath: "1-3", SIMPINEnv: "SIM_PIN_A"},
+		{DeviceBackend: "pcsc", PCSCReaderName: "Reader A", PCSCUSBPath: "1-2", SIMPINEnv: "SIM_PIN_B"},
+	}
+	for _, next := range tests {
+		if !pcscRuntimeConfigChanged(base, next) {
+			t.Fatalf("pcscRuntimeConfigChanged(%+v, %+v) = false", base, next)
+		}
+	}
+}
+
 func TestDeviceConfigMBIMManagedNetworkChangesRequiresRebuild(t *testing.T) {
 	base := config.DeviceConfig{
 		APN:           "internet",

@@ -15,6 +15,8 @@ const (
 	HealthLayerQMI HealthLayer = "qmi"
 	// HealthLayerMBIM MBIM 协议控制层（健康观测 + host 侧 reopen 恢复 + 超限重建兜底）
 	HealthLayerMBIM HealthLayer = "mbim"
+	// HealthLayerPCSC 系统智能卡服务与读卡器控制层。
+	HealthLayerPCSC HealthLayer = "pcsc"
 	// HealthLayerPool 设备池全局生命周期控制层
 	HealthLayerPool HealthLayer = "pool"
 )

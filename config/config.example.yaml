@@ -12,6 +12,14 @@ web:
   password: admin
 
 devices: []
+# PC/SC 读卡器示例（Linux 需要 pcscd 与 libpcsclite.so.1）：
+# - id: reader1
+#   name: USB SIM reader
+#   device_backend: pcsc
+#   esim_transport: pcsc
+#   pcsc_reader_name: Example Reader 00 00
+#   pcsc_usb_path: 1-2
+#   sim_pin_env: VOHIVE_SIM_PIN_READER1 # 只保存环境变量名，不要填写 PIN 明文
 
 proxy:
   instances: []

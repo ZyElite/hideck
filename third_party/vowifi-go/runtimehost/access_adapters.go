@@ -45,6 +45,12 @@ func (adapter modemAccessAdapter) Capabilities() ModemCapabilities {
 	if adapter.modem == nil {
 		return ModemCapabilities{}
 	}
+	if provider, ok := adapter.modem.(interface{ Capabilities() ModemCapabilities }); ok {
+		value := provider.Capabilities()
+		value.SIM = value.SIM || value.HasUSIM
+		value.ISIMIdentity = value.ISIMIdentity || value.HasISIM
+		return value
+	}
 	_, hasIdentity := adapter.modem.(IMSIdentityProvider)
 	_, hasISIMAKA := adapter.modem.(enginesim.ISIMAKAProvider)
 	return ModemCapabilities{

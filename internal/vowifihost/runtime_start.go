@@ -93,8 +93,12 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 	if err != nil {
 		return RuntimeStartResult{}, err
 	}
+	mode := strings.TrimSpace(req.Prepared.Mode)
+	if mode == "" {
+		mode = runtimehost.StartModeMain
+	}
 	inst, err := m.runtimeStarter()(ctx, runtimehost.StartRequest{
-		Mode:          runtimehost.StartModeMain,
+		Mode:          mode,
 		DeviceID:      deviceID,
 		TraceID:       strings.TrimSpace(req.TraceID),
 		Profile:       profile,

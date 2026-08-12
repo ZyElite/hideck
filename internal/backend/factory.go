@@ -13,6 +13,7 @@ const (
 	BackendAT   = "at"
 	BackendQMI  = "qmi"
 	BackendMBIM = "mbim"
+	BackendPCSC = "pcsc"
 )
 
 // NormalizeBackendMode 标准化后端模式字符串
@@ -24,6 +25,8 @@ func NormalizeBackendMode(in string) string {
 		return BackendQMI
 	case BackendMBIM:
 		return BackendMBIM
+	case BackendPCSC:
+		return BackendPCSC
 	default:
 		return BackendAT
 	}
@@ -31,16 +34,17 @@ func NormalizeBackendMode(in string) string {
 
 // ValidateBackendMode 验证后端模式是否有效
 func ValidateBackendMode(in string) error {
-	switch NormalizeBackendMode(in) {
-	case BackendAT, BackendQMI, BackendMBIM:
+	switch strings.ToLower(strings.TrimSpace(in)) {
+	case "", BackendAT, BackendQMI, BackendMBIM, BackendPCSC:
 		return nil
 	default:
-		return fmt.Errorf("无效的 device_backend 值: %q (可选: at, qmi, mbim)", in)
+		return fmt.Errorf("无效的 device_backend 值: %q (可选: at, qmi, mbim, pcsc)", in)
 	}
 }
 
 // NewBackend 根据配置模式创建对应后端实例的工厂方法
-// mode: "at" | "qmi"
+// mode: "at" | "qmi" | "mbim". PC/SC is built by the device pool because it
+// needs a reader selector and a shared card-session service.
 // controlPath: QMI 控制设备路径（qmi 模式必须）
 // m: modem.Manager（at 模式必须）
 // source: QMI Core 资源源（qmi 模式必须）

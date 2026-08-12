@@ -3,6 +3,9 @@ package api
 import "github.com/iniwex5/vohive/internal/config"
 
 func deviceConfigRequiresRestart(old config.DeviceConfig, next config.DeviceConfig) bool {
+	if pcscRuntimeConfigChanged(old, next) {
+		return true
+	}
 	if config.NormalizeIMEI(old.ModemIMEI) != config.NormalizeIMEI(next.ModemIMEI) {
 		return true
 	}
@@ -63,6 +66,12 @@ func qmiProxyConfigChanged(old config.DeviceConfig, next config.DeviceConfig) bo
 		return true
 	}
 	return false
+}
+
+func pcscRuntimeConfigChanged(old config.DeviceConfig, next config.DeviceConfig) bool {
+	return old.PCSCReaderName != next.PCSCReaderName ||
+		old.PCSCUSBPath != next.PCSCUSBPath ||
+		old.SIMPINEnv != next.SIMPINEnv
 }
 
 func managedNetworkConfigChanged(old, next config.DeviceConfig) bool {

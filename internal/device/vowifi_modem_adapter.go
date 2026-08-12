@@ -21,6 +21,9 @@ func newVoWiFiModemInterface(w *Worker, deviceID string) (runtimehost.Modem, err
 	if strings.TrimSpace(deviceID) == "" {
 		deviceID = strings.TrimSpace(w.ID)
 	}
+	if w.Backend != nil && strings.EqualFold(w.Backend.Mode(), backend.BackendPCSC) {
+		return newPCSCModemAdapter(deviceID, w.Backend), nil
+	}
 	if w.Backend != nil {
 		mode := strings.ToLower(strings.TrimSpace(w.Backend.Mode()))
 		if mode != "" && mode != backend.BackendAT {

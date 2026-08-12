@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,7 +14,36 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/iniwex5/vohive/internal/config"
 	"github.com/iniwex5/vohive/internal/device"
+	"github.com/iniwex5/vohive/internal/pcsc"
 )
+
+func TestHandleDeviceMgmtDiscoveredIncludesPCSCCardReader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	path := writeDeviceMgmtDiscoveryConfig(t, `
+server:
+  port: ":7575"
+devices: []
+`)
+	if err := config.InitGlobalManager(path); err != nil {
+		t.Fatalf("InitGlobalManager() error = %v", err)
+	}
+	restoreDiscoveryStubs(t)
+	discoverQMIForMgmtFn = func() ([]device.QMIDevice, error) { return nil, nil }
+	discoverCompatibleModemsFromQMIFn = func([]device.QMIDevice) ([]device.CompatibleModem, error) { return nil, nil }
+	discoverPCSCReadersForMgmtFn = func(context.Context) ([]pcsc.Reader, error) {
+		return []pcsc.Reader{{Name: "Example Reader 00 00", USBPath: "/sys/bus/usb/devices/1-2", CardPresent: true, ATR: "3B00"}}, nil
+	}
+
+	got := requestDiscoveredDevices(t, &Server{pool: device.NewPool(&config.Config{}), configPath: path})
+	if len(got.Devices) != 1 {
+		t.Fatalf("devices len = %d, want 1", len(got.Devices))
+	}
+	reader := got.Devices[0]
+	if reader.HardwareKind != pcsc.HardwareKind || reader.ReaderName != "Example Reader 00 00" ||
+		!reader.CardPresent || reader.Degraded || reader.NetworkCapable {
+		t.Fatalf("unexpected PC/SC discovery result: %+v", reader)
+	}
+}
 
 // 不同 IMEI 落在已配置设备的旧路径上,不再是"冲突":新模组就是一台可正常添加的设备,
 // 旧配置离线(身份锚定后路径不再有否决权)。
@@ -51,7 +81,6 @@ devices:
 		dev.IMEI = "222222222222222"
 		return dev, "222222222222222"
 	}
-
 
 	got := requestDiscoveredDevices(t, &Server{pool: device.NewPool(&config.Config{}), configPath: path})
 	if len(got.Devices) != 1 {
@@ -94,7 +123,6 @@ devices: []
 		return dev, "" // AT/QMI 探不到 IMEI
 	}
 	probeIMEIViaMBIMForMgmtFn = func(string) (string, error) { return "", fmt.Errorf("mbim hung") } // MBIM 也读不到
-
 
 	got := requestDiscoveredDevices(t, &Server{pool: device.NewPool(&config.Config{}), configPath: path})
 	if len(got.Devices) != 1 {
@@ -139,7 +167,6 @@ devices:
 		dev.IMEI = "111111111111111"
 		return dev, "111111111111111"
 	}
-
 
 	got := requestDiscoveredDevices(t, &Server{pool: device.NewPool(&config.Config{}), configPath: path})
 	d := got.Devices[0]
@@ -200,7 +227,29 @@ devices:
 }
 
 type discoveredDevicesResponse struct {
-	Devices []discoveredDevice `json:"devices"`
+	Devices   []discoveredDevice `json:"devices"`
+	PCSCError string             `json:"pcsc_error"`
+}
+
+func TestHandleDeviceMgmtDiscoveredExposesPCSCFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	path := writeDeviceMgmtDiscoveryConfig(t, "server:\n  port: \":7575\"\ndevices: []")
+	if err := config.InitGlobalManager(path); err != nil {
+		t.Fatalf("InitGlobalManager() error = %v", err)
+	}
+	restoreDiscoveryStubs(t)
+	discoverQMIForMgmtFn = func() ([]device.QMIDevice, error) { return nil, nil }
+	discoverCompatibleModemsFromQMIFn = func([]device.QMIDevice) ([]device.CompatibleModem, error) {
+		return nil, nil
+	}
+	discoverPCSCReadersForMgmtFn = func(context.Context) ([]pcsc.Reader, error) {
+		return nil, pcsc.ErrUnavailable
+	}
+
+	got := requestDiscoveredDevices(t, &Server{pool: device.NewPool(&config.Config{}), configPath: path})
+	if !strings.Contains(got.PCSCError, pcsc.ErrUnavailable.Error()) {
+		t.Fatalf("pcsc_error = %q, want explicit unavailable error", got.PCSCError)
+	}
 }
 
 func requestDiscoveredDevices(t *testing.T, srv *Server) discoveredDevicesResponse {
@@ -228,12 +277,14 @@ func restoreDiscoveryStubs(t *testing.T) {
 	origEnrich := enrichDiscoveredCompatibleModemFn
 
 	origProbeMBIM := probeIMEIViaMBIMForMgmtFn
+	origDiscoverPCSC := discoverPCSCReadersForMgmtFn
 	t.Cleanup(func() {
 		discoverQMIForMgmtFn = origDiscoverQMI
 		discoverCompatibleModemsFromQMIFn = origDiscoverCompat
 		enrichDiscoveredCompatibleModemFn = origEnrich
 
 		probeIMEIViaMBIMForMgmtFn = origProbeMBIM
+		discoverPCSCReadersForMgmtFn = origDiscoverPCSC
 	})
 }
 

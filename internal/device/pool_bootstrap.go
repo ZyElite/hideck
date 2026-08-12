@@ -32,6 +32,8 @@ func deriveESIMTransport(cfg config.DeviceConfig) string {
 		return config.ESIMTransportQMI
 	case "mbim":
 		return config.ESIMTransportMBIM
+	case "pcsc":
+		return config.ESIMTransportPCSC
 	case "at":
 		return config.ESIMTransportAT
 	}
@@ -68,6 +70,9 @@ func hasManagedQMINetwork(cfg config.DeviceConfig) bool {
 }
 
 func requiresQMICore(cfg config.DeviceConfig) bool {
+	if resolvedBackendMode(cfg) == backend.BackendPCSC {
+		return false
+	}
 	if requiresMBIMCore(cfg) {
 		return false
 	}
@@ -233,6 +238,10 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 		close(watchdogStop)
 		p.endRebuildAttemptIfCurrent(devCfg.ID, attempt)
 	}()
+
+	if resolvedBackendMode(devCfg) == backend.BackendPCSC {
+		return p.addPCSCWorkerFromConfig(devCfg, attempt)
+	}
 
 	needsQMICore := requiresQMICore(devCfg)
 	if p.lifecycle != nil && needsQMICore {

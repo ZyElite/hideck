@@ -19,6 +19,7 @@ import (
 	"github.com/iniwex5/vohive/internal/esim"
 	mbimcore "github.com/iniwex5/vohive/internal/mbim"
 	"github.com/iniwex5/vohive/internal/modem"
+	"github.com/iniwex5/vohive/internal/pcsc"
 	"github.com/iniwex5/vohive/internal/proxy/server"
 	qmicore "github.com/iniwex5/vohive/internal/qmi"
 	"github.com/iniwex5/vohive/internal/vowifihost"
@@ -67,6 +68,17 @@ type liveSIMMetadataReader interface {
 	GetSIMMetadataLive(ctx context.Context) (*backend.SIMMetadata, error)
 }
 
+type liveSIMIdentitySnapshot struct {
+	ICCID     string
+	IMSI      string
+	NativeSPN string
+	Metadata  *backend.SIMMetadata
+}
+
+type liveSIMIdentitySnapshotReader interface {
+	ReadSIMIdentityLive(ctx context.Context) (liveSIMIdentitySnapshot, error)
+}
+
 const publicIPLookupWait = 6 * time.Second
 
 const (
@@ -97,6 +109,7 @@ type Worker struct {
 	Backend     backend.DeviceBackend // 双模后端接口（AT / QMI / Auto）
 	QMICore     *qmicore.Manager
 	MBIMCore    *mbimcore.Manager
+	PCSCService *pcsc.Service
 	netOverride NetworkController
 	APDUArbiter *apduarbiter.Arbiter
 	qmiSMS      qmiSMSCore
@@ -205,6 +218,8 @@ type Pool struct {
 	policyResolver         cardpolicy.Resolver
 	smsIdentities          smsIdentityStore
 	dynamicInterfaceMapper DynamicInterfaceMapper
+	pcscService            *pcsc.Service
+	pcscReconcileMu        sync.Mutex
 }
 
 func NewPool(cfg *config.Config) *Pool {
@@ -235,6 +250,7 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 		lifecycle:              newLifecycleCoordinator(),
 		smsIdentities:          databaseSMSIdentityStore{},
 		dynamicInterfaceMapper: mapper,
+		pcscService:            pcsc.New(),
 	}
 	p.transportRecovery = NewTransportRecoveryController(p)
 	p.voWiFiHost().ConfigureAdapter(p)
@@ -549,7 +565,20 @@ func (w *Worker) refreshIdentityLive(ctx context.Context, reason string) (liveSI
 	}
 
 	iccid, imsi, nativeSPN := "", "", ""
-	if v, err := reader.GetICCIDLive(ctx); err == nil {
+	var simMetadata *backend.SIMMetadata
+	spnReadOK, metadataReadOK := false, false
+	if snapshotReader, supported := w.Backend.(liveSIMIdentitySnapshotReader); supported {
+		snapshot, err := snapshotReader.ReadSIMIdentityLive(ctx)
+		if err != nil {
+			return liveSIMIdentityRefreshResult{}, err
+		}
+		iccid = strings.TrimSpace(snapshot.ICCID)
+		imsi = strings.TrimSpace(snapshot.IMSI)
+		nativeSPN = strings.TrimSpace(snapshot.NativeSPN)
+		simMetadata = snapshot.Metadata
+		spnReadOK = true
+		metadataReadOK = true
+	} else if v, err := reader.GetICCIDLive(ctx); err == nil {
 		iccid = strings.TrimSpace(v)
 		if iccid == "" {
 			logger.Debug("读取 ICCID 为空", "device", w.ID, "reason", reason)
@@ -557,34 +586,34 @@ func (w *Worker) refreshIdentityLive(ctx context.Context, reason string) (liveSI
 	} else {
 		logger.Debug("读取 ICCID 失败", "device", w.ID, "reason", reason, "err", err)
 	}
-	if v, err := reader.GetIMSILive(ctx); err == nil {
-		imsi = strings.TrimSpace(v)
-		if imsi == "" {
-			logger.Debug("读取 IMSI 为空", "device", w.ID, "reason", reason)
-		}
-	} else {
-		logger.Debug("读取 IMSI 失败", "device", w.ID, "reason", reason, "err", err)
-	}
-	spnReadOK := false
-	if spnReader, ok := w.Backend.(liveSIMSPNReader); ok {
-		if v, err := spnReader.GetNativeSPNLive(ctx); err == nil {
-			nativeSPN = strings.TrimSpace(v)
-			spnReadOK = true
+	if _, supported := w.Backend.(liveSIMIdentitySnapshotReader); !supported {
+		if v, err := reader.GetIMSILive(ctx); err == nil {
+			imsi = strings.TrimSpace(v)
+			if imsi == "" {
+				logger.Debug("读取 IMSI 为空", "device", w.ID, "reason", reason)
+			}
 		} else {
-			logger.Debug("读取 EF_SPN 失败", "device", w.ID, "reason", reason, "err", err)
+			logger.Debug("读取 IMSI 失败", "device", w.ID, "reason", reason, "err", err)
+		}
+		if spnReader, ok := w.Backend.(liveSIMSPNReader); ok {
+			if v, err := spnReader.GetNativeSPNLive(ctx); err == nil {
+				nativeSPN = strings.TrimSpace(v)
+				spnReadOK = true
+			} else {
+				logger.Debug("读取 EF_SPN 失败", "device", w.ID, "reason", reason, "err", err)
+			}
+		}
+		if metadataReader, ok := w.Backend.(liveSIMMetadataReader); ok {
+			if meta, err := metadataReader.GetSIMMetadataLive(ctx); err == nil {
+				simMetadata = meta
+				metadataReadOK = true
+			}
 		}
 	}
-	var simMetadata *backend.SIMMetadata
-	metadataReadOK := false
-	if metadataReader, ok := w.Backend.(liveSIMMetadataReader); ok {
-		if meta, err := metadataReader.GetSIMMetadataLive(ctx); err == nil {
-			simMetadata = meta
-			metadataReadOK = true
-		}
-	}
-	if simMetadata == nil ||
+	_, snapshotSupported := w.Backend.(liveSIMIdentitySnapshotReader)
+	if !snapshotSupported && (simMetadata == nil ||
 		strings.TrimSpace(simMetadata.NativeMCC) == "" ||
-		strings.TrimSpace(simMetadata.NativeMNC) == "" {
+		strings.TrimSpace(simMetadata.NativeMNC) == "") {
 		if mcc, mnc, err := w.Backend.GetNativeMCCMNC(ctx); err == nil {
 			mcc = strings.TrimSpace(mcc)
 			mnc = strings.TrimSpace(mnc)
@@ -1314,6 +1343,7 @@ func (p *Pool) startPoolBackgroundServicesOnce() {
 		go p.healthCheckLoop()
 		go p.overviewStreamLoop()
 		go p.startVoWiFiDesiredReconcileLoop()
+		go p.pcscMonitorLoop()
 		p.startInitialDesiredVoWiFiAutoStart(5 * time.Second)
 
 		p.udevWatcher = NewUdevWatcher(p)
@@ -1488,7 +1518,8 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 	liveWorkerIndex := BuildWorkerDiscoveryIndex(p.GetAllWorkers(), false)
 	hardware := p.collectRescanHardware(discovered, liveWorkerIndex)
 	managed := config.ListDevices()
-	resolved := ResolveDeviceIdentities(hardware, managed)
+	modemDevices, pcscDevices := partitionManagedDevices(managed)
+	resolved := ResolveDeviceIdentities(hardware, modemDevices)
 
 	if len(resolved.Degraded) > 0 || len(resolved.Unmatched) > 0 {
 		logger.Debug("rescan 发现未匹配或退化设备", "degraded", len(resolved.Degraded), "unmatched", len(resolved.Unmatched))
@@ -1689,7 +1720,20 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 		}
 	}
 
-	return nil
+	return p.reconcilePCSCReaders(opts, managed, pcscDevices)
+}
+
+func partitionManagedDevices(devices []config.DeviceConfig) ([]config.DeviceConfig, []config.DeviceConfig) {
+	modems := make([]config.DeviceConfig, 0, len(devices))
+	readers := make([]config.DeviceConfig, 0)
+	for _, device := range devices {
+		if resolvedBackendMode(device) == backend.BackendPCSC {
+			readers = append(readers, device)
+			continue
+		}
+		modems = append(modems, device)
+	}
+	return modems, readers
 }
 
 // RebuildWorker 安全移除并重建指定设备的 Worker。

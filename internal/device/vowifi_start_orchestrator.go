@@ -82,10 +82,18 @@ func (w workerAKAProviderInput) RuntimeModem() (innersim.ATModem, error) {
 }
 
 func BuildAKAProvider(w *Worker, deviceID string) innersim.AKAProvider {
-	return innersim.BuildAKAProvider(workerAKAProviderInput{
-		worker:   w,
-		deviceID: deviceID,
-	})
+	return buildWorkerAKAProvider(w, deviceID, nil)
+}
+
+func buildWorkerAKAProvider(w *Worker, deviceID string, modem runtimehost.Modem) innersim.AKAProvider {
+	if w != nil && strings.EqualFold(workerAKAProviderInput{worker: w}.BackendMode(), backend.BackendPCSC) {
+		pcscBackend, ok := w.Backend.(*pcscDeviceBackend)
+		if !ok {
+			return nil
+		}
+		return &pcscAKAProvider{backend: pcscBackend, ICCID: w.CurrentICCID()}
+	}
+	return innersim.BuildAKAProvider(workerAKAProviderInput{worker: w, deviceID: deviceID, modem: modem})
 }
 
 func (p *Pool) Context() context.Context {
@@ -180,11 +188,7 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 	}
 	startCtx.Profile = startProfile
 
-	akaProvider := innersim.BuildAKAProvider(workerAKAProviderInput{
-		worker:   w,
-		deviceID: deviceID,
-		modem:    modemIface,
-	})
+	akaProvider := buildWorkerAKAProvider(w, deviceID, modemIface)
 	if akaProvider == nil {
 		if strings.EqualFold(workerAKAProviderInput{worker: w}.BackendMode(), backend.BackendMBIM) {
 			return startCtx, fmt.Errorf("设备 %s 的 MBIM 不支持 AKA(AUTH 与逻辑通道均不可用),如需 VoWiFi 请切 QMI 组态", deviceID)
@@ -224,6 +228,10 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		return startCtx, errPrepare
 	}
 	startCtx.Prepared = prepared
+	startCtx.Mode = runtimehost.StartModeMain
+	if strings.EqualFold(w.Backend.Mode(), backend.BackendPCSC) {
+		startCtx.Mode = runtimehost.StartModeReader
+	}
 	if preferred, ok := akaProvider.(innersim.AKAWithPreferenceProvider); ok {
 		akaProvider = innersim.WrapPreferredAKAProvider(preferred, string(prepared.IMSIdentity.AKAAppPreference))
 	}
@@ -267,6 +275,10 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 func enterVoWiFiRFOff(ctx context.Context, w *Worker, traceID string) error {
 	if w == nil || w.Backend == nil {
 		return fmt.Errorf("VoWiFi 启动缺少射频控制后端")
+	}
+	if strings.EqualFold(w.Backend.Mode(), backend.BackendPCSC) {
+		logger.Info("PC/SC 读卡器没有蜂窝射频，跳过射频切换", "trace_id", traceID, "device", w.ID)
+		return nil
 	}
 	if strings.EqualFold(w.Backend.Mode(), backend.BackendMBIM) {
 		logger.Info("MBIM 后端不支持真正的低功耗模式", "trace_id", traceID, "device", w.ID)

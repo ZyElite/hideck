@@ -11,6 +11,7 @@ import (
 )
 
 type PreparedStart struct {
+	Mode         string
 	Profile      identity.Profile
 	Prepared     identity.PreparedSession
 	Modem        runtimehost.Modem

@@ -83,7 +83,7 @@ func (p *Pool) captureESIMSwitchContext(deviceID string, targetICCID string) esi
 	}
 	ctx.VoWiFiActiveBefore = p.IsVoWiFiActive(deviceID)
 
-	if worker.Backend != nil {
+	if worker.Backend != nil && resolvedBackendMode(worker.Config) != backend.BackendPCSC {
 		if opMode, err := worker.Backend.GetOperatingMode(context.Background()); err == nil {
 			ctx.FlightModeBefore = isFlightOperatingMode(opMode)
 		} else {
@@ -267,7 +267,7 @@ func (p *Pool) applyNetworkPreferenceForSwitchSnapshot(worker *Worker, snapshot 
 }
 
 func releaseRadioBeforeSwitch(deviceID string, worker *Worker) {
-	if worker == nil || worker.Backend == nil {
+	if worker == nil || worker.Backend == nil || resolvedBackendMode(worker.Config) == backend.BackendPCSC {
 		return
 	}
 	controller, ok := worker.Backend.(backend.OperatingModeController)
@@ -288,7 +288,7 @@ func releaseRadioBeforeSwitch(deviceID string, worker *Worker) {
 }
 
 func (p *Pool) bringRadioOnlineAfterSwitch(deviceID string, worker *Worker, snapshot esimSwitchContext, attachTimeout time.Duration) {
-	if worker == nil || worker.Backend == nil {
+	if worker == nil || worker.Backend == nil || resolvedBackendMode(worker.Config) == backend.BackendPCSC {
 		return
 	}
 	controller, ok := worker.Backend.(backend.OperatingModeController)
@@ -891,6 +891,9 @@ func (p *Pool) setOperatingModeWithRetry(worker *Worker, mode backend.OperatingM
 }
 
 func (p *Pool) restoreRadioDataForSwitchSnapshot(deviceID string, worker *Worker, snapshot esimSwitchContext, reason string, radioCycleAlreadyDone bool) {
+	if worker != nil && worker.Backend != nil && resolvedBackendMode(worker.Config) == backend.BackendPCSC {
+		return
+	}
 	if snapshot.FlightModeBefore {
 		if worker.Backend != nil {
 			if err := p.setOperatingModeWithRetry(worker, backend.ModeRFOff); err != nil {

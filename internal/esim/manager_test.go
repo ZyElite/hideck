@@ -2550,6 +2550,15 @@ type lifecycleSmartCardChannel struct {
 	closedChannel   atomic.Int32
 }
 
+type contextAwareSmartCardChannel struct {
+	lifecycleSmartCardChannel
+	context context.Context
+}
+
+func (channel *contextAwareSmartCardChannel) SetContext(ctx context.Context) {
+	channel.context = ctx
+}
+
 func (c *lifecycleSmartCardChannel) Connect() error {
 	c.connectCalls.Add(1)
 	return nil
@@ -2582,6 +2591,31 @@ func (c *lifecycleSmartCardChannel) CloseLogicalChannel(channel byte) error {
 }
 
 var _ driver.SmartCardChannel = (*lifecycleSmartCardChannel)(nil)
+
+func TestCustomSmartCardChannelInheritsOperationContext(t *testing.T) {
+	type contextKey string
+	const key contextKey = "operation"
+	operationCtx := context.WithValue(context.Background(), key, "download")
+	channel := &contextAwareSmartCardChannel{}
+	manager := NewManagerWithSmartCardChannelFactoryCallbacks(
+		"reader-1",
+		func() (driver.SmartCardChannel, error) { return channel, nil },
+		nil,
+		ChannelFactorySwitchCallbacks{},
+	)
+	manager.channelCtx.Store(&operationCtx)
+
+	created, err := manager.newSmartCardChannel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created != channel {
+		t.Fatalf("created channel = %T, want original channel", created)
+	}
+	if got := channel.context.Value(key); got != "download" {
+		t.Fatalf("channel context value = %v, want download", got)
+	}
+}
 
 func newLifecycleNotificationClient(t *testing.T, ch *lifecycleSmartCardChannel, handleErrByHost map[string]error) (*lpa.Client, *fakeNotificationRoundTripper) {
 	t.Helper()
