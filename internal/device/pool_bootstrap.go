@@ -190,6 +190,18 @@ func buildESIMMBIMTransport(mgr mbimUICCProvider) esim.QMIAPDUTransport {
 	return esim.NewMBIMAPDUTransport(mgr)
 }
 
+func (p *Pool) initialCellularRadioSuppression(cfg config.DeviceConfig) bool {
+	if cfg.VoWiFiEnabled || cfg.AirplaneEnabled {
+		return true
+	}
+	if p == nil {
+		return false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.policyResolver != nil
+}
+
 type apduArbiterAwareTransport interface {
 	SetAPDUArbiter(arbiter *apduarbiter.Arbiter)
 }
@@ -416,7 +428,9 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 		stop:             make(chan struct{}),
 		reassembler:      smscodec.NewReassembler(),
 	}
-	w.setCellularRadioSuppressed(devCfg.VoWiFiEnabled || devCfg.AirplaneEnabled)
+	// The live ICCID policy is authoritative. Keep QMI registration suppressed
+	// until it has replaced the stale device-config snapshot.
+	w.setCellularRadioSuppressed(p.initialCellularRadioSuppression(devCfg))
 	p.assignWorkerGeneration(w)
 	configureWorkerAPDUArbiter(w, qmiTransport)
 

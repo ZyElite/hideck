@@ -31,6 +31,35 @@ func TestApplyPolicyProjectsFields(t *testing.T) {
 	}
 }
 
+func TestInitialCellularRadioSuppressionWaitsForLiveCardPolicy(t *testing.T) {
+	p := NewPool(nil)
+	defer p.cancel()
+	p.SetPolicyResolver(&stubPolicyResolver{})
+
+	if !p.initialCellularRadioSuppression(config.DeviceConfig{}) {
+		t.Fatal("存在卡策略解析器时，真实 ICCID 策略投影前必须抑制蜂窝驻网")
+	}
+
+	w := &Worker{ID: "wwan0"}
+	w.setCellularRadioSuppressed(p.initialCellularRadioSuppression(w.Config))
+	applyPolicyToWorker(w, cardpolicy.Policy{ICCID: "123", NetworkEnabled: true})
+	if w.cellularRadioIsSuppressed() {
+		t.Fatal("在线卡策略投影后必须解除蜂窝驻网抑制")
+	}
+}
+
+func TestInitialCellularRadioSuppressionWithoutResolverUsesDeviceConfig(t *testing.T) {
+	p := NewPool(nil)
+	defer p.cancel()
+
+	if p.initialCellularRadioSuppression(config.DeviceConfig{}) {
+		t.Fatal("无卡策略解析器且静态策略在线时不应抑制蜂窝驻网")
+	}
+	if !p.initialCellularRadioSuppression(config.DeviceConfig{VoWiFiEnabled: true}) {
+		t.Fatal("静态 VoWiFi 策略必须抑制蜂窝驻网")
+	}
+}
+
 // 投影时按策略真正进入飞行模式：当前在线 ⇒ 切 RFOff。
 func TestProjectionEntersAirplaneMode(t *testing.T) {
 	p := &Pool{ctx: context.Background()}
