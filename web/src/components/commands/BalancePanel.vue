@@ -76,7 +76,7 @@ function stateLabel(query: BalanceQuery) {
 </template>
 
 <style scoped>
-.balance-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--ui-border); }
+.balance-panel { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; }
 .panel-heading { min-height: 58px; padding: 10px 12px 10px 14px; border-bottom: 1px solid var(--ui-border); display: flex; align-items: center; justify-content: space-between; }
 .panel-heading h3 { margin: 0; font-size: 15px; letter-spacing: 0; }
 .query-controls { padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; border-bottom: 1px solid var(--ui-border); }
@@ -94,5 +94,4 @@ function stateLabel(query: BalanceQuery) {
 .query-error { margin: 7px 0 0; font-size: 11px; }
 .balance-empty { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #94a3b8; font-size: 12px; }
 .balance-empty .el-icon { font-size: 26px; color: #0d9488; }
-@media (max-width: 1023px) { .balance-panel { border-right: 0; border-bottom: 1px solid var(--ui-border); } }
 </style>

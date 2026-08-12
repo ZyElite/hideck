@@ -1,15 +1,29 @@
 <script setup lang="ts">
-import type { CommandEvent } from '../../types/commands'
+import { computed } from 'vue'
+import BalanceMessage from './BalanceMessage.vue'
+import type { BalanceQuery, CommandEvent } from '../../types/commands'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
-import { Bot24Regular, History24Regular } from '@vicons/fluent'
+import { Bot24Regular } from '@vicons/fluent'
 
-defineProps<{
+const props = defineProps<{
   events: CommandEvent[]
+  balanceQueries: BalanceQuery[]
   loading: boolean
-  hasOlder: boolean
 }>()
 
-defineEmits<{ loadOlder: [] }>()
+type TimelineItem =
+  | { key: string; kind: 'command'; createdAt: string; event: CommandEvent }
+  | { key: string; kind: 'balance'; createdAt: string; query: BalanceQuery }
+
+const timelineItems = computed<TimelineItem[]>(() => {
+  const commands: TimelineItem[] = props.events.map((event) => ({
+    key: `command-${event.id}`, kind: 'command', createdAt: event.created_at, event
+  }))
+  const balances: TimelineItem[] = props.balanceQueries.map((query) => ({
+    key: `balance-${query.id}`, kind: 'balance', createdAt: query.updated_at, query
+  }))
+  return [...commands, ...balances].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
+})
 
 function eventLabel(event: CommandEvent) {
   if (event.kind === 'accepted') return '你'
@@ -26,36 +40,31 @@ function eventText(event: CommandEvent) {
 
 <template>
   <section class="timeline" aria-label="命令对话记录">
-    <div class="timeline-toolbar">
-      <div>
-        <h3>执行时间线</h3>
-        <p>{{ events.length }} 条事件</p>
-      </div>
-      <el-button v-if="hasOlder" text :loading="loading" @click="$emit('loadOlder')">
-        <el-icon><History24Regular /></el-icon>
-        更早记录
-      </el-button>
-    </div>
-
     <div class="timeline-scroll" aria-live="polite">
-      <div v-if="loading && !events.length" class="empty-line">正在读取命令记录</div>
-      <div v-else-if="!events.length" class="empty-state">
+      <div v-if="loading && !timelineItems.length" class="empty-line">正在读取命令记录</div>
+      <div v-else-if="!timelineItems.length" class="empty-state">
         <el-icon><Bot24Regular /></el-icon>
         <strong>暂无命令记录</strong>
       </div>
       <article
-        v-for="event in events"
-        :key="event.id"
+        v-for="item in timelineItems"
+        :key="item.key"
         class="message"
-        :class="{ user: event.kind === 'accepted', error: event.kind === 'error' }"
+        :class="{
+          user: item.kind === 'command' && item.event.kind === 'accepted',
+          error: item.kind === 'command' && item.event.kind === 'error'
+        }"
       >
         <div class="message-meta">
-          <span>{{ eventLabel(event) }}</span>
-          <time>{{ formatDeviceDateTime(event.created_at) }}</time>
+          <span>{{ item.kind === 'command' ? eventLabel(item.event) : 'VoHive' }}</span>
+          <time>{{ formatDeviceDateTime(item.createdAt) }}</time>
         </div>
-        <pre>{{ eventText(event) }}</pre>
-        <span v-if="event.execution?.state === 'running'" class="state running">执行中</span>
-        <span v-else-if="event.execution?.state === 'failed'" class="state failed">失败</span>
+        <template v-if="item.kind === 'command'">
+          <pre>{{ eventText(item.event) }}</pre>
+          <span v-if="item.event.execution?.state === 'running'" class="state running">执行中</span>
+          <span v-else-if="item.event.execution?.state === 'failed'" class="state failed">失败</span>
+        </template>
+        <BalanceMessage v-else :query="item.query" />
       </article>
     </div>
   </section>
@@ -63,9 +72,6 @@ function eventText(event: CommandEvent) {
 
 <style scoped>
 .timeline { min-height: 0; display: flex; flex-direction: column; }
-.timeline-toolbar { min-height: 58px; padding: 10px 14px; border-bottom: 1px solid var(--ui-border); display: flex; align-items: center; justify-content: space-between; }
-.timeline-toolbar h3 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: 0; }
-.timeline-toolbar p { margin: 2px 0 0; color: #94a3b8; font-size: 12px; }
 .timeline-scroll { min-height: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .message { max-width: min(82%, 720px); align-self: flex-start; }
 .message.user { align-self: flex-end; }

@@ -130,7 +130,9 @@ func (s *Server) handleCommandEventStream(c *gin.Context) {
 	}
 	updates, unsubscribe := s.commandCenter.Subscribe()
 	defer unsubscribe()
-	prepareSSE(c)
+	if err := prepareSSE(c); err != nil {
+		return
+	}
 	if after, err = s.writeCommandBacklog(c, after); err != nil {
 		return
 	}
@@ -213,13 +215,17 @@ func commandEventCursor(c *gin.Context) (uint64, int, error) {
 	return after, limit, nil
 }
 
-func prepareSSE(c *gin.Context) {
+func prepareSSE(c *gin.Context) error {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)
+	if _, err := fmt.Fprint(c.Writer, ": connected\n\n"); err != nil {
+		return err
+	}
 	c.Writer.Flush()
+	return nil
 }
 
 func writeSSEEvent(c *gin.Context, event commandcenter.Event) error {

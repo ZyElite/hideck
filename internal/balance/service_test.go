@@ -153,6 +153,36 @@ func TestInboundSMSRequiresExpectedSenderAndCompletesParsedQuery(t *testing.T) {
 	}
 }
 
+func TestInboundSMSMatchesPendingQueryAcrossTimezoneOffsets(t *testing.T) {
+	queryZone := time.FixedZone("UTC+8", 8*60*60)
+	replyZone := time.FixedZone("UTC+1", 1*60*60)
+	now := time.Date(2026, 8, 12, 7, 28, 46, 183914565, queryZone)
+	gateway := &fakeGateway{snapshot: DeviceSnapshot{
+		DeviceID: "wwan1", ICCID: "iccid-cte", MCC: "234", MNC: "33",
+	}}
+	rule, found := carrierquery.FindBuiltIn("234", "33")
+	if !found {
+		t.Fatal("CTExcel built-in rule not found")
+	}
+	service, store := newTestService(t, gateway, rule, now)
+	query, err := service.StartQuery(context.Background(), "wwan1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replyTime := now.Add(2 * time.Second).In(replyZone)
+
+	matched, err := service.HandleInboundSMS(context.Background(), InboundSMS{
+		ICCID: "iccid-cte", Sender: "888", Content: "您当前余额为 £1", Time: replyTime,
+	})
+	if err != nil || !matched {
+		t.Fatalf("cross-timezone reply matched=%v err=%v query=%s reply=%s", matched, err, now, replyTime)
+	}
+	stored, _, err := store.Get(context.Background(), query.ID)
+	if err != nil || stored.State != StateCompleted || stored.Amount != "1" || stored.Currency != "GBP" {
+		t.Fatalf("stored query = %+v, err=%v", stored, err)
+	}
+}
+
 func TestExpirePendingPreventsLateSMSCorrelation(t *testing.T) {
 	now := time.Date(2026, 8, 11, 10, 0, 0, 0, time.UTC)
 	gateway := &fakeGateway{snapshot: DeviceSnapshot{DeviceID: "wwan0", ICCID: "iccid-1", MCC: "234", MNC: "10"}}

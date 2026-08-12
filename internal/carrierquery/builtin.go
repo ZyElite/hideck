@@ -109,4 +109,4 @@ func unsupportedRule(id, mcc, mnc, operator, alternative, source, limitation str
 		Limitations: []string{limitation}, Alternative: alternative, Enabled: true, BuiltIn: true}
 }
 
-const balancePattern = `(?i)(?:credit|balance|saldo|guthaben|tegoed)[^0-9]{0,32}(?P<amount>[0-9]+(?:[.,][0-9]{1,2})?)`
+const balancePattern = `(?i)(?:credit|balance|saldo|guthaben|tegoed|余额)[^0-9]{0,32}(?P<amount>[0-9]+(?:[.,][0-9]{1,2})?)`

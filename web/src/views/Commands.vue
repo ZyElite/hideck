@@ -2,9 +2,8 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
-import CommandTimeline from '../components/commands/CommandTimeline.vue'
-import CommandComposer from '../components/commands/CommandComposer.vue'
-import BalancePanel from '../components/commands/BalancePanel.vue'
+import CommandChat from '../components/commands/CommandChat.vue'
+import BalanceDrawer from '../components/commands/BalanceDrawer.vue'
 import RuleEditorDrawer from '../components/commands/RuleEditorDrawer.vue'
 import { useEventStream } from '../composables/useEventStream'
 import { commandService } from '../services/commands'
@@ -12,7 +11,6 @@ import { devicesService } from '../services/devices'
 import type { DeviceMgmtListItem } from '../types/api'
 import type { BalanceQuery, CarrierQueryRule, CommandDefinition, CommandEvent } from '../types/commands'
 import { buildDangerousCommand } from '../utils/commandInput'
-import { Delete24Regular, PlugConnected24Regular } from '@vicons/fluent'
 
 const pageSize = 100
 const definitions = ref<CommandDefinition[]>([])
@@ -28,6 +26,7 @@ const hasOlder = ref(false)
 const executing = ref(false)
 const querying = ref(false)
 const rulesOpen = ref(false)
+const balanceOpen = ref(false)
 const savingRule = ref(false)
 const dangerousDefinition = ref<CommandDefinition | null>(null)
 const dangerForm = reactive({ device: '', target: '', phone: '', duration: 15 })
@@ -41,6 +40,7 @@ const stream = useEventStream<CommandEvent>({
   reconnectDelayMs: 2500
 })
 const streamConnected = stream.connected
+const selectedBalance = computed(() => balances.value.find((query) => query.device_id === selectedDevice.value))
 
 const dangerousTitle = computed(() => {
   if (dangerousDefinition.value?.name === 'switch') return '切换 eSIM'
@@ -49,10 +49,12 @@ const dangerousTitle = computed(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadCatalog(), loadEvents(), loadDevices(), refreshBalances(), loadRules()])
+  const pageData = Promise.all([loadCatalog(), loadDevices(), refreshBalances(), loadRules()])
+  await loadEvents()
   const latest = events.value.at(-1)?.id
   if (latest) stream.setLastEventId(latest)
   void stream.connect()
+  await pageData
   balanceTimer = window.setInterval(() => {
     if (balances.value.some((query) => query.state === 'sending' || query.state === 'awaiting_reply')) {
       void refreshBalances(true)
@@ -134,6 +136,7 @@ async function execute(input: string) {
   const latest = events.value.at(-1)?.id || 0
   const catchup = await commandService.events({ afterId: latest, limit: 20 })
   if (catchup.ok) mergeEvents(catchup.data)
+  if (input.trim().split(/\s+/, 1)[0]?.toLowerCase() === '/balance') await refreshBalances(true)
 }
 
 function mergeEvents(incoming: CommandEvent[]) {
@@ -166,6 +169,7 @@ async function startBalance() {
     return
   }
   balances.value = [result.data, ...balances.value.filter((item) => item.id !== result.data.id)]
+  balanceOpen.value = false
   ElMessage.success(result.data.state === 'completed' ? '运营商已返回结果' : '查询已发送，正在等待运营商回复')
 }
 
@@ -224,41 +228,39 @@ async function deleteRule(id: string) {
 
 <template>
   <div class="commands-page">
-    <PageHeader title="命令中心">
-      <template #actions>
-        <div class="header-actions">
-          <span class="stream-state" :class="{ online: streamConnected }">
-            <el-icon><PlugConnected24Regular /></el-icon>
-            {{ streamConnected ? '实时连接' : '正在重连' }}
-          </span>
-          <el-tooltip content="清除已结束的命令历史" placement="bottom">
-            <el-button aria-label="清除命令历史" @click="clearHistory"><el-icon><Delete24Regular /></el-icon></el-button>
-          </el-tooltip>
-        </div>
-      </template>
-    </PageHeader>
+    <PageHeader title="命令中心" />
 
-    <div class="command-workspace ui-surface-strong">
-      <BalancePanel
+    <div class="commands-layout">
+      <CommandChat
         v-model:selected-device="selectedDevice"
+        :events="events"
+        :balance-queries="balances"
+        :latest-balance="selectedBalance"
+        :definitions="definitions"
         :devices="devices"
-        :queries="balances"
         :loading="loading"
-        :querying="querying"
-        @query="startBalance"
-        @edit-rules="rulesOpen = true"
+        :loading-older="loadingOlder"
+        :has-older="hasOlder"
+        :busy="executing"
+        :stream-connected="streamConnected"
+        @load-older="loadOlder"
+        @clear-history="clearHistory"
+        @open-balance="balanceOpen = true"
+        @submit="execute"
+        @dangerous="openDangerous"
       />
-      <main class="conversation-pane">
-        <CommandTimeline :events="events" :loading="loading || loadingOlder" :has-older="hasOlder" @load-older="loadOlder" />
-        <CommandComposer
-          :definitions="definitions"
-          :busy="executing"
-          :selected-device="selectedDevice"
-          @submit="execute"
-          @dangerous="openDangerous"
-        />
-      </main>
     </div>
+
+    <BalanceDrawer
+      v-model="balanceOpen"
+      v-model:selected-device="selectedDevice"
+      :devices="devices"
+      :queries="balances"
+      :loading="loading"
+      :querying="querying"
+      @query="startBalance"
+      @edit-rules="rulesOpen = true"
+    />
 
     <el-dialog
       :model-value="!!dangerousDefinition"
@@ -300,17 +302,11 @@ async function deleteRule(id: string) {
 
 <style scoped>
 .commands-page { min-width: 0; }
-.header-actions { display: flex; align-items: center; gap: 8px; }
-.stream-state { min-height: 36px; padding: 0 10px; border: 1px solid var(--ui-border); border-radius: 6px; display: inline-flex; align-items: center; gap: 6px; color: #b45309; font-size: 12px; }
-.stream-state.online { color: #15803d; }
-.command-workspace { height: calc(100dvh - 166px); min-height: 520px; display: grid; grid-template-columns: 340px minmax(0, 1fr); overflow: hidden; border-radius: 8px; box-shadow: var(--ui-shadow-sm); }
-.conversation-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+.commands-layout { height: calc(100dvh - 166px); min-height: 520px; }
 @media (max-width: 1023px) {
-  .command-workspace { height: calc(100dvh - 166px); min-height: 520px; grid-template-columns: 1fr; grid-template-rows: minmax(190px, 34%) minmax(0, 1fr); }
-  .conversation-pane { height: auto; min-height: 0; }
+  .commands-layout { height: calc(100dvh - 166px); min-height: 520px; }
 }
 @media (max-width: 640px) {
-  .header-actions { width: 100%; justify-content: space-between; }
-  .command-workspace { height: calc(100dvh - 178px); min-height: 480px; margin: 0 -4px; grid-template-rows: minmax(176px, 32%) minmax(0, 1fr); }
+  .commands-layout { height: calc(100dvh - 178px); min-height: 480px; margin: 0 -4px; }
 }
 </style>

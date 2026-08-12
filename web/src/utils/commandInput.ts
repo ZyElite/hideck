@@ -13,6 +13,22 @@ export function commandTemplate(definition: CommandDefinition, selectedDevice = 
   return device ? `/${definition.name} ${device}` : `/${definition.name} `
 }
 
+export function commandTargetDevice(input: string, definitions: CommandDefinition[]): string | null {
+  const parts = input.trim().split(/\s+/)
+  const name = parts[0]?.startsWith('/') ? parts[0].slice(1).toLowerCase() : ''
+  const definition = definitions.find((item) => item.name.toLowerCase() === name)
+  if (!definition?.device_argument) return null
+  return parts[1] || ''
+}
+
+export function retargetDeviceCommand(input: string, definitions: CommandDefinition[], selectedDevice: string) {
+  const device = selectedDevice.trim()
+  if (!device || commandTargetDevice(input, definitions) === null) return input
+  const parts = input.trim().split(/\s+/)
+  if (parts.length === 1) return `${parts[0]} ${device}`
+  return [parts[0], device, ...parts.slice(2)].join(' ')
+}
+
 export function carrierReplySenderError(responseMode: string, sendersText: string) {
   if (responseMode !== 'sms') return ''
   const hasSender = sendersText.split('\n').some((sender) => sender.trim() !== '')

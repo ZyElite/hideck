@@ -11,9 +11,12 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    BalanceDrawer: typeof import('./components/commands/BalanceDrawer.vue')['default']
+    BalanceMessage: typeof import('./components/commands/BalanceMessage.vue')['default']
     BalancePanel: typeof import('./components/commands/BalancePanel.vue')['default']
     CardPolicyPanel: typeof import('./components/CardPolicyPanel.vue')['default']
     CarrierWebsheetDialog: typeof import('./components/CarrierWebsheetDialog.vue')['default']
+    CommandChat: typeof import('./components/commands/CommandChat.vue')['default']
     CommandComposer: typeof import('./components/commands/CommandComposer.vue')['default']
     CommandTimeline: typeof import('./components/commands/CommandTimeline.vue')['default']
     DebugPanel: typeof import('./components/DebugPanel.vue')['default']

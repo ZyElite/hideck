@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { CommandDefinition } from '../../types/commands'
-import { commandSuggestions, commandTemplate } from '../../utils/commandInput'
+import { commandSuggestions, commandTemplate, retargetDeviceCommand } from '../../utils/commandInput'
 import { Send24Regular } from '@vicons/fluent'
 
 const props = defineProps<{
@@ -18,6 +18,10 @@ const emit = defineEmits<{
 const input = ref('')
 const suggestions = computed(() => commandSuggestions(input.value, props.definitions))
 
+watch(() => props.selectedDevice, (device) => {
+  input.value = retargetDeviceCommand(input.value, props.definitions, device)
+})
+
 function choose(definition: CommandDefinition) {
   if (definition.dangerous) {
     emit('dangerous', definition)
@@ -27,7 +31,7 @@ function choose(definition: CommandDefinition) {
 }
 
 function submit() {
-  const value = input.value.trim()
+  const value = retargetDeviceCommand(input.value, props.definitions, props.selectedDevice).trim()
   if (!value || props.busy) return
   emit('submit', value)
   input.value = ''

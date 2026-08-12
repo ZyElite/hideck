@@ -3,19 +3,37 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const commandsView = await readFile(new URL('../src/views/Commands.vue', import.meta.url), 'utf8')
+const balanceDrawer = await readFile(new URL('../src/components/commands/BalanceDrawer.vue', import.meta.url), 'utf8')
+const commandChat = await readFile(new URL('../src/components/commands/CommandChat.vue', import.meta.url), 'utf8')
+const commandTimeline = await readFile(new URL('../src/components/commands/CommandTimeline.vue', import.meta.url), 'utf8')
 const commandComposer = await readFile(new URL('../src/components/commands/CommandComposer.vue', import.meta.url), 'utf8')
 
-test('command workspace source places balance controls before the conversation', () => {
-  const balanceIndex = commandsView.indexOf('<BalancePanel')
-  const conversationIndex = commandsView.indexOf('<main class="conversation-pane">')
+test('command workspace keeps balance inside chat and a responsive history drawer', () => {
+  const chatIndex = commandsView.indexOf('<CommandChat')
 
-  assert.ok(balanceIndex >= 0, 'balance panel is present')
-  assert.ok(conversationIndex > balanceIndex, 'balance panel precedes the conversation')
-  assert.match(commandsView, /grid-template-columns:\s*340px minmax\(0, 1fr\)/)
-  assert.match(commandsView, /grid-template-rows:\s*minmax\(190px, 34%\) minmax\(0, 1fr\)/)
+  assert.ok(chatIndex >= 0, 'independent chat is present')
+  assert.match(commandsView, /<BalanceDrawer/)
+  assert.match(balanceDrawer, /<el-drawer[\s\S]*<BalancePanel/)
+  assert.match(balanceDrawer, /narrowViewport\.value \? 'btt' : 'rtl'/)
+  assert.match(commandChat, /Wallet24Regular/)
+  assert.match(commandChat, /:events="visibleEvents"/)
+  assert.match(commandChat, /:balance-queries="visibleBalanceQueries"/)
+  assert.match(commandTimeline, /<BalanceMessage v-else/)
 })
 
 test('command composer source stays visible above the mobile safe area', () => {
   assert.match(commandComposer, /env\(safe-area-inset-bottom\)/)
   assert.match(commandComposer, /@media \(max-width: 1023px\).*position:\s*sticky;\s*bottom:\s*0;/s)
+})
+
+test('command realtime stream starts before secondary page data finishes', () => {
+  const pageDataIndex = commandsView.indexOf('const pageData = Promise.all')
+  const historyIndex = commandsView.indexOf('await loadEvents()')
+  const connectIndex = commandsView.indexOf('void stream.connect()')
+  const pageDataAwaitIndex = commandsView.indexOf('await pageData')
+
+  assert.ok(pageDataIndex >= 0)
+  assert.ok(historyIndex > pageDataIndex)
+  assert.ok(connectIndex > historyIndex)
+  assert.ok(pageDataAwaitIndex > connectIndex)
 })

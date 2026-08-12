@@ -408,7 +408,7 @@ func (s *Server) Run() error {
 
 	srv := &http.Server{
 		Addr:              s.cfg.Port,
-		Handler:           r,
+		Handler:           withCommandEventStreamDeadlineDisabled(r),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       120 * time.Second,
 		WriteTimeout:      120 * time.Second,
@@ -420,6 +420,22 @@ func (s *Server) Run() error {
 	s.httpSrvMu.Unlock()
 	logger.Info("启动 API 服务器", "port", s.cfg.Port)
 	return srv.ListenAndServe()
+}
+
+func withCommandEventStreamDeadlineDisabled(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if isCommandEventStreamPath(request.URL.Path) {
+			controller := http.NewResponseController(writer)
+			if err := controller.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+				logger.Warn("取消命令中心实时流写入超时失败", "err", err)
+			}
+		}
+		next.ServeHTTP(writer, request)
+	})
+}
+
+func isCommandEventStreamPath(path string) bool {
+	return path == "/api/command-center/stream" || path == "/api/commands/events/stream"
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {

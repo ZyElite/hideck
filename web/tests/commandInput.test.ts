@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { CommandDefinition } from '../src/types/commands'
-import { buildDangerousCommand, carrierReplySenderError, commandSuggestions, commandTemplate } from '../src/utils/commandInput'
+import {
+  buildDangerousCommand,
+  carrierReplySenderError,
+  commandSuggestions,
+  commandTargetDevice,
+  commandTemplate,
+  retargetDeviceCommand
+} from '../src/utils/commandInput'
 
 const definitions: CommandDefinition[] = [
   { name: 'send', usage: '/send [设备]', summary: '发送', dangerous: false, async: true, device_argument: true },
@@ -19,6 +26,14 @@ test('creates a command template that is ready for required arguments', () => {
   assert.equal(commandTemplate(definitions[0]), '/send ')
   assert.equal(commandTemplate(definitions[0], 'wwan0'), '/send wwan0')
   assert.equal(commandTemplate(definitions[2]), '/list')
+})
+
+test('retargets device commands while preserving global commands', () => {
+  assert.equal(commandTargetDevice('/send wwan0 447700900123 hello', definitions), 'wwan0')
+  assert.equal(commandTargetDevice('/list', definitions), null)
+  assert.equal(retargetDeviceCommand('/send wwan0 447700900123 hello', definitions, 'wwan1'), '/send wwan1 447700900123 hello')
+  assert.equal(retargetDeviceCommand('/sms', definitions, 'wwan1'), '/sms wwan1')
+  assert.equal(retargetDeviceCommand('/list', definitions, 'wwan1'), '/list')
 })
 
 test('requires a sender only for SMS reply rules', () => {

@@ -63,7 +63,7 @@ func (s *DatabaseStore) Complete(ctx context.Context, id string, completion Comp
 func (s *DatabaseStore) FindPending(ctx context.Context, iccid string, at time.Time) (Query, bool, error) {
 	var record appdb.BalanceQuery
 	err := s.db.WithContext(ctx).Where(
-		"iccid = ? AND state IN ? AND started_at <= ? AND expires_at >= ?",
+		"iccid = ? AND state IN ? AND julianday(started_at) <= julianday(?) AND julianday(expires_at) >= julianday(?)",
 		iccid, pendingStates(), at, at,
 	).Order("started_at desc").First(&record).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

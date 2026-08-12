@@ -182,6 +182,9 @@ func TestCommandEventStreamResumesAfterLastEventID(t *testing.T) {
 	}
 	defer response.Body.Close()
 	scanner := bufio.NewScanner(response.Body)
+	if !scanner.Scan() || scanner.Text() != ": connected" {
+		t.Fatalf("initial stream frame = %q, want connected comment", scanner.Text())
+	}
 	for scanner.Scan() {
 		if strings.HasPrefix(scanner.Text(), "id:") {
 			if got := strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "id:")); got != fmt.Sprint(events[1].ID) {
@@ -191,6 +194,42 @@ func TestCommandEventStreamResumesAfterLastEventID(t *testing.T) {
 		}
 	}
 	t.Fatalf("stream ended without event: %v", scanner.Err())
+}
+
+type writeDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadlineCalls int
+	deadline      time.Time
+}
+
+func (w *writeDeadlineRecorder) SetWriteDeadline(deadline time.Time) error {
+	w.deadlineCalls++
+	w.deadline = deadline
+	return nil
+}
+
+func TestOnlyCommandEventStreamsDisableWriteDeadline(t *testing.T) {
+	tests := []struct {
+		path      string
+		wantCalls int
+	}{
+		{path: "/api/command-center/stream", wantCalls: 1},
+		{path: "/api/commands/events/stream", wantCalls: 1},
+		{path: "/api/command-center/events", wantCalls: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			writer := &writeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+			handler := withCommandEventStreamDeadlineDisabled(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			handler.ServeHTTP(writer, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if writer.deadlineCalls != tt.wantCalls {
+				t.Fatalf("SetWriteDeadline calls = %d, want %d", writer.deadlineCalls, tt.wantCalls)
+			}
+			if tt.wantCalls > 0 && !writer.deadline.IsZero() {
+				t.Fatalf("stream write deadline = %s, want disabled", writer.deadline)
+			}
+		})
+	}
 }
 
 func newCommandCenterAPITestServer(t *testing.T) (*Server, string, *apiBalanceGateway) {
