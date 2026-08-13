@@ -138,7 +138,7 @@ function lines(value: string) {
       <el-icon aria-hidden="true"><Database24Regular /></el-icon>
       <div>
         <strong>实时后端规则库</strong>
-        <span>服务端内置规则通过数据库覆盖编辑；自定义规则持久化到数据库</span>
+        <span>同 ID 数据库规则完整替代内置规则；删除覆盖后恢复内置规则</span>
       </div>
       <div class="source-summary">
         <small>内置 {{ loaded ? builtIn.length : '—' }}</small>
@@ -262,7 +262,7 @@ function lines(value: string) {
       <el-tab-pane :label="`服务端内置 ${loaded ? builtIn.length : '—'}`" name="builtin">
         <div class="readonly-note">
           <strong>服务端内置 · 数据库覆盖可编辑</strong>
-          <span>内置数据本身保持只读；点击“覆盖编辑”会以同一规则 ID 保存数据库自定义版本，删除覆盖后自动恢复内置规则。</span>
+          <span>内置数据本身保持只读；同 ID 覆盖会完整替代内置规则，停用覆盖也会停用该规则，删除覆盖后自动恢复。</span>
         </div>
         <div v-if="loading && !loaded" class="inventory-state">正在读取服务端内置规则</div>
         <div v-else-if="!loaded" class="inventory-state">内置规则尚未从后端读取成功</div>

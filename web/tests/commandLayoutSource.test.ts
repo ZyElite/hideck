@@ -133,7 +133,7 @@ test('carrier rule source and mutation states are explicit without demo data', (
   assert.match(balancePanel, /内置可覆盖编辑 · 数据库自定义可管理/)
   assert.match(balancePanel, /v-else-if="rulesError"[\s\S]*role="alert"/)
   assert.match(ruleEditor, /实时后端规则库/)
-  assert.match(ruleEditor, /服务端内置规则通过数据库覆盖编辑；自定义规则持久化到数据库/)
+  assert.match(ruleEditor, /同 ID 数据库规则完整替代内置规则；删除覆盖后恢复内置规则/)
   assert.match(ruleEditor, /数据库中暂无自定义规则/)
   assert.match(ruleEditor, /自定义规则尚未从后端读取成功/)
   assert.match(ruleEditor, /`数据库自定义 \$\{loaded \? custom\.length : '—'\}`/)

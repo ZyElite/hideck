@@ -40,3 +40,12 @@ test('effective rules replace a built-in row with its database override', () => 
     ['Custom override', 'Another']
   )
 })
+
+test('disabled or retargeted overrides keep the built-in rule suppressed by ID', () => {
+  const builtIn = rule({ id: 'same', mcc: '234', mnc: '10', built_in: true })
+  const disabled = rule({ id: 'same', mcc: '234', mnc: '10', enabled: false })
+  assert.deepEqual(effectiveCarrierRules([builtIn], [disabled]), [])
+
+  const retargeted = rule({ id: 'same', mcc: '530', mnc: '24', operator: 'Retargeted' })
+  assert.deepEqual(effectiveCarrierRules([builtIn], [retargeted]).map((item) => item.operator), ['Retargeted'])
+})

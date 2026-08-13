@@ -29,7 +29,7 @@ func (r *Rules) Resolve(_ context.Context, snapshot DeviceSnapshot) (carrierquer
 		return rule, nil
 	}
 	rule, ok := carrierquery.FindBuiltIn(snapshot.MCC, snapshot.MNC)
-	if !ok || !rule.Enabled {
+	if !ok || !rule.Enabled || hasRuleID(custom, rule.ID) {
 		return carrierquery.Rule{}, ErrRuleNotFound
 	}
 	return rule, nil
@@ -40,10 +40,11 @@ func (r *Rules) ByID(_ context.Context, id string) (carrierquery.Rule, error) {
 	if err != nil {
 		return carrierquery.Rule{}, err
 	}
-	for _, rule := range custom {
-		if rule.Enabled && rule.ID == id {
-			return rule, nil
+	if rule, ok := findRuleByID(custom, id); ok {
+		if !rule.Enabled {
+			return carrierquery.Rule{}, ErrRuleNotFound
 		}
+		return rule, nil
 	}
 	for _, rule := range carrierquery.BuiltInRules() {
 		if rule.ID == id {
@@ -51,6 +52,21 @@ func (r *Rules) ByID(_ context.Context, id string) (carrierquery.Rule, error) {
 		}
 	}
 	return carrierquery.Rule{}, ErrRuleNotFound
+}
+
+func findRuleByID(rules []carrierquery.Rule, id string) (carrierquery.Rule, bool) {
+	id = strings.TrimSpace(id)
+	for _, rule := range rules {
+		if rule.ID == id {
+			return rule, true
+		}
+	}
+	return carrierquery.Rule{}, false
+}
+
+func hasRuleID(rules []carrierquery.Rule, id string) bool {
+	_, found := findRuleByID(rules, id)
+	return found
 }
 
 func (r *Rules) customRules() ([]carrierquery.Rule, error) {
