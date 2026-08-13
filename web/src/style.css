@@ -22,6 +22,7 @@
   --ui-primary-solid: #087f7b;
   --ui-primary-hover: #066b68;
   --ui-communication: #246bce;
+  --ui-info: #6b4eb8;
   --ui-success: #198754;
   --ui-warning: #b86a0b;
   --ui-danger: #c53b3b;
@@ -72,6 +73,7 @@ html.dark {
   --ui-primary-solid: #1a8b62;
   --ui-primary-hover: #82f4c7;
   --ui-communication: #5adbd7;
+  --ui-info: #b783ff;
   --ui-success: #66e9ad;
   --ui-warning: #eeb254;
   --ui-danger: #ef646a;

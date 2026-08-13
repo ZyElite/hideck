@@ -13,11 +13,11 @@ import {
 } from '../../utils/commandPresentation'
 import {
   Bot24Regular,
+  Chat24Regular,
   CheckmarkCircle24Regular,
   Clock24Regular,
   ErrorCircle24Regular,
-  Send24Regular,
-  Wallet24Regular
+  Send24Regular
 } from '@vicons/fluent'
 
 const props = defineProps<{
@@ -183,9 +183,10 @@ function audioAttachments(event: CommandEvent) {
           :class="`tone-${item.presentation.tone}`"
         >
           <span class="event-marker" aria-hidden="true">
-            <el-icon v-if="item.kind === 'balance'"><Wallet24Regular /></el-icon>
-            <el-icon v-else-if="item.presentation.tone === 'sent'"><Send24Regular /></el-icon>
+            <el-icon v-if="item.presentation.tone === 'sent'"><Send24Regular /></el-icon>
             <el-icon v-else-if="item.presentation.tone === 'running'"><Clock24Regular /></el-icon>
+            <el-icon v-else-if="item.presentation.tone === 'waiting'"><Clock24Regular /></el-icon>
+            <el-icon v-else-if="item.presentation.tone === 'parsed'"><Chat24Regular /></el-icon>
             <el-icon v-else-if="item.presentation.tone === 'danger'"><ErrorCircle24Regular /></el-icon>
             <el-icon v-else><CheckmarkCircle24Regular /></el-icon>
           </span>
@@ -243,7 +244,7 @@ function audioAttachments(event: CommandEvent) {
   width: 1px;
   background: color-mix(in srgb, var(--ui-primary) 26%, var(--ui-border));
 }
-.timeline-event { position: relative; min-width: 0; color: var(--ui-primary); animation: event-enter 180ms ease-out both; }
+.timeline-event { position: relative; min-width: 0; color: var(--ui-success); animation: event-enter 180ms ease-out both; }
 .event-marker {
   position: absolute;
   top: 8px;
@@ -278,8 +279,10 @@ function audioAttachments(event: CommandEvent) {
   overflow-wrap: anywhere;
 }
 .event-command { display: inline-block; margin-top: 7px; color: var(--ui-text-subtle); font: 10px "v-mono", monospace; }
+.tone-sent { color: var(--ui-communication); }
 .tone-running, .tone-waiting { color: var(--ui-warning); }
 .tone-parsed { color: var(--ui-info); }
+.tone-success { color: var(--ui-success); }
 .tone-danger { color: var(--ui-danger); }
 .empty-state, .empty-line {
   min-height: 300px;

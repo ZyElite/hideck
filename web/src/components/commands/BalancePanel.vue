@@ -169,9 +169,10 @@ function ruleRoute(rule: CarrierQueryRule): string {
 .balance-panel h3 span { margin-left: 4px; color: var(--ui-text-subtle); font-weight: 400; }
 .balance-history, .rule-list { border-top: 1px solid var(--ui-border); }
 .balance-item { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(90px, auto); gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--ui-border); }
-.history-icon { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: var(--ui-primary); background: color-mix(in srgb, currentColor 10%, transparent); }
+.history-icon { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: var(--ui-success); background: color-mix(in srgb, currentColor 10%, transparent); }
 .history-icon.waiting, .history-icon.running, .tone-waiting, .tone-running { color: var(--ui-warning); }
 .history-icon.parsed, .tone-parsed { color: var(--ui-info); }
+.history-icon.success, .tone-success { color: var(--ui-success); }
 .history-icon.danger, .tone-danger, .query-error { color: var(--ui-danger); }
 .balance-item b { font-size: 11px; }
 .balance-item small { display: block; margin-top: 2px; color: var(--ui-text-subtle); font-size: 9px; }

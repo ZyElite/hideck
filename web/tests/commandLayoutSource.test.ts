@@ -8,6 +8,7 @@ const commandChat = await readFile(new URL('../src/components/commands/CommandCh
 const commandTimeline = await readFile(new URL('../src/components/commands/CommandTimeline.vue', import.meta.url), 'utf8')
 const commandAudioPlayer = await readFile(new URL('../src/components/commands/CommandAudioPlayer.vue', import.meta.url), 'utf8')
 const commandComposer = await readFile(new URL('../src/components/commands/CommandComposer.vue', import.meta.url), 'utf8')
+const globalStyles = await readFile(new URL('../src/style.css', import.meta.url), 'utf8')
 
 test('command workspace keeps an inline responsive balance rail beside the conversation', () => {
   const chatIndex = commandsView.indexOf('<CommandChat')
@@ -50,6 +51,12 @@ test('command conversation uses the Studio event rail instead of chat bubbles', 
   assert.match(commandTimeline, /class="timeline-track"/)
   assert.match(commandTimeline, /class="event-marker"/)
   assert.match(commandTimeline, /`tone-\$\{item\.presentation\.tone\}`/)
+  assert.match(commandTimeline, /\.tone-sent \{ color: var\(--ui-communication\); \}/)
+  assert.match(commandTimeline, /\.tone-running, \.tone-waiting \{ color: var\(--ui-warning\); \}/)
+  assert.match(commandTimeline, /\.tone-parsed \{ color: var\(--ui-info\); \}/)
+  assert.match(commandTimeline, /\.tone-success \{ color: var\(--ui-success\); \}/)
+  assert.match(commandTimeline, /\.tone-danger \{ color: var\(--ui-danger\); \}/)
+  assert.equal((globalStyles.match(/--ui-info:/g) || []).length, 2)
   assert.doesNotMatch(commandTimeline, /class="message"/)
 })
 
