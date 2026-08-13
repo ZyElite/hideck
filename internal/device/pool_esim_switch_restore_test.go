@@ -505,6 +505,9 @@ func TestHandleESIMSwitchAfterSubmitsSwitchEndThroughLifecycleController(t *test
 
 func TestHandleESIMSwitchAfterRadioCycleOnlineThenSnapshotRestore(t *testing.T) {
 	p := NewPool(&config.Config{})
+	p.SetPolicyResolver(&stubPolicyResolver{pol: cardpolicy.Policy{
+		ICCID: "460001234567890", IPVersion: "v4v6", APN: "new-card-apn",
+	}})
 	be := &esimSwitchRestoreBackendStub{
 		mode:      backend.BackendQMI,
 		getMode:   backend.ModeOnline,
@@ -533,6 +536,15 @@ func TestHandleESIMSwitchAfterRadioCycleOnlineThenSnapshotRestore(t *testing.T) 
 	want := []backend.OperatingMode{backend.ModeOnline, backend.ModeRFOff}
 	if !reflect.DeepEqual(be.setCalls, want) {
 		t.Fatalf("setCalls=%v want %v", be.setCalls, want)
+	}
+	if w.CurrentICCID() != "460001234567890" {
+		t.Fatalf("current ICCID=%q", w.CurrentICCID())
+	}
+	if w.Config.IPVersion != "v4v6" || w.Config.APN != "new-card-apn" {
+		t.Fatalf("new card policy was not projected: %+v", w.Config)
+	}
+	if w.Config.NetworkEnabled || w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled {
+		t.Fatalf("new card policy switches were not projected: %+v", w.Config)
 	}
 }
 

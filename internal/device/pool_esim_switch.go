@@ -1080,6 +1080,7 @@ func (p *Pool) handleESIMSwitchAfter(deviceID string, token uint64) {
 		p.restorePostSwitchConnectivity(deviceID, worker, snapshot, identityRefreshErr, false)
 		return
 	}
+	p.resolveAndApplyPolicy(worker, "esim_switched")
 	p.schedulePostSwitchIdentityRefreshes(deviceID, snapshot)
 	var restoreGateErr error
 	if worker.Config.VoWiFiEnabled {
