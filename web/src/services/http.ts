@@ -34,6 +34,16 @@ export function toAppError(err: unknown): AppError {
     }
   }
   if (err instanceof Error) return { message: err.message }
+  if (err && typeof err === 'object' && typeof (err as { message?: unknown }).message === 'string') {
+    const candidate = err as AppError
+    return {
+      message: candidate.message,
+      status: candidate.status,
+      method: candidate.method,
+      url: candidate.url,
+      code: candidate.code
+    }
+  }
   return { message: String(err) }
 }
 

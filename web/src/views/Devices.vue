@@ -23,6 +23,7 @@ import { useDevicesStore } from '../stores/devices'
 import { debugCollector } from '../debug/collector'
 import { isManagedDeviceBackendSwitch, isWwanQmiControlPath } from '../utils/deviceBackend'
 import { isControlOnline, isRecoveryPhase } from '../utils/deviceLifecycle'
+import { createDeviceRequestScope } from '../utils/deviceRequestScope'
 import { getMccMncIndex, lookupMccMncRow, mccMncCountryCode, type MccMncRow } from '../utils/mcc-mnc'
 import type { CardPolicy, CarrierWebsheetInfo, DeviceConfigDTO, DeviceMgmtListItem, DeviceOverviewItem, DiscoveredDevice, ModemStatus, PNNRecord, RealtimeTrafficSnapshot } from '../types/api'
 import type { AppError } from '../types/domain'
@@ -39,7 +40,7 @@ import {
 const router = useRouter()
 const route = useRoute()
 const devicesStore = useDevicesStore()
-const { list: storeList, detail: storeDetail, discovered: storeDiscovered, pcscDiscoveryError, config: storeConfig, deviceLimit } = storeToRefs(devicesStore)
+const { list: storeList, discovered: storeDiscovered, pcscDiscoveryError, deviceLimit } = storeToRefs(devicesStore)
 
 let listAbort: AbortController | null = null
 let detailAbort: AbortController | null = null
@@ -62,12 +63,17 @@ const sortKey = ref<'name' | 'signal'>('name')
 const sortDir = ref<'asc' | 'desc'>('asc')
 const selectedId = ref('')
 const selectedDetail = ref<DeviceOverviewItem | null>(null)
+const detailLoading = ref(false)
+const detailError = ref<AppError | null>(null)
 const hasAutoSelected = ref(false)
 const deviceTabs = new Set(['overview', 'esim', 'at', 'ussd', 'config', 'card'])
 
 const editConfig = ref<DeviceConfigDTO | null>(null)
+const editConfigDeviceId = ref('')
 const editBaseline = ref('')
 const editDirty = ref(false)
+const configLoading = ref(false)
+const configError = ref<AppError | null>(null)
 const saving = ref(false)
 const rotating = ref(false)
 const reconnectingVoWiFi = ref(false)
@@ -79,6 +85,15 @@ const rescanning = ref(false)
 
 // 卡策略（跟当前选中设备的 ICCID 绑定）
 const cardPolicy = ref<CardPolicy | null>(null)
+const cardPolicyLoading = ref(false)
+const cardPolicyError = ref<AppError | null>(null)
+const configRequestScope = createDeviceRequestScope('')
+const cardPolicyRequestScope = createDeviceRequestScope('')
+
+type LoadOutcome =
+  | Readonly<{ status: 'ok' }>
+  | Readonly<{ status: 'failed'; error: AppError }>
+  | Readonly<{ status: 'stale' }>
 
 const trafficSpeedRx = ref('')
 const trafficSpeedTx = ref('')
@@ -521,47 +536,102 @@ async function fetchDeviceTrafficAnalysis(id = selectedDetail.value?.id || selec
   deviceAnalysisLoading.value = false
 }
 
-async function fetchSelectedDetail(id: string) {
-  const deviceID = String(id || '').trim()
-  if (!deviceID) {
-    clearLiveRadioFallbackTimer()
-    selectedDetail.value = null
-    updateTrafficSpeedFromSelected()
-    return
-  }
-
-  if (detailAbort) detailAbort.abort()
-  detailAbort = new AbortController()
-  const result = await devicesStore.fetchDetail(deviceID, detailAbort.signal)
-  if (result.ok) {
-    selectedDetail.value = resolveDetailForDisplay((storeDetail.value || null) as DeviceOverviewItem | null)
-  }
+function clearSelectedDetail() {
+  clearLiveRadioFallbackTimer()
+  selectedDetail.value = null
   updateTrafficSpeedFromSelected()
 }
 
+function emptyResponseError(resource: string, url: string): AppError {
+  return {
+    message: `${resource}响应为空`,
+    method: 'GET',
+    url
+  }
+}
+
+async function fetchSelectedDetail(id: string): Promise<LoadOutcome> {
+  const deviceID = String(id || '').trim()
+  if (!deviceID) {
+    clearSelectedDetail()
+    detailError.value = null
+    detailLoading.value = false
+    return { status: 'ok' }
+  }
+
+  if (selectedDetail.value?.id !== deviceID) clearSelectedDetail()
+  detailError.value = null
+  detailLoading.value = true
+  if (detailAbort) detailAbort.abort()
+  const controller = new AbortController()
+  detailAbort = controller
+  const result = await devicesStore.fetchDetail(deviceID, controller.signal)
+  if (detailAbort !== controller || selectedId.value !== deviceID) {
+    return { status: 'stale' }
+  }
+  detailAbort = null
+  detailLoading.value = false
+
+  if (!result.ok) {
+    if (result.error.code === 'ERR_CANCELED') return { status: 'stale' }
+    clearSelectedDetail()
+    detailError.value = result.error
+    return { status: 'failed', error: result.error }
+  }
+
+  const detail = result.data as DeviceOverviewItem | null
+  if (!detail) {
+    const error = emptyResponseError('设备详情', `/devices/${deviceID}/overview`)
+    clearSelectedDetail()
+    detailError.value = error
+    return { status: 'failed', error }
+  }
+
+  selectedDetail.value = resolveDetailForDisplay(detail)
+  updateTrafficSpeedFromSelected()
+  return { status: 'ok' }
+}
+
 async function syncEditConfigFromSelected(force = false) {
-  if (!force && editDirty.value) return
   const id = String(selectedId.value || '').trim()
+  if (!force && editDirty.value && editConfigDeviceId.value === id) return
+  const requestToken = configRequestScope.begin(id)
+  editConfig.value = null
+  editConfigDeviceId.value = id
+  editBaseline.value = ''
+  editDirty.value = false
+  configError.value = null
+  configLoading.value = Boolean(id)
   if (!id) {
-    editConfig.value = null
-    editBaseline.value = ''
-    editDirty.value = false
     return
   }
+
   try {
     const result = await devicesStore.fetchConfig(id)
-    if (!result.ok) throw new Error(result.error.message)
-    editConfig.value = JSON.parse(JSON.stringify(storeConfig.value || {})) as DeviceConfigDTO
+    if (!configRequestScope.isCurrent(requestToken, selectedId.value)) return
+    if (!result.ok) {
+      configError.value = result.error
+      return
+    }
+    if (!result.data) {
+      configError.value = emptyResponseError('设备配置', `/devices/${id}/config`)
+      return
+    }
+    editConfig.value = JSON.parse(JSON.stringify(result.data)) as DeviceConfigDTO
 
-	if (!editConfig.value.device_backend) {
-	  editConfig.value.device_backend = 'at'
-	}
+    if (!editConfig.value.device_backend) {
+      editConfig.value.device_backend = 'at'
+    }
     editBaseline.value = JSON.stringify(editConfig.value)
     editDirty.value = false
-  } catch {
-    editConfig.value = null
-    editBaseline.value = ''
-    editDirty.value = false
+  } catch (error: unknown) {
+    if (configRequestScope.isCurrent(requestToken, selectedId.value)) {
+      configError.value = toAppError(error)
+    }
+  } finally {
+    if (configRequestScope.isCurrent(requestToken, selectedId.value)) {
+      configLoading.value = false
+    }
   }
 }
 
@@ -585,13 +655,32 @@ watch(
 )
 
 async function fetchCardPolicy(iccid: string | undefined) {
-  if (!iccid) {
-    cardPolicy.value = null
-    return
-  }
-  const result = await cardsService.getPolicy(iccid)
-  if (result.ok) {
+  const cardID = String(iccid || '').trim()
+  const requestToken = cardPolicyRequestScope.begin(cardID)
+  cardPolicy.value = null
+  cardPolicyError.value = null
+  cardPolicyLoading.value = Boolean(cardID)
+  if (!cardID) return
+
+  try {
+    const result = await cardsService.getPolicy(cardID)
+    const currentCardID = String(selectedDetail.value?.modem?.iccid || '').trim()
+    if (!cardPolicyRequestScope.isCurrent(requestToken, currentCardID)) return
+    if (!result.ok) {
+      cardPolicyError.value = result.error
+      return
+    }
     cardPolicy.value = result.data
+  } catch (error: unknown) {
+    const currentCardID = String(selectedDetail.value?.modem?.iccid || '').trim()
+    if (cardPolicyRequestScope.isCurrent(requestToken, currentCardID)) {
+      cardPolicyError.value = toAppError(error)
+    }
+  } finally {
+    const currentCardID = String(selectedDetail.value?.modem?.iccid || '').trim()
+    if (cardPolicyRequestScope.isCurrent(requestToken, currentCardID)) {
+      cardPolicyLoading.value = false
+    }
   }
 }
 
@@ -700,7 +789,9 @@ async function refreshListOnly() {
 async function refreshSelectedDetailOnly() {
   if (!selectedId.value) return
   try {
-    await fetchSelectedDetail(selectedId.value)
+    const outcome = await fetchSelectedDetail(selectedId.value)
+    if (outcome.status === 'stale') return
+    if (outcome.status === 'failed') throw outcome.error
     detailPollFailCount.value = 0
     detailPollWarned.value = false
   } catch (e: unknown) {
@@ -714,6 +805,18 @@ async function refreshSelectedDetailOnly() {
     }
     throw e
   }
+}
+
+function retrySelectedDetail() {
+  void refreshSelectedDetailOnly().catch(() => {})
+}
+
+function retryCardPolicy() {
+  void fetchCardPolicy(selectedDetail.value?.modem?.iccid)
+}
+
+function retryConfig() {
+  void syncEditConfigFromSelected(true)
 }
 
 async function refreshDeviceViews() {
@@ -1147,6 +1250,8 @@ function handleOverviewEvent(data: OverviewSSEPayload) {
 
   if (selectedId.value === found.id) {
     selectedDetail.value = resolveDetailForDisplay(found as any)
+    detailError.value = null
+    detailLoading.value = false
     updateTrafficSpeedFromSelected()
   }
 
@@ -1321,7 +1426,21 @@ usePollingScheduler(async () => {
               <DeviceUssdTab :device-id="selectedDevice.id" />
             </el-tab-pane>
             <el-tab-pane label="卡策略" name="card" lazy>
+              <div v-if="cardPolicyLoading" class="tab-loading-state ui-panel-muted">
+                <el-skeleton :rows="4" animated />
+              </div>
+              <ErrorState
+                v-else-if="cardPolicyError"
+                title="卡策略读取失败"
+                :message="cardPolicyError.message"
+                :status-code="cardPolicyError.status"
+                :request-method="cardPolicyError.method"
+                :request-url="cardPolicyError.url"
+                retry-text="重新读取"
+                @retry="retryCardPolicy"
+              />
               <CardPolicyPanel
+                v-else
                 :device-id="selectedDevice.id"
                 :iccid="selectedDetail?.modem?.iccid"
                 :policy="cardPolicy"
@@ -1330,7 +1449,21 @@ usePollingScheduler(async () => {
               />
             </el-tab-pane>
             <el-tab-pane label="配置" name="config" lazy>
+              <div v-if="configLoading" class="tab-loading-state ui-panel-muted">
+                <el-skeleton :rows="5" animated />
+              </div>
+              <ErrorState
+                v-else-if="configError"
+                title="设备配置读取失败"
+                :message="configError.message"
+                :status-code="configError.status"
+                :request-method="configError.method"
+                :request-url="configError.url"
+                retry-text="重新读取"
+                @retry="retryConfig"
+              />
               <DeviceConfigTab
+                v-else
                 :edit-config="editConfig"
                 :device-status="selectedDetail"
                 :saving="saving"
@@ -1345,7 +1478,17 @@ usePollingScheduler(async () => {
       </main>
 
       <main v-else class="device-workspace">
-        <DeviceDetailLoading v-if="loading" />
+        <DeviceDetailLoading v-if="loading || detailLoading" />
+        <ErrorState
+          v-else-if="detailError"
+          title="设备详情读取失败"
+          :message="detailError.message"
+          :status-code="detailError.status"
+          :request-method="detailError.method"
+          :request-url="detailError.url"
+          retry-text="重新读取"
+          @retry="retrySelectedDetail"
+        />
         <section v-else class="device-workspace-empty ui-card">
           <div class="device-workspace-empty-icon" aria-hidden="true">
             <el-icon><Sim24Regular /></el-icon>
@@ -1378,6 +1521,12 @@ usePollingScheduler(async () => {
 <style scoped>
 .devices-page {
   container-type: inline-size;
+}
+
+.tab-loading-state {
+  min-height: 220px;
+  padding: 28px;
+  border-radius: 10px;
 }
 
 .device-action-row,
