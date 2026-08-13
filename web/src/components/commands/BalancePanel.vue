@@ -10,8 +10,10 @@ import {
   presentBalanceState
 } from '../../utils/commandPresentation'
 import {
+  ArrowSync24Regular,
   CheckmarkCircle24Regular,
   Clock24Regular,
+  Database24Regular,
   Edit24Regular,
   ErrorCircle24Regular,
   Info24Regular,
@@ -27,12 +29,16 @@ const props = defineProps<{
   customRules: CarrierQueryRule[]
   loading: boolean
   querying: boolean
+  rulesLoading: boolean
+  rulesLoaded: boolean
+  rulesError: string
 }>()
 
 const emit = defineEmits<{
   'update:selectedDevice': [value: string]
   query: []
   editRules: []
+  refreshRules: []
 }>()
 
 const selectedQueries = computed(() => [...props.queries
@@ -63,11 +69,9 @@ function ruleRoute(rule: CarrierQueryRule): string {
         <h2>余额查询</h2>
         <span>真实运营商回复与解析记录</span>
       </div>
-      <el-tooltip content="编辑运营商规则" placement="left">
-        <el-button text aria-label="编辑运营商规则" @click="emit('editRules')">
-          <el-icon><Edit24Regular /></el-icon>
-        </el-button>
-      </el-tooltip>
+      <el-button text class="manage-rules-button" @click="emit('editRules')">
+        <el-icon><Edit24Regular /></el-icon><span>管理规则</span>
+      </el-button>
     </header>
 
     <div class="query-controls">
@@ -128,12 +132,33 @@ function ruleRoute(rule: CarrierQueryRule): string {
     </section>
 
     <section class="rules-section" aria-label="运营商规则">
-      <h3>运营商规则 <span>{{ builtInRules.length + customRules.length }}</span></h3>
-      <div v-if="visibleRules.length" class="rule-list">
+      <div class="rules-heading">
+        <h3>运营商规则 <span>{{ rulesLoaded ? builtInRules.length + customRules.length : '—' }}</span></h3>
+        <el-button text :loading="rulesLoading" aria-label="刷新运营商规则" @click="emit('refreshRules')">
+          <el-icon v-if="!rulesLoading"><ArrowSync24Regular /></el-icon><span>刷新</span>
+        </el-button>
+      </div>
+      <div class="rule-source">
+        <el-icon aria-hidden="true"><Database24Regular /></el-icon>
+        <div>
+          <strong>后端规则库</strong>
+          <span>服务端内置只读 · 数据库自定义可管理</span>
+        </div>
+        <div class="source-counts">
+          <small>内置 {{ rulesLoaded ? builtInRules.length : '—' }}</small>
+          <small>自定义 {{ rulesLoaded ? customRules.length : '—' }}</small>
+        </div>
+      </div>
+      <div v-if="rulesLoading && !rulesLoaded" class="rules-state">正在从后端读取规则</div>
+      <div v-else-if="rulesError" class="rules-state rules-error" role="alert">
+        <span>{{ rulesError }}</span>
+        <el-button text @click="emit('refreshRules')">重试</el-button>
+      </div>
+      <div v-else-if="visibleRules.length" class="rule-list">
         <article v-for="rule in visibleRules" :key="rule.id">
           <div>
             <strong>{{ rule.operator || rule.id }}</strong>
-            <small>{{ rule.built_in ? '内置' : '自定义' }}</small>
+            <small>{{ rule.built_in ? '服务端内置' : '数据库自定义' }}</small>
           </div>
           <span>{{ ruleRoute(rule) }}</span>
           <el-tooltip :content="`${rule.mcc}/${rule.mnc} · ${rule.id}`" placement="left">
@@ -141,8 +166,8 @@ function ruleRoute(rule: CarrierQueryRule): string {
           </el-tooltip>
         </article>
       </div>
-      <button v-else type="button" class="rules-empty" @click="emit('editRules')">
-        暂无可用规则，打开规则编辑器
+      <button v-else-if="rulesLoaded" type="button" class="rules-empty" @click="emit('editRules')">
+        后端当前没有可用规则，打开管理器
       </button>
     </section>
   </section>
@@ -155,7 +180,8 @@ function ruleRoute(rule: CarrierQueryRule): string {
 .panel-icon .el-icon { font-size: 19px; }
 .panel-heading h2 { margin: 0; color: var(--ui-text); font-size: 18px; }
 .panel-heading div > span { color: var(--ui-text-subtle); font-size: 10px; }
-.panel-heading :deep(.el-button) { width: 36px; height: 36px; padding: 0; }
+.manage-rules-button { min-height: 36px; padding-inline: 8px; color: var(--ui-primary); }
+.manage-rules-button span { font-size: 10px; }
 .query-controls { display: grid; gap: 7px; margin: 18px 0 16px; }
 .query-controls > label, .section-label { color: var(--ui-text-muted); font-size: 11px; }
 .query-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
@@ -181,10 +207,23 @@ function ruleRoute(rule: CarrierQueryRule): string {
 .balance-item pre { max-height: 90px; overflow: auto; color: var(--ui-text-muted); font: 10px/1.5 "v-mono", monospace; white-space: pre-wrap; }
 .query-error { font-size: 10px; }
 .balance-empty { min-height: 90px; color: var(--ui-text-subtle); display: grid; place-items: center; font-size: 11px; }
+.rules-heading { display: flex; align-items: end; justify-content: space-between; gap: 8px; }
+.rules-heading :deep(.el-button) { min-height: 36px; margin-bottom: 1px; padding-inline: 7px; color: var(--ui-text-muted); }
+.rules-heading :deep(.el-button span) { font-size: 10px; }
+.rule-source { min-width: 0; padding: 10px 8px; border-block: 1px solid var(--ui-border); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.rule-source > .el-icon { color: var(--ui-primary); font-size: 18px; }
+.rule-source strong, .rule-source span { display: block; }
+.rule-source strong { color: var(--ui-text); font-size: 11px; }
+.rule-source span { margin-top: 2px; color: var(--ui-text-subtle); font-size: 9px; }
+.source-counts { display: flex; gap: 5px; }
+.source-counts small { padding: 3px 5px; border: 1px solid var(--ui-border); border-radius: 3px; color: var(--ui-text-muted); font-size: 8px; white-space: nowrap; }
+.rules-state { min-height: 72px; padding: 12px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-subtle); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 10px; text-align: center; }
+.rules-error { color: var(--ui-danger); flex-direction: column; }
+.rules-error :deep(.el-button) { color: var(--ui-danger); }
 .rule-list article { min-height: 48px; padding: 9px 8px; border: 1px solid var(--ui-border); border-top: 0; display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, auto) auto; align-items: center; gap: 8px; }
 .rule-list article > div { min-width: 0; display: flex; align-items: center; gap: 5px; }
 .rule-list strong { min-width: 0; color: var(--ui-text); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rule-list small { color: var(--ui-primary); font-size: 8px; }
+.rule-list small { color: var(--ui-primary); font-size: 8px; white-space: nowrap; }
 .rule-list article > span { color: var(--ui-text-muted); font: 9px "v-mono", monospace; text-align: right; overflow-wrap: anywhere; }
 .rule-list article > .el-icon { color: var(--ui-text-subtle); }
 .rules-empty { width: 100%; min-height: 48px; border: 1px solid var(--ui-border); border-radius: 4px; background: transparent; color: var(--ui-text-muted); font-size: 11px; }
@@ -195,5 +234,8 @@ function ruleRoute(rule: CarrierQueryRule): string {
 @media (max-width: 640px) {
   .balance-panel { padding: 16px 12px 88px; }
   .query-row :deep(.el-input__wrapper), .query-row :deep(.el-button) { min-height: 44px; }
+  .manage-rules-button, .rules-heading :deep(.el-button), .rules-state :deep(.el-button) { min-height: 44px; }
+  .rule-source { grid-template-columns: auto minmax(0, 1fr); }
+  .source-counts { grid-column: 2; flex-wrap: wrap; }
 }
 </style>

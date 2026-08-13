@@ -8,6 +8,9 @@ const commandChat = await readFile(new URL('../src/components/commands/CommandCh
 const commandTimeline = await readFile(new URL('../src/components/commands/CommandTimeline.vue', import.meta.url), 'utf8')
 const commandAudioPlayer = await readFile(new URL('../src/components/commands/CommandAudioPlayer.vue', import.meta.url), 'utf8')
 const commandComposer = await readFile(new URL('../src/components/commands/CommandComposer.vue', import.meta.url), 'utf8')
+const balancePanel = await readFile(new URL('../src/components/commands/BalancePanel.vue', import.meta.url), 'utf8')
+const ruleEditor = await readFile(new URL('../src/components/commands/RuleEditorDrawer.vue', import.meta.url), 'utf8')
+const commandService = await readFile(new URL('../src/services/commands.ts', import.meta.url), 'utf8')
 const globalStyles = await readFile(new URL('../src/style.css', import.meta.url), 'utf8')
 
 test('command workspace keeps an inline responsive balance rail beside the conversation', () => {
@@ -113,4 +116,28 @@ test('command runtime state refreshes periodically and exposes a unified manual 
   assert.match(commandChat, /:loading="refreshing"/)
   assert.match(commandChat, /class="sync-warning" role="status"/)
   assert.match(commandChat, /:context-key="`\$\{selectedDevice\}:\$\{refreshVersion\}`"/)
+})
+
+test('carrier rule manager uses the real backend CRUD contract', () => {
+  assert.match(commandService, /api\.get\('\/carrier-query-rules'\)/)
+  assert.match(commandService, /createRule[\s\S]*api\.post\('\/carrier-query-rules', rule\)/)
+  assert.match(commandService, /updateRule[\s\S]*api\.put\(`\/carrier-query-rules\/\$\{encodeURIComponent\(id\)\}`, rule\)/)
+  assert.match(commandService, /deleteRule[\s\S]*api\.delete\(`\/carrier-query-rules\/\$\{encodeURIComponent\(id\)\}`\)/)
+  assert.match(commandsView, /updating\s*\? await commandService\.updateRule\(rule\.id, rule\)/)
+  assert.match(commandsView, /: await commandService\.createRule\(rule\)/)
+  assert.match(commandsView, /const refreshed = await loadRules\(\)/)
+})
+
+test('carrier rule source and mutation states are explicit without demo data', () => {
+  assert.match(balancePanel, /后端规则库/)
+  assert.match(balancePanel, /服务端内置只读 · 数据库自定义可管理/)
+  assert.match(balancePanel, /v-else-if="rulesError"[\s\S]*role="alert"/)
+  assert.match(ruleEditor, /实时后端规则库/)
+  assert.match(ruleEditor, /服务端内置规则只读；自定义规则持久化到数据库/)
+  assert.match(ruleEditor, /数据库中暂无自定义规则/)
+  assert.match(ruleEditor, /服务端内置 · 只读/)
+  assert.match(ruleEditor, /@click="emit\('delete', rule\.id\)"/)
+  assert.match(ruleEditor, /emit\('save',[\s\S]*isExisting\.value\)/)
+  assert.match(ruleEditor, /min-height: 44px/)
+  assert.doesNotMatch(ruleEditor, /mock|fixture|demo/i)
 })

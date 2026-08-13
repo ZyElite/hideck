@@ -13,6 +13,9 @@ const props = defineProps<{
   customRules: CarrierQueryRule[]
   loading: boolean
   querying: boolean
+  rulesLoading: boolean
+  rulesLoaded: boolean
+  rulesError: string
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +23,7 @@ const emit = defineEmits<{
   'update:selectedDevice': [value: string]
   query: []
   editRules: []
+  refreshRules: []
 }>()
 
 const rail = ref<HTMLElement | null>(null)
@@ -44,9 +48,13 @@ watch(() => props.modelValue, async (open) => {
       :custom-rules="customRules"
       :loading="loading"
       :querying="querying"
+      :rules-loading="rulesLoading"
+      :rules-loaded="rulesLoaded"
+      :rules-error="rulesError"
       @update:selected-device="emit('update:selectedDevice', $event)"
       @query="emit('query')"
       @edit-rules="emit('editRules')"
+      @refresh-rules="emit('refreshRules')"
     />
   </aside>
 </template>

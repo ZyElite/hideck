@@ -28,9 +28,14 @@ const querying = ref(false)
 const rulesOpen = ref(false)
 const balanceOpen = ref(false)
 const savingRule = ref(false)
+const deletingRuleID = ref('')
+const rulesLoading = ref(false)
+const rulesLoaded = ref(false)
+const rulesError = ref('')
 const dangerousDefinition = ref<CommandDefinition | null>(null)
 const dangerForm = reactive({ device: '', target: '', phone: '', duration: 15 })
 let disposed = false
+let rulesRequestID = 0
 
 const runtimeStatus = useCommandRuntimeStatus({
   fetchDevices: () => devicesService.listManaged(),
@@ -118,13 +123,21 @@ async function loadOlder() {
 }
 
 async function loadRules() {
+  const requestID = ++rulesRequestID
+  rulesLoading.value = true
+  rulesError.value = ''
   const result = await commandService.rules()
+  if (requestID !== rulesRequestID) return false
+  rulesLoading.value = false
   if (!result.ok) {
-    ElMessage.error(result.error.message || '运营商规则加载失败')
-    return
+    rulesError.value = result.error.message || '运营商规则加载失败'
+    ElMessage.error(rulesError.value)
+    return false
   }
+  rulesLoaded.value = true
   builtInRules.value = result.data.builtIn
   customRules.value = result.data.custom
+  return true
 }
 
 async function execute(input: string) {
@@ -226,30 +239,38 @@ async function confirmDangerous() {
   await execute(command)
 }
 
-async function saveRule(rule: CarrierQueryRule) {
+async function saveRule(rule: CarrierQueryRule, updating: boolean) {
+  if (savingRule.value || deletingRuleID.value) return
   savingRule.value = true
-  const result = await commandService.saveRule(rule)
-  savingRule.value = false
+  const result = updating
+    ? await commandService.updateRule(rule.id, rule)
+    : await commandService.createRule(rule)
   if (!result.ok) {
+    savingRule.value = false
     ElMessage.error(result.error.message || '规则保存失败')
     return
   }
-  await loadRules()
-  ElMessage.success('自定义规则已保存')
+  const refreshed = await loadRules()
+  savingRule.value = false
+  if (refreshed) ElMessage.success(updating ? '自定义规则已更新' : '自定义规则已创建')
 }
 
 async function deleteRule(id: string) {
+  if (savingRule.value || deletingRuleID.value) return
   const confirmed = await ElMessageBox.confirm(`删除自定义规则 ${id}？`, '删除规则', {
     confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning'
   }).then(() => true).catch(() => false)
   if (!confirmed) return
+  deletingRuleID.value = id
   const result = await commandService.deleteRule(id)
   if (!result.ok) {
+    deletingRuleID.value = ''
     ElMessage.error(result.error.message || '规则删除失败')
     return
   }
-  await loadRules()
-  ElMessage.success('规则已删除')
+  const refreshed = await loadRules()
+  deletingRuleID.value = ''
+  if (refreshed) ElMessage.success('自定义规则已删除')
 }
 </script>
 
@@ -288,8 +309,12 @@ async function deleteRule(id: string) {
         :custom-rules="customRules"
         :loading="loading"
         :querying="querying"
+        :rules-loading="rulesLoading"
+        :rules-loaded="rulesLoaded"
+        :rules-error="rulesError"
         @query="startBalance"
         @edit-rules="rulesOpen = true"
+        @refresh-rules="loadRules"
       />
     </div>
 
@@ -325,8 +350,13 @@ async function deleteRule(id: string) {
       :built-in="builtInRules"
       :custom="customRules"
       :saving="savingRule"
+      :loading="rulesLoading"
+      :loaded="rulesLoaded"
+      :error="rulesError"
+      :deleting-id="deletingRuleID"
       @save="saveRule"
       @delete="deleteRule"
+      @refresh="loadRules"
     />
   </div>
 </template>

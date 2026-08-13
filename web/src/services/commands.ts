@@ -72,9 +72,16 @@ export const commandService = {
     })
   },
 
-  saveRule(rule: CarrierQueryRule) {
+  createRule(rule: CarrierQueryRule) {
     return callService(async () => {
       const response = await api.post('/carrier-query-rules', rule)
+      return response.data?.rule as CarrierQueryRule
+    })
+  },
+
+  updateRule(id: string, rule: CarrierQueryRule) {
+    return callService(async () => {
+      const response = await api.put(`/carrier-query-rules/${encodeURIComponent(id)}`, rule)
       return response.data?.rule as CarrierQueryRule
     })
   },
