@@ -4,6 +4,7 @@ import type { DashboardDevice } from '../src/types/api.ts'
 import {
   canAnimateDashboardConnection,
   createDashboardDevicePresentation,
+  filterDashboardDevices,
   formatDashboardNetworkType,
   formatDashboardSignal,
   hasDashboardSignal
@@ -104,4 +105,28 @@ test('formats cellular connection and validates signal sentinels', () => {
   assert.equal(formatDashboardSignal(-999), '不可用')
   assert.equal(hasDashboardSignal(-78), true)
   assert.equal(hasDashboardSignal(Number.POSITIVE_INFINITY), false)
+})
+
+test('filters real device fields by status and normalized search text', () => {
+  const online = createDevice()
+  const offline = createDevice({
+    id: 'modem-2',
+    name: 'Backup modem',
+    healthy: false,
+    operator: 'Telecom B',
+    public_ipv6: '2001:db8:ffff::2'
+  })
+
+  assert.deepEqual(filterDashboardDevices([online, offline], {
+    query: 'DB8:FFFF',
+    status: 'all'
+  }).map(device => device.id), ['modem-2'])
+  assert.deepEqual(filterDashboardDevices([online, offline], {
+    query: '',
+    status: 'online'
+  }).map(device => device.id), ['modem-1'])
+  assert.deepEqual(filterDashboardDevices([online, offline], {
+    query: 'telecom b',
+    status: 'offline'
+  }).map(device => device.id), ['modem-2'])
 })

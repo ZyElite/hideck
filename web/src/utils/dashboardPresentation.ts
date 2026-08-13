@@ -21,6 +21,11 @@ export type DashboardDevicePresentation = Readonly<{
   statusLabel: '在线' | '离线'
 }>
 
+export type DashboardDeviceFilter = Readonly<{
+  query: string
+  status: 'all' | 'online' | 'offline'
+}>
+
 const SIGNAL_SENTINELS = new Set([0, -999])
 
 export function hasDashboardSignal(value: unknown): value is number {
@@ -56,6 +61,20 @@ export function createDashboardStages(
 export function canAnimateDashboardConnection(device: DashboardDevice): boolean {
   if (!device.healthy || device.vowifi_active !== true) return false
   return !createDashboardStages(device.vowifi_runtime).some(stage => stage.ready === false)
+}
+
+export function filterDashboardDevices(
+  devices: readonly DashboardDevice[],
+  filter: DashboardDeviceFilter
+): DashboardDevice[] {
+  const query = filter.query.trim().toLocaleLowerCase()
+  return devices.filter((device) => {
+    if (filter.status === 'online' && !device.healthy) return false
+    if (filter.status === 'offline' && device.healthy) return false
+    if (!query) return true
+    return [device.id, device.name, device.operator, device.public_ip, device.public_ipv6]
+      .some(value => String(value || '').toLocaleLowerCase().includes(query))
+  })
 }
 
 export function createDashboardDevicePresentation(

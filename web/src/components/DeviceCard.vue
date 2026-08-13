@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { DashboardDevice } from '../types/api'
-import StatusLight from './StatusLight.vue'
 import {
   Cellular3G24Regular,
   Cellular4G24Regular,
   Cellular5G24Regular,
   CellularData124Regular,
-  Wifi124Regular, 
-  Globe24Regular
+  DataUsage24Regular,
+  Globe24Regular,
+  Wifi124Regular
 } from '@vicons/fluent'
+import type { DashboardDevice } from '../types/api'
+import {
+  createDashboardDevicePresentation,
+  hasDashboardSignal
+} from '../utils/dashboardPresentation'
 
 const props = withDefaults(defineProps<{
   device: DashboardDevice
@@ -17,70 +21,38 @@ const props = withDefaults(defineProps<{
 }>(), {
   selected: false
 })
-const displayNetworkMode = computed(() => {
-  const mode = String(props.device?.network_mode || '').trim()
-  const duplex = String(props.device?.network_duplex || '').trim()
-  if (!mode) return ''
-  return duplex ? `${duplex} ${mode}` : mode
-})
 
+const presentation = computed(() => createDashboardDevicePresentation(props.device))
 const networkIcon = computed(() => {
-  // VoWiFi 模式显示 Wi-Fi 图标
-  if (props.device?.vowifi_active) return Wifi124Regular
-  const mode = displayNetworkMode.value
-  if (!mode) return CellularData124Regular
-  const m = String(mode).toUpperCase()
-  if (m.includes('5G') || m.includes('NR')) return Cellular5G24Regular
-  if (m.includes('4G') || m.includes('LTE')) return Cellular4G24Regular
-  if (m.includes('3G') || m.includes('WCDMA') || m.includes('HSPA') || m.includes('UMTS')) return Cellular3G24Regular
+  if (props.device.vowifi_active) return Wifi124Regular
+  const mode = presentation.value.connectionType.toUpperCase()
+  if (mode.includes('5G') || mode.includes('NR')) return Cellular5G24Regular
+  if (mode.includes('4G') || mode.includes('LTE')) return Cellular4G24Regular
+  if (mode.includes('3G') || mode.includes('WCDMA') || mode.includes('UMTS')) {
+    return Cellular3G24Regular
+  }
   return CellularData124Regular
 })
-
-const networkColor = computed(() => {
-  if (props.device?.vowifi_active) return 'text-emerald-500'
-  const mode = displayNetworkMode.value
-  if (!mode) return 'text-gray-400'
-  const m = String(mode).toUpperCase()
-  if (m.includes('5G') || m.includes('NR')) return 'text-blue-600'
-  if (m.includes('4G') || m.includes('LTE')) return 'text-blue-500'
-  if (m.includes('3G')) return 'text-orange-500'
-  return 'text-gray-400'
+const connectionDetail = computed(() => {
+  if (!props.device.healthy) return '设备未连接'
+  if (props.device.vowifi_active) return 'VoWiFi 已连接'
+  if (presentation.value.connectionType === '不可用') return '网络检测中'
+  return `${presentation.value.connectionType} 已连接`
 })
-
-function hasValidSignalDbm(dbm: number | null | undefined): dbm is number {
-  return typeof dbm === 'number' && Number.isFinite(dbm) && dbm !== 0 && dbm !== -999
-}
-
-function getSignalColor(dbm: number | null | undefined) {
-  if (!hasValidSignalDbm(dbm)) return 'bg-gray-300 dark:bg-gray-600'
-  if (dbm > -70) return 'bg-green-500'
-  if (dbm > -90) return 'bg-yellow-500'
-  return 'bg-red-500'
-}
-
-function getSignalBars(dbm: number | null | undefined) {
-  if (!hasValidSignalDbm(dbm)) return 0
+const signalBars = computed(() => {
+  const dbm = props.device.signal_dbm
+  if (!hasDashboardSignal(dbm)) return 0
   if (dbm > -70) return 4
   if (dbm > -85) return 3
   if (dbm > -100) return 2
   return 1
-}
-
-const deviceState = computed(() => {
-  if (!props.device.healthy) return { label: '离线', tone: 'danger' as const }
-  if (!props.device.vowifi_active && hasValidSignalDbm(props.device.signal_dbm) && props.device.signal_dbm <= -100) {
-    return { label: '警告（信号弱）', tone: 'warning' as const }
-  }
-  return { label: '在线', tone: 'success' as const }
 })
-
-const connectionText = computed(() => {
-  if (!props.device.healthy) return '设备未连接'
-  if (props.device.vowifi_active) return 'VoWiFi 已连接'
-  return displayNetworkMode.value ? `${displayNetworkMode.value} 已连接` : '网络检测中'
+const signalTone = computed(() => {
+  if (signalBars.value === 0) return 'is-unavailable'
+  if (signalBars.value === 1) return 'is-danger'
+  if (signalBars.value === 2) return 'is-warning'
+  return 'is-good'
 })
-
-const displayIP = computed(() => props.device.public_ipv6 || props.device.public_ip || '')
 </script>
 
 <template>
@@ -88,254 +60,129 @@ const displayIP = computed(() => props.device.public_ipv6 || props.device.public
     type="button"
     class="device-card ui-card ui-card-hover"
     :class="{ 'device-card-selected': selected }"
+    :aria-label="`选择 ${presentation.displayName}；双击打开设备工作区`"
     :aria-pressed="selected"
   >
-    <header class="device-card-header">
-      <div class="device-title-group">
+    <span class="device-card-header">
+      <span class="device-title-group">
         <span class="device-glyph" aria-hidden="true"><component :is="networkIcon" /></span>
-        <div>
-          <h3>{{ device.name || device.id }}</h3>
-          <p>{{ device.id }}</p>
-        </div>
-      </div>
-      <div class="device-state" :class="`device-state-${deviceState.tone}`">
-        <StatusLight :tone="deviceState.tone" size="md" :animated="device.healthy" />
-        <span>{{ deviceState.label }}</span>
-      </div>
-    </header>
-
-    <section class="device-connection-summary">
-      <div class="connection-primary">
-        <el-icon :class="networkColor" aria-hidden="true"><component :is="networkIcon" /></el-icon>
-        <div>
-          <strong>{{ device.vowifi_active ? 'Wi-Fi Calling' : (device.operator || '网络检测中') }}</strong>
-          <span>{{ connectionText }}<template v-if="!device.vowifi_active && displayNetworkMode"> · {{ displayNetworkMode }}</template></span>
-        </div>
-      </div>
-      <div v-if="!device.vowifi_active" class="connection-signal" title="蜂窝信号强度">
-        <span class="signal-bars" aria-hidden="true">
-          <i
-            v-for="i in 4"
-            :key="i"
-            :class="getSignalBars(device.signal_dbm) >= i ? getSignalColor(device.signal_dbm) : 'bg-gray-200 dark:bg-gray-700'"
-            :style="{ height: `${i * 25}%` }"
-          />
+        <span class="device-identity">
+          <strong>{{ presentation.displayName }}</strong>
+          <small>{{ device.id }}</small>
         </span>
-        <span>{{ hasValidSignalDbm(device.signal_dbm) ? `${device.signal_dbm} dBm` : '--' }}</span>
-      </div>
-    </section>
+      </span>
+      <span class="device-state" :class="device.healthy ? 'is-online' : 'is-offline'">
+        <i aria-hidden="true" />
+        {{ presentation.statusLabel }}
+      </span>
+    </span>
 
-    <dl class="device-facts">
-      <div>
-        <dt>公网 IP</dt>
-        <dd class="device-public-ip" :title="displayIP">
-          <el-icon aria-hidden="true"><Globe24Regular /></el-icon>
-          {{ displayIP || '--' }}
-        </dd>
-      </div>
-    </dl>
+    <span class="device-connection-summary">
+      <span class="connection-primary">
+        <component :is="networkIcon" aria-hidden="true" />
+        <span>
+          <strong>{{ presentation.connectionTitle }}</strong>
+          <small>{{ connectionDetail }}</small>
+        </span>
+      </span>
+      <span class="connection-meta" aria-label="运营商和连接类型">
+        <span>{{ presentation.operator }}</span>
+        <span>{{ presentation.connectionType }}</span>
+      </span>
+    </span>
+
+    <span class="device-addresses">
+      <span class="address-heading">
+        <Globe24Regular aria-hidden="true" />
+        <span>公网地址</span>
+      </span>
+      <span class="address-list">
+        <span>
+          <small>IPv4</small>
+          <code :title="presentation.ipv4">{{ presentation.ipv4 }}</code>
+        </span>
+        <span>
+          <small>IPv6</small>
+          <code :title="presentation.ipv6">{{ presentation.ipv6 }}</code>
+        </span>
+      </span>
+    </span>
+
+    <span class="device-card-footer">
+      <span class="signal-label">
+        <DataUsage24Regular aria-hidden="true" />
+        <span>信号</span>
+      </span>
+      <span class="signal-reading" :class="signalTone">
+        <span class="signal-bars" aria-hidden="true">
+          <i v-for="bar in 4" :key="bar" :class="{ 'is-filled': signalBars >= bar }" />
+        </span>
+        <strong>{{ presentation.signal }}</strong>
+      </span>
+    </span>
   </button>
 </template>
 
 <style scoped>
-.device-card {
-  min-width: 0;
-  min-height: 214px;
-  padding: 0;
-  overflow: hidden;
-  border-left: 1px solid var(--ui-border);
-  background: var(--ui-surface);
-  color: var(--ui-text);
-  text-align: left;
-  cursor: pointer;
-}
+.device-card { position: relative; min-width: 0; min-height: 286px; padding: 0; overflow: hidden; border-color: var(--ui-border); background: linear-gradient(155deg, color-mix(in srgb, var(--ui-surface) 96%, var(--ui-primary) 4%), var(--ui-surface)); color: var(--ui-text); text-align: left; cursor: pointer; }
+.device-card::before { position: absolute; inset: 0 22px auto; height: 1px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-text) 10%, transparent), transparent); pointer-events: none; content: ""; }
+.device-card-selected { border-color: color-mix(in srgb, var(--ui-primary) 58%, var(--ui-border)); background: linear-gradient(150deg, color-mix(in srgb, var(--ui-surface) 84%, var(--ui-primary) 16%), var(--ui-surface) 62%); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-primary) 8%, transparent), var(--ui-shadow-md); }
+.device-card-header { min-height: 74px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--ui-border-muted); }
+.device-title-group { min-width: 0; display: flex; align-items: center; gap: 11px; }
+.device-glyph { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--ui-primary) 28%, var(--ui-border)); border-radius: 11px; background: color-mix(in srgb, var(--ui-primary) 8%, transparent); color: var(--ui-primary); }
+.device-glyph svg { width: 20px; height: 20px; }
+.device-identity { min-width: 0; display: grid; }
+.device-identity strong,
+.device-identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-identity strong { font-size: 15px; font-weight: 700; }
+.device-identity small { max-width: 180px; margin-top: 3px; color: var(--ui-text-muted); font: 11px "v-mono", monospace; }
+.device-state { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; }
+.device-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.device-state.is-online { color: var(--ui-success); }
+.device-state.is-offline { color: var(--ui-danger); }
+.device-state.is-online i { animation: device-online-pulse 2.4s var(--ui-ease-in-out) infinite; }
 
-.device-card:focus-visible {
-  outline: 2px solid var(--ui-primary);
-  outline-offset: 2px;
-}
+.device-connection-summary { min-height: 82px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--ui-border-muted); background: radial-gradient(ellipse at center, color-mix(in srgb, var(--ui-primary) 8%, transparent), transparent 70%); }
+.connection-primary { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.connection-primary > svg { width: 21px; height: 21px; flex: 0 0 21px; color: var(--ui-primary); }
+.connection-primary > span { min-width: 0; display: grid; gap: 3px; }
+.connection-primary strong,
+.connection-primary small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connection-primary strong { font-size: 14px; }
+.connection-primary small { color: var(--ui-text-muted); font-size: 11px; }
+.connection-meta { flex: 0 1 120px; display: grid; gap: 5px; text-align: right; }
+.connection-meta span { overflow: hidden; color: var(--ui-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.connection-meta span:last-child { color: var(--ui-text); font: 11px "v-mono", monospace; }
 
-.device-card-selected {
-  border-color: color-mix(in srgb, var(--ui-primary) 60%, var(--ui-border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-primary) 20%, transparent), var(--ui-shadow-md);
-}
+.device-addresses { min-height: 88px; padding: 12px 16px; display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 10px; border-bottom: 1px solid var(--ui-border-muted); }
+.address-heading { display: flex; align-items: flex-start; gap: 7px; color: var(--ui-text-muted); font-size: 11px; }
+.address-heading svg { width: 16px; height: 16px; flex: 0 0 16px; }
+.address-list { min-width: 0; display: grid; gap: 7px; }
+.address-list > span { min-width: 0; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 6px; }
+.address-list small { color: var(--ui-text-muted); font: 9px/1.45 "v-mono", monospace; }
+.address-list code { min-width: 0; color: var(--ui-communication); font: 10px/1.45 "v-mono", monospace; overflow-wrap: anywhere; }
 
-.device-card-header {
-  min-height: 78px;
-  padding: 14px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-bottom: 1px solid var(--ui-border);
-}
+.device-card-footer { min-height: 42px; padding: 9px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.signal-label,
+.signal-reading { display: flex; align-items: center; gap: 7px; }
+.signal-label { color: var(--ui-text-muted); font-size: 11px; }
+.signal-label svg { width: 16px; height: 16px; }
+.signal-reading { color: var(--ui-text-muted); }
+.signal-reading.is-good { color: var(--ui-success); }
+.signal-reading.is-warning { color: var(--ui-warning); }
+.signal-reading.is-danger { color: var(--ui-danger); }
+.signal-reading strong { font: 11px "v-mono", monospace; }
+.signal-bars { width: 20px; height: 14px; display: flex; align-items: flex-end; gap: 2px; }
+.signal-bars i { width: 3px; height: calc(var(--bar-index, 1) * 25%); min-height: 3px; border-radius: 1px; background: color-mix(in srgb, currentColor 24%, transparent); }
+.signal-bars i:nth-child(1) { height: 25%; }
+.signal-bars i:nth-child(2) { height: 50%; }
+.signal-bars i:nth-child(3) { height: 75%; }
+.signal-bars i:nth-child(4) { height: 100%; }
+.signal-bars i.is-filled { background: currentColor; }
 
-.device-title-group {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-}
+@keyframes device-online-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 
-.device-glyph {
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
-  display: grid;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--ui-primary) 28%, var(--ui-border));
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--ui-primary) 8%, transparent);
-  color: var(--ui-primary);
-}
-
-.device-glyph svg { width: 20px; }
-
-.device-card-header h3 {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  font-size: 15px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.device-card-header p {
-  max-width: 170px;
-  margin: 3px 0 0;
-  overflow: hidden;
-  color: var(--ui-text-muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.device-state {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.device-state-success { color: var(--ui-success); }
-.device-state-warning { color: var(--ui-warning); }
-.device-state-danger { color: var(--ui-danger); }
-
-.device-facts {
-  margin: 0;
-}
-
-.device-connection-summary {
-  min-height: 88px;
-  padding: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  border-bottom: 1px solid var(--ui-border-muted);
-  background:
-    radial-gradient(ellipse at center, color-mix(in srgb, var(--ui-primary) 10%, transparent), transparent 68%);
-}
-
-.connection-primary {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-}
-
-.connection-primary > .el-icon {
-  flex: 0 0 auto;
-  font-size: 22px;
-}
-
-.connection-primary div {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-}
-
-.connection-primary strong {
-  overflow: hidden;
-  color: var(--ui-text);
-  font-size: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.connection-primary span,
-.connection-signal {
-  color: var(--ui-text-muted);
-  font-size: 11px;
-}
-
-.connection-signal {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.device-facts > div {
-  min-height: 39px;
-  padding: 8px 15px;
-  display: grid;
-  grid-template-columns: 66px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  border-bottom: 1px solid var(--ui-border-muted);
-}
-
-.device-facts > div:last-child {
-  border-bottom: 0;
-}
-
-.device-facts dt {
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.device-facts dd {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--ui-text);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.device-public-ip {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.signal-bars {
-  width: 22px;
-  height: 16px;
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-}
-
-.signal-bars i {
-  width: 4px;
-  border-radius: 1px;
-}
-
-.device-public-ip {
-  color: var(--ui-communication);
-  font-family: "v-mono", ui-monospace, monospace;
-  font-variant-numeric: tabular-nums;
-}
-
-.connection-value .el-icon,
-.device-public-ip .el-icon {
-  flex: 0 0 auto;
+@media (prefers-reduced-motion: reduce) {
+  .device-state.is-online i { animation: none; }
 }
 </style>

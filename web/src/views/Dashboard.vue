@@ -15,6 +15,7 @@ import { useDashboardStore } from '../stores/dashboard'
 import type { TrafficRange } from '../services/traffic'
 import type { DashboardDevice } from '../types/api'
 import { formatDeviceTime } from '../utils/deviceTime'
+import { filterDashboardDevices } from '../utils/dashboardPresentation'
 import { Search } from '@element-plus/icons-vue'
 import {
   CheckmarkCircle24Regular,
@@ -44,16 +45,15 @@ const selectedDeviceID = ref('')
 const totalCount = computed(() => devices.value.length)
 const onlineCount = computed(() => devices.value.filter(d => d?.healthy).length)
 const offlineCount = computed(() => Math.max(0, totalCount.value - onlineCount.value))
-const filteredDevices = computed(() => {
-  const query = searchQuery.value.trim().toLocaleLowerCase()
-  return devices.value.filter((device) => {
-    if (statusFilter.value === 'online' && !device.healthy) return false
-    if (statusFilter.value === 'offline' && device.healthy) return false
-    if (!query) return true
-    return [device.id, device.name, device.operator, device.public_ip, device.public_ipv6]
-      .some((value) => String(value || '').toLocaleLowerCase().includes(query))
-  })
-})
+const filteredDevices = computed(() => filterDashboardDevices(devices.value, {
+  query: searchQuery.value,
+  status: statusFilter.value
+}))
+const deviceGridKey = computed(() => [
+  statusFilter.value,
+  searchQuery.value.trim().toLocaleLowerCase(),
+  filteredDevices.value.map(device => device.id).join(',')
+].join(':'))
 const selectedDevice = computed(() => {
   return devices.value.find((device) => device.id === selectedDeviceID.value)
     || devices.value.find((device) => device.healthy)
@@ -204,7 +204,7 @@ onMounted(() => {
         title="没有匹配的设备"
         subtitle="请调整搜索关键词或在线状态筛选"
       />
-      <section v-else class="device-status-grid" aria-label="设备实时状态">
+      <section v-else :key="deviceGridKey" class="device-status-grid" aria-label="设备实时状态">
         <DeviceCard
           v-for="(dev, index) in filteredDevices"
           :key="dev.id"
