@@ -11,11 +11,14 @@ import EmptyState from '../components/EmptyState.vue'
 import ErrorState from '../components/ErrorState.vue'
 import SmsDeviceRail from '../components/sms/SmsDeviceRail.vue'
 import SmsThreadListPane from '../components/sms/SmsThreadListPane.vue'
+import SmsConversationHeader from '../components/sms/SmsConversationHeader.vue'
+import SmsMessageTimeline from '../components/sms/SmsMessageTimeline.vue'
+import SmsComposer from '../components/sms/SmsComposer.vue'
 import type { DeviceMgmtListItem, SMSMessage } from '../types/api'
 import { Delete24Regular, Send24Regular } from '@vicons/fluent'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
-import { formatDeviceDate, formatDeviceDateTime } from '../utils/deviceTime'
-import { createSmsDeviceChannels } from '../utils/smsPresentation'
+import { formatDeviceDate } from '../utils/deviceTime'
+import { createSmsConversationContext, createSmsDeviceChannels } from '../utils/smsPresentation'
 
 type SmsThread = {
   key: string
@@ -134,7 +137,6 @@ const showSendModal = ref(false)
 const sending = ref(false)
 const deletingMessageId = ref<number | null>(null)
 const deletingThreadKey = ref<string | null>(null)
-const supportsHover = ref(false)
 const showActionSheet = ref(false)
 const actionSheetTarget = ref<{ type: 'thread'; thread: SmsThread } | { type: 'message'; message: SMSMessage } | null>(null)
 const composer = ref('')
@@ -173,7 +175,6 @@ function estimateSegments(text: string) {
 const composerLen = computed(() => Array.from(String(composer.value || '')).length)
 const composerEstimate = computed(() => estimateSegments(String(composer.value || '')))
 const detailScrollbar = ref<HTMLElement | null>(null)
-const composerInput = ref<unknown>(null)
 
 const sendForm = ref({
   device_id: '',
@@ -186,6 +187,11 @@ const selectedSendDeviceId = ref('')
 const sendDeviceOptions = computed(() => devices.value.map(d => ({ label: `${d.name || d.id}`, value: d.id })))
 
 const deviceSidebarItems = computed(() => createSmsDeviceChannels(devices.value))
+const conversationContext = computed(() => createSmsConversationContext({
+  selectedDeviceId: selectedDevice.value,
+  thread: selectedThread.value,
+  devices: devices.value
+}))
 
 function normalizeQueryDevice(device: string) {
   const v = String(device || '').trim()
@@ -286,7 +292,6 @@ async function loadMoreHistory() {
 }
 
 function onDetailScroll(e: Event) {
-  clearLongPress()
   const target = e.target as HTMLElement
   if (target && target.scrollTop <= 80) {
     loadMoreHistory()
@@ -296,47 +301,14 @@ function onDetailScroll(e: Event) {
 let devicesFetchSeq = 0
 let messagesFetchSeq = 0
 let threadFetchSeq = 0
-let longPressTimer: ReturnType<typeof setTimeout> | null = null
-let longPressStartX = 0
-let longPressStartY = 0
-
-function clearLongPress() {
-  if (longPressTimer != null) {
-    clearTimeout(longPressTimer)
-    longPressTimer = null
-  }
-}
-
-function startLongPress(target: { type: 'thread'; thread: SmsThread } | { type: 'message'; message: SMSMessage }, e: PointerEvent) {
-  if (!isNarrowLayout.value) return
-  if (e.pointerType === 'mouse') return
-  clearLongPress()
-  longPressStartX = e.clientX
-  longPressStartY = e.clientY
-  longPressTimer = setTimeout(() => {
-    longPressTimer = null
-    actionSheetTarget.value = target
-    showActionSheet.value = true
-    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-      navigator.vibrate(20)
-    }
-  }, 450)
-}
-
-function moveLongPress(e: PointerEvent) {
-  if (longPressTimer == null) return
-  if (Math.abs(e.clientX - longPressStartX) > 10 || Math.abs(e.clientY - longPressStartY) > 10) {
-    clearLongPress()
-  }
-}
-
 function showThreadActionSheet(thread: SmsThread) {
   actionSheetTarget.value = { type: 'thread', thread }
   showActionSheet.value = true
 }
 
-function openMessageActionSheet(message: SMSMessage, e: PointerEvent) {
-  startLongPress({ type: 'message', message }, e)
+function showMessageActionSheet(message: SMSMessage) {
+  actionSheetTarget.value = { type: 'message', message }
+  showActionSheet.value = true
 }
 
 function closeActionSheet() {
@@ -538,9 +510,6 @@ watch(
 )
 
 onMounted(async () => {
-  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-    supportsHover.value = window.matchMedia('(hover: hover) and (pointer: fine)').matches
-  }
   syncSmsPageWidth()
   if (typeof ResizeObserver !== 'undefined') {
     smsPageResizeObserver = new ResizeObserver(() => {
@@ -561,7 +530,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  clearLongPress()
   smsPageResizeObserver?.disconnect()
   smsPageResizeObserver = null
   window.removeEventListener('resize', syncSmsPageWidth)
@@ -758,123 +726,42 @@ async function confirmDeleteThread(thread: SmsThread) {
         />
 
         <section v-if="showDetailPane" class="sms-conversation-pane flex flex-col min-w-0 min-h-0">
-          <div class="sms-conversation-header flex items-center justify-between gap-3">
-            <div class="min-w-0">
-              <div class="flex items-center gap-2">
-                <el-button v-if="isNarrowLayout && selectedThreadKey" text @click="backToList">返回</el-button>
-                <div class="text-sm font-extrabold text-gray-900 dark:text-white truncate">
-                  {{ selectedThread?.peer || '请选择会话' }}
-                </div>
-              </div>
-              <div class="text-xs text-gray-400 mt-1">
-                {{
-                  selectedDevice === 'all'
-                    ? (selectedThread?.localPhone || selectedThread?.lastDeviceName
-                        ? `本机：${selectedThread?.localPhone || selectedThread?.lastDeviceName}`
-                        : '全部设备')
-                    : `设备：${selectedDevice}`
-                }}
-              </div>
-            </div>
-            <div v-if="selectedThread" class="flex items-center gap-2">
-
-              <el-button text @click="scrollThreadToBottom">最新</el-button>
-            </div>
-          </div>
+          <SmsConversationHeader
+            :peer="selectedThread?.peer || ''"
+            :context="conversationContext"
+            :loading="threadLoading"
+            :show-back="isNarrowLayout && !!selectedThreadKey"
+            @back="backToList"
+            @refresh="() => void fetchThreadLatest(false)"
+            @latest="scrollThreadToBottom"
+            @delete="selectedThread && void confirmDeleteThread(selectedThread)"
+          />
 
           <div v-if="!selectedThread" class="flex-1 flex items-center justify-center p-6">
             <EmptyState title="请选择一个会话" subtitle="从左侧联系人列表进入短信明细" />
           </div>
 
           <div v-else ref="detailScrollbar" class="flex-1 min-h-0 overflow-y-auto sms-detail-scroll" @scroll="onDetailScroll">
-            <div class="p-5 space-y-5">
-              <div v-if="canLoadMoreHistory" class="flex justify-center">
-                <el-button text type="primary" :loading="loadingHistoryMore" @click="loadMoreHistory">加载更多</el-button>
-              </div>
-              <div v-for="g in selectedThreadGroups" :key="g.date" class="space-y-4">
-                <div class="flex justify-center">
-                  <div class="text-[11px] font-bold text-gray-500 dark:text-gray-300 bg-gray-100/80 dark:bg-white/5 border border-gray-200/60 dark:border-white/10 px-3 py-1 rounded-full">
-                    {{ g.date }}
-                  </div>
-                </div>
-                <div v-for="m in g.items" :key="m.id" class="flex" :class="m.type === 1 ? 'justify-start' : 'justify-end'">
-                  <div
-                    class="sms-msg-wrapper group"
-                    @pointerdown="(e) => openMessageActionSheet(m, e)"
-                    @pointermove="moveLongPress"
-                    @pointerup="clearLongPress"
-                    @pointercancel="clearLongPress"
-                  >
-                    <div class="flex items-center gap-2 mb-1" :class="m.type === 1 ? '' : 'justify-end'">
-                      <span v-if="m.type === 1" class="text-xs font-bold text-gray-700 dark:text-gray-200">{{ m.sender }}</span>
-                      <el-button
-                        v-if="!isNarrowLayout && m.type === 2 && m.device_name"
-                        text
-                        class="sms-danger-ghost-btn sms-delete-trigger sms-message-delete-btn"
-                        size="small"
-                        :class="{ 'sms-delete-visible': !supportsHover }"
-                        :loading="deletingMessageId === m.id"
-                        :aria-label="`删除短信 ${m.id}`"
-                        title="删除短信"
-                        @click="void confirmDeleteMessage(m)"
-                      >
-                        <el-icon><Delete24Regular /></el-icon>
-                      </el-button>
-                      <span v-if="m.device_name" class="text-[10px] font-bold text-gray-400 bg-gray-100 dark:bg-white/5 px-1.5 py-0.5 rounded">
-                        {{ m.device_name }}
-                      </span>
-                      <span class="text-[11px] text-gray-400 font-mono">{{ formatDeviceDateTime(m.timestamp) }}</span>
-                      <span v-if="m.type === 2 && m.status === 2" class="text-green-500 text-xs" title="发送成功">✓</span>
-                      <span v-else-if="m.type === 2 && m.status === 3" class="text-red-500 text-xs" title="发送失败">✗</span>
-                      <el-button
-                        v-if="!isNarrowLayout && (m.type !== 2 || !m.device_name)"
-                        text
-                        class="sms-danger-ghost-btn sms-delete-trigger sms-message-delete-btn"
-                        size="small"
-                        :class="{ 'sms-delete-visible': !supportsHover }"
-                        :loading="deletingMessageId === m.id"
-                        :aria-label="`删除短信 ${m.id}`"
-                        title="删除短信"
-                        @click="void confirmDeleteMessage(m)"
-                      >
-                        <el-icon><Delete24Regular /></el-icon>
-                      </el-button>
-                    </div>
-                    <div
-                      class="px-5 py-4 rounded-lg text-sm leading-[1.75] shadow-sm border"
-                      :class="m.type === 1
-                        ? 'bg-white/90 dark:bg-white/5 text-gray-700 dark:text-gray-200 border-gray-100 dark:border-white/10'
-                        : 'bg-blue-50 dark:bg-blue-500/10 text-gray-800 dark:text-gray-100 border-blue-100 dark:border-blue-500/20'"
-                    >
-                      {{ m.content }}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="h-2" />
-            </div>
+            <SmsMessageTimeline
+              :groups="selectedThreadGroups"
+              :can-load-more="canLoadMoreHistory"
+              :loading-more="loadingHistoryMore"
+              :deleting-id="deletingMessageId"
+              @load-more="loadMoreHistory"
+              @delete="(message) => void confirmDeleteMessage(message)"
+              @open-actions="showMessageActionSheet"
+            />
           </div>
 
-          <div v-if="selectedThread" class="p-4 border-t border-gray-100 dark:border-white/10">
-            <div class="text-[11px] text-gray-400 text-left mb-2">
-              {{ composerEstimate.encoding }} · 预计 {{ composerEstimate.parts }} 段 · {{ composerLen }} 字
-            </div>
-            <div class="flex items-end gap-3">
-              <el-input
-                ref="composerInput"
-                v-model="composer"
-                type="textarea"
-                :autosize="{ minRows: 1, maxRows: 6 }"
-                resize="none"
-                placeholder="回复（Enter 发送）"
-                @keydown.enter.exact.prevent="sendToCurrentThread"
-              />
-              <el-button type="primary" :loading="sending" @click="sendToCurrentThread" class="!border-0 self-end">
-                <el-icon><Send24Regular /></el-icon>
-                发送
-              </el-button>
-            </div>
-          </div>
+          <SmsComposer
+            v-if="selectedThread"
+            v-model="composer"
+            :encoding="composerEstimate.encoding"
+            :parts="composerEstimate.parts"
+            :length="composerLen"
+            :sending="sending"
+            @send="sendToCurrentThread"
+          />
         </section>
       </div>
     </div>
@@ -956,12 +843,6 @@ async function confirmDeleteThread(thread: SmsThread) {
   background: var(--ui-surface);
 }
 
-.sms-conversation-header {
-  min-height: 64px;
-  padding: 13px 15px;
-  border-bottom: 1px solid var(--ui-border);
-}
-
 @keyframes sms-workspace-enter {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
@@ -970,26 +851,6 @@ async function confirmDeleteThread(thread: SmsThread) {
 @media (prefers-reduced-motion: reduce) {
   .sms-workspace { animation-name: sms-workspace-fade; }
   @keyframes sms-workspace-fade { from { opacity: 0; } to { opacity: 1; } }
-}
-
-.sms-msg-wrapper {
-  width: 100%;
-  max-width: min(620px, 88%);
-}
-
-.sms-delete-trigger {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-}
-
-.sms-message-delete-btn {
-  flex: 0 0 auto;
-}
-
-.sms-delete-visible {
-  opacity: 1 !important;
-  pointer-events: auto !important;
 }
 
 .sms-action-sheet-mask {
@@ -1054,25 +915,6 @@ async function confirmDeleteThread(thread: SmsThread) {
 @container (min-width: 980px) {
   .sms-main-layout {
     grid-template-columns: 218px 310px minmax(0, 1fr);
-  }
-
-  .sms-delete-trigger {
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.18s ease, transform 0.2s ease;
-  }
-
-  .group:hover .sms-delete-trigger,
-  .group:focus-within .sms-delete-trigger {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-}
-
-@container (max-width: 979px) {
-  .sms-msg-wrapper {
-    max-width: 96%;
   }
 }
 

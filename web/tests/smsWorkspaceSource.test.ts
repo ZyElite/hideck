@@ -5,6 +5,9 @@ import test from 'node:test'
 const smsView = readFileSync(new URL('../src/views/Sms.vue', import.meta.url), 'utf8')
 const deviceRail = readFileSync(new URL('../src/components/sms/SmsDeviceRail.vue', import.meta.url), 'utf8')
 const threadList = readFileSync(new URL('../src/components/sms/SmsThreadListPane.vue', import.meta.url), 'utf8')
+const conversationHeader = readFileSync(new URL('../src/components/sms/SmsConversationHeader.vue', import.meta.url), 'utf8')
+const messageTimeline = readFileSync(new URL('../src/components/sms/SmsMessageTimeline.vue', import.meta.url), 'utf8')
+const composer = readFileSync(new URL('../src/components/sms/SmsComposer.vue', import.meta.url), 'utf8')
 
 test('SMS workspace uses one continuous shell with dedicated navigation panes', () => {
   assert.match(smsView, /<SmsDeviceRail/)
@@ -26,4 +29,23 @@ test('thread pane preserves virtual scrolling and all production entries', () =>
   assert.match(threadList, /emit\('select', thread\.key\)/)
   assert.match(threadList, /emit\('delete', thread\)/)
   assert.match(threadList, /LONG_PRESS_MS = 450/)
+})
+
+test('conversation pane exposes real runtime context and explicit message status', () => {
+  assert.match(smsView, /createSmsConversationContext/)
+  assert.match(conversationHeader, /context\.operatorLabel/)
+  assert.match(conversationHeader, /context\.smsLabel/)
+  assert.match(conversationHeader, /context\.imsLabel/)
+  assert.match(messageTimeline, /if \(message\.status === 2\) return '已发送'/)
+  assert.match(messageTimeline, /if \(message\.status === 3\) return '发送失败'/)
+  assert.match(messageTimeline, /max-width: 64%/)
+})
+
+test('conversation actions remain wired to production handlers', () => {
+  assert.match(smsView, /@refresh="\(\) => void fetchThreadLatest\(false\)"/)
+  assert.match(smsView, /@delete="selectedThread && void confirmDeleteThread\(selectedThread\)"/)
+  assert.match(smsView, /@load-more="loadMoreHistory"/)
+  assert.match(smsView, /@delete="\(message\) => void confirmDeleteMessage\(message\)"/)
+  assert.match(smsView, /@send="sendToCurrentThread"/)
+  assert.match(composer, /Shift\+Enter 换行/)
 })
