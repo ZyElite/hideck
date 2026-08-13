@@ -12,6 +12,7 @@ import { devicesService } from '../services/devices'
 import type { BalanceQuery, CarrierQueryRule, CommandDefinition, CommandEvent, ManualBalanceInput } from '../types/commands'
 import { isCarrierRuleOperationBlocked } from '../utils/carrierRuleRuntime'
 import { buildDangerousCommand } from '../utils/commandInput'
+import { createDeviceRequestScope } from '../utils/deviceRequestScope'
 
 const pageSize = 100
 const definitions = ref<CommandDefinition[]>([])
@@ -49,7 +50,7 @@ const dangerousDefinition = ref<CommandDefinition | null>(null)
 const dangerForm = reactive({ device: '', target: '', phone: '', duration: 15 })
 let disposed = false
 let rulesRequestID = 0
-let manualBalanceRequestID = 0
+const manualBalanceRequestScope = createDeviceRequestScope('')
 
 const runtimeStatus = useCommandRuntimeStatus({
   fetchDevices: () => devicesService.listManaged(),
@@ -91,6 +92,7 @@ watch(devices, (nextDevices) => {
 }, { flush: 'sync' })
 
 watch(selectedDevice, () => {
+  manualBalanceRequestScope.invalidate(selectedDevice.value)
   manualBalance.value = null
   void loadManualBalance()
 }, { flush: 'sync' })
@@ -225,14 +227,14 @@ async function refreshAll() {
 
 async function loadManualBalance(showError = false) {
   const deviceID = selectedDevice.value
-  const requestID = ++manualBalanceRequestID
+  const request = manualBalanceRequestScope.begin(deviceID)
   if (!deviceID) {
     manualBalance.value = null
     manualBalanceError.value = ''
     return true
   }
   const result = await commandService.manualBalance(deviceID)
-  if (requestID !== manualBalanceRequestID || deviceID !== selectedDevice.value) return false
+  if (!manualBalanceRequestScope.isCurrent(request, selectedDevice.value)) return false
   if (!result.ok) {
     manualBalanceError.value = result.error.message || '手动余额读取失败'
     if (showError) ElMessage.error(manualBalanceError.value)
@@ -280,6 +282,7 @@ async function saveManualBalance(input: ManualBalanceInput) {
     ElMessage.error(result.error.message || '手动余额保存失败')
     return
   }
+  manualBalanceRequestScope.invalidate(selectedDevice.value)
   balances.value = [result.data, ...balances.value.filter((item) => item.id !== result.data.id)]
   manualBalance.value = result.data
   manualBalanceError.value = ''
@@ -300,6 +303,7 @@ async function clearManualBalance() {
     ElMessage.error(result.error.message || '手动余额清除失败')
     return
   }
+  manualBalanceRequestScope.invalidate(selectedDevice.value)
   balances.value = balances.value.filter((item) => (
     item.device_id !== selectedDevice.value || item.transport !== 'manual'
   ))

@@ -47,8 +47,8 @@ const emit = defineEmits<{
 const selectedQueries = computed(() => [...props.queries
   .filter((query) => !props.selectedDevice || query.device_id === props.selectedDevice)]
   .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at)))
-const latestQuery = computed(() => selectedQueries.value[0])
 const manualQuery = computed(() => selectedQueries.value.find((query) => query.transport === 'manual'))
+const latestQuery = computed(() => manualQuery.value || selectedQueries.value[0])
 const visibleRules = computed(() => effectiveCarrierRules(props.builtInRules, props.customRules).slice(0, 4))
 
 function deviceLabel(device: DeviceMgmtListItem): string {

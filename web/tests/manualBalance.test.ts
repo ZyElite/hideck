@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { prepareManualBalanceInput } from '../src/utils/manualBalance'
+import { createDeviceRequestScope } from '../src/utils/deviceRequestScope'
 
 const service = await readFile(new URL('../src/services/commands.ts', import.meta.url), 'utf8')
 const commands = await readFile(new URL('../src/views/Commands.vue', import.meta.url), 'utf8')
@@ -33,4 +34,15 @@ test('manual balance remains independently addressable and visually distinct', (
   assert.match(timeline, /tone === 'manual'/)
   assert.match(timeline, /\.tone-manual \{ color: var\(--ui-primary\); \}/)
   assert.match(balanceMessage, /\.tone-manual \{ color: var\(--ui-primary\); \}/)
+})
+
+test('manual balance mutations invalidate stale reads and remain the current display value', () => {
+  const scope = createDeviceRequestScope('wwan0')
+  const staleRead = scope.begin('wwan0')
+  scope.invalidate('wwan0')
+  assert.equal(scope.isCurrent(staleRead, 'wwan0'), false)
+
+  assert.match(commands, /manualBalanceRequestScope\.invalidate\(selectedDevice\.value\)[\s\S]*balances\.value = \[result\.data/)
+  assert.match(commands, /manualBalanceRequestScope\.invalidate\(selectedDevice\.value\)[\s\S]*balances\.value = balances\.value\.filter/)
+  assert.match(panel, /const latestQuery = computed\(\(\) => manualQuery\.value \|\| selectedQueries\.value\[0\]\)/)
 })
