@@ -6,11 +6,13 @@ import WorkspaceStage from '../components/WorkspaceStage.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ListSkeleton from '../components/ListSkeleton.vue'
 import ErrorState from '../components/ErrorState.vue'
+import ProxyUpstreamInventory from '../components/proxy/ProxyUpstreamInventory.vue'
 import { usePollingScheduler } from '../composables/usePollingScheduler'
 import { useProxyStore } from '../stores/proxy'
 import { useUpstreamProxyStore } from '../stores/upstream-proxy'
 import type { ProxyInstance, ProxyDevice, ProxyMode, UpstreamProxy, UpstreamProxyCountry } from '../types/api'
 import { toAppError } from '../services/http'
+import { createUpstreamProxyPresentation } from '../utils/proxyPresentation'
 import {
   upstreamProxyAddressWarning,
   upstreamProxyIPv6AddressHint
@@ -321,12 +323,12 @@ const currentProxyCountryRules = computed(() => {
 })
 
 // 前置代理列表（带国家规则数量）
-const upstreamProxiesWithRuleCount = computed(() => {
-  return upstreamStore.proxies.map(p => ({
-    ...p,
-    ruleCount: upstreamStore.getRulesForProxy(p.id).length
-  }))
-})
+const upstreamRows = computed(() => upstreamStore.proxies.map(proxy => (
+  createUpstreamProxyPresentation({
+    proxy,
+    ruleCount: upstreamStore.getRulesForProxy(proxy.id).length
+  })
+)))
 
 async function fetchUpstream(opts: { silent?: boolean; initial?: boolean } = {}) {
   const isInitial = opts.initial === true
@@ -340,7 +342,8 @@ async function fetchUpstream(opts: { silent?: boolean; initial?: boolean } = {})
 
   try {
     const result = await upstreamStore.fetchAll()
-    if (!result.ok) throw new Error(result.error.message)
+    const error = result.ok ? upstreamStore.error : result.error
+    if (error) throw error
   } catch (e: unknown) {
     const err = toAppError(e)
     upstreamError.value = {
@@ -444,6 +447,25 @@ function openCountryRuleDrawer(proxy: UpstreamProxy) {
   countryRuleDrawerOpen.value = true
 }
 
+function findUpstreamProxy(id: string): UpstreamProxy | undefined {
+  return upstreamStore.proxies.find(proxy => proxy.id === id)
+}
+
+function editUpstreamProxy(id: string) {
+  const proxy = findUpstreamProxy(id)
+  if (proxy) openUpstreamDrawer(proxy)
+}
+
+function removeUpstreamProxy(id: string) {
+  const proxy = findUpstreamProxy(id)
+  if (proxy) void deleteUpstream(proxy)
+}
+
+function manageUpstreamRules(id: string) {
+  const proxy = findUpstreamProxy(id)
+  if (proxy) openCountryRuleDrawer(proxy)
+}
+
 async function doUpsertCountryRule() {
   if (!countryRuleTargetProxy.value || !selectedCountryCode.value) {
     ElMessage.warning('请选择国家')
@@ -544,79 +566,16 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
         @retry="fetchUpstream"
       />
 
-      <section class="proxy-board ui-card">
-        <header class="proxy-board-header">
-          <div class="flex items-center gap-3">
-            <div class="section-icon section-icon-communication">
-              <el-icon size="20"><Earth24Regular /></el-icon>
-            </div>
-            <div>
-              <div class="text-lg font-bold text-gray-900 dark:text-white">VoWiFi 漫游前置代理</div>
-              <div class="text-xs text-gray-500">VoWiFi 通过 Socks5 代理穿透连接海外运营商。注意 Socks5 端必须支持 UDP Associate</div>
-            </div>
-          </div>
-          <el-button type="primary" @click="openUpstreamDrawer()" class="!border-0">
-            <el-icon class="mr-1.5"><Add24Regular /></el-icon>
-            <span>新增代理</span>
-          </el-button>
-        </header>
-
-        <ListSkeleton v-if="upstreamLoading && upstreamStore.proxies.length === 0" :rows="2" />
-
-        <EmptyState
-          v-else-if="upstreamStore.proxies.length === 0"
-          title="暂无前置代理"
-          subtitle="点击「新增代理」创建 Socks5 前置代理，再按国家配置 VoWiFi 分流规则；未配置国家默认直连"
-        />
-
-        <div v-else class="proxy-node-grid">
-          <div
-            v-for="proxy in upstreamProxiesWithRuleCount"
-            :key="proxy.id"
-            class="proxy-node-card ui-panel-muted p-4 flex flex-col gap-4"
-          >
-            <div class="flex items-center gap-3 min-w-0">
-              <span class="w-2.5 h-2.5 rounded-full shrink-0" :class="proxy.enabled ? 'bg-green-500' : 'bg-gray-300'" />
-              <div class="min-w-0">
-                <div class="font-bold text-gray-900 dark:text-white truncate">{{ proxy.name || proxy.id }}</div>
-                <div class="text-xs text-gray-500 mt-0.5 truncate">
-                  Socks5 · <span class="font-mono">{{ proxy.addr }}</span>
-                  <span v-if="proxy.username"> · 鉴权: {{ proxy.username }}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="flex items-center gap-2 shrink-0 flex-wrap">
-              <el-tag size="small" :type="proxy.enabled ? 'success' : 'info'">
-                {{ proxy.enabled ? '已启用' : '已禁用' }}
-              </el-tag>
-              
-              <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-blue-50 text-blue-600 border border-blue-200/60 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/40">
-                <el-icon size="14"><Link24Regular /></el-icon>
-                <span>{{ proxy.ruleCount }} 个国家规则</span>
-              </div>
-
-              <div class="w-px h-3.5 bg-gray-200 dark:bg-gray-700 mx-0.5 hidden sm:block"></div>
-
-              <el-button size="small" @click="openCountryRuleDrawer(proxy)">
-                <div class="flex items-center gap-1 -my-0.5">
-                  <el-icon size="14"><Link24Regular /></el-icon>
-                  <span>国家规则</span>
-                </div>
-              </el-button>
-              
-              <el-button-group>
-                <el-button size="small" @click="openUpstreamDrawer(proxy)">
-                  <el-icon><Edit24Regular /></el-icon>
-                </el-button>
-                <el-button size="small" type="danger" @click="deleteUpstream(proxy)">
-                  <el-icon><Delete24Regular /></el-icon>
-                </el-button>
-              </el-button-group>
-            </div>
-          </div>
-        </div>
-      </section>
+      <ProxyUpstreamInventory
+        :loading="upstreamLoading"
+        :refreshing="upstreamRefreshing"
+        :rows="upstreamRows"
+        @add="openUpstreamDrawer()"
+        @delete="removeUpstreamProxy"
+        @edit="editUpstreamProxy"
+        @refresh="fetchUpstream"
+        @rules="manageUpstreamRules"
+      />
     </div>
 
     <!-- ═══════════ 出站代理 Tab ═══════════ -->
