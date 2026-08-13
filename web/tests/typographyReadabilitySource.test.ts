@@ -36,6 +36,10 @@ const proxyTypographyFiles = [
   '../src/components/proxy/ProxyInstanceEditorDrawer.vue',
   '../src/components/proxy/ProxyUpstreamEditorDrawer.vue'
 ] as const
+const proxyInventoryFiles = [
+  '../src/components/proxy/ProxyOutboundInventory.vue',
+  '../src/components/proxy/ProxyUpstreamInventory.vue'
+] as const
 const smsTypographyFiles = [
   '../src/views/Sms.vue',
   '../src/components/sms/SmsDeviceRail.vue',
@@ -116,6 +120,17 @@ test('proxy workspace text does not declare font sizes below 12px', async () => 
   for (const path of proxyTypographyFiles) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8')
     assert.deepEqual(findUnreadableFontSizes(source), [], path)
+  }
+})
+
+test('proxy inventory table body uses the 13px body-small token', async () => {
+  for (const path of proxyInventoryFiles) {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8')
+    assert.match(
+      source,
+      /\.proxy-inventory-table td \{[^}]*font-size:\s*var\(--ui-font-body-sm\)/,
+      path
+    )
   }
 })
 

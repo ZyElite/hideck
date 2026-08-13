@@ -109,7 +109,7 @@ defineEmits<{
 .proxy-table-wrap { min-width: 0; }
 .proxy-inventory-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .proxy-inventory-table th { height: 40px; padding: 0 12px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-muted); font-size: var(--ui-font-caption); font-weight: 600; text-align: left; }
-.proxy-inventory-table td { min-width: 0; min-height: 58px; padding: 11px 12px; border-bottom: 1px solid var(--ui-border-muted); color: var(--ui-text); font-size: 12px; vertical-align: middle; overflow-wrap: anywhere; }
+.proxy-inventory-table td { min-width: 0; min-height: 58px; padding: 11px 12px; border-bottom: 1px solid var(--ui-border-muted); color: var(--ui-text); font-size: var(--ui-font-body-sm); vertical-align: middle; overflow-wrap: anywhere; }
 .proxy-inventory-table tr:last-child td { border-bottom: 0; }
 .proxy-inventory-table th:nth-child(1) { width: 15%; }
 .proxy-inventory-table th:nth-child(2) { width: 21%; }
