@@ -184,17 +184,15 @@ async function openDrawer(inst?: ProxyInstance) {
     return
   }
 
-  editingInstance.value = inst
-  instanceForm.value = { ...inst, mode: inst.mode || 'socks5' }
-  drawerOpen.value = true
-
   try {
     const result = await proxyStore.fetchInstance(inst.id)
-    if (result.ok) {
-      instanceForm.value = { ...result.data, mode: result.data.mode || 'socks5' }
-    }
-  } catch {
-    ElMessage.warning('读取完整实例配置失败，已使用概览数据')
+    if (!result.ok) throw result.error
+    editingInstance.value = inst
+    instanceForm.value = { ...result.data, mode: result.data.mode || 'socks5' }
+    drawerOpen.value = true
+  } catch (e: unknown) {
+    const err = toAppError(e)
+    ElMessage.error(err.message || '读取完整实例配置失败')
   }
 }
 

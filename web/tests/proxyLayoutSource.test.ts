@@ -43,3 +43,15 @@ test('proxy controls retain real runtime facts and accessible actions', () => {
     assert.ok(outboundInventory.includes(`aria-label="\`${action}`))
   }
 })
+
+test('outbound editing never falls back to incomplete overview data', () => {
+  const fetchIndex = proxyView.indexOf('await proxyStore.fetchInstance(inst.id)')
+  const rejectIndex = proxyView.indexOf('if (!result.ok) throw result.error', fetchIndex)
+  const openIndex = proxyView.indexOf('drawerOpen.value = true', rejectIndex)
+
+  assert.ok(fetchIndex >= 0)
+  assert.ok(rejectIndex > fetchIndex)
+  assert.ok(openIndex > rejectIndex)
+  assert.doesNotMatch(proxyView, /已使用概览数据/)
+  assert.match(proxyView, /ElMessage\.error\(err\.message \|\| '读取完整实例配置失败'\)/)
+})
