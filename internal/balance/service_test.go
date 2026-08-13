@@ -266,9 +266,16 @@ func TestManualBalanceUpsertsWithoutSendingAndCanBeCleared(t *testing.T) {
 	if err != nil || len(queries) != 1 || queries[0].Amount != "9.5" {
 		t.Fatalf("manual query list = %+v, err=%v", queries, err)
 	}
+	current, found, err := service.GetManualBalance(context.Background(), "wwan0")
+	if err != nil || !found || current.ID != first.ID || current.Amount != "9.5" {
+		t.Fatalf("GetManualBalance() = %+v, %v, %v", current, found, err)
+	}
 	cleared, err := service.ClearManualBalance(context.Background(), "wwan0")
 	if err != nil || !cleared {
 		t.Fatalf("ClearManualBalance() = %v, %v", cleared, err)
+	}
+	if _, found, err := service.GetManualBalance(context.Background(), "wwan0"); err != nil || found {
+		t.Fatalf("GetManualBalance() after clear found=%v err=%v", found, err)
 	}
 }
 

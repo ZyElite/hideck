@@ -31,6 +31,7 @@ defineProps<{ query: BalanceQuery }>()
 .balance-message p { margin: 0; color: var(--ui-danger); font-size: var(--ui-font-body-sm); overflow-wrap: anywhere; }
 .tone-waiting, .tone-running { color: var(--ui-warning); }
 .tone-parsed { color: var(--ui-info); }
+.tone-manual { color: var(--ui-primary); }
 .tone-success { color: var(--ui-success); }
 .tone-danger { color: var(--ui-danger); }
 </style>

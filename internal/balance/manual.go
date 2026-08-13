@@ -54,6 +54,21 @@ func (s *Service) ClearManualBalance(ctx context.Context, deviceID string) (bool
 	return s.repo.DeleteManual(ctx, deviceID)
 }
 
+func (s *Service) GetManualBalance(ctx context.Context, deviceID string) (Query, bool, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return Query{}, false, ErrDeviceNotFound
+	}
+	query, found, err := s.repo.Get(ctx, manualBalanceID(deviceID))
+	if err != nil || !found {
+		return Query{}, found, err
+	}
+	if query.DeviceID != deviceID || query.Transport != TransportManual {
+		return Query{}, false, nil
+	}
+	return query, true, nil
+}
+
 func normalizeManualBalance(amount, currency string) (string, string, error) {
 	amount = strings.TrimSpace(amount)
 	if len(amount) == 0 || len(amount) > maxManualAmountLength || !manualAmountPattern.MatchString(amount) {

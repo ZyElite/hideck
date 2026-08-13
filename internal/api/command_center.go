@@ -38,6 +38,7 @@ func (s *Server) registerApprovedCommandRoutes(api *gin.RouterGroup) {
 	api.GET("/balances", s.handleBalanceQueryList)
 	api.POST("/devices/:device_id/balance-queries", s.handleDeviceBalanceQueryStart)
 	api.GET("/devices/:device_id/balance-queries", s.handleDeviceBalanceQueryList)
+	api.GET("/devices/:device_id/manual-balance", s.handleDeviceManualBalanceGet)
 	api.PUT("/devices/:device_id/manual-balance", s.handleDeviceManualBalancePut)
 	api.DELETE("/devices/:device_id/manual-balance", s.handleDeviceManualBalanceDelete)
 	api.GET("/carrier-query-rules", s.handleBalanceRules)

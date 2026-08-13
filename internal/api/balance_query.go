@@ -84,6 +84,22 @@ func (s *Server) handleDeviceManualBalancePut(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"query": query})
 }
 
+func (s *Server) handleDeviceManualBalanceGet(c *gin.Context) {
+	if !s.requireBalance(c) {
+		return
+	}
+	query, found, err := s.balance.GetManualBalance(c.Request.Context(), c.Param("device_id"))
+	if err != nil {
+		writeManualBalanceError(c, err, "手动余额读取失败")
+		return
+	}
+	if !found {
+		c.JSON(http.StatusOK, gin.H{"query": nil})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"query": query})
+}
+
 func (s *Server) handleDeviceManualBalanceDelete(c *gin.Context) {
 	if !s.requireBalance(c) {
 		return

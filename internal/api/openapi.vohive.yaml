@@ -1958,6 +1958,29 @@ paths:
           $ref: '#/components/responses/Unauthorized'
 
   /devices/{device_id}/manual-balance:
+    get:
+      tags: [balance]
+      summary: 获取指定设备的当前手动余额
+      description: 返回当前手动余额；尚未设置时 query 为 null。
+      parameters:
+        - $ref: '#/components/parameters/DeviceIDPath'
+      responses:
+        '200':
+          description: 当前手动余额或空值
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [query]
+                properties:
+                  query:
+                    nullable: true
+                    allOf:
+                      - $ref: '#/components/schemas/BalanceQuery'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     put:
       tags: [balance]
       summary: 保存或更新指定设备的手动余额

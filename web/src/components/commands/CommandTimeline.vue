@@ -16,6 +16,7 @@ import {
   Chat24Regular,
   CheckmarkCircle24Regular,
   Clock24Regular,
+  Edit24Regular,
   ErrorCircle24Regular,
   Send24Regular
 } from '@vicons/fluent'
@@ -187,6 +188,7 @@ function audioAttachments(event: CommandEvent) {
             <el-icon v-else-if="item.presentation.tone === 'running'"><Clock24Regular /></el-icon>
             <el-icon v-else-if="item.presentation.tone === 'waiting'"><Clock24Regular /></el-icon>
             <el-icon v-else-if="item.presentation.tone === 'parsed'"><Chat24Regular /></el-icon>
+            <el-icon v-else-if="item.presentation.tone === 'manual'"><Edit24Regular /></el-icon>
             <el-icon v-else-if="item.presentation.tone === 'danger'"><ErrorCircle24Regular /></el-icon>
             <el-icon v-else><CheckmarkCircle24Regular /></el-icon>
           </span>
@@ -282,6 +284,7 @@ function audioAttachments(event: CommandEvent) {
 .tone-sent { color: var(--ui-communication); }
 .tone-running, .tone-waiting { color: var(--ui-warning); }
 .tone-parsed { color: var(--ui-info); }
+.tone-manual { color: var(--ui-primary); }
 .tone-success { color: var(--ui-success); }
 .tone-danger { color: var(--ui-danger); }
 .empty-state, .empty-line {

@@ -7,6 +7,8 @@ const service = await readFile(new URL('../src/services/commands.ts', import.met
 const commands = await readFile(new URL('../src/views/Commands.vue', import.meta.url), 'utf8')
 const panel = await readFile(new URL('../src/components/commands/BalancePanel.vue', import.meta.url), 'utf8')
 const dialog = await readFile(new URL('../src/components/commands/ManualBalanceDialog.vue', import.meta.url), 'utf8')
+const timeline = await readFile(new URL('../src/components/commands/CommandTimeline.vue', import.meta.url), 'utf8')
+const balanceMessage = await readFile(new URL('../src/components/commands/BalanceMessage.vue', import.meta.url), 'utf8')
 
 test('manual balance input normalizes amount and currency without inventing defaults', () => {
   assert.deepEqual(prepareManualBalanceInput(' 12,89 ', ' gbp '), { amount: '12.89', currency: 'GBP' })
@@ -22,4 +24,13 @@ test('manual balance UI uses real save and clear endpoints and labels its source
   assert.match(panel, /编辑手动余额/)
   assert.match(dialog, /来源会明确显示为“手动录入”/)
   assert.match(dialog, /清除手动值/)
+})
+
+test('manual balance remains independently addressable and visually distinct', () => {
+  assert.match(service, /api\.get\(`\/devices\/\$\{encodeURIComponent\(deviceId\)\}\/manual-balance`\)/)
+  assert.match(commands, /const displayedBalances = computed/)
+  assert.match(commands, /loadManualBalance\(true\)/)
+  assert.match(timeline, /tone === 'manual'/)
+  assert.match(timeline, /\.tone-manual \{ color: var\(--ui-primary\); \}/)
+  assert.match(balanceMessage, /\.tone-manual \{ color: var\(--ui-primary\); \}/)
 })

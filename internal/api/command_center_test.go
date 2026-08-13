@@ -130,6 +130,7 @@ func TestApprovedCommandCenterRoutesAreProtected(t *testing.T) {
 		{method: http.MethodGet, path: "/api/balances"},
 		{method: http.MethodPost, path: "/api/devices/wwan0/balance-queries"},
 		{method: http.MethodGet, path: "/api/devices/wwan0/balance-queries"},
+		{method: http.MethodGet, path: "/api/devices/wwan0/manual-balance"},
 		{method: http.MethodPut, path: "/api/devices/wwan0/manual-balance"},
 		{method: http.MethodDelete, path: "/api/devices/wwan0/manual-balance"},
 		{method: http.MethodGet, path: "/api/carrier-query-rules"},
@@ -162,6 +163,12 @@ func TestManualBalanceRoutesPersistUpdateAndDeleteWithoutSending(t *testing.T) {
 	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"amount":"9.50"`) {
 		t.Fatalf("update manual balance status=%d body=%s", updated.Code, updated.Body.String())
 	}
+	current := performAPIRequest(router, apiRequestOptions{
+		method: http.MethodGet, path: "/api/devices/wwan0/manual-balance", token: token,
+	})
+	if current.Code != http.StatusOK || !strings.Contains(current.Body.String(), `"amount":"9.50"`) {
+		t.Fatalf("get manual balance status=%d body=%s", current.Code, current.Body.String())
+	}
 	listed := performAPIRequest(router, apiRequestOptions{method: http.MethodGet, path: "/api/balances", token: token})
 	if listed.Code != http.StatusOK || strings.Count(listed.Body.String(), `"transport":"manual"`) != 1 {
 		t.Fatalf("list manual balance status=%d body=%s", listed.Code, listed.Body.String())
@@ -178,6 +185,12 @@ func TestManualBalanceRoutesPersistUpdateAndDeleteWithoutSending(t *testing.T) {
 	listed = performAPIRequest(router, apiRequestOptions{method: http.MethodGet, path: "/api/balances", token: token})
 	if strings.Contains(listed.Body.String(), `"transport":"manual"`) {
 		t.Fatalf("manual balance remains after delete: %s", listed.Body.String())
+	}
+	current = performAPIRequest(router, apiRequestOptions{
+		method: http.MethodGet, path: "/api/devices/wwan0/manual-balance", token: token,
+	})
+	if current.Code != http.StatusOK || !strings.Contains(current.Body.String(), `"query":null`) {
+		t.Fatalf("get cleared manual balance status=%d body=%s", current.Code, current.Body.String())
 	}
 }
 

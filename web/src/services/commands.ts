@@ -62,6 +62,13 @@ export const commandService = {
     })
   },
 
+  manualBalance(deviceId: string) {
+    return callService(async () => {
+      const response = await api.get(`/devices/${encodeURIComponent(deviceId)}/manual-balance`)
+      return (response.data?.query || null) as BalanceQuery | null
+    })
+  },
+
   setManualBalance(deviceId: string, input: ManualBalanceInput) {
     return callService(async () => {
       const response = await api.put(`/devices/${encodeURIComponent(deviceId)}/manual-balance`, input)

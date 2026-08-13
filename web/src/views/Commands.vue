@@ -9,7 +9,7 @@ import { useEventStream } from '../composables/useEventStream'
 import { useCommandRuntimeStatus } from '../composables/useCommandRuntimeStatus'
 import { commandService } from '../services/commands'
 import { devicesService } from '../services/devices'
-import type { CarrierQueryRule, CommandDefinition, CommandEvent, ManualBalanceInput } from '../types/commands'
+import type { BalanceQuery, CarrierQueryRule, CommandDefinition, CommandEvent, ManualBalanceInput } from '../types/commands'
 import { isCarrierRuleOperationBlocked } from '../utils/carrierRuleRuntime'
 import { buildDangerousCommand } from '../utils/commandInput'
 
@@ -38,6 +38,8 @@ const deletingRuleID = ref('')
 const rulesLoading = ref(false)
 const rulesLoaded = ref(false)
 const rulesError = ref('')
+const manualBalance = ref<BalanceQuery | null>(null)
+const manualBalanceError = ref('')
 const ruleOperationBlocked = computed(() => isCarrierRuleOperationBlocked({
   loading: rulesLoading.value,
   saving: savingRule.value,
@@ -47,6 +49,7 @@ const dangerousDefinition = ref<CommandDefinition | null>(null)
 const dangerForm = reactive({ device: '', target: '', phone: '', duration: 15 })
 let disposed = false
 let rulesRequestID = 0
+let manualBalanceRequestID = 0
 
 const runtimeStatus = useCommandRuntimeStatus({
   fetchDevices: () => devicesService.listManaged(),
@@ -56,9 +59,17 @@ const runtimeStatus = useCommandRuntimeStatus({
 const devices = runtimeStatus.devices
 const balances = runtimeStatus.balances
 const selectedDeviceModel = computed(() => devices.value.find((device) => device.id === selectedDevice.value))
-const selectedManualBalance = computed(() => balances.value.find((query) => (
-  query.device_id === selectedDevice.value && query.transport === 'manual'
-)))
+const selectedManualBalance = computed(() => manualBalance.value?.device_id === selectedDevice.value
+  ? manualBalance.value
+  : undefined)
+const displayedBalances = computed(() => {
+  const withoutSelectedManual = balances.value.filter((query) => (
+    query.device_id !== selectedDevice.value || query.transport !== 'manual'
+  ))
+  return selectedManualBalance.value
+    ? [selectedManualBalance.value, ...withoutSelectedManual]
+    : withoutSelectedManual
+})
 
 const stream = useEventStream<CommandEvent>({
   path: '/command-center/stream',
@@ -70,13 +81,23 @@ const stream = useEventStream<CommandEvent>({
 const streamConnected = stream.connected
 const syncWarning = computed(() => [
   stream.lastError.value ? `实时事件：${stream.lastError.value}` : '',
-  runtimeStatus.syncWarning.value
+  runtimeStatus.syncWarning.value,
+  manualBalanceError.value ? `手动余额：${manualBalanceError.value}` : ''
 ].filter(Boolean).join('；'))
 
 watch(devices, (nextDevices) => {
   if (nextDevices.some((device) => device.id === selectedDevice.value)) return
   selectedDevice.value = nextDevices[0]?.id || ''
 }, { flush: 'sync' })
+
+watch(selectedDevice, () => {
+  manualBalance.value = null
+  void loadManualBalance()
+}, { flush: 'sync' })
+
+watch(runtimeStatus.lastSyncedAt, () => {
+  void loadManualBalance()
+})
 
 const dangerousTitle = computed(() => {
   if (dangerousDefinition.value?.name === 'switch') return '切换 eSIM'
@@ -196,9 +217,30 @@ async function refreshAll() {
       loadRules()
     ])
     if (eventsLoaded) refreshVersion.value += 1
+    await loadManualBalance(true)
   } finally {
     manualRefreshing.value = false
   }
+}
+
+async function loadManualBalance(showError = false) {
+  const deviceID = selectedDevice.value
+  const requestID = ++manualBalanceRequestID
+  if (!deviceID) {
+    manualBalance.value = null
+    manualBalanceError.value = ''
+    return true
+  }
+  const result = await commandService.manualBalance(deviceID)
+  if (requestID !== manualBalanceRequestID || deviceID !== selectedDevice.value) return false
+  if (!result.ok) {
+    manualBalanceError.value = result.error.message || '手动余额读取失败'
+    if (showError) ElMessage.error(manualBalanceError.value)
+    return false
+  }
+  manualBalance.value = result.data
+  manualBalanceError.value = ''
+  return true
 }
 
 async function clearHistory() {
@@ -239,6 +281,8 @@ async function saveManualBalance(input: ManualBalanceInput) {
     return
   }
   balances.value = [result.data, ...balances.value.filter((item) => item.id !== result.data.id)]
+  manualBalance.value = result.data
+  manualBalanceError.value = ''
   manualBalanceOpen.value = false
   ElMessage.success('手动余额已保存')
 }
@@ -259,6 +303,8 @@ async function clearManualBalance() {
   balances.value = balances.value.filter((item) => (
     item.device_id !== selectedDevice.value || item.transport !== 'manual'
   ))
+  manualBalance.value = null
+  manualBalanceError.value = ''
   manualBalanceOpen.value = false
   ElMessage.success('手动余额已清除')
 }
@@ -341,7 +387,7 @@ function updateRulesOpen(open: boolean) {
       <CommandChat
         v-model:selected-device="selectedDevice"
         :events="events"
-        :balance-queries="balances"
+        :balance-queries="displayedBalances"
         :definitions="definitions"
         :devices="devices"
         :loading="loading"
@@ -365,7 +411,7 @@ function updateRulesOpen(open: boolean) {
         v-model="balanceOpen"
         v-model:selected-device="selectedDevice"
         :devices="devices"
-        :queries="balances"
+        :queries="displayedBalances"
         :built-in-rules="builtInRules"
         :custom-rules="customRules"
         :loading="loading"
