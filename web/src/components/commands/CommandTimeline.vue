@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import BalanceMessage from './BalanceMessage.vue'
 import CommandAudioPlayer from './CommandAudioPlayer.vue'
 import type { BalanceQuery, CommandEvent } from '../../types/commands'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
+import { countAddedTimelineRecords, isNearTimelineEnd } from '../../utils/timelineFollow'
 import {
   presentBalanceState,
   presentCommandEvent,
@@ -23,7 +24,16 @@ const props = defineProps<{
   events: CommandEvent[]
   balanceQueries: BalanceQuery[]
   loading: boolean
+  contextKey: string
+  historyVersion: number
 }>()
+
+type TimelineAnchor = Readonly<{ key: string; offset: number }>
+
+const timelineScroll = ref<HTMLElement | null>(null)
+const followingLatest = ref(true)
+const pendingRecordCount = ref(0)
+let previousScrollTop = 0
 
 type TimelineItem =
   | {
@@ -61,6 +71,92 @@ const timelineItems = computed<TimelineItem[]>(() => {
   ))
 })
 
+const timelineKeys = computed(() => timelineItems.value.map((item) => item.key))
+
+onMounted(async () => {
+  await nextTick()
+  scrollToLatest('auto')
+})
+
+watch(
+  [timelineKeys, () => props.contextKey, () => props.historyVersion],
+  async ([nextKeys, nextContext, nextHistory], [previousKeys, previousContext, previousHistory]) => {
+    const container = timelineScroll.value
+    if (!container) return
+
+    const contextChanged = nextContext !== previousContext
+    const historyPrepended = nextHistory !== previousHistory
+    const anchor = historyPrepended ? captureVisibleAnchor(container) : null
+    const addedCount = countAddedTimelineRecords(previousKeys, nextKeys)
+
+    await nextTick()
+    if (contextChanged) {
+      scrollToLatest('auto')
+      return
+    }
+    if (historyPrepended) {
+      restoreVisibleAnchor(container, anchor)
+      return
+    }
+    if (!previousKeys.length && nextKeys.length) {
+      scrollToLatest('auto')
+      return
+    }
+    if (!addedCount) return
+    if (followingLatest.value) {
+      scrollToLatest(preferredScrollBehavior())
+      return
+    }
+    pendingRecordCount.value += addedCount
+  },
+  { flush: 'pre' }
+)
+
+function captureVisibleAnchor(container: HTMLElement): TimelineAnchor | null {
+  const containerTop = container.getBoundingClientRect().top
+  const elements = container.querySelectorAll<HTMLElement>('[data-timeline-key]')
+  for (const element of elements) {
+    const bounds = element.getBoundingClientRect()
+    if (bounds.bottom <= containerTop) continue
+    return { key: element.dataset.timelineKey || '', offset: bounds.top - containerTop }
+  }
+  return null
+}
+
+function restoreVisibleAnchor(container: HTMLElement, anchor: TimelineAnchor | null) {
+  if (!anchor?.key) return
+  const element = [...container.querySelectorAll<HTMLElement>('[data-timeline-key]')]
+    .find((candidate) => candidate.dataset.timelineKey === anchor.key)
+  if (!element) return
+  const nextOffset = element.getBoundingClientRect().top - container.getBoundingClientRect().top
+  container.scrollTop += nextOffset - anchor.offset
+  previousScrollTop = container.scrollTop
+}
+
+function preferredScrollBehavior(): ScrollBehavior {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+}
+
+function scrollToLatest(behavior: ScrollBehavior) {
+  const container = timelineScroll.value
+  if (!container) return
+  followingLatest.value = true
+  pendingRecordCount.value = 0
+  container.scrollTo({ top: container.scrollHeight, behavior })
+  previousScrollTop = container.scrollTop
+}
+
+function handleTimelineScroll() {
+  const container = timelineScroll.value
+  if (!container) return
+  if (container.scrollTop < previousScrollTop) followingLatest.value = false
+  if (isNearTimelineEnd(container)) {
+    followingLatest.value = true
+    pendingRecordCount.value = 0
+  }
+  previousScrollTop = container.scrollTop
+}
+
 function audioAttachments(event: CommandEvent) {
   return (event.attachments || []).filter((attachment) => attachment.type === 'audio')
 }
@@ -68,7 +164,7 @@ function audioAttachments(event: CommandEvent) {
 
 <template>
   <section class="timeline" aria-label="命令执行记录">
-    <div class="timeline-scroll" aria-live="polite">
+    <div ref="timelineScroll" class="timeline-scroll" aria-live="polite" @scroll.passive="handleTimelineScroll">
       <div v-if="loading && !timelineItems.length" class="empty-line">
         <span class="empty-icon" aria-hidden="true"><el-icon><Clock24Regular /></el-icon></span>
         <strong>正在读取命令记录</strong>
@@ -82,6 +178,7 @@ function audioAttachments(event: CommandEvent) {
         <article
           v-for="item in timelineItems"
           :key="item.key"
+          :data-timeline-key="item.key"
           class="timeline-event"
           :class="`tone-${item.presentation.tone}`"
         >
@@ -114,12 +211,28 @@ function audioAttachments(event: CommandEvent) {
         </article>
       </div>
     </div>
+    <el-button
+      v-if="pendingRecordCount"
+      class="new-records"
+      type="primary"
+      round
+      @click="scrollToLatest(preferredScrollBehavior())"
+    >
+      {{ pendingRecordCount }} 条新记录 · 查看最新
+    </el-button>
   </section>
 </template>
 
 <style scoped>
-.timeline { min-height: 0; display: flex; flex-direction: column; }
-.timeline-scroll { min-height: 0; overflow: auto; padding: 16px 20px 18px; scrollbar-width: thin; }
+.timeline { position: relative; min-height: 0; display: flex; flex-direction: column; }
+.timeline-scroll {
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px 18px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
 .timeline-track { position: relative; display: grid; gap: 8px; padding-left: 54px; }
 .timeline-track::before {
   content: '';
@@ -191,6 +304,15 @@ function audioAttachments(event: CommandEvent) {
 .empty-icon .el-icon { font-size: 22px; }
 .empty-state strong, .empty-line strong { color: var(--ui-text); font-size: 13px; }
 .empty-state > span:last-child { font-size: 11px; }
+.new-records {
+  position: absolute;
+  z-index: 10;
+  left: 50%;
+  bottom: 12px;
+  min-height: 36px;
+  transform: translateX(-50%);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ui-bg) 52%, transparent);
+}
 @keyframes event-enter {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
@@ -202,6 +324,7 @@ function audioAttachments(event: CommandEvent) {
   .event-marker { left: -48px; width: 36px; height: 36px; }
   .event-card { padding: 10px 12px; }
   .event-card header { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .new-records { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .timeline-event { animation-name: event-fade; animation-duration: 120ms; }

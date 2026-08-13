@@ -75,3 +75,14 @@ test('command realtime stream starts before secondary page data finishes', () =>
   assert.match(commandsView, /await pageData\s+if \(disposed\) return/)
   assert.match(commandsView, /onUnmounted\(\(\) => \{\s+disposed = true/)
 })
+
+test('command timeline opens at the latest record without stealing historical reading position', () => {
+  assert.match(commandTimeline, /ref="timelineScroll"/)
+  assert.match(commandTimeline, /captureVisibleAnchor/)
+  assert.match(commandTimeline, /restoreVisibleAnchor/)
+  assert.match(commandTimeline, /followingLatest\.value/)
+  assert.match(commandTimeline, /\{\{ pendingRecordCount \}\} 条新记录 · 查看最新/)
+  assert.match(commandTimeline, /prefers-reduced-motion: reduce/)
+  assert.match(commandChat, /:history-version="historyVersion"/)
+  assert.match(commandsView, /historyVersion\.value \+= 1/)
+})

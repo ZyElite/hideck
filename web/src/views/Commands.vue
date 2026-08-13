@@ -22,6 +22,7 @@ const selectedDevice = ref('')
 const loading = ref(true)
 const loadingOlder = ref(false)
 const hasOlder = ref(false)
+const historyVersion = ref(0)
 const executing = ref(false)
 const querying = ref(false)
 const rulesOpen = ref(false)
@@ -97,6 +98,7 @@ async function loadOlder() {
     return
   }
   mergeEvents(result.data)
+  historyVersion.value += 1
   hasOlder.value = result.data.length === pageSize
 }
 
@@ -240,6 +242,7 @@ async function deleteRule(id: string) {
         :loading="loading"
         :loading-older="loadingOlder"
         :has-older="hasOlder"
+        :history-version="historyVersion"
         :busy="executing"
         :stream-connected="streamConnected"
         @load-older="loadOlder"

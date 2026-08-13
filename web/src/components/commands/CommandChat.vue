@@ -23,6 +23,7 @@ const props = defineProps<{
   loading: boolean
   loadingOlder: boolean
   hasOlder: boolean
+  historyVersion: number
   busy: boolean
   streamConnected: boolean
 }>()
@@ -99,7 +100,13 @@ const emit = defineEmits<{
     </header>
 
     <main class="chat-conversation">
-      <CommandTimeline :events="visibleEvents" :balance-queries="visibleBalanceQueries" :loading="loading" />
+      <CommandTimeline
+        :events="visibleEvents"
+        :balance-queries="visibleBalanceQueries"
+        :loading="loading"
+        :context-key="selectedDevice"
+        :history-version="historyVersion"
+      />
       <CommandComposer
         :definitions="definitions"
         :busy="busy"
