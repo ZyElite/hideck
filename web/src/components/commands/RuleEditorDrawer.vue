@@ -138,7 +138,7 @@ function lines(value: string) {
       <el-icon aria-hidden="true"><Database24Regular /></el-icon>
       <div>
         <strong>实时后端规则库</strong>
-        <span>服务端内置规则只读；自定义规则持久化到数据库</span>
+        <span>服务端内置规则通过数据库覆盖编辑；自定义规则持久化到数据库</span>
       </div>
       <div class="source-summary">
         <small>内置 {{ loaded ? builtIn.length : '—' }}</small>

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { CarrierQueryRule } from '../src/types/commands'
-import { editableCarrierRule, isCarrierRuleOperationBlocked } from '../src/utils/carrierRuleRuntime'
+import { editableCarrierRule, effectiveCarrierRules, isCarrierRuleOperationBlocked } from '../src/utils/carrierRuleRuntime'
 
 function rule(overrides: Partial<CarrierQueryRule> = {}): CarrierQueryRule {
   return {
@@ -29,4 +29,14 @@ test('built-in editing creates a database override and prefers an existing overr
   assert.equal(existing.operator, 'Custom override')
   existing.expected_senders?.push('changed')
   assert.deepEqual(custom.expected_senders, ['reply'])
+})
+
+test('effective rules replace a built-in row with its database override', () => {
+  const builtIn = rule({ operator: 'Built in', built_in: true })
+  const custom = rule({ operator: 'Custom override' })
+  const another = rule({ id: 'another', operator: 'Another', built_in: true })
+  assert.deepEqual(
+    effectiveCarrierRules([builtIn, another], [custom]).map((item) => item.operator),
+    ['Custom override', 'Another']
+  )
 })

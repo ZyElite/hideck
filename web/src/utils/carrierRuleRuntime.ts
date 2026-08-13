@@ -23,3 +23,14 @@ export function editableCarrierRule(
     built_in: false
   }
 }
+
+export function effectiveCarrierRules(
+  builtInRules: readonly CarrierQueryRule[],
+  customRules: readonly CarrierQueryRule[]
+): CarrierQueryRule[] {
+  const customIDs = new Set(customRules.map((rule) => rule.id))
+  return [
+    ...customRules,
+    ...builtInRules.filter((rule) => !customIDs.has(rule.id))
+  ].filter((rule) => rule.enabled)
+}

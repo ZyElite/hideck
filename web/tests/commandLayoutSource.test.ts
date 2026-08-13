@@ -130,10 +130,10 @@ test('carrier rule manager uses the real backend CRUD contract', () => {
 
 test('carrier rule source and mutation states are explicit without demo data', () => {
   assert.match(balancePanel, /后端规则库/)
-  assert.match(balancePanel, /服务端内置只读 · 数据库自定义可管理/)
+  assert.match(balancePanel, /内置可覆盖编辑 · 数据库自定义可管理/)
   assert.match(balancePanel, /v-else-if="rulesError"[\s\S]*role="alert"/)
   assert.match(ruleEditor, /实时后端规则库/)
-  assert.match(ruleEditor, /服务端内置规则只读；自定义规则持久化到数据库/)
+  assert.match(ruleEditor, /服务端内置规则通过数据库覆盖编辑；自定义规则持久化到数据库/)
   assert.match(ruleEditor, /数据库中暂无自定义规则/)
   assert.match(ruleEditor, /自定义规则尚未从后端读取成功/)
   assert.match(ruleEditor, /`数据库自定义 \$\{loaded \? custom\.length : '—'\}`/)

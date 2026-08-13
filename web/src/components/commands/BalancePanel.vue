@@ -4,6 +4,7 @@ import type { DeviceMgmtListItem } from '../../types/api'
 import type { BalanceQuery, CarrierQueryRule } from '../../types/commands'
 import { isControlOnline } from '../../utils/deviceLifecycle'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
+import { effectiveCarrierRules } from '../../utils/carrierRuleRuntime'
 import {
   balanceResultText,
   balanceTransportLabel,
@@ -48,9 +49,7 @@ const selectedQueries = computed(() => [...props.queries
   .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at)))
 const latestQuery = computed(() => selectedQueries.value[0])
 const manualQuery = computed(() => selectedQueries.value.find((query) => query.transport === 'manual'))
-const visibleRules = computed(() => [...props.customRules, ...props.builtInRules]
-  .filter((rule) => rule.enabled)
-  .slice(0, 4))
+const visibleRules = computed(() => effectiveCarrierRules(props.builtInRules, props.customRules).slice(0, 4))
 
 function deviceLabel(device: DeviceMgmtListItem): string {
   return `${device.name || device.id} · ${isControlOnline(device) ? '在线' : '离线'}`
@@ -149,7 +148,7 @@ function ruleRoute(rule: CarrierQueryRule): string {
         <el-icon aria-hidden="true"><Database24Regular /></el-icon>
         <div>
           <strong>后端规则库</strong>
-          <span>服务端内置只读 · 数据库自定义可管理</span>
+          <span>内置可覆盖编辑 · 数据库自定义可管理</span>
         </div>
         <div class="source-counts">
           <small>内置 {{ rulesLoaded ? builtInRules.length : '—' }}</small>
