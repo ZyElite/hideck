@@ -65,6 +65,7 @@ const emit = defineEmits<{
 const VChartComp = shallowRef<unknown>(null)
 const chartLoadError = ref<string | null>(null)
 const chartLoading = ref(false)
+const detailsVisible = ref(false)
 let chartInitPromise: Promise<void> | null = null
 
 function formatChartLoadError(err: unknown) {
@@ -503,11 +504,18 @@ function handleRangeChange(value: string | number | boolean | undefined) {
           aria-label="流量统计周期"
           @change="handleRangeChange"
         >
-          <el-radio-button label="day">日</el-radio-button>
-          <el-radio-button label="week">周</el-radio-button>
-          <el-radio-button label="month">月</el-radio-button>
+          <el-radio-button value="day">日</el-radio-button>
+          <el-radio-button value="week">周</el-radio-button>
+          <el-radio-button value="month">月</el-radio-button>
         </el-radio-group>
         <RefreshButton :loading="loading" :disabled="disabled" @click="emit('refresh')" />
+        <el-button
+          v-if="!compact"
+          :aria-expanded="detailsVisible"
+          @click="detailsVisible = !detailsVisible"
+        >
+          {{ detailsVisible ? '收起明细' : '查看明细' }}
+        </el-button>
       </div>
     </div>
 
@@ -574,7 +582,7 @@ function handleRangeChange(value: string | number | boolean | undefined) {
         <span>总流量 <strong>{{ formatBytes(analysisTotal.total) }}</strong></span>
       </footer>
 
-      <section v-else class="traffic-detail" aria-label="流量周期明细">
+      <section v-else-if="detailsVisible" class="traffic-detail" aria-label="流量周期明细">
         <header>
           <div>
             <strong>周期明细</strong>
@@ -616,9 +624,9 @@ function handleRangeChange(value: string | number | boolean | undefined) {
 }
 
 .traffic-analysis-panel {
-  padding: 28px 30px;
-  border-radius: 20px;
-  background: linear-gradient(155deg, color-mix(in srgb, var(--ui-surface) 96%, var(--ui-primary) 4%), var(--ui-surface));
+  padding: 30px;
+  border-radius: 22px;
+  background: linear-gradient(155deg, color-mix(in srgb, var(--ui-surface) 98%, var(--ui-primary) 2%), var(--ui-surface));
 }
 
 .traffic-panel-heading { min-width: 0; }
@@ -643,8 +651,7 @@ function handleRangeChange(value: string | number | boolean | undefined) {
 
 .traffic-chart {
   width: 100%;
-  height: 280px;
-  margin-bottom: 20px;
+  height: 235px;
 }
 
 .traffic-panel-actions {
@@ -654,6 +661,7 @@ function handleRangeChange(value: string | number | boolean | undefined) {
   gap: 8px;
 }
 
+.traffic-period-control { flex: 0 0 auto; }
 .traffic-period-control :deep(.el-radio-button__inner) { min-width: 48px; min-height: 38px; display: grid; place-items: center; }
 
 .compact-chart {
@@ -662,8 +670,8 @@ function handleRangeChange(value: string | number | boolean | undefined) {
 }
 
 .traffic-chart-placeholder {
-  height: 180px;
-  margin-bottom: 24px;
+  height: 235px;
+  margin-bottom: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -711,14 +719,13 @@ function handleRangeChange(value: string | number | boolean | undefined) {
     justify-content: space-between;
   }
 
-  .traffic-period-control { min-width: 0; }
   .traffic-period-control :deep(.el-radio-button__inner) { min-width: 46px; min-height: 44px; padding-inline: 12px; }
 
   .traffic-metrics { margin-top: 22px; grid-template-columns: 1fr; }
   .traffic-metric { padding: 14px 4px; }
   .traffic-metric + .traffic-metric { border-left: 0; border-top: 1px solid var(--ui-border); }
 
-  .traffic-chart { height: 230px; }
+  .traffic-chart { height: 220px; }
 
   .traffic-detail > header > div { align-items: flex-start; flex-direction: column; gap: 1px; }
 

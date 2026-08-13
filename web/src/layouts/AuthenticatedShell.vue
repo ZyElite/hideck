@@ -33,6 +33,8 @@ const route = useRoute()
 const auth = useAuthStore()
 const collapsed = ref(localStorage.getItem('sidebar_collapsed') === '1')
 const isMobile = ref(false)
+const viewportCompact = ref(false)
+const viewportNarrow = ref(false)
 const drawerOpen = ref(false)
 const debugOpen = ref(false)
 const DebugPanel = defineAsyncComponent(() => import('../components/DebugPanel.vue'))
@@ -47,6 +49,8 @@ const menuItems = [
   { index: '/logs', label: '实时日志', icon: DocumentText24Regular },
   { index: '/settings', label: '系统设置', icon: Settings24Regular }
 ]
+const effectiveCollapsed = computed(() => collapsed.value || viewportCompact.value)
+const expandedSidebarWidth = computed(() => viewportNarrow.value ? '190px' : '218px')
 
 async function handleLogout() {
   const { ElMessageBox } = await import('element-plus')
@@ -64,7 +68,9 @@ async function handleLogout() {
 
 function syncIsMobile() {
   if (typeof window === 'undefined') return
-  isMobile.value = window.matchMedia('(max-width: 767px)').matches
+  isMobile.value = window.matchMedia('(max-width: 820px)').matches
+  viewportCompact.value = !isMobile.value && window.matchMedia('(max-width: 1180px)').matches
+  viewportNarrow.value = window.matchMedia('(max-width: 1480px)').matches
   if (!isMobile.value) {
     drawerOpen.value = false
   }
@@ -132,19 +138,19 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
   <el-container v-if="auth.isAuthenticated && route.name !== 'Login'" class="h-full flow-shell">
     <el-aside
       v-if="!isMobile"
-      :width="collapsed ? '60px' : '216px'"
+      :width="effectiveCollapsed ? '78px' : expandedSidebarWidth"
       class="h-full transition-[width] duration-200 relative sidebar-shell app-sidebar"
     >
-      <div class="h-16 px-4 flex items-center sidebar-brand" :class="collapsed ? 'justify-center px-0' : ''">
+      <div class="h-16 px-4 flex items-center sidebar-brand" :class="effectiveCollapsed ? 'justify-center px-0' : ''">
         <div class="sidebar-brand-icon">V</div>
-        <div v-if="!collapsed" class="ml-3 min-w-0">
+        <div v-if="!effectiveCollapsed" class="ml-3 min-w-0">
           <div class="sidebar-brand-title">VoHive</div>
           <div class="sidebar-brand-subtitle">MODEM CONTROL</div>
         </div>
       </div>
 
       <el-menu
-        :collapse="collapsed"
+        :collapse="effectiveCollapsed"
         :collapse-transition="false"
         :default-active="activePath"
         class="sidebar-menu !border-0 !border-r-0 !bg-transparent mt-2"
@@ -156,7 +162,7 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
         </el-menu-item>
       </el-menu>
 
-      <div v-if="collapsed" class="sidebar-account-compact">
+      <div v-if="effectiveCollapsed" class="sidebar-account-compact">
         <el-tooltip content="退出登录" placement="right">
           <button type="button" aria-label="退出登录" @click="handleLogout">
             <el-icon><SignOut24Regular /></el-icon>
@@ -252,13 +258,27 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
       </el-main>
     </el-container>
 
+    <nav v-if="isMobile" class="mobile-bottom-nav" aria-label="移动导航">
+      <button
+        v-for="item in menuItems"
+        :key="item.index"
+        type="button"
+        :class="{ 'is-active': activePath === item.index }"
+        :aria-label="item.label"
+        :aria-current="activePath === item.index ? 'page' : undefined"
+        @click="router.push(item.index)"
+      >
+        <el-icon><component :is="item.icon" /></el-icon>
+      </button>
+    </nav>
+
     <DebugPanel v-model="debugOpen" />
   </el-container>
 </template>
 
 <style scoped>
 .sidebar-shell {
-  font-family: "v-sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   --sidebar-menu-text: #9bb2b6;
@@ -269,6 +289,8 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
 }
 
 :deep(.sidebar-menu) {
+  margin-top: 0 !important;
+  padding: 18px 12px;
   border-right: 0 !important;
   --el-menu-hover-bg-color: var(--sidebar-menu-hover-bg);
   --el-menu-active-color: var(--sidebar-menu-active-color);
@@ -276,14 +298,14 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
 }
 
 :deep(.sidebar-menu .el-menu-item) {
-  height: 40px;
-  min-height: 40px;
-  line-height: 40px;
-  margin: 2px 8px;
-  border-radius: 4px;
-  padding-left: 13px !important;
-  padding-right: 13px !important;
-  font-size: 0.94rem;
+  height: 46px;
+  min-height: 46px;
+  line-height: 46px;
+  margin: 0 0 5px;
+  border-radius: 8px;
+  padding-left: 14px !important;
+  padding-right: 14px !important;
+  font-size: 14px;
   font-weight: 400;
   letter-spacing: 0;
   color: var(--sidebar-menu-text);
@@ -291,8 +313,8 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
 }
 
 :deep(.sidebar-menu .el-menu-item .el-icon) {
-  margin-right: 8px !important;
-  font-size: 1.18rem;
+  margin-right: 14px !important;
+  font-size: 20px;
 }
 
 :deep(.sidebar-menu .el-menu-item .el-icon svg) {
@@ -308,17 +330,17 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
   position: relative;
   background: var(--sidebar-menu-active-bg);
   color: var(--sidebar-menu-active-color);
-  box-shadow: 0 0 24px rgba(92, 234, 177, 0.1);
+  box-shadow: none;
 }
 
 :deep(.sidebar-menu .el-menu-item.is-active::before) {
   position: absolute;
-  left: -8px;
-  width: 3px;
-  height: 24px;
-  border-radius: 0 3px 3px 0;
+  left: 0;
+  width: 2px;
+  height: 30px;
+  border-radius: 2px;
   background: var(--ui-primary);
-  box-shadow: 0 0 14px var(--ui-primary);
+  box-shadow: none;
   content: "";
 }
 
@@ -339,12 +361,12 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
 }
 
 :deep(.sidebar-menu.el-menu--collapse .el-menu-item) {
-  width: 40px;
-  height: 40px;
-  min-height: 40px;
-  line-height: 40px;
-  margin: 4px auto;
-  border-radius: 10px;
+  width: 46px;
+  height: 46px;
+  min-height: 46px;
+  line-height: 46px;
+  margin: 0 auto 5px;
+  border-radius: 8px;
   display: grid;
   place-items: center;
   padding: 0 !important;
@@ -408,14 +430,17 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
 }
 
 .app-sidebar {
-  border: 1px solid var(--ui-border);
-  border-radius: 0 22px 22px 0;
-  background: color-mix(in srgb, var(--ui-nav) 94%, transparent);
-  box-shadow: 16px 0 48px rgba(0, 0, 0, 0.18);
+  border: 0;
+  border-right: 1px solid var(--ui-border);
+  border-radius: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ui-nav) 99%, transparent), color-mix(in srgb, #050a0c 98%, transparent));
+  box-shadow: none;
   color: #fff;
 }
 
 .sidebar-brand {
+  height: 78px !important;
+  flex: 0 0 78px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -520,13 +545,13 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
 }
 
 .app-topbar {
-  width: calc(100% - 40px);
-  margin: 18px 20px 20px !important;
-  padding: 0 20px !important;
+  width: calc(100% - 36px);
+  margin: 18px 18px 0 !important;
+  padding: 0 22px !important;
   flex: 0 0 64px;
   border: 1px solid var(--ui-border);
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--ui-surface) 82%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--ui-surface-subtle) 92%, transparent);
   box-shadow: var(--ui-shadow-sm);
   backdrop-filter: blur(18px);
 }
@@ -584,8 +609,11 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
 }
 
 .app-main {
+  padding-top: 34px !important;
   background: var(--ui-bg);
 }
+
+.mobile-bottom-nav { display: none; }
 
 .main-inner {
   max-width: 1600px;
@@ -597,14 +625,71 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
   }
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1480px) and (min-width: 821px) {
+  .app-main { padding-right: 14px !important; padding-left: 22px !important; }
+}
+
+@media (max-width: 1180px) and (min-width: 821px) {
+  .app-main { padding: 24px 8px 48px 16px !important; }
   .app-topbar {
     width: calc(100% - 24px);
-    margin: 12px !important;
-    padding: 0 12px !important;
+    margin-right: 12px !important;
+    margin-left: 12px !important;
+    padding-right: 14px !important;
+    padding-left: 14px !important;
+  }
+}
+
+@media (max-width: 820px) {
+  .app-topbar {
+    width: 100%;
+    height: 56px !important;
+    margin: 0 !important;
+    padding: 0 14px !important;
+    flex-basis: 56px;
+    border-width: 0 0 1px;
+    border-radius: 0;
+    background: color-mix(in srgb, var(--ui-surface-subtle) 88%, transparent);
   }
 
   .topbar-side { min-width: auto; }
   .topbar-product { display: none; }
+
+  .app-main {
+    padding: 20px 12px calc(86px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    z-index: 40;
+    right: 12px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    left: 12px;
+    height: 58px;
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    border: 1px solid color-mix(in srgb, var(--ui-text) 12%, transparent);
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--ui-surface) 88%, transparent);
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--ui-text) 7%, transparent) inset, 0 22px 64px rgba(0, 0, 0, .38);
+    backdrop-filter: blur(22px) saturate(1.2);
+    overflow: hidden;
+  }
+
+  .mobile-bottom-nav button {
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ui-text-muted);
+    cursor: pointer;
+  }
+
+  .mobile-bottom-nav button.is-active {
+    background: color-mix(in srgb, var(--ui-primary) 12%, transparent);
+    color: var(--ui-primary);
+    box-shadow: 2px 0 0 var(--ui-primary) inset;
+  }
+
+  .mobile-bottom-nav .el-icon { font-size: 19px; }
 }
 </style>

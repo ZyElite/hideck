@@ -17,12 +17,6 @@ import type { DashboardDevice } from '../types/api'
 import { formatDeviceTime } from '../utils/deviceTime'
 import { filterDashboardDevices } from '../utils/dashboardPresentation'
 import { Search } from '@element-plus/icons-vue'
-import {
-  CheckmarkCircle24Regular,
-  Clock24Regular,
-  DismissCircle24Regular,
-  Server24Regular
-} from '@vicons/fluent'
 
 const dashboard = useDashboardStore()
 const router = useRouter()
@@ -74,9 +68,12 @@ function handleAnalysisRangeChange(range: TrafficRange) {
   void fetchTrafficAnalysis()
 }
 
-function openDeviceOverview(id: string) {
+function openDeviceOverview(id?: string) {
   const deviceID = String(id || '').trim()
-  if (!deviceID) return
+  if (!deviceID) {
+    void router.push({ name: 'Devices' })
+    return
+  }
   void router.push({
     name: 'Devices',
     query: {
@@ -123,8 +120,7 @@ onMounted(() => {
 
     <Transition name="focus-swap" mode="out-in">
       <ConnectionFocusStage
-        v-if="selectedDevice"
-        :key="selectedDevice.id"
+        :key="selectedDevice?.id || 'empty'"
         :device="selectedDevice"
         @open="openDeviceOverview"
       />
@@ -138,22 +134,18 @@ onMounted(() => {
       </div>
       <div class="fleet-metrics">
         <div class="fleet-metric">
-          <el-icon><Server24Regular /></el-icon>
           <span>全部</span>
           <strong>{{ totalCount }}</strong>
         </div>
         <div class="fleet-metric">
-          <el-icon><CheckmarkCircle24Regular /></el-icon>
           <span>在线</span>
           <strong>{{ onlineCount }}</strong>
         </div>
         <div class="fleet-metric">
-          <el-icon><DismissCircle24Regular /></el-icon>
           <span>离线</span>
           <strong>{{ offlineCount }}</strong>
         </div>
         <div class="fleet-metric fleet-metric-time">
-          <el-icon><Clock24Regular /></el-icon>
           <span>更新</span>
           <strong>
             {{ devicesLastOkAt ? formatDeviceTime(devicesLastOkAt, { clientClock: true }) : '--:--:--' }}
@@ -175,18 +167,13 @@ onMounted(() => {
       @retry="fetchDevices"
     />
 
-    <ListSkeleton v-if="loading && devices.length === 0" :rows="10" />
-
-    <EmptyState v-else-if="devices.length === 0" title="暂无设备接入" subtitle="请先在设备管理中添加或接管设备" />
-
-    <template v-else>
-      <section class="device-overview-toolbar" aria-label="设备筛选">
-        <div>
-          <span class="section-kicker">DEVICE FLEET</span>
-          <h2>设备连接</h2>
-          <p>显示 {{ filteredDevices.length }} / {{ totalCount }} 台设备</p>
-        </div>
-        <div class="device-filter-controls">
+    <section class="device-overview-toolbar" aria-label="设备筛选">
+      <div>
+        <span class="section-kicker">DEVICE FLEET</span>
+        <h2>设备连接</h2>
+        <p>显示 {{ filteredDevices.length }} / {{ totalCount }} 台设备</p>
+      </div>
+      <div v-if="devices.length > 0" class="device-filter-controls">
           <el-input v-model="searchQuery" clearable placeholder="搜索设备、运营商或 IP" :prefix-icon="Search" />
           <el-segmented
             v-model="statusFilter"
@@ -196,9 +183,20 @@ onMounted(() => {
               { label: '离线', value: 'offline' }
             ]"
           />
-        </div>
-      </section>
+      </div>
+      <el-button v-else @click="openDeviceOverview('')">设备管理</el-button>
+    </section>
 
+    <ListSkeleton v-if="loading && devices.length === 0" :rows="4" />
+
+    <EmptyState
+      v-else-if="devices.length === 0"
+      class="device-fleet-empty"
+      title="暂无设备接入"
+      subtitle="请先在设备管理中添加或接管设备"
+    />
+
+    <template v-else>
       <EmptyState
         v-if="filteredDevices.length === 0"
         title="没有匹配的设备"
@@ -219,7 +217,7 @@ onMounted(() => {
 
     <TrafficAnalysisPanel
       v-if="devices.length > 0 || !loading"
-      class="mt-6"
+      class="dashboard-traffic"
       :analysis="analysis"
       :loading="analysisLoading"
       :error="analysisError"
@@ -233,21 +231,23 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.dashboard-page :deep(.page-header) { margin-bottom: 26px; }
 .section-kicker { color: var(--ui-primary); font: 700 10px "v-mono", monospace; letter-spacing: .14em; }
-.fleet-summary { margin-bottom: 28px; padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; gap: 30px; border: 1px solid var(--ui-border); border-radius: 16px; background: var(--ui-surface); }
+.fleet-summary { min-height: 79px; margin-bottom: 30px; padding: 15px 22px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 18px; border: 1px solid var(--ui-border); border-radius: 22px; background: var(--ui-surface); }
 .fleet-summary-copy { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
-.fleet-summary-copy > strong { color: var(--ui-text); font: 24px "v-mono", monospace; }
+.fleet-summary-copy > strong { color: var(--ui-text); font-size: 26px; }
 .fleet-summary-copy > span:last-child { color: var(--ui-text-muted); font-size: 11px; }
-.fleet-metrics { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)); }
-.fleet-metric { min-width: 110px; padding: 0 20px; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 9px; border-left: 1px solid var(--ui-border); }
-.fleet-metric .el-icon { grid-row: span 2; color: var(--ui-primary); }
+.fleet-metrics { justify-self: end; display: grid; grid-template-columns: repeat(4, minmax(92px, 120px)); }
+.fleet-metric { min-width: 0; padding-left: 18px; display: grid; gap: 2px; border-left: 1px solid var(--ui-border); }
 .fleet-metric span { color: var(--ui-text-muted); font-size: 10px; }
-.fleet-metric strong { color: var(--ui-text); font: 16px "v-mono", monospace; }
-.device-overview-toolbar { margin: 2px 0 16px; display: flex; align-items: end; justify-content: space-between; gap: 24px; }
-.device-overview-toolbar h2 { margin: 4px 0 3px; color: var(--ui-text); font-size: 22px; font-weight: 620; }
+.fleet-metric strong { color: var(--ui-text); font: 17px "v-mono", monospace; }
+.device-overview-toolbar { margin: 0 0 16px; display: flex; align-items: end; justify-content: space-between; gap: 24px; }
+.device-overview-toolbar h2 { margin: 5px 0 2px; color: var(--ui-text); font-size: 24px; font-weight: 620; }
 .device-overview-toolbar p { margin: 0; color: var(--ui-text-muted); font-size: 13px; }
 .device-filter-controls { width: min(100%, 560px); display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 10px; }
-.device-status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 286px), 1fr)); gap: 12px; }
+.device-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 12px; }
+.device-fleet-empty { min-height: 170px; display: grid; align-content: center; }
+.dashboard-traffic { margin-top: 18px !important; }
 .device-status-grid :deep(.device-card) { animation: device-card-enter 240ms var(--ui-ease-out) both; animation-delay: min(calc(var(--device-index, 0) * 35ms), 210ms); }
 .focus-swap-enter-active { transition: opacity 220ms var(--ui-ease-out), transform 220ms var(--ui-ease-out); }
 .focus-swap-leave-active { transition: opacity 120ms var(--ui-ease-out), transform 120ms var(--ui-ease-out); }
@@ -255,6 +255,6 @@ onMounted(() => {
 .focus-swap-leave-to { opacity: 0; transform: translateY(-4px) scale(.996); }
 @keyframes device-card-enter { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .device-status-grid :deep(.device-card) { animation: device-card-fade 160ms ease both; } .focus-swap-enter-from, .focus-swap-leave-to { transform: none; } @keyframes device-card-fade { from { opacity: 0; } to { opacity: 1; } } }
-@media (max-width: 1050px) { .fleet-summary { align-items: stretch; flex-direction: column; } .fleet-metrics { width: 100%; } .fleet-metric:first-child { border-left: 0; } }
-@media (max-width: 760px) { .fleet-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fleet-metric:nth-child(3) { border-left: 0; } .fleet-metric { padding: 10px 12px; } .device-overview-toolbar { align-items: stretch; flex-direction: column; } .device-filter-controls { width: 100%; grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1050px) { .fleet-summary { grid-template-columns: auto auto 1fr; } .fleet-metrics { display: none; } }
+@media (max-width: 760px) { .fleet-summary { grid-template-columns: minmax(0, 1fr); border-radius: 12px; } .fleet-summary-copy { white-space: normal; } .device-overview-toolbar { align-items: stretch; flex-direction: column; } .device-filter-controls { width: 100%; grid-template-columns: minmax(0, 1fr); } }
 </style>

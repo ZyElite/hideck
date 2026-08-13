@@ -4,7 +4,7 @@
 
 :root {
   color-scheme: light;
-  font-family: "v-sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-synthesis: none;
   --ui-bg: #f4f7f8;
   --ui-nav: #102a2e;
@@ -56,29 +56,29 @@
 
 html.dark {
   color-scheme: dark;
-  --ui-bg: #05090c;
-  --ui-nav: #070b0e;
-  --ui-nav-muted: #879298;
+  --ui-bg: #050807;
+  --ui-nav: #080b0a;
+  --ui-nav-muted: #8f9b95;
   --ui-nav-active: #dffff1;
-  --ui-surface: #0a1014;
-  --ui-surface-strong: #0d1519;
-  --ui-surface-muted: #0e171b;
-  --ui-surface-subtle: #080d10;
-  --ui-border: #253039;
-  --ui-border-muted: #182329;
-  --ui-text: #f4f7f6;
-  --ui-text-muted: #8f9a9f;
-  --ui-primary: #5ceab1;
-  --ui-primary-solid: #15966b;
+  --ui-surface: #0b100e;
+  --ui-surface-strong: #101613;
+  --ui-surface-muted: #141b17;
+  --ui-surface-subtle: #070a09;
+  --ui-border: rgba(230, 241, 235, 0.11);
+  --ui-border-muted: rgba(230, 241, 235, 0.065);
+  --ui-text: #f4f7f5;
+  --ui-text-muted: #8f9b95;
+  --ui-primary: #66e9ad;
+  --ui-primary-solid: #1a8b62;
   --ui-primary-hover: #82f4c7;
-  --ui-communication: #5be1de;
-  --ui-success: #5ceab1;
-  --ui-warning: #f0ad4e;
-  --ui-danger: #f06a6a;
-  --ui-shadow-sm: 0 18px 48px rgba(0, 0, 0, 0.22);
-  --ui-shadow-md: 0 28px 70px rgba(0, 0, 0, 0.34);
-  --ui-focus: 0 0 0 3px rgba(92, 234, 177, 0.2);
-  --el-color-primary: #15966b;
+  --ui-communication: #5adbd7;
+  --ui-success: #66e9ad;
+  --ui-warning: #eeb254;
+  --ui-danger: #ef646a;
+  --ui-shadow-sm: 0 1px 0 rgba(255, 255, 255, 0.035) inset, 0 20px 54px rgba(0, 0, 0, 0.18);
+  --ui-shadow-md: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 28px 80px rgba(0, 0, 0, 0.42);
+  --ui-focus: 0 0 0 3px rgba(102, 233, 173, 0.2);
+  --el-color-primary: #1a8b62;
   --el-color-primary-light-3: #2f9f98;
   --el-color-primary-light-5: #277f7a;
   --el-color-primary-light-7: #205c59;
@@ -117,8 +117,8 @@ body {
 
 html.dark body {
   background:
-    radial-gradient(circle at 72% 18%, rgba(55, 201, 153, 0.07), transparent 34%),
-    linear-gradient(145deg, #04080a, #071014 58%, #05090c);
+    radial-gradient(circle at 69% 12%, rgba(52, 198, 148, 0.06), transparent 33%),
+    linear-gradient(145deg, #030709, #071014 58%, #04080a);
 }
 
 button,
