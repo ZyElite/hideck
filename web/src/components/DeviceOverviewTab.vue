@@ -9,6 +9,7 @@ import StatusLight from './StatusLight.vue'
 import OperatorSelectionDialog from './OperatorSelectionDialog.vue'
 import { Settings24Regular } from '@vicons/fluent'
 import type { StatusLightTone } from './statusLight'
+import DeviceOverviewConnectionStage from './DeviceOverviewConnectionStage.vue'
 
 const props = defineProps<{
   device: DeviceOverviewItem | null
@@ -174,11 +175,14 @@ const networkPanelMessage = computed(() => {
 </script>
 
 <template>
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+  <div class="device-overview-stack">
+    <DeviceOverviewConnectionStage :device="device" />
+
+    <div class="device-overview-facts">
 
     <!-- ===== 运行状态面板 ===== -->
-    <div class="ui-panel-muted p-4">
-      <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">运行状态</div>
+    <section class="overview-fact-panel ui-panel-muted p-4">
+      <div class="overview-panel-title">{{ device?.vowifi_enabled ? 'VoWiFi 运行时' : '蜂窝运行时' }}</div>
 
       <!-- ── VoWiFi 模式 ── -->
       <template v-if="device?.vowifi_enabled">
@@ -323,12 +327,12 @@ const networkPanelMessage = computed(() => {
           <FieldRow label="注册状态"  :value="device?.modem?.reg_status_text || '--'" monospace />
         </div>
       </template>
-    </div>
+    </section>
 
     <!-- ===== SIM / 设备面板（不变）===== -->
-    <div class="ui-panel-muted p-4 relative min-w-0 overflow-hidden">
+    <section class="overview-fact-panel ui-panel-muted p-4 relative min-w-0 overflow-hidden">
       <div class="flex items-center justify-between mb-2">
-        <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">SIM / 设备</div>
+        <div class="overview-panel-title">身份与设备</div>
         <div class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer -mt-1 -mr-1" @click="showSensitive = !showSensitive">
           <el-icon size="18">
             <Eye24Regular v-if="showSensitive" />
@@ -373,24 +377,25 @@ const networkPanelMessage = computed(() => {
         </div>
         <FieldRow label="运行模式"  :value="device?.backend_mode === 'qmi' ? 'QMI' : device?.backend_mode === 'mbim' ? 'MBIM' : device?.backend_mode === 'pcsc' ? 'PC/SC' : device?.backend_mode === 'at' ? 'AT' : 'Auto'" monospace />
       </div>
-    </div>
+    </section>
 
     <!-- ===== 流量面板（不变）===== -->
-    <div class="ui-panel-muted p-4">
-      <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">网络</div>
+    <section class="overview-fact-panel overview-network-panel ui-panel-muted p-4">
+      <div class="overview-panel-title mb-2">地址与实时网络</div>
       <div v-if="networkPanelMessage" class="flex items-center justify-center p-6 text-sm text-gray-400">
         {{ networkPanelMessage }}
       </div>
       <div v-else class="text-sm space-y-1.5 text-gray-700 dark:text-gray-200">
         <FieldRow label="内网 IPv4"     :value="device?.private_ip"           monospace copyable />
-        <FieldRow label="内网 IPv6"   :value="device?.private_ipv6"         monospace copyable />
+        <FieldRow label="内网 IPv6"   :value="device?.private_ipv6"         monospace copyable wrap />
         <FieldRow label="外网 IPv4"     :value="device?.public_ip"            monospace copyable />
-        <FieldRow label="外网 IPv6"   :value="device?.public_ipv6"          monospace copyable />
+        <FieldRow label="外网 IPv6"   :value="device?.public_ipv6"          monospace copyable wrap />
         <FieldRow label="近1分钟上传" :value="trafficTxDisplay"             monospace />
         <FieldRow label="近1分钟下载" :value="trafficRxDisplay"             monospace />
         <FieldRow label="实时下载速率"    :value="trafficDownloadRateDisplay"   monospace />
         <FieldRow label="实时上传速率"    :value="trafficUploadRateDisplay"     monospace />
       </div>
+    </section>
     </div>
 
     <!-- 运营商选择弹窗 -->
@@ -402,3 +407,58 @@ const networkPanelMessage = computed(() => {
     />
   </div>
 </template>
+
+<style scoped>
+.device-overview-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.device-overview-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.overview-fact-panel {
+  min-width: 0;
+  border-radius: 12px;
+}
+
+.overview-network-panel {
+  grid-column: 1 / -1;
+}
+
+.overview-panel-title {
+  color: var(--ui-text-muted);
+  font: 700 10px "v-mono", ui-monospace, monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.overview-network-panel > div:last-child {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 28px;
+}
+
+.overview-network-panel :deep(.font-mono) {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 880px) {
+  .device-overview-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .overview-network-panel {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .overview-network-panel > div:last-child {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>

@@ -9,6 +9,7 @@ const props = defineProps<{
   monospace?: boolean
   placeholder?: string
   sensitive?: boolean // 加密显示（打码）
+  wrap?: boolean
 }>()
 
 const displayValue = computed(() => {
@@ -40,9 +41,10 @@ async function copy() {
   <div class="flex w-full min-w-0 items-center justify-between gap-3 overflow-hidden">
     <span class="text-gray-500 shrink-0 whitespace-nowrap">{{ label }}</span>
     <span
-      class="block min-w-0 max-w-full flex-1 truncate text-right"
+      class="block min-w-0 max-w-full flex-1 text-right"
       :class="[
         monospace ? 'font-mono' : '',
+        wrap ? 'break-all whitespace-normal' : 'truncate',
         canCopy ? 'cursor-pointer hover:underline' : '',
         sensitive ? 'blur-sm select-none transition-all' : ''
       ]"
