@@ -6,11 +6,12 @@ import WorkspaceStage from '../components/WorkspaceStage.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ListSkeleton from '../components/ListSkeleton.vue'
 import ErrorState from '../components/ErrorState.vue'
+import ProxyCountryRuleDrawer from '../components/proxy/ProxyCountryRuleDrawer.vue'
 import ProxyUpstreamInventory from '../components/proxy/ProxyUpstreamInventory.vue'
 import { usePollingScheduler } from '../composables/usePollingScheduler'
 import { useProxyStore } from '../stores/proxy'
 import { useUpstreamProxyStore } from '../stores/upstream-proxy'
-import type { ProxyInstance, ProxyDevice, ProxyMode, UpstreamProxy, UpstreamProxyCountry } from '../types/api'
+import type { ProxyInstance, ProxyDevice, ProxyMode, UpstreamProxy } from '../types/api'
 import { toAppError } from '../services/http'
 import { createUpstreamProxyPresentation } from '../utils/proxyPresentation'
 import {
@@ -25,7 +26,6 @@ import {
   Edit24Regular,
   Delete24Regular,
   Router24Regular,
-  Link24Regular,
   Earth24Regular
 } from '@vicons/fluent'
 
@@ -330,6 +330,12 @@ const upstreamRows = computed(() => upstreamStore.proxies.map(proxy => (
   })
 )))
 
+const countryRuleTargetPresentation = computed(() => {
+  const targetId = countryRuleTargetProxy.value?.id
+  if (!targetId) return null
+  return upstreamRows.value.find(row => row.id === targetId) ?? null
+})
+
 async function fetchUpstream(opts: { silent?: boolean; initial?: boolean } = {}) {
   const isInitial = opts.initial === true
   const silent = opts.silent === true
@@ -497,12 +503,6 @@ async function doDeleteCountryRule(countryCode: string) {
     const err = toAppError(e)
     ElMessage.error(err.message || '删除规则失败')
   }
-}
-
-function formatCountryLabel(country: UpstreamProxyCountry): string {
-  const name = country.country_name || country.country_code
-  const mccs = country.mccs?.length ? ` · MCC ${country.mccs.join('/')}` : ''
-  return `${country.country_code} · ${name}${mccs}`
 }
 
 // ── 统一初始化 ──
@@ -827,87 +827,15 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
       </template>
     </el-drawer>
 
-    <!-- ═══════════ 国家规则 Drawer ═══════════ -->
-    <el-drawer v-model="countryRuleDrawerOpen" :title="`国家规则 — ${countryRuleTargetProxy?.name || countryRuleTargetProxy?.id || ''}`" size="560px">
-      <div class="space-y-6 pb-6">
-        <!-- 已配置国家规则 -->
-        <div class="space-y-4">
-          <div class="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <div class="w-1 h-4 bg-green-500 rounded-full"></div>
-            <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">已路由到该代理的国家</h3>
-          </div>
-
-          <EmptyState
-            v-if="currentProxyCountryRules.length === 0"
-            title="暂无国家规则"
-            subtitle="未配置的国家会默认直连"
-          />
-
-          <div v-else class="space-y-2">
-            <div
-              v-for="rule in currentProxyCountryRules"
-              :key="rule.country_code"
-              class="ui-panel-muted p-3 flex items-center justify-between rounded-lg"
-            >
-              <div class="flex items-center gap-2 min-w-0">
-                <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
-                <div class="min-w-0">
-                  <div class="text-sm font-medium text-gray-900 dark:text-white truncate">
-                    {{ rule.country_code }} · {{ rule.country_name || rule.country_code }}
-                  </div>
-                  <div class="text-xs text-gray-400 font-mono truncate">MCC {{ rule.mccs.join('/') || '-' }}</div>
-                </div>
-              </div>
-              <el-button size="small" type="danger" text @click="doDeleteCountryRule(rule.country_code)">
-                删除规则
-              </el-button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 添加国家规则 -->
-        <div class="space-y-4">
-          <div class="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <div class="w-1 h-4 bg-blue-500 rounded-full"></div>
-            <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">添加国家规则</h3>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <el-select v-model="selectedCountryCode" placeholder="选择国家" class="flex-1" filterable>
-              <el-option
-                v-for="country in availableCountries"
-                :key="country.country_code"
-                :label="formatCountryLabel(country)"
-                :value="country.country_code"
-              >
-                <div class="flex items-center justify-between w-full">
-                  <span>{{ country.country_code }} · {{ country.country_name || country.country_code }}</span>
-                  <el-tag
-                    v-if="upstreamStore.getRuleForCountry(country.country_code)?.upstream_proxy_id === countryRuleTargetProxy?.id"
-                    size="small"
-                    type="success"
-                    class="ml-2"
-                  >
-                    已配置
-                  </el-tag>
-                  <span class="text-xs text-gray-400 font-mono ml-2">MCC {{ country.mccs.join('/') }}</span>
-                </div>
-              </el-option>
-            </el-select>
-            <el-button type="primary" @click="doUpsertCountryRule" :disabled="!selectedCountryCode">
-              <el-icon class="mr-1.5"><Link24Regular /></el-icon>
-              <span>保存规则</span>
-            </el-button>
-          </div>
-
-          <el-alert type="info" :closable="false" show-icon class="!py-2">
-            <template #default>
-              <span class="text-xs">规则按 SIM 归属 MCC 解析国家。例如 US 会覆盖 MCC 310/311/312/313/314/315/316 等表内分组；没有配置规则的国家默认直连。需要重启 VoWiFi 生效。</span>
-            </template>
-          </el-alert>
-        </div>
-      </div>
-    </el-drawer>
+    <ProxyCountryRuleDrawer
+      v-model="countryRuleDrawerOpen"
+      v-model:selected-country-code="selectedCountryCode"
+      :available-countries="availableCountries"
+      :rules="currentProxyCountryRules"
+      :target="countryRuleTargetPresentation"
+      @delete="doDeleteCountryRule"
+      @save="doUpsertCountryRule"
+    />
   </div>
 </template>
 
