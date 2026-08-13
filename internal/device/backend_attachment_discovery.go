@@ -2,12 +2,15 @@ package device
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/iniwex5/vohive/internal/config"
 )
+
+var errBackendAttachmentAmbiguous = errors.New("backend attachment is ambiguous")
 
 const (
 	defaultBackendAttachmentPollInterval = 500 * time.Millisecond
@@ -95,6 +98,9 @@ func (d BackendAttachmentDiscovery) WaitWithHint(
 		if findErr == nil {
 			return attachment, nil
 		}
+		if errors.Is(findErr, errBackendAttachmentAmbiguous) {
+			return BackendAttachment{}, findErr
+		}
 		lastErr = findErr
 
 		timer := time.NewTimer(pollInterval)
@@ -166,7 +172,12 @@ func (d BackendAttachmentDiscovery) findOnce(
 		)
 	}
 	if len(matches) > 1 {
-		return BackendAttachment{}, fmt.Errorf("IMEI %s 对应到 %d 个设备路径，拒绝自动选择", query.IMEI, len(matches))
+		return BackendAttachment{}, fmt.Errorf(
+			"%w: IMEI %s 对应到 %d 个设备路径，拒绝自动选择",
+			errBackendAttachmentAmbiguous,
+			query.IMEI,
+			len(matches),
+		)
 	}
 	for _, attachment := range matches {
 		return attachment, nil

@@ -31,13 +31,21 @@ func TestBackendAttachmentDiscoveryWaitRejectsAmbiguousIMEI(t *testing.T) {
 		backendAttachmentTestModem("1-2", "/dev/cdc-wdm0", "wwan0"),
 		backendAttachmentTestModem("1-3", "/dev/cdc-wdm1", "wwan1"),
 	})
-	discovery.PollInterval = time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, err := discovery.Wait(ctx, "866069053342612", "qmi")
-	if err == nil || !strings.Contains(err.Error(), "拒绝自动选择") {
-		t.Fatalf("Wait() error = %v", err)
+	result := make(chan error, 1)
+	go func() {
+		_, err := discovery.Wait(ctx, "866069053342612", "qmi")
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "拒绝自动选择") {
+			t.Fatalf("Wait() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ambiguous attachment must fail without waiting for context cancellation")
 	}
 }
 
