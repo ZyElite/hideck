@@ -165,9 +165,9 @@ function copyFact(fact: IdentityFact) {
 
 .device-overview-identity.is-wide { grid-column: 1 / -1; }
 .identity-header { min-height: 78px; padding: 15px 18px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-primary) 4%, var(--ui-surface)); }
-.identity-header span { color: var(--ui-primary); font: 700 9px "v-mono", ui-monospace, monospace; letter-spacing: .14em; }
+.identity-header span { color: var(--ui-primary); font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace; letter-spacing: .14em; }
 .identity-header h3 { margin: 4px 0 0; color: var(--ui-text); font-size: 17px; font-weight: 650; }
-.identity-header p { margin: 3px 0 0; color: var(--ui-text-muted); font-size: 11px; }
+.identity-header p { margin: 3px 0 0; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 .identity-visibility { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 8px; background: var(--ui-surface-strong); color: var(--ui-text-muted); cursor: pointer; transition: border-color 160ms var(--ui-ease-out), color 160ms var(--ui-ease-out), background-color 160ms var(--ui-ease-out); }
 .identity-visibility:hover,
 .identity-visibility:focus-visible { border-color: var(--ui-primary); color: var(--ui-primary); }
@@ -177,16 +177,16 @@ function copyFact(fact: IdentityFact) {
 .identity-grid { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .identity-fact { min-width: 0; min-height: 66px; padding: 12px 16px; display: grid; align-content: center; gap: 6px; border-bottom: 1px solid var(--ui-border-muted); }
 .identity-fact:nth-child(odd) { border-right: 1px solid var(--ui-border-muted); }
-.identity-fact dt { color: var(--ui-text-muted); font: 700 9px "v-mono", ui-monospace, monospace; letter-spacing: .07em; }
+.identity-fact dt { color: var(--ui-text-muted); font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace; letter-spacing: .07em; }
 .identity-fact dd { min-width: 0; margin: 0; color: var(--ui-text); }
 .identity-value,
-.identity-operator { min-width: 0; max-width: 100%; color: var(--ui-text); font: 12px/1.45 "v-mono", ui-monospace, monospace; overflow-wrap: anywhere; }
+.identity-operator { min-width: 0; max-width: 100%; color: var(--ui-text); font: var(--ui-font-body-sm)/1.45 "v-mono", ui-monospace, monospace; overflow-wrap: anywhere; }
 .identity-value.is-copyable,
 .identity-operator button { padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: copy; }
 .identity-value.is-copyable:hover,
 .identity-operator button:hover { color: var(--ui-primary); text-decoration: underline; text-underline-offset: 3px; }
 .identity-value.is-sensitive { filter: blur(5px); user-select: none; }
-.identity-value.is-status { width: fit-content; padding: 3px 8px; border: 1px solid color-mix(in srgb, var(--ui-primary) 28%, var(--ui-border)); border-radius: 999px; background: color-mix(in srgb, var(--ui-primary) 7%, transparent); color: var(--ui-primary); font-family: "v-sans", system-ui, sans-serif; font-size: 11px; }
+.identity-value.is-status { width: fit-content; padding: 3px 8px; border: 1px solid color-mix(in srgb, var(--ui-primary) 28%, var(--ui-border)); border-radius: 999px; background: color-mix(in srgb, var(--ui-primary) 7%, transparent); color: var(--ui-primary); font-family: "v-sans", system-ui, sans-serif; font-size: var(--ui-font-caption); }
 .identity-operator { display: inline-flex; align-items: center; gap: 8px; }
 .identity-flag { width: 20px; height: 14px; flex: 0 0 20px; overflow: hidden; border-radius: 2px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-text) 12%, transparent); }
 .identity-e911 dd { display: flex; justify-content: flex-start; }

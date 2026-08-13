@@ -155,7 +155,7 @@ function stageLabel(ready: boolean | undefined): string {
 
 .overview-eyebrow {
   color: var(--ui-primary);
-  font: 700 9px "v-mono", ui-monospace, monospace;
+  font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace;
   letter-spacing: .16em;
 }
 
@@ -177,7 +177,7 @@ function stageLabel(ready: boolean | undefined): string {
 .overview-connection-stage > div > p {
   margin: 6px 0 0;
   color: var(--ui-text-muted);
-  font-size: 12px;
+  font-size: var(--ui-font-body-sm);
 }
 
 .overview-connection-stage.is-failed h2,
@@ -240,7 +240,7 @@ function stageLabel(ready: boolean | undefined): string {
 }
 
 .overview-service-step svg { width: 13px; height: 13px; }
-.overview-service-step small { font-size: 10px; }
+.overview-service-step small { font-size: var(--ui-font-caption); }
 .overview-service-step.is-ready { color: var(--ui-primary); }
 .overview-service-step.is-ready i { border-color: var(--ui-primary); }
 .overview-service-step.is-failed { color: var(--ui-danger); }
@@ -264,9 +264,9 @@ function stageLabel(ready: boolean | undefined): string {
 .overview-connection-metrics div:nth-child(odd) { border-right: 1px solid var(--ui-border); }
 .overview-connection-metrics div { border-bottom: 1px solid var(--ui-border); }
 .overview-connection-metrics div:nth-last-child(-n+2) { border-bottom: 0; }
-.overview-connection-metrics dt { color: var(--ui-text-muted); font-size: 10px; }
+.overview-connection-metrics dt { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .overview-connection-metrics dd { margin: 6px 0 0; color: var(--ui-text); font: 13px "v-mono", ui-monospace, monospace; overflow-wrap: anywhere; }
-.overview-connection-metrics small { color: var(--ui-primary); font-size: 9px; }
+.overview-connection-metrics small { color: var(--ui-primary); font-size: var(--ui-font-caption); }
 
 @keyframes overview-service-flow {
   0% { opacity: 0; transform: translateX(0); }

@@ -129,22 +129,22 @@ const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
 <style scoped>
 .config-workspace-header { min-height: 82px; display: flex; align-items: center; gap: 12px; }
 .config-heading-icon { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 11px; color: var(--ui-primary); font-size: 22px; }
-.config-workspace-header span { color: var(--ui-primary); font: 700 9px "v-mono", ui-monospace, monospace; letter-spacing: .15em; }
+.config-workspace-header span { color: var(--ui-primary); font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace; letter-spacing: .15em; }
 .config-workspace-header h2 { margin: 3px 0 0; color: var(--ui-text); font-size: 20px; font-weight: 650; }
-.config-workspace-header p { margin: 3px 0 0; color: var(--ui-text-muted); font-size: 11px; }
+.config-workspace-header p { margin: 3px 0 0; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 
 .config-form-surface { overflow: hidden; border: 1px solid var(--ui-border); border-radius: 12px; background: var(--ui-surface-strong); }
 .config-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .config-columns > section { min-width: 0; padding: 22px; }
 .config-columns > section + section { border-left: 1px solid var(--ui-border); }
-.config-columns h3 { margin: 0 0 14px; color: var(--ui-text); font-size: 12px; font-weight: 650; }
+.config-columns h3 { margin: 0 0 14px; color: var(--ui-text); font-size: var(--ui-font-body); font-weight: 650; }
 .config-columns h3:not(:first-child) { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--ui-border-muted); }
 .config-field { margin-top: 13px; }
-.config-field label { display: block; margin-bottom: 5px; color: var(--ui-text-muted); font: 700 9px "v-mono", ui-monospace, monospace; letter-spacing: .08em; }
+.config-field label { display: block; margin-bottom: 5px; color: var(--ui-text-muted); font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace; letter-spacing: .08em; }
 .config-protocol-field { min-height: 62px; padding: 11px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--ui-border); border-radius: 8px; background: var(--ui-surface-muted); }
-.config-protocol-field strong { display: block; color: var(--ui-text); font-size: 11px; }
-.config-protocol-field small { display: block; margin-top: 2px; color: var(--ui-text-muted); font-size: 9px; }
-.config-notice { margin: 0; padding: 11px 22px; border-top: 1px solid var(--ui-border); border-bottom: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-warning) 6%, var(--ui-surface)); color: var(--ui-text-muted); font-size: 10px; }
+.config-protocol-field strong { display: block; color: var(--ui-text); font-size: var(--ui-font-body-sm); }
+.config-protocol-field small { display: block; margin-top: 2px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
+.config-notice { margin: 0; padding: 11px 22px; border-top: 1px solid var(--ui-border); border-bottom: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-warning) 6%, var(--ui-surface)); color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 .config-actions { min-height: 70px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
 @media (max-width: 760px) {

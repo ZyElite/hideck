@@ -184,7 +184,7 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 
 .device-rail-header span {
   color: var(--ui-primary);
-  font: 700 9px "v-mono", monospace;
+  font: 700 var(--ui-font-caption) "v-mono", monospace;
   letter-spacing: .14em;
 }
 
@@ -202,7 +202,7 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 
 .device-rail-header small {
   color: var(--ui-text-muted);
-  font-size: 11px;
+  font-size: var(--ui-font-caption);
 }
 
 .device-rail-search {
@@ -224,7 +224,7 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
   border: 1px solid var(--ui-border-muted);
   border-radius: 9px;
   color: var(--ui-text-muted);
-  font-size: 10px;
+  font-size: var(--ui-font-caption);
 }
 
 .device-quota.is-full strong {
@@ -267,7 +267,7 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
   align-items: center;
   gap: 5px;
   color: var(--ui-text-muted);
-  font-size: 10px;
+  font-size: var(--ui-font-caption);
   white-space: nowrap;
 }
 

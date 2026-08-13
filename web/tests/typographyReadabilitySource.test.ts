@@ -12,6 +12,19 @@ const dashboardTypographyFiles = [
   '../src/components/PageHeader.vue',
   '../src/layouts/AuthenticatedShell.vue'
 ] as const
+const deviceTypographyFiles = [
+  '../src/views/Devices.vue',
+  '../src/components/DeviceListPanel.vue',
+  '../src/components/DeviceDetailHeader.vue',
+  '../src/components/DeviceOverviewTab.vue',
+  '../src/components/DeviceOverviewIdentityPanel.vue',
+  '../src/components/DeviceOverviewConnectionStage.vue',
+  '../src/components/DeviceEsimTab.vue',
+  '../src/components/DeviceAtTab.vue',
+  '../src/components/DeviceUssdTab.vue',
+  '../src/components/DeviceConfigTab.vue',
+  '../src/components/CardPolicyPanel.vue'
+] as const
 
 const FONT_DECLARATION_PATTERNS = [
   /font-size:\s*([0-9.]+)px/g,
@@ -48,6 +61,13 @@ test('typography audit detects declarations below the readable minimum', () => {
 
 test('dashboard text does not declare font sizes below 12px', async () => {
   for (const path of dashboardTypographyFiles) {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8')
+    assert.deepEqual(findUnreadableFontSizes(source), [], path)
+  }
+})
+
+test('device workspace text does not declare font sizes below 12px', async () => {
+  for (const path of deviceTypographyFiles) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8')
     assert.deepEqual(findUnreadableFontSizes(source), [], path)
   }

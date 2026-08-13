@@ -830,7 +830,7 @@ onBeforeUnmount(() => {
 .esim-workspace-header > div:first-child > span,
 .esim-panel-eyebrow {
   color: var(--ui-primary);
-  font: 700 9px "v-mono", ui-monospace, monospace;
+  font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace;
   letter-spacing: .15em;
 }
 
@@ -844,7 +844,7 @@ onBeforeUnmount(() => {
 .esim-workspace-header p {
   margin: 3px 0 0;
   color: var(--ui-text-muted);
-  font-size: 11px;
+  font-size: var(--ui-font-body-sm);
 }
 
 .esim-workspace-actions,
@@ -872,7 +872,7 @@ onBeforeUnmount(() => {
 .esim-ready-status {
   gap: 6px;
   color: var(--ui-success);
-  font-size: 11px;
+  font-size: var(--ui-font-caption);
   white-space: nowrap;
 }
 

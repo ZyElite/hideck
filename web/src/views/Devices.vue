@@ -1550,7 +1550,7 @@ usePollingScheduler(async () => {
 .device-page-heading span,
 .device-workspace-empty > span {
   color: var(--ui-primary);
-  font: 700 9px "v-mono", ui-monospace, monospace;
+  font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace;
   letter-spacing: .16em;
 }
 

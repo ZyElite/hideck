@@ -120,7 +120,7 @@ const identityItems = computed(() => [
 
 .device-workspace-kicker {
   color: var(--ui-primary);
-  font: 700 9px "v-mono", ui-monospace, monospace;
+  font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace;
   letter-spacing: .16em;
 }
 
@@ -146,13 +146,13 @@ const identityItems = computed(() => [
   flex: 0 0 auto;
   gap: 5px;
   color: var(--ui-text-muted);
-  font-size: 11px;
+  font-size: var(--ui-font-caption);
 }
 
 .device-operator {
   margin: 3px 0 0;
   color: var(--ui-text-muted);
-  font-size: 12px;
+  font-size: var(--ui-font-body-sm);
 }
 
 .device-operator span {
@@ -172,7 +172,7 @@ const identityItems = computed(() => [
 
 .device-workspace-meta dt {
   color: var(--ui-text-muted);
-  font: 700 8px "v-mono", ui-monospace, monospace;
+  font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace;
   letter-spacing: .1em;
 }
 
@@ -181,7 +181,7 @@ const identityItems = computed(() => [
   margin: 2px 0 0;
   overflow: hidden;
   color: var(--ui-text);
-  font: 11px "v-mono", ui-monospace, monospace;
+  font: var(--ui-font-body-sm) "v-mono", ui-monospace, monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

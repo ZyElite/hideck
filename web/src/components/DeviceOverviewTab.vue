@@ -254,7 +254,7 @@ const networkPanelMessage = computed(() => {
 
 .overview-panel-title {
   color: var(--ui-text-muted);
-  font: 700 10px "v-mono", ui-monospace, monospace;
+  font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace;
   letter-spacing: .12em;
   text-transform: uppercase;
 }

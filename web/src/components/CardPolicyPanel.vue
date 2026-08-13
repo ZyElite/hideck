@@ -243,22 +243,22 @@ const policyProjection = computed(() => [
 .policy-heading-icon { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 11px; color: var(--ui-primary); font-size: 22px; }
 .policy-workspace-header span,
 .policy-card-status > div > span,
-.policy-projection span { color: var(--ui-primary); font: 700 9px "v-mono", ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; }
+.policy-projection span { color: var(--ui-primary); font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; }
 .policy-workspace-header h2 { margin: 3px 0 0; color: var(--ui-text); font-size: 20px; font-weight: 650; }
-.policy-workspace-header p { margin: 3px 0 0; color: var(--ui-text-muted); font-size: 11px; }
+.policy-workspace-header p { margin: 3px 0 0; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 
 .policy-empty-state { min-height: 220px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; color: var(--ui-text-muted); }
 .policy-empty-state .el-icon { color: var(--ui-primary); font-size: 28px; }
 .policy-empty-state strong { color: var(--ui-text); }
-.policy-empty-state span { font-size: 11px; }
+.policy-empty-state span { font-size: var(--ui-font-caption); }
 
 .policy-card { overflow: hidden; border: 1px solid var(--ui-border); border-radius: 12px; background: var(--ui-surface-strong); }
 .policy-card-status { min-height: 72px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-primary) 5%, var(--ui-surface)); }
-.policy-card-status strong { display: block; margin-top: 4px; color: var(--ui-text); font: 12px "v-mono", ui-monospace, monospace; overflow-wrap: anywhere; }
+.policy-card-status strong { display: block; margin-top: 4px; color: var(--ui-text); font: var(--ui-font-body-sm) "v-mono", ui-monospace, monospace; overflow-wrap: anywhere; }
 .policy-status-meta,
 .policy-sync-state { display: flex; align-items: center; }
 .policy-status-meta { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.policy-sync-state { gap: 5px; color: var(--ui-text-muted); font-size: 10px; }
+.policy-sync-state { gap: 5px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .policy-sync-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .policy-sync-state.is-saved { color: var(--ui-success); }
 .policy-sync-state.is-pending { color: var(--ui-warning); }
@@ -269,13 +269,13 @@ const policyProjection = computed(() => [
 .policy-setting-row.is-active { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-primary) 5%, transparent)); }
 .policy-setting-row > span { min-width: 0; display: flex; flex-direction: column; }
 .policy-setting-row > span strong { color: var(--ui-text); font-size: 13px; }
-.policy-setting-row > span small { margin-top: 3px; color: var(--ui-text-muted); font-size: 10px; }
+.policy-setting-row > span small { margin-top: 3px; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 .policy-field-control { width: min(360px, 52%); }
-.policy-field-control > small { color: var(--ui-warning); font-size: 9px; }
+.policy-field-control > small { color: var(--ui-warning); font-size: var(--ui-font-caption); }
 
 .policy-projection { min-height: 74px; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--ui-surface-muted); }
-.policy-projection strong { display: block; margin-top: 4px; color: var(--ui-text); font-size: 11px; }
-.policy-projection > small { max-width: 280px; color: var(--ui-text-muted); font-size: 9px; text-align: right; }
+.policy-projection strong { display: block; margin-top: 4px; color: var(--ui-text); font-size: var(--ui-font-body-sm); }
+.policy-projection > small { max-width: 280px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); text-align: right; }
 
 @media (max-width: 620px) {
   .policy-workspace-header { align-items: flex-start; }
