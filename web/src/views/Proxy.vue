@@ -3,28 +3,25 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import WorkspaceStage from '../components/WorkspaceStage.vue'
-import EmptyState from '../components/EmptyState.vue'
-import ListSkeleton from '../components/ListSkeleton.vue'
 import ErrorState from '../components/ErrorState.vue'
 import ProxyCountryRuleDrawer from '../components/proxy/ProxyCountryRuleDrawer.vue'
+import ProxyInstanceEditorDrawer from '../components/proxy/ProxyInstanceEditorDrawer.vue'
+import ProxyOutboundInventory from '../components/proxy/ProxyOutboundInventory.vue'
 import ProxyUpstreamInventory from '../components/proxy/ProxyUpstreamInventory.vue'
 import { usePollingScheduler } from '../composables/usePollingScheduler'
 import { useProxyStore } from '../stores/proxy'
 import { useUpstreamProxyStore } from '../stores/upstream-proxy'
 import type { ProxyInstance, ProxyDevice, ProxyMode, UpstreamProxy } from '../types/api'
 import { toAppError } from '../services/http'
-import { createUpstreamProxyPresentation } from '../utils/proxyPresentation'
+import {
+  createOutboundProxyPresentation,
+  createUpstreamProxyPresentation
+} from '../utils/proxyPresentation'
 import {
   upstreamProxyAddressWarning,
   upstreamProxyIPv6AddressHint
 } from '../utils/upstreamProxyAddress'
 import {
-  Add24Regular,
-  Play24Regular,
-  Stop24Regular,
-  ArrowSync24Regular,
-  Edit24Regular,
-  Delete24Regular,
   Router24Regular,
   Earth24Regular
 } from '@vicons/fluent'
@@ -65,12 +62,13 @@ const modeOptions: Array<{ label: string; value: ProxyMode }> = [
   { label: 'HTTP', value: 'http' }
 ]
 
-const instancesWithStatus = computed(() => {
-  return instances.value.map((inst) => ({
-    ...inst,
-    status: statusMap.value[inst.id] || { id: inst.id, running: false }
-  }))
-})
+const outboundRows = computed(() => instances.value.map(instance => (
+  createOutboundProxyPresentation({
+    instance,
+    status: statusMap.value[instance.id],
+    device: devices.value.find(device => device.id === instance.device_id)
+  })
+)))
 
 watch(
   () => instanceForm.value.auth_enabled,
@@ -269,8 +267,9 @@ async function deleteInstance(id: string) {
   saveConfig()
 }
 
-function formatModeLabel(mode: string | undefined) {
-  return mode === 'http' ? 'HTTP' : 'SOCKS5'
+function editOutboundInstance(id: string) {
+  const instance = instances.value.find(item => item.id === id)
+  if (instance) void openDrawer(instance)
 }
 
 const pollEnabled = computed(() => !initialLoading.value && instances.value.length > 0)
@@ -286,7 +285,7 @@ usePollingScheduler(() => fetchOverview({ silent: true }), 5000, {
 // ══════════════════════════════════════════════════════
 const upstreamStore = useUpstreamProxyStore()
 const enabledUpstreamCount = computed(() => upstreamStore.proxies.filter((proxy) => proxy.enabled).length)
-const runningOutboundCount = computed(() => instancesWithStatus.value.filter((instance) => instance.status.running).length)
+const runningOutboundCount = computed(() => outboundRows.value.filter((instance) => instance.running).length)
 
 const upstreamLoading = ref(true)
 const upstreamRefreshing = ref(false)
@@ -590,177 +589,29 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
         @retry="fetchOverview"
       />
 
-      <section class="proxy-board ui-card">
-        <header class="proxy-board-header">
-          <div class="flex items-center gap-3">
-            <div class="section-icon section-icon-primary">
-              <el-icon size="20"><Router24Regular /></el-icon>
-            </div>
-            <div>
-              <div class="text-lg font-bold text-gray-900 dark:text-white">本地出站实例</div>
-              <div class="text-xs text-gray-500">每个实例必须绑定一个物理网络接口提供出口通道，通常用于特定分流和IP池场景</div>
-            </div>
-          </div>
-          <el-button type="primary" @click="openDrawer()" class="!border-0">
-            <el-icon class="mr-1.5"><Add24Regular /></el-icon>
-            <span>新增实例</span>
-          </el-button>
-        </header>
-
-        <ListSkeleton v-if="initialLoading && instances.length === 0" :rows="3" />
-
-        <EmptyState v-else-if="instances.length === 0" title="暂无代理实例" subtitle="点击「新增实例」创建第一个实例" />
-
-        <div v-else class="proxy-node-grid">
-          <div
-            v-for="inst in instancesWithStatus"
-            :key="inst.id"
-            class="proxy-node-card ui-panel-muted p-4 flex flex-col gap-4"
-          >
-            <div class="flex items-center gap-3 min-w-0">
-              <span class="w-2.5 h-2.5 rounded-full shrink-0" :class="inst.status.running ? 'bg-green-500' : 'bg-gray-300'" />
-              <div class="min-w-0">
-                <div class="font-bold text-gray-900 dark:text-white truncate">{{ inst.name || inst.id }}</div>
-                <div class="text-xs text-gray-500 mt-0.5 truncate">
-                  {{ formatModeLabel(inst.mode) }} · {{ inst.listen_addr }}:{{ inst.listen_port }} · 绑定: {{ devices.find(d => d.id === inst.device_id)?.name || inst.device_id }}
-                </div>
-                <div v-if="inst.status.last_error" class="text-xs text-red-500 mt-1 truncate">
-                  {{ inst.status.last_error }}
-                </div>
-              </div>
-            </div>
-
-            <div class="flex items-center gap-2 shrink-0">
-              <el-tag size="small" :type="inst.enabled ? 'success' : 'info'">
-                {{ inst.enabled ? '启用' : '禁用' }}
-              </el-tag>
-              <el-tag size="small" :type="inst.status.running ? 'success' : 'danger'">
-                {{ inst.status.running ? '运行中' : '已停止' }}
-              </el-tag>
-              <el-tag size="small" type="info">
-                {{ formatModeLabel(inst.mode) }}
-              </el-tag>
-              <el-tag size="small" :type="inst.auth_enabled ? 'warning' : 'info'">
-                {{ inst.auth_enabled ? '账号认证' : '免认证' }}
-              </el-tag>
-
-              <el-button-group class="ml-2">
-                <el-button v-if="!inst.status.running" size="small" :disabled="!inst.enabled" @click="startInstance(inst.id)">
-                  <el-icon><Play24Regular /></el-icon>
-                </el-button>
-                <el-button v-if="inst.status.running" size="small" @click="stopInstance(inst.id)">
-                  <el-icon><Stop24Regular /></el-icon>
-                </el-button>
-                <el-button size="small" @click="restartInstance(inst.id)" :disabled="!inst.enabled">
-                  <el-icon><ArrowSync24Regular /></el-icon>
-                </el-button>
-              </el-button-group>
-
-              <el-button size="small" @click="openDrawer(inst)">
-                <el-icon><Edit24Regular /></el-icon>
-              </el-button>
-              <el-button size="small" type="danger" @click="deleteInstance(inst.id)">
-                <el-icon><Delete24Regular /></el-icon>
-              </el-button>
-            </div>
-          </div>
-        </div>
-      </section>
+      <ProxyOutboundInventory
+        :loading="initialLoading"
+        :refreshing="refreshing"
+        :rows="outboundRows"
+        @add="openDrawer()"
+        @delete="deleteInstance"
+        @edit="editOutboundInstance"
+        @refresh="fetchOverview"
+        @restart="restartInstance"
+        @start="startInstance"
+        @stop="stopInstance"
+      />
     </div>
 
-    <!-- ═══════════ 出站代理编辑 Drawer ═══════════ -->
-    <el-drawer v-model="drawerOpen" :title="editingInstance ? '编辑代理实例' : '新增代理实例'" size="560px">
-      <div class="space-y-6 pb-6">
-        <div class="space-y-4">
-          <div class="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <div class="drawer-section-marker"></div>
-            <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">基础设置</h3>
-          </div>
-
-          <div class="grid grid-cols-2 gap-4">
-            <div class="space-y-1">
-              <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">实例 ID</label>
-              <el-input v-model="instanceForm.id" :disabled="!!editingInstance" placeholder="唯一标识" />
-            </div>
-            <div class="space-y-1">
-              <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">名称</label>
-              <el-input v-model="instanceForm.name" placeholder="显示名称" />
-            </div>
-          </div>
-
-          <div class="space-y-1">
-            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">绑定设备（必填）</label>
-            <el-select v-model="instanceForm.device_id" placeholder="选择设备" class="w-full">
-              <el-option v-for="d in devices" :key="d.id" :label="`${d.name} (${d.interface})`" :value="d.id" />
-            </el-select>
-          </div>
-
-          <div class="space-y-1">
-            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">代理模式</label>
-            <el-select v-model="instanceForm.mode" placeholder="选择代理模式" class="w-full">
-              <el-option
-                v-for="opt in modeOptions"
-                :key="opt.value"
-                :label="opt.label"
-                :value="opt.value"
-              />
-            </el-select>
-          </div>
-
-          <div class="grid grid-cols-2 gap-4">
-            <div class="space-y-1">
-              <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">监听地址</label>
-              <el-input v-model="instanceForm.listen_addr" placeholder="0.0.0.0" />
-            </div>
-            <div class="space-y-1">
-              <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">监听端口</label>
-              <el-input-number v-model="instanceForm.listen_port" :min="1" :max="65535" class="!w-full" />
-            </div>
-          </div>
-
-          <div class="ui-panel-muted p-3 flex items-center justify-between rounded-lg">
-            <div>
-              <div class="text-sm font-bold text-gray-800 dark:text-gray-100">启用实例</div>
-              <div class="text-xs text-gray-500">禁用后实例不会自动启动</div>
-            </div>
-            <el-switch v-model="instanceForm.enabled" />
-          </div>
-        </div>
-
-        <div class="space-y-4">
-          <div class="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <div class="w-1 h-4 bg-amber-500 rounded-full"></div>
-            <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">认证设置</h3>
-          </div>
-
-          <div class="ui-panel-muted p-3 flex items-center justify-between rounded-lg">
-            <div>
-              <div class="text-sm font-bold text-gray-800 dark:text-gray-100">启用账号认证</div>
-              <div class="text-xs text-gray-500">关闭后将允许免认证连接</div>
-            </div>
-            <el-switch v-model="instanceForm.auth_enabled" />
-          </div>
-
-          <div v-if="instanceForm.auth_enabled" class="grid grid-cols-2 gap-4">
-            <div class="space-y-1">
-              <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">用户名</label>
-              <el-input v-model="instanceForm.username" placeholder="例如 user01" />
-            </div>
-            <div class="space-y-1">
-              <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">密码</label>
-              <el-input v-model="instanceForm.password" type="password" show-password placeholder="请输入密码" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <template #footer>
-        <div class="flex items-center justify-end gap-2">
-          <el-button @click="drawerOpen = false">取消</el-button>
-          <el-button type="primary" @click="saveForm">保存</el-button>
-        </div>
-      </template>
-    </el-drawer>
+    <ProxyInstanceEditorDrawer
+      v-model="drawerOpen"
+      v-model:form="instanceForm"
+      :devices="devices"
+      :editing="!!editingInstance"
+      :mode-options="modeOptions"
+      :saving="saving"
+      @save="saveForm"
+    />
 
     <!-- ═══════════ 前置代理编辑 Drawer ═══════════ -->
     <el-drawer v-model="upstreamDrawerOpen" :title="editingUpstream ? '编辑前置代理' : '新增前置代理'" size="520px">
@@ -912,46 +763,6 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
   color: var(--ui-primary);
 }
 
-.proxy-board {
-  padding: 0 18px 18px;
-  overflow: hidden;
-  animation: proxy-board-enter 240ms var(--ui-ease-out) both;
-}
-
-.proxy-board-header {
-  min-height: 84px;
-  margin: 0 -18px 18px;
-  padding: 16px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  border-bottom: 1px solid var(--ui-border);
-}
-
-.proxy-node-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr));
-  gap: 10px;
-}
-
-.proxy-node-card {
-  min-width: 0;
-  min-height: 132px;
-  justify-content: space-between;
-  animation: proxy-node-enter 220ms var(--ui-ease-out) both;
-}
-
-@keyframes proxy-board-enter {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes proxy-node-enter {
-  from { opacity: 0; transform: scale(.985); }
-  to { opacity: 1; transform: scale(1); }
-}
-
 .proxy-page :deep(.ui-card) {
   border-radius: 18px;
 }
@@ -970,23 +781,6 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
 @media (max-width: 720px) {
   .proxy-mode-switch {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .proxy-board-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .proxy-board,
-  .proxy-node-card {
-    animation-name: proxy-board-fade;
-  }
-
-  @keyframes proxy-board-fade {
-    from { opacity: 0; }
-    to { opacity: 1; }
   }
 }
 </style>
