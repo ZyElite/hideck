@@ -1434,7 +1434,7 @@ usePollingScheduler(async () => {
 @container (max-width: 760px) {
   .device-action-row {
     align-items: flex-start;
-    flex-direction: column-reverse;
+    flex-direction: column;
   }
 
   .device-global-actions {
