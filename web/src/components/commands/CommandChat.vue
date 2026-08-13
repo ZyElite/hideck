@@ -5,11 +5,11 @@ import CommandTimeline from './CommandTimeline.vue'
 import type { DeviceMgmtListItem } from '../../types/api'
 import type { BalanceQuery, CommandDefinition, CommandEvent } from '../../types/commands'
 import { commandTargetDevice } from '../../utils/commandInput'
-import { balanceResultText } from '../../utils/commandPresentation'
 import {
-  Bot24Regular,
+  Chat24Regular,
   Delete24Regular,
   History24Regular,
+  Phone24Regular,
   PlugConnected24Regular,
   Wallet24Regular
 } from '@vicons/fluent'
@@ -17,7 +17,6 @@ import {
 const props = defineProps<{
   events: CommandEvent[]
   balanceQueries: BalanceQuery[]
-  latestBalance?: BalanceQuery
   definitions: CommandDefinition[]
   devices: DeviceMgmtListItem[]
   selectedDevice: string
@@ -38,6 +37,7 @@ const visibleBalanceQueries = computed(() => props.balanceQueries.filter((query)
   !props.selectedDevice || query.device_id === props.selectedDevice
 )))
 const deviceIds = computed(() => props.devices.map((device) => device.id))
+const visibleRecordCount = computed(() => visibleEvents.value.length + visibleBalanceQueries.value.length)
 
 const emit = defineEmits<{
   'update:selectedDevice': [value: string]
@@ -47,57 +47,55 @@ const emit = defineEmits<{
   submit: [input: string]
   dangerous: [command: CommandDefinition]
 }>()
-
-function latestBalanceText(query?: BalanceQuery) {
-  if (!query) return ''
-  return balanceResultText(query)
-}
 </script>
 
 <template>
-  <section class="chat-shell ui-surface-strong" aria-label="VoHive 命令会话">
+  <section class="chat-shell" aria-label="VoHive 命令会话">
     <header class="chat-header">
-      <div class="chat-identity">
-        <span class="chat-avatar" aria-hidden="true"><el-icon><Bot24Regular /></el-icon></span>
+      <div class="chat-heading">
+        <span class="chat-title-icon" aria-hidden="true"><el-icon><Chat24Regular /></el-icon></span>
         <div>
-          <h3>VoHive 命令会话</h3>
-          <div class="chat-meta">
-            <span class="stream-state" :class="{ online: streamConnected }">
+          <div class="chat-title-row">
+            <h2>VoHive 命令会话</h2>
+            <span class="stream-state" :class="{ online: streamConnected }" aria-live="polite">
               <el-icon><PlugConnected24Regular /></el-icon>
               {{ streamConnected ? '实时连接' : '正在重连' }}
             </span>
-            <span>{{ visibleEvents.length + visibleBalanceQueries.length }} 条消息</span>
-            <span v-if="latestBalance" class="latest-balance">{{ latestBalanceText(latestBalance) }}</span>
           </div>
+          <span class="record-count">当前设备 · {{ visibleRecordCount }} 条记录</span>
         </div>
       </div>
 
       <div class="chat-actions">
+        <el-tooltip content="余额查询与历史" placement="bottom">
+          <el-button aria-label="余额查询与历史" @click="emit('openBalance')">
+            <el-icon><Wallet24Regular /></el-icon><span>余额历史</span>
+          </el-button>
+        </el-tooltip>
+        <el-tooltip v-if="hasOlder" content="读取更早记录" placement="bottom">
+          <el-button :loading="loadingOlder" aria-label="读取更早记录" @click="emit('loadOlder')">
+            <el-icon><History24Regular /></el-icon><span>更早记录</span>
+          </el-button>
+        </el-tooltip>
+        <el-tooltip content="清除已结束的命令历史" placement="bottom">
+          <el-button aria-label="清除命令历史" @click="emit('clearHistory')">
+            <el-icon><Delete24Regular /></el-icon><span>清除历史</span>
+          </el-button>
+        </el-tooltip>
+      </div>
+
+      <label class="device-target">
+        <span class="device-label">目标设备</span>
         <el-select
           :model-value="selectedDevice"
-          class="chat-device-select"
           placeholder="选择设备"
           aria-label="命令目标设备"
           @update:model-value="emit('update:selectedDevice', String($event || ''))"
         >
+          <template #prefix><el-icon><Phone24Regular /></el-icon></template>
           <el-option v-for="device in devices" :key="device.id" :label="device.name || device.id" :value="device.id" />
         </el-select>
-        <el-tooltip content="余额查询与历史" placement="bottom">
-          <el-button class="icon-action" aria-label="打开余额查询与历史" @click="emit('openBalance')">
-            <el-icon><Wallet24Regular /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip v-if="hasOlder" content="读取更早记录" placement="bottom">
-          <el-button class="icon-action" aria-label="读取更早记录" :loading="loadingOlder" @click="emit('loadOlder')">
-            <el-icon><History24Regular /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip content="清除已结束的命令历史" placement="bottom">
-          <el-button class="icon-action" aria-label="清除命令历史" @click="emit('clearHistory')">
-            <el-icon><Delete24Regular /></el-icon>
-          </el-button>
-        </el-tooltip>
-      </div>
+      </label>
     </header>
 
     <main class="chat-conversation">
@@ -115,25 +113,69 @@ function latestBalanceText(query?: BalanceQuery) {
 </template>
 
 <style scoped>
-.chat-shell { min-width: 0; min-height: 0; height: 100%; overflow: hidden; border-radius: 20px; display: grid; grid-template-rows: auto minmax(0, 1fr); box-shadow: var(--ui-shadow-sm); background: radial-gradient(circle at 78% 16%, color-mix(in srgb, var(--ui-primary) 7%, transparent), transparent 34%), var(--ui-surface); }
-.chat-header { min-height: 78px; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.chat-identity, .chat-actions, .chat-meta, .stream-state { display: flex; align-items: center; }
-.chat-identity { min-width: 0; gap: 10px; }
-.chat-avatar { width: 42px; height: 42px; flex: 0 0 42px; border: 1px solid color-mix(in srgb, var(--ui-primary) 42%, var(--ui-border)); border-radius: 13px; background: color-mix(in srgb, var(--ui-primary) 10%, transparent); color: var(--ui-primary); display: grid; place-items: center; font-size: 21px; box-shadow: 0 0 24px color-mix(in srgb, var(--ui-primary) 10%, transparent); }
-.chat-identity h3 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: 0; }
-.chat-meta { margin-top: 3px; gap: 10px; color: #64748b; font-size: 11px; }
-.latest-balance { max-width: 220px; color: var(--ui-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stream-state { gap: 4px; color: #b45309; }
+.chat-shell {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-surface);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.chat-header {
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--ui-border);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "heading actions" "device actions";
+  align-items: start;
+  gap: 12px 18px;
+}
+.chat-heading { min-width: 0; grid-area: heading; display: flex; align-items: center; gap: 11px; }
+.chat-title-icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border: 1px solid color-mix(in srgb, var(--ui-info) 55%, var(--ui-border));
+  border-radius: 7px;
+  color: var(--ui-info);
+  display: grid;
+  place-items: center;
+}
+.chat-title-icon .el-icon { font-size: 19px; }
+.chat-title-row, .stream-state { display: flex; align-items: center; }
+.chat-title-row { min-width: 0; flex-wrap: wrap; gap: 8px 12px; }
+.chat-title-row h2 { margin: 0; color: var(--ui-text); font-size: 19px; font-weight: 700; }
+.stream-state { gap: 5px; color: var(--ui-warning); font-size: 11px; }
 .stream-state.online { color: var(--ui-success); }
-.chat-actions { flex: 0 0 auto; gap: 8px; }
-.chat-device-select { width: 180px; }
-.chat-actions :deep(.el-input__wrapper), .chat-actions :deep(.el-button) { min-height: 44px; }
-.chat-actions :deep(.icon-action) { width: 44px; padding: 0; }
+.record-count { display: block; margin-top: 3px; color: var(--ui-text-subtle); font: 10px "v-mono", monospace; }
+.chat-actions { grid-area: actions; display: flex; align-items: center; justify-content: flex-end; gap: 0; }
+.chat-actions :deep(.el-button) { min-height: 36px; margin: 0; border-radius: 0; }
+.chat-actions :deep(.el-button + .el-button) { margin-left: -1px; }
+.chat-actions :deep(.el-button:first-child) { border-radius: 4px 0 0 4px; }
+.chat-actions :deep(.el-button:last-child) { border-radius: 0 4px 4px 0; }
+.chat-actions :deep(.el-button span) { display: inline-flex; align-items: center; gap: 6px; }
+.device-target { width: 220px; min-width: 0; grid-area: device; display: grid; gap: 5px; }
+.device-label { color: var(--ui-text-subtle); font-size: 10px; }
+.device-target :deep(.el-input__wrapper) { min-height: 36px; border-radius: 4px; }
 .chat-conversation { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+@media (max-width: 900px) {
+  .chat-header { grid-template-columns: minmax(0, 1fr) auto; }
+  .chat-actions :deep(.el-button) { width: 40px; padding: 0; }
+  .chat-actions :deep(.el-button span span) { display: none; }
+}
 @media (max-width: 640px) {
-  .chat-header { align-items: stretch; flex-direction: column; gap: 10px; }
-  .chat-actions { width: 100%; }
-  .chat-device-select { width: auto; flex: 1 1 auto; min-width: 0; }
-  .latest-balance { max-width: 150px; }
+  .chat-header {
+    padding: 14px 12px 12px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "heading" "device" "actions";
+    gap: 11px;
+  }
+  .chat-title-row h2 { font-size: 17px; }
+  .device-target { width: 100%; }
+  .chat-actions { justify-content: flex-start; }
+  .chat-actions :deep(.el-button) { min-height: 44px; width: 44px; }
 }
 </style>

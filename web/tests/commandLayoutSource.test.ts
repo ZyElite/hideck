@@ -30,6 +30,16 @@ test('VoWiFi command results render authenticated MP3 playback', () => {
   assert.match(commandAudioPlayer, /<audio[^>]*controls[^>]*preload="metadata"/)
 })
 
+test('command conversation uses the Studio event rail instead of chat bubbles', () => {
+  assert.match(commandChat, /class="chat-title-icon"/)
+  assert.match(commandChat, /实时连接/)
+  assert.match(commandChat, /class="device-target"/)
+  assert.match(commandTimeline, /class="timeline-track"/)
+  assert.match(commandTimeline, /class="event-marker"/)
+  assert.match(commandTimeline, /`tone-\$\{item\.presentation\.tone\}`/)
+  assert.doesNotMatch(commandTimeline, /class="message"/)
+})
+
 test('command composer source stays visible above the mobile safe area', () => {
   assert.match(commandComposer, /env\(safe-area-inset-bottom\)/)
   assert.match(commandComposer, /@media \(max-width: 1023px\).*position:\s*sticky;\s*bottom:\s*0;/s)

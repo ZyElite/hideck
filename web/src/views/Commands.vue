@@ -40,7 +40,6 @@ const stream = useEventStream<CommandEvent>({
   reconnectDelayMs: 2500
 })
 const streamConnected = stream.connected
-const selectedBalance = computed(() => balances.value.find((query) => query.device_id === selectedDevice.value))
 
 const dangerousTitle = computed(() => {
   if (dangerousDefinition.value?.name === 'switch') return '切换 eSIM'
@@ -236,7 +235,6 @@ async function deleteRule(id: string) {
         v-model:selected-device="selectedDevice"
         :events="events"
         :balance-queries="balances"
-        :latest-balance="selectedBalance"
         :definitions="definitions"
         :devices="devices"
         :loading="loading"

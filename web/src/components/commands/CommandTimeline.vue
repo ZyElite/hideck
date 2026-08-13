@@ -4,8 +4,20 @@ import BalanceMessage from './BalanceMessage.vue'
 import CommandAudioPlayer from './CommandAudioPlayer.vue'
 import type { BalanceQuery, CommandEvent } from '../../types/commands'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
-import { presentCommandEvent } from '../../utils/commandPresentation'
-import { Bot24Regular } from '@vicons/fluent'
+import {
+  presentBalanceState,
+  presentCommandEvent,
+  type BalanceStatePresentation,
+  type CommandEventPresentation
+} from '../../utils/commandPresentation'
+import {
+  Bot24Regular,
+  CheckmarkCircle24Regular,
+  Clock24Regular,
+  ErrorCircle24Regular,
+  Send24Regular,
+  Wallet24Regular
+} from '@vicons/fluent'
 
 const props = defineProps<{
   events: CommandEvent[]
@@ -14,22 +26,40 @@ const props = defineProps<{
 }>()
 
 type TimelineItem =
-  | { key: string; kind: 'command'; createdAt: string; event: CommandEvent }
-  | { key: string; kind: 'balance'; createdAt: string; query: BalanceQuery }
+  | {
+    key: string
+    kind: 'command'
+    createdAt: string
+    event: CommandEvent
+    presentation: CommandEventPresentation
+  }
+  | {
+    key: string
+    kind: 'balance'
+    createdAt: string
+    query: BalanceQuery
+    presentation: BalanceStatePresentation
+  }
 
 const timelineItems = computed<TimelineItem[]>(() => {
   const commands: TimelineItem[] = props.events.map((event) => ({
-    key: `command-${event.id}`, kind: 'command', createdAt: event.created_at, event
+    key: `command-${event.id}`,
+    kind: 'command',
+    createdAt: event.created_at,
+    event,
+    presentation: presentCommandEvent(event)
   }))
   const balances: TimelineItem[] = props.balanceQueries.map((query) => ({
-    key: `balance-${query.id}`, kind: 'balance', createdAt: query.updated_at, query
+    key: `balance-${query.id}`,
+    kind: 'balance',
+    createdAt: query.updated_at,
+    query,
+    presentation: presentBalanceState(query)
   }))
-  return [...commands, ...balances].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
+  return [...commands, ...balances].sort((left, right) => (
+    Date.parse(left.createdAt) - Date.parse(right.createdAt)
+  ))
 })
-
-function eventText(event: CommandEvent) {
-  return presentCommandEvent(event).detail
-}
 
 function audioAttachments(event: CommandEvent) {
   return (event.attachments || []).filter((attachment) => attachment.type === 'audio')
@@ -37,58 +67,136 @@ function audioAttachments(event: CommandEvent) {
 </script>
 
 <template>
-  <section class="timeline" aria-label="命令对话记录">
+  <section class="timeline" aria-label="命令执行记录">
     <div class="timeline-scroll" aria-live="polite">
-      <div v-if="loading && !timelineItems.length" class="empty-line">正在读取命令记录</div>
-      <div v-else-if="!timelineItems.length" class="empty-state">
-        <el-icon><Bot24Regular /></el-icon>
-        <strong>暂无命令记录</strong>
+      <div v-if="loading && !timelineItems.length" class="empty-line">
+        <span class="empty-icon" aria-hidden="true"><el-icon><Clock24Regular /></el-icon></span>
+        <strong>正在读取命令记录</strong>
       </div>
-      <article
-        v-for="item in timelineItems"
-        :key="item.key"
-        class="message"
-        :class="{
-          user: item.kind === 'command' && item.event.kind === 'accepted',
-          error: item.kind === 'command' && item.event.kind === 'error'
-        }"
-      >
-        <div class="message-meta">
-          <span>{{ item.kind === 'command' ? presentCommandEvent(item.event).title : 'VoHive' }}</span>
-          <time>{{ formatDeviceDateTime(item.createdAt) }}</time>
-        </div>
-        <template v-if="item.kind === 'command'">
-          <pre>{{ eventText(item.event) }}</pre>
-          <CommandAudioPlayer
-            v-for="attachment in audioAttachments(item.event)"
-            :key="attachment.recording"
-            :attachment="attachment"
-          />
-          <span v-if="item.event.execution?.state === 'running'" class="state running">执行中</span>
-          <span v-else-if="item.event.execution?.state === 'failed'" class="state failed">失败</span>
-        </template>
-        <BalanceMessage v-else :query="item.query" />
-      </article>
+      <div v-else-if="!timelineItems.length" class="empty-state">
+        <span class="empty-icon" aria-hidden="true"><el-icon><Bot24Regular /></el-icon></span>
+        <strong>暂无命令记录</strong>
+        <span>选择下方真实命令后，执行过程会显示在这里</span>
+      </div>
+      <div v-else class="timeline-track">
+        <article
+          v-for="item in timelineItems"
+          :key="item.key"
+          class="timeline-event"
+          :class="`tone-${item.presentation.tone}`"
+        >
+          <span class="event-marker" aria-hidden="true">
+            <el-icon v-if="item.kind === 'balance'"><Wallet24Regular /></el-icon>
+            <el-icon v-else-if="item.presentation.tone === 'sent'"><Send24Regular /></el-icon>
+            <el-icon v-else-if="item.presentation.tone === 'running'"><Clock24Regular /></el-icon>
+            <el-icon v-else-if="item.presentation.tone === 'danger'"><ErrorCircle24Regular /></el-icon>
+            <el-icon v-else><CheckmarkCircle24Regular /></el-icon>
+          </span>
+
+          <div class="event-card">
+            <header>
+              <strong>{{ item.kind === 'balance' ? '运营商余额' : item.presentation.title }}</strong>
+              <time>{{ formatDeviceDateTime(item.createdAt) }}</time>
+            </header>
+            <template v-if="item.kind === 'command'">
+              <pre>{{ item.presentation.detail }}</pre>
+              <CommandAudioPlayer
+                v-for="attachment in audioAttachments(item.event)"
+                :key="attachment.recording"
+                :attachment="attachment"
+              />
+              <span v-if="item.event.execution?.command" class="event-command">
+                /{{ item.event.execution.command }}
+              </span>
+            </template>
+            <BalanceMessage v-else :query="item.query" />
+          </div>
+        </article>
+      </div>
     </div>
   </section>
 </template>
 
 <style scoped>
 .timeline { min-height: 0; display: flex; flex-direction: column; }
-.timeline-scroll { min-height: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.message { max-width: min(82%, 720px); align-self: flex-start; }
-.message.user { align-self: flex-end; }
-.message-meta { margin: 0 3px 5px; display: flex; align-items: center; gap: 10px; color: #64748b; font-size: 11px; }
-.message.user .message-meta { justify-content: flex-end; }
-.message pre { margin: 0; padding: 11px 13px; border: 1px solid var(--ui-border); border-radius: 8px; background: var(--ui-surface-strong); color: inherit; font: 13px/1.55 "v-mono", ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.message.user pre { background: #0f766e; border-color: #0f766e; color: white; }
-.message.error pre { border-color: rgba(239, 68, 68, .35); background: rgba(239, 68, 68, .07); }
-.state { display: inline-block; margin: 5px 3px 0; font-size: 11px; color: #64748b; }
-.state.running { color: #0284c7; }
-.state.failed { color: #dc2626; }
-.empty-state, .empty-line { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #94a3b8; text-align: center; }
-.empty-state .el-icon { font-size: 30px; color: #0d9488; }
-.empty-state strong { color: #475569; font-size: 14px; }
-:global(html.dark) .empty-state strong { color: #cbd5e1; }
-@media (max-width: 640px) { .message { max-width: 94%; } .timeline-scroll { padding: 12px; } }
+.timeline-scroll { min-height: 0; overflow: auto; padding: 16px 20px 18px; scrollbar-width: thin; }
+.timeline-track { position: relative; display: grid; gap: 8px; padding-left: 54px; }
+.timeline-track::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 20px;
+  width: 1px;
+  background: color-mix(in srgb, var(--ui-primary) 26%, var(--ui-border));
+}
+.timeline-event { position: relative; min-width: 0; color: var(--ui-primary); }
+.event-marker {
+  position: absolute;
+  top: 8px;
+  left: -54px;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: var(--ui-surface);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 5px var(--ui-surface), 0 0 18px color-mix(in srgb, currentColor 10%, transparent);
+}
+.event-marker .el-icon { font-size: 19px; }
+.event-card {
+  min-width: 0;
+  min-height: 58px;
+  padding: 10px 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--ui-surface-strong) 76%, transparent);
+}
+.event-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.event-card header strong { color: currentColor; font-size: 13px; font-weight: 700; }
+.event-card time { flex: 0 0 auto; color: var(--ui-text-subtle); font: 10px "v-mono", ui-monospace, monospace; }
+.event-card pre {
+  margin: 3px 0 0;
+  color: var(--ui-text-muted);
+  font: 12px/1.5 "v-mono", ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.event-command { display: inline-block; margin-top: 7px; color: var(--ui-text-subtle); font: 10px "v-mono", monospace; }
+.tone-running, .tone-waiting { color: var(--ui-warning); }
+.tone-parsed { color: var(--ui-info); }
+.tone-danger { color: var(--ui-danger); }
+.empty-state, .empty-line {
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--ui-text-subtle);
+  text-align: center;
+}
+.empty-icon {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 3px;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--ui-primary);
+}
+.empty-icon .el-icon { font-size: 22px; }
+.empty-state strong, .empty-line strong { color: var(--ui-text); font-size: 13px; }
+.empty-state > span:last-child { font-size: 11px; }
+@media (max-width: 640px) {
+  .timeline-scroll { padding: 14px 10px 18px; }
+  .timeline-track { padding-left: 48px; }
+  .timeline-track::before { left: 18px; }
+  .event-marker { left: -48px; width: 36px; height: 36px; }
+  .event-card { padding: 10px 12px; }
+  .event-card header { align-items: flex-start; flex-direction: column; gap: 2px; }
+}
 </style>
