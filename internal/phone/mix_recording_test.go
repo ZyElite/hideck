@@ -24,7 +24,7 @@ func TestMixedRecorderWritesBothDirectionsToPCM16WAV(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data[:4]) != "RIFF" || string(data[8:12]) != "WAVE" ||
+	if string(data[:4]) != "RIFF" || string(data[8:12]) != "WAVE" || string(data[12:16]) != "fmt " ||
 		binary.LittleEndian.Uint32(data[40:44]) != browserSamplesPerFrame*2 {
 		t.Fatalf("invalid WAV header: %x", data[:mixedWAVHeaderBytes])
 	}
