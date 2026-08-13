@@ -30,7 +30,14 @@ test('VoWiFi command results render authenticated MP3 playback', () => {
   assert.match(commandAudioPlayer, /commandService\.recording/)
   assert.match(commandAudioPlayer, /URL\.createObjectURL/)
   assert.match(commandAudioPlayer, /URL\.revokeObjectURL/)
-  assert.match(commandAudioPlayer, /<audio[^>]*controls[^>]*preload="metadata"/)
+  assert.match(commandAudioPlayer, /<audio[\s\S]*preload="metadata"/)
+  assert.doesNotMatch(commandAudioPlayer, /<audio[^>]*controls/)
+  assert.match(commandAudioPlayer, /aria-label="录音播放进度"/)
+  assert.match(commandAudioPlayer, /aria-label="录音音量"/)
+  assert.match(commandAudioPlayer, /togglePlayback/)
+  assert.match(commandAudioPlayer, /toggleMuted/)
+  assert.match(commandAudioPlayer, /handleMediaError/)
+  assert.match(commandAudioPlayer, /loadRecording\(attachment\.recording\)/)
 })
 
 test('command conversation uses the Studio event rail instead of chat bubbles', () => {
