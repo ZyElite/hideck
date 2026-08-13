@@ -37,6 +37,13 @@ func TestCommandCenterSchemaAndCustomRuleRoundTrip(t *testing.T) {
 	if stored.ParserPattern != rule.ParserPattern || len(stored.ExpectedSenders) != 1 {
 		t.Fatalf("stored rule = %#v", stored)
 	}
+	if err := DeleteCustomCarrierQueryRule(rule.ID); err != nil {
+		t.Fatalf("DeleteCustomCarrierQueryRule() error = %v", err)
+	}
+	stored, err = GetCustomCarrierQueryRule(rule.ID)
+	if err != nil || stored != nil {
+		t.Fatalf("GetCustomCarrierQueryRule() after delete = %#v, %v", stored, err)
+	}
 }
 
 func TestSaveCustomCarrierQueryRuleRejectsInvalidRE2(t *testing.T) {

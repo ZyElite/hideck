@@ -293,6 +293,35 @@ func TestCarrierRuleCollectionPostValidatesReplySenders(t *testing.T) {
 	}
 }
 
+func TestCarrierRuleOverrideDeleteRestoresBuiltInCollectionEntry(t *testing.T) {
+	server, token, _ := newCommandCenterAPITestServer(t)
+	router := server.newRouter()
+	builtIn := carrierquery.BuiltInRules()[0]
+	override := builtIn
+	override.BuiltIn = false
+	override.Operator = "Database override"
+	store := server.carrierRules.(*apiCarrierRuleStore)
+	store.rules[override.ID] = override
+
+	before := performAPIRequest(router, apiRequestOptions{method: http.MethodGet, path: "/api/carrier-query-rules", token: token})
+	if before.Code != http.StatusOK || !strings.Contains(before.Body.String(), `"operator":"Database override"`) {
+		t.Fatalf("list override status=%d body=%s", before.Code, before.Body.String())
+	}
+	deleted := performAPIRequest(router, apiRequestOptions{
+		method: http.MethodDelete, path: "/api/carrier-query-rules/" + override.ID, token: token,
+	})
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete override status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+	after := performAPIRequest(router, apiRequestOptions{method: http.MethodGet, path: "/api/carrier-query-rules", token: token})
+	if after.Code != http.StatusOK || strings.Contains(after.Body.String(), `"operator":"Database override"`) {
+		t.Fatalf("list restored status=%d body=%s", after.Code, after.Body.String())
+	}
+	if !strings.Contains(after.Body.String(), `"id":"`+builtIn.ID+`"`) {
+		t.Fatalf("built-in %q missing after restore: %s", builtIn.ID, after.Body.String())
+	}
+}
+
 func TestCommandEventStreamResumesAfterLastEventID(t *testing.T) {
 	server, token, _ := newCommandCenterAPITestServer(t)
 	if _, err := server.commandCenter.Execute(context.Background(), commandcenter.ExecuteRequest{Input: "/list"}); err != nil {

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import type { CarrierQueryRule } from '../../types/commands'
 import {
   Add24Regular,
+  ArrowReset24Regular,
   ArrowSync24Regular,
   Database24Regular,
   Delete24Regular,
@@ -22,12 +23,14 @@ const props = defineProps<{
   error: string
   deletingId: string
   initialRule?: CarrierQueryRule | null
+  initialTab: 'custom' | 'builtin'
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   save: [rule: CarrierQueryRule, updating: boolean]
   delete: [id: string]
+  restore: [id: string]
   refresh: []
 }>()
 
@@ -36,9 +39,15 @@ const editingID = ref('')
 const sendersText = ref('')
 const limitationsText = ref('')
 const submitAttempted = ref(false)
+const restorePendingID = ref('')
+const restoreInteractionError = ref('')
+const restoreCancelButton = ref<{ $el?: HTMLElement } | null>(null)
+let restoreTriggerElement: HTMLElement | null = null
 const form = reactive<CarrierQueryRule>(blankRule())
 const isExisting = computed(() => props.custom.some((rule) => rule.id === editingID.value))
 const isBuiltInOverride = computed(() => !isExisting.value && props.builtIn.some((rule) => rule.id === editingID.value))
+const builtInRuleIDs = computed(() => new Set(props.builtIn.map((rule) => rule.id)))
+const isCurrentOverride = computed(() => isExisting.value && builtInRuleIDs.value.has(editingID.value))
 const mutationBusy = computed(() => isCarrierRuleOperationBlocked({
   loading: props.loading,
   saving: props.saving,
@@ -51,16 +60,40 @@ const formError = computed(() => submitAttempted.value ? validateRequiredFields(
 
 watch(() => props.modelValue, (open) => {
   if (!open) return
+  restorePendingID.value = ''
+  restoreInteractionError.value = ''
+  restoreTriggerElement = null
   if (props.initialRule) startEditing(props.initialRule)
-  else startNew()
+  else resetEditor(props.initialTab)
 })
 
 watch(() => props.initialRule, (rule) => {
   if (props.modelValue && rule) startEditing(rule)
 })
 
+watch(() => props.initialTab, (tab) => {
+  if (props.modelValue && !props.initialRule) resetEditor(tab)
+})
+
 watch(() => props.custom.map((rule) => rule.id).join('\n'), () => {
-  if (editingID.value && !isExisting.value) startNew()
+  if (restorePendingID.value && !props.custom.some((rule) => rule.id === restorePendingID.value)) {
+    const restoredID = restorePendingID.value
+    restorePendingID.value = ''
+    activeTab.value = 'builtin'
+    restoreTriggerElement = null
+    void focusBuiltInRule(restoredID)
+  }
+  if (!editingID.value || isExisting.value) return
+  const restored = props.builtIn.find((rule) => rule.id === editingID.value)
+  if (restored) assignRule(restored)
+  else startNew()
+})
+
+watch(() => props.builtIn.map((rule) => rule.id).join('\n'), () => {
+  const pendingID = restorePendingID.value
+  if (!pendingID || isOverride(pendingID)) return
+  restoreInteractionError.value = '规则来源已变化，请刷新后重新选择需要恢复的内置覆盖。'
+  void cancelRestore()
 })
 
 function blankRule(): CarrierQueryRule {
@@ -89,12 +122,68 @@ function startEditing(rule: CarrierQueryRule) {
 }
 
 function startNew() {
-  activeTab.value = 'custom'
+  resetEditor('custom')
+}
+
+function resetEditor(tab: 'custom' | 'builtin') {
+  activeTab.value = tab
   Object.assign(form, blankRule())
   editingID.value = ''
   sendersText.value = ''
   limitationsText.value = ''
   submitAttempted.value = false
+}
+
+function isOverride(id: string): boolean {
+  return builtInRuleIDs.value.has(id) && props.custom.some((rule) => rule.id === id)
+}
+
+function requestRestore(id: string, event: MouseEvent) {
+  if (mutationBusy.value) return
+  editingID.value = id
+  restoreInteractionError.value = ''
+  restoreTriggerElement = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  restorePendingID.value = id
+  void focusRestoreCancel()
+}
+
+function confirmRestore() {
+  if (!restorePendingID.value || mutationBusy.value) return
+  if (!isOverride(restorePendingID.value)) {
+    restoreInteractionError.value = '该记录已不再覆盖内置规则，未执行删除。请刷新后重新选择。'
+    void cancelRestore()
+    return
+  }
+  emit('restore', restorePendingID.value)
+}
+
+async function cancelRestore() {
+  const trigger = restoreTriggerElement
+  restorePendingID.value = ''
+  restoreTriggerElement = null
+  await nextTick()
+  trigger?.focus()
+}
+
+async function focusRestoreCancel() {
+  await nextTick()
+  restoreCancelButton.value?.$el?.focus()
+}
+
+async function focusBuiltInRule(id: string) {
+  await nextTick()
+  const buttons = document.querySelectorAll<HTMLButtonElement>('.command-rule-drawer [data-builtin-rule-id]')
+  for (const button of buttons) {
+    if (button.dataset.builtinRuleId === id) {
+      button.focus()
+      return
+    }
+  }
+}
+
+function handleOpenChange(open: boolean) {
+  if (!open && mutationBusy.value) return
+  emit('update:modelValue', open)
 }
 
 function submit() {
@@ -130,9 +219,15 @@ function lines(value: string) {
   <el-drawer
     :model-value="modelValue"
     class="command-rule-drawer"
+    modal-class="command-rule-tray-scrim"
     title="运营商规则管理"
-    size="min(720px, 100%)"
-    @update:model-value="emit('update:modelValue', $event)"
+    direction="rtl"
+    size="min(720px, 100vw)"
+    append-to-body
+    :close-on-click-modal="!mutationBusy"
+    :close-on-press-escape="!mutationBusy"
+    :show-close="!mutationBusy"
+    @update:model-value="handleOpenChange"
   >
     <section class="source-banner" aria-label="规则数据来源">
       <el-icon aria-hidden="true"><Database24Regular /></el-icon>
@@ -153,6 +248,33 @@ function lines(value: string) {
       <span>{{ error }}</span>
       <el-button text :disabled="loading || mutationBusy" @click="emit('refresh')">重新读取</el-button>
     </div>
+    <div v-if="restoreInteractionError" class="source-error" role="alert">
+      <span>{{ restoreInteractionError }}</span>
+      <el-button text @click="restoreInteractionError = ''">关闭</el-button>
+    </div>
+
+    <section
+      v-if="restorePendingID"
+      class="restore-confirmation"
+      role="alertdialog"
+      aria-modal="false"
+      aria-labelledby="restore-built-in-title"
+      aria-describedby="restore-built-in-description"
+    >
+      <div>
+        <strong id="restore-built-in-title">恢复 {{ restorePendingID }} 的内置规则？</strong>
+        <span id="restore-built-in-description">只会删除同 ID 的数据库覆盖，随后重新启用服务端内置规则。</span>
+      </div>
+      <el-button ref="restoreCancelButton" :disabled="mutationBusy" @click="cancelRestore">取消</el-button>
+      <el-button
+        type="warning"
+        :loading="deletingId === restorePendingID"
+        :disabled="mutationBusy"
+        @click="confirmRestore"
+      >
+        确认恢复
+      </el-button>
+    </section>
 
     <el-tabs v-model="activeTab" class="rule-tabs">
       <el-tab-pane :label="`数据库自定义 ${loaded ? custom.length : '—'}`" name="custom">
@@ -174,7 +296,7 @@ function lines(value: string) {
             <button type="button" class="rule-select" :disabled="mutationBusy" @click="assignRule(rule)">
               <span>
                 <strong>{{ rule.operator || rule.id }}</strong>
-                <small>{{ rule.id }} · {{ rule.mcc }}/{{ rule.mnc }}</small>
+                <small>{{ rule.id }} · {{ rule.mcc }}/{{ rule.mnc }} · {{ isOverride(rule.id) ? '内置覆盖' : '自定义' }}</small>
               </span>
               <em :class="{ disabled: !rule.enabled }">{{ rule.enabled ? '已启用' : '已停用' }}</em>
             </button>
@@ -183,6 +305,19 @@ function lines(value: string) {
                 <el-icon><Edit24Regular /></el-icon>
               </el-button>
               <el-button
+                v-if="isOverride(rule.id)"
+                text
+                type="warning"
+                :aria-label="`恢复 ${rule.id} 的内置规则`"
+                :title="`恢复 ${rule.id} 的内置规则`"
+                :loading="deletingId === rule.id"
+                :disabled="mutationBusy"
+                @click="requestRestore(rule.id, $event)"
+              >
+                <el-icon v-if="deletingId !== rule.id"><ArrowReset24Regular /></el-icon>
+              </el-button>
+              <el-button
+                v-else
                 text
                 type="danger"
                 :aria-label="`删除 ${rule.id}`"
@@ -243,7 +378,17 @@ function lines(value: string) {
           <el-form-item><el-switch v-model="form.enabled" :disabled="mutationBusy" active-text="启用规则" /></el-form-item>
           <div class="form-actions">
             <el-button
-              v-if="isExisting"
+              v-if="isCurrentOverride"
+              type="warning"
+              plain
+              :loading="deletingId === form.id"
+              :disabled="mutationBusy"
+              @click="requestRestore(form.id, $event)"
+            >
+              恢复内置规则
+            </el-button>
+            <el-button
+              v-else-if="isExisting"
               type="danger"
               plain
               :loading="deletingId === form.id"
@@ -268,13 +413,33 @@ function lines(value: string) {
         <div v-else-if="!loaded" class="inventory-state">内置规则尚未从后端读取成功</div>
         <div v-else-if="!builtIn.length" class="inventory-state">后端当前未返回内置规则</div>
         <div v-else class="builtin-list">
-          <article v-for="rule in builtIn" :key="rule.id">
+          <article v-for="rule in builtIn" :key="rule.id" :class="{ overridden: isOverride(rule.id) }">
             <div>
-              <strong>{{ rule.operator }}</strong>
+              <span class="builtin-identity">
+                <strong>{{ rule.operator }}</strong>
+                <small v-if="isOverride(rule.id)">数据库覆盖中</small>
+              </span>
               <code>{{ rule.mcc }}/{{ rule.mnc }}</code>
-              <el-button text :disabled="mutationBusy" @click="startEditing(rule)">
-                <el-icon><Edit24Regular /></el-icon>覆盖编辑
-              </el-button>
+              <span class="builtin-actions">
+                <el-button
+                  text
+                  :disabled="mutationBusy"
+                  :data-builtin-rule-id="rule.id"
+                  @click="startEditing(rule)"
+                >
+                  <el-icon><Edit24Regular /></el-icon>{{ isOverride(rule.id) ? '编辑覆盖' : '覆盖编辑' }}
+                </el-button>
+                <el-button
+                  v-if="isOverride(rule.id)"
+                  text
+                  type="warning"
+                  :loading="deletingId === rule.id"
+                  :disabled="mutationBusy"
+                  @click="requestRestore(rule.id, $event)"
+                >
+                  恢复内置
+                </el-button>
+              </span>
             </div>
             <p v-if="rule.transport !== 'unsupported'">{{ rule.transport.toUpperCase() }} · {{ rule.destination || rule.payload }} · {{ rule.payload }}</p>
             <p v-else>{{ rule.alternative }}</p>
@@ -287,7 +452,12 @@ function lines(value: string) {
 </template>
 
 <style scoped>
-.source-banner { min-width: 0; margin-bottom: 12px; padding: 11px 0; border-block: 1px solid var(--ui-border); display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; }
+:global(.command-rule-tray-scrim) { background: color-mix(in srgb, #000 54%, transparent); }
+:global(.command-rule-drawer) { border-radius: 8px 0 0 8px; background: var(--ui-surface-strong); }
+:global(.command-rule-drawer .el-drawer__header) { min-height: 64px; margin: 0; padding: 10px 18px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text); }
+:global(.command-rule-drawer .el-drawer__title) { font-size: 18px; font-weight: 650; }
+:global(.command-rule-drawer .el-drawer__body) { min-height: 0; padding: 0 18px 24px; overflow-y: auto; }
+.source-banner { min-width: 0; margin-bottom: 12px; padding: 11px 0; border-bottom: 1px solid var(--ui-border); display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; }
 .rule-tabs :deep(.el-tabs__item) { min-height: 44px; }
 :global(.command-rule-drawer .el-drawer__close-btn) { width: 44px; height: 44px; display: grid; place-items: center; }
 .source-banner > .el-icon { color: var(--ui-primary); font-size: 20px; }
@@ -300,6 +470,11 @@ function lines(value: string) {
 .source-error, .form-error { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ui-danger) 38%, var(--ui-border)); background: color-mix(in srgb, var(--ui-danger) 7%, transparent); color: var(--ui-danger); font-size: var(--ui-font-body-sm); }
 .source-error { margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .source-error :deep(.el-button) { color: var(--ui-danger); }
+.restore-confirmation { position: sticky; top: 8px; z-index: 4; margin: 12px 0; padding: 12px; border: 1px solid color-mix(in srgb, var(--ui-warning) 48%, var(--ui-border)); border-radius: 6px; background: var(--ui-surface-strong); box-shadow: var(--ui-shadow-md); display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; }
+.restore-confirmation strong, .restore-confirmation span { display: block; }
+.restore-confirmation strong { color: var(--ui-text); font-size: var(--ui-font-body); }
+.restore-confirmation span { margin-top: 3px; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); line-height: 1.45; }
+.restore-confirmation :deep(.el-button) { min-height: 40px; margin: 0; }
 .inventory-heading, .editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .inventory-heading { padding: 4px 0 12px; }
 .inventory-heading strong, .inventory-heading span { display: block; }
@@ -334,22 +509,32 @@ function lines(value: string) {
 .readonly-note strong { color: var(--ui-primary); font-size: var(--ui-font-body-sm); }
 .readonly-note span { margin-top: 4px; color: var(--ui-text-subtle); font-size: var(--ui-font-body-sm); line-height: 1.5; }
 .builtin-list article { padding: 13px 2px; border-bottom: 1px solid var(--ui-border); }
+.builtin-list article.overridden { background: color-mix(in srgb, var(--ui-warning) 6%, transparent); box-shadow: inset 2px 0 var(--ui-warning); }
 .builtin-list article > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; }
+.builtin-identity strong, .builtin-identity small { display: block; }
+.builtin-identity small { margin-top: 3px; color: var(--ui-warning); font-size: var(--ui-font-caption); }
+.builtin-actions { display: flex; align-items: center; }
+.builtin-actions :deep(.el-button) { margin-left: 0; }
 .builtin-list article :deep(.el-button) { min-height: 40px; color: var(--ui-primary); }
 .builtin-list code, .builtin-list p { color: var(--ui-text-subtle); font-size: var(--ui-font-body-sm); }
 .builtin-list p { margin: 6px 0; line-height: 1.5; }
 .builtin-list a { color: var(--ui-primary); font-size: var(--ui-font-body-sm); }
 @media (max-width: 560px) {
+  :global(.command-rule-drawer) { border-radius: 0; }
   .source-banner { grid-template-columns: auto minmax(0, 1fr) auto; }
   .source-summary { grid-column: 2 / -1; flex-wrap: wrap; }
   .source-banner :deep(.el-button), .inventory-heading :deep(.el-button), .source-error :deep(.el-button), .row-actions :deep(.el-button) { min-height: 44px; }
+  .restore-confirmation { grid-template-columns: 1fr 1fr; }
+  .restore-confirmation > div { grid-column: 1 / -1; }
+  .restore-confirmation :deep(.el-button) { min-height: 44px; }
   .form-grid { grid-template-columns: 1fr; }
   .inventory-heading { align-items: flex-start; }
   .inventory-heading span { max-width: 210px; }
   .rule-select { min-height: 60px; padding-inline: 8px; }
   .row-actions :deep(.el-button) { width: 44px; height: 44px; }
   .builtin-list article > div { grid-template-columns: minmax(0, 1fr) auto; }
-  .builtin-list article :deep(.el-button) { grid-column: 1 / -1; justify-self: start; min-height: 44px; }
+  .builtin-actions { grid-column: 1 / -1; justify-self: start; flex-wrap: wrap; }
+  .builtin-list article :deep(.el-button) { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) { .custom-list article { transition: none; } }
 </style>

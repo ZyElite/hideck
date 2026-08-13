@@ -25,6 +25,7 @@ const emit = defineEmits<{
   query: []
   editManualBalance: []
   editRules: []
+  editBuiltInRules: []
   editRule: [rule: CarrierQueryRule]
   refreshRules: []
 }>()
@@ -59,6 +60,7 @@ watch(() => props.modelValue, async (open) => {
       @query="emit('query')"
       @edit-manual-balance="emit('editManualBalance')"
       @edit-rules="emit('editRules')"
+      @edit-built-in-rules="emit('editBuiltInRules')"
       @edit-rule="emit('editRule', $event)"
       @refresh-rules="emit('refreshRules')"
     />

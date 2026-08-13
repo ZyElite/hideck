@@ -29,6 +29,7 @@ const manualRefreshing = ref(false)
 const executing = ref(false)
 const querying = ref(false)
 const rulesOpen = ref(false)
+const rulesInitialTab = ref<'custom' | 'builtin'>('custom')
 const selectedRule = ref<CarrierQueryRule | null>(null)
 const balanceOpen = ref(false)
 const manualBalanceOpen = ref(false)
@@ -388,6 +389,14 @@ async function deleteRule(id: string) {
     confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning'
   }).then(() => true).catch(() => false)
   if (!confirmed) return
+  await removeRule(id, '自定义规则已删除')
+}
+
+async function restoreBuiltInRule(id: string) {
+  await removeRule(id, '已恢复服务端内置规则')
+}
+
+async function removeRule(id: string, successMessage: string) {
   if (ruleOperationBlocked.value) return
   deletingRuleID.value = id
   const result = await commandService.deleteRule(id)
@@ -398,12 +407,17 @@ async function deleteRule(id: string) {
   }
   deletingRuleID.value = ''
   const refreshed = await loadRules()
-  if (refreshed) ElMessage.success('自定义规则已删除')
+  if (refreshed) ElMessage.success(successMessage)
 }
 
-function openRuleEditor(rule: CarrierQueryRule | null = null) {
+function openRuleEditor(rule: CarrierQueryRule | null = null, initialTab: 'custom' | 'builtin' = 'custom') {
   selectedRule.value = rule
+  rulesInitialTab.value = initialTab
   rulesOpen.value = true
+}
+
+function openBuiltInRuleEditor() {
+  openRuleEditor(null, 'builtin')
 }
 
 function updateRulesOpen(open: boolean) {
@@ -454,6 +468,7 @@ function updateRulesOpen(open: boolean) {
         @query="startBalance"
         @edit-manual-balance="openManualBalance"
         @edit-rules="openRuleEditor()"
+        @edit-built-in-rules="openBuiltInRuleEditor"
         @edit-rule="openRuleEditor"
         @refresh-rules="loadRules"
       />
@@ -491,6 +506,7 @@ function updateRulesOpen(open: boolean) {
       :built-in="builtInRules"
       :custom="customRules"
       :initial-rule="selectedRule"
+      :initial-tab="rulesInitialTab"
       :saving="savingRule"
       :loading="rulesLoading"
       :loaded="rulesLoaded"
@@ -499,6 +515,7 @@ function updateRulesOpen(open: boolean) {
       @update:model-value="updateRulesOpen"
       @save="saveRule"
       @delete="deleteRule"
+      @restore="restoreBuiltInRule"
       @refresh="loadRules"
     />
 
