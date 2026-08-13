@@ -282,9 +282,14 @@ function releaseRecording() {
 .playback-range, .volume-range {
   --range-progress: 0%;
   min-width: 0;
-  height: 4px;
+  height: 36px;
   margin: 0;
   appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.playback-range::-webkit-slider-runnable-track, .volume-range::-webkit-slider-runnable-track {
+  height: 4px;
   border-radius: 2px;
   background: linear-gradient(
     to right,
@@ -293,7 +298,17 @@ function releaseRecording() {
     var(--ui-border) var(--range-progress),
     var(--ui-border) 100%
   );
-  cursor: pointer;
+}
+.playback-range::-moz-range-track, .volume-range::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--ui-primary) 0,
+    var(--ui-primary) var(--range-progress),
+    var(--ui-border) var(--range-progress),
+    var(--ui-border) 100%
+  );
 }
 .playback-range:disabled { cursor: wait; opacity: .5; }
 .playback-range::-webkit-slider-thumb, .volume-range::-webkit-slider-thumb {
@@ -304,6 +319,7 @@ function releaseRecording() {
   border-radius: 50%;
   background: var(--ui-primary);
   box-shadow: 0 0 0 1px var(--ui-border);
+  margin-top: -4px;
 }
 .playback-range::-moz-range-thumb, .volume-range::-moz-range-thumb {
   width: 10px;
@@ -323,10 +339,10 @@ function releaseRecording() {
 @keyframes audio-loading { to { transform: rotate(360deg); } }
 @media (max-width: 640px) {
   .recording-copy { display: grid; gap: 1px; }
-  .audio-controls { grid-template-columns: 44px auto minmax(32px, 1fr) auto 44px; gap: 7px; }
+  .audio-controls { grid-template-columns: 44px auto minmax(32px, 1fr) auto; gap: 7px; }
   .audio-action { width: 44px; height: 44px; }
-  .volume-controls { display: block; }
-  .volume-range { display: none; }
+  .playback-range, .volume-range { height: 44px; }
+  .volume-controls { grid-column: 1 / -1; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; }
   .retry-button { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
