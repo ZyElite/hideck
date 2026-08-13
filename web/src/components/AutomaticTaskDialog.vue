@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { ArrowClockwise24Regular } from '@vicons/fluent'
 import { devicesService } from '../services/devices'
 import type { DeviceMgmtListItem, EsimEUICCProfiles } from '../types/api'
 import type { AutomaticTask, AutomaticTaskInput, AutomaticTaskType } from '../types/automation'
@@ -28,6 +29,7 @@ const profileOptions = ref<ProfileOption[]>([])
 const profilesLoading = ref(false)
 const deviceBackend = ref('')
 let profileRequest = 0
+let configRequest = 0
 
 const form = reactive<AutomaticTaskInput>(defaultTask())
 const selectedProfile = ref('')
@@ -38,14 +40,17 @@ watch(() => props.modelValue, (open) => {
   Object.assign(form, props.task ? taskToInput(props.task) : defaultTask())
   if (!form.device_id && props.devices.length) form.device_id = props.devices[0].id
   selectedProfile.value = profileKey(form.profile_iccid, form.profile_aid || '')
-  void loadProfiles(form.device_id)
+  resetProfileOptions(form.device_id)
+  void loadDeviceConfig(form.device_id)
+  if (form.profile_aid) void loadESIMProfiles()
 })
 
 function changeDevice(deviceID: string) {
   form.profile_iccid = ''
   form.profile_aid = ''
   selectedProfile.value = ''
-  void loadProfiles(deviceID)
+  resetProfileOptions(deviceID)
+  void loadDeviceConfig(deviceID)
 }
 
 watch(() => form.task_type, (taskType) => {
@@ -84,26 +89,64 @@ function taskToInput(task: AutomaticTask): AutomaticTaskInput {
   }
 }
 
-async function loadProfiles(deviceID: string) {
-  const requestID = ++profileRequest
-  profileOptions.value = []
+async function loadDeviceConfig(deviceID: string) {
+  const requestID = ++configRequest
   deviceBackend.value = ''
   if (!deviceID) return
+  const config = await devicesService.getConfig(deviceID)
+  if (requestID !== configRequest) return
+  if (config.ok) deviceBackend.value = config.data?.device_backend || ''
+}
+
+async function loadESIMProfiles() {
+  const deviceID = form.device_id
+  if (!deviceID) return
+  const requestID = ++profileRequest
   profilesLoading.value = true
-  const [overview, config] = await Promise.all([
-    devicesService.getEsimOverview(deviceID),
-    devicesService.getConfig(deviceID)
-  ])
+  const overview = await devicesService.getEsimOverview(deviceID)
   if (requestID !== profileRequest) return
   profilesLoading.value = false
-  if (config.ok) deviceBackend.value = config.data?.device_backend || ''
   if (!overview.ok) {
     ElMessage.error(overview.error.message || 'eSIM profile 加载失败')
     return
   }
-  profileOptions.value = flattenProfiles(overview.data.profiles)
+  profileOptions.value = mergeProfileOptions(profileOptions.value, flattenProfiles(overview.data.profiles))
   const current = profileKey(form.profile_iccid, form.profile_aid || '')
   if (current && profileOptions.value.some((item) => item.key === current)) selectedProfile.value = current
+}
+
+function resetProfileOptions(deviceID: string) {
+  profileRequest++
+  profilesLoading.value = false
+  const current = props.devices.find((device) => device.id === deviceID)
+  const iccid = currentDeviceICCID(current)
+  const options: ProfileOption[] = []
+  if (iccid) options.push(profileOption(iccid, '', '当前 SIM'))
+  if (form.profile_iccid) options.push(profileOption(
+    form.profile_iccid,
+    form.profile_aid || '',
+    form.profile_aid ? '任务 eSIM' : '任务 SIM'
+  ))
+  profileOptions.value = mergeProfileOptions([], options)
+  if (!form.profile_iccid && iccid) {
+    form.profile_iccid = iccid
+    form.profile_aid = ''
+  }
+  selectedProfile.value = profileKey(form.profile_iccid, form.profile_aid || '')
+}
+
+function currentDeviceICCID(device?: DeviceMgmtListItem) {
+  return (device?.modem?.iccid || device?.vowifi_runtime?.iccid || '').trim()
+}
+
+function profileOption(iccid: string, aid: string, name: string): ProfileOption {
+  return { key: profileKey(iccid, aid), iccid, aid, label: `${name} · ${iccid}` }
+}
+
+function mergeProfileOptions(existing: ProfileOption[], added: ProfileOption[]) {
+  const options = new Map(existing.map((option) => [option.key, option]))
+  for (const option of added) options.set(option.key, option)
+  return [...options.values()]
 }
 
 function flattenProfiles(groups: EsimEUICCProfiles[]): ProfileOption[] {
@@ -150,7 +193,7 @@ function submit() {
 function validateForm() {
   if (!form.name.trim()) return '请输入任务名称'
   if (!form.device_id) return '请选择设备'
-  if (!form.profile_iccid) return '请选择 eSIM profile'
+  if (!form.profile_iccid) return '当前设备尚未读取到 SIM ICCID'
   if (!form.start_date || !form.run_time || !form.timezone.trim()) return '请填写完整执行时间与时区'
   if (form.task_type === 'sms' && (!form.payload.phone?.trim() || !form.payload.message?.trim())) return '请填写短信号码和内容'
   if (form.task_type === 'call' && !form.payload.phone?.trim()) return '请填写通话号码'
@@ -179,16 +222,23 @@ function validateForm() {
             <el-option v-for="device in devices" :key="device.id" :label="device.name || device.id" :value="device.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="eSIM Profile">
-          <el-select
-            v-model="selectedProfile"
-            filterable
-            class="w-full"
-            :loading="profilesLoading"
-            @change="applyProfile"
-          >
-            <el-option v-for="profile in profileOptions" :key="profile.key" :label="profile.label" :value="profile.key" />
-          </el-select>
+        <el-form-item label="SIM / eSIM Profile">
+          <div class="profile-selector">
+            <el-select
+              v-model="selectedProfile"
+              filterable
+              class="w-full"
+              :loading="profilesLoading"
+              @change="applyProfile"
+            >
+              <el-option v-for="profile in profileOptions" :key="profile.key" :label="profile.label" :value="profile.key" />
+            </el-select>
+            <el-tooltip content="读取 eSIM profiles">
+              <el-button circle :loading="profilesLoading" aria-label="读取 eSIM profiles" @click="loadESIMProfiles">
+                <el-icon v-if="!profilesLoading"><ArrowClockwise24Regular /></el-icon>
+              </el-button>
+            </el-tooltip>
+          </div>
         </el-form-item>
       </div>
 
@@ -258,6 +308,7 @@ function validateForm() {
 
 <style scoped>
 .task-form :deep(.el-form-item) { margin-bottom: 18px; }
+.profile-selector { display: flex; width: 100%; gap: 8px; }
 .form-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(140px, 1fr); gap: 0 16px; }
 .form-grid-schedule { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (max-width: 640px) {

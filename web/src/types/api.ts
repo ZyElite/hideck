@@ -39,6 +39,7 @@ export type RealtimeTrafficSnapshot = {
 export type VoWiFiRuntimeState = {
   device_id?: string
   dataplane_mode?: string
+  iccid?: string
   sim_ready?: boolean
   access_ready?: boolean
   tunnel_ready?: boolean

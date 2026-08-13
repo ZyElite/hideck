@@ -17,6 +17,13 @@ const automationPollInterval = 500 * time.Millisecond
 
 type automaticTaskExecutor struct{ server *Server }
 
+type automaticTaskProfileAction uint8
+
+const (
+	automaticTaskUseCurrentSIM automaticTaskProfileAction = iota
+	automaticTaskSwitchESIM
+)
+
 func (e *automaticTaskExecutor) Execute(
 	ctx context.Context,
 	task automation.Task,
@@ -29,10 +36,15 @@ func (e *automaticTaskExecutor) Execute(
 	if worker == nil {
 		return "", fmt.Errorf("device %s is offline", task.DeviceID)
 	}
-	if err := reportAutomationProgress(progress, "正在切换目标 eSIM profile"); err != nil {
-		return "", err
+	profileAction, err := resolveAutomaticTaskProfile(task, worker.CurrentICCID())
+	if err != nil {
+		return "", automation.Permanent(err)
 	}
-	if err := e.server.pool.SwitchESIMProfileAndWait(ctx, task.DeviceID, task.ProfileICCID, task.ProfileAID); err != nil {
+	if profileAction == automaticTaskUseCurrentSIM {
+		if err := reportAutomationProgress(progress, "正在使用设备当前 SIM"); err != nil {
+			return "", err
+		}
+	} else if err := e.switchTaskESIM(ctx, task, progress); err != nil {
 		return "", err
 	}
 
@@ -69,6 +81,41 @@ func (e *automaticTaskExecutor) Execute(
 	default:
 		return "", fmt.Errorf("unsupported automatic task type %q", task.TaskType)
 	}
+}
+
+func resolveAutomaticTaskProfile(task automation.Task, currentICCID string) (automaticTaskProfileAction, error) {
+	if strings.TrimSpace(task.ProfileAID) != "" {
+		return automaticTaskSwitchESIM, nil
+	}
+	target := normalizeAutomaticTaskICCID(task.ProfileICCID)
+	current := normalizeAutomaticTaskICCID(currentICCID)
+	if current == "" {
+		return automaticTaskUseCurrentSIM, errors.New("device current SIM ICCID is unavailable")
+	}
+	if current != target {
+		return automaticTaskUseCurrentSIM, fmt.Errorf(
+			"task SIM %s is not active on the device; an eSIM AID is required to switch profiles",
+			target,
+		)
+	}
+	return automaticTaskUseCurrentSIM, nil
+}
+
+func normalizeAutomaticTaskICCID(value string) string {
+	return strings.TrimRight(strings.Trim(strings.TrimSpace(value), "\""), "Ff")
+}
+
+func (e *automaticTaskExecutor) switchTaskESIM(
+	ctx context.Context,
+	task automation.Task,
+	progress func(string) error,
+) error {
+	if err := reportAutomationProgress(progress, "正在切换目标 eSIM profile"); err != nil {
+		return err
+	}
+	return e.server.pool.SwitchESIMProfileAndWait(
+		ctx, task.DeviceID, task.ProfileICCID, task.ProfileAID,
+	)
 }
 
 func (e *automaticTaskExecutor) prepareEnvironment(
