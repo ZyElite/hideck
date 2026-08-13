@@ -1,0 +1,92 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import {
+  PhoneMediaController,
+  supportsPCMU,
+  type PhoneMediaDependencies,
+  type PhoneMediaState
+} from '../src/services/phone-media'
+
+const PCMU_OFFER = 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=rtpmap:0 PCMU/8000\r\n'
+
+type FakeTrack = MediaStreamTrack & { stopped: boolean }
+
+function mediaFixture(secure = true) {
+  const states: PhoneMediaState[] = []
+  const track = {
+    enabled: true,
+    stopped: false,
+    stop() { this.stopped = true }
+  } as FakeTrack
+  const microphone = {
+    active: true,
+    getAudioTracks: () => [track],
+    getTracks: () => [track]
+  } as unknown as MediaStream
+  const peer = new FakePeer()
+  let requestedConstraints: MediaStreamConstraints | null = null
+  const dependencies: PhoneMediaDependencies = {
+    secureContext: () => secure,
+    getUserMedia: async (constraints) => {
+      requestedConstraints = constraints
+      return microphone
+    },
+    createPeer: () => peer as unknown as RTCPeerConnection,
+    createAudio: () => ({ autoplay: false, srcObject: null, play: async () => {} }) as unknown as HTMLAudioElement,
+    createMedia: async (sdp) => {
+      assert.equal(sdp, PCMU_OFFER)
+      return { media_id: 'media-1', lease: 'lease-1', sdp: PCMU_OFFER }
+    },
+    setTimer: () => 1,
+    clearTimer: () => {}
+  }
+  const controller = new PhoneMediaController({
+    onState: (state) => states.push(state),
+    onError: (message) => assert.fail(message)
+  }, dependencies)
+  return { controller, states, track, peer, constraints: () => requestedConstraints }
+}
+
+test('refuses microphone access outside a trusted secure context', async () => {
+  const fixture = mediaFixture(false)
+  await assert.rejects(fixture.controller.prepare(), /HTTPS 安全上下文/)
+  assert.equal(fixture.constraints(), null)
+})
+
+test('prepares PCMU media, controls mute, and releases browser resources', async () => {
+  const fixture = mediaFixture()
+  assert.deepEqual(await fixture.controller.prepare(), { mediaId: 'media-1', lease: 'lease-1' })
+  assert.deepEqual(fixture.states, ['requesting', 'connecting'])
+  assert.equal((fixture.constraints()?.audio as MediaTrackConstraints).channelCount, 1)
+  assert.equal(fixture.peer.remoteDescription?.sdp, PCMU_OFFER)
+  fixture.controller.setMuted(true)
+  assert.equal(fixture.track.enabled, false)
+  fixture.controller.close()
+  assert.equal(fixture.track.stopped, true)
+  assert.equal(fixture.peer.closed, true)
+  assert.equal(fixture.states.at(-1), 'idle')
+})
+
+test('recognizes only an explicit PCMU 8000 SDP mapping', () => {
+  assert.equal(supportsPCMU(PCMU_OFFER), true)
+  assert.equal(supportsPCMU('a=rtpmap:8 PCMA/8000\r\n'), false)
+})
+
+class FakePeer extends EventTarget {
+  iceGatheringState: RTCIceGatheringState = 'complete'
+  connectionState: RTCPeerConnectionState = 'new'
+  localDescription: RTCSessionDescription | null = null
+  remoteDescription: RTCSessionDescription | null = null
+  closed = false
+
+  addTrack() { return {} as RTCRtpSender }
+  getTransceivers() { return [] as RTCRtpTransceiver[] }
+  async createOffer() { return { type: 'offer', sdp: PCMU_OFFER } as RTCSessionDescriptionInit }
+  async setLocalDescription(description: RTCLocalSessionDescriptionInit) {
+    this.localDescription = description as RTCSessionDescription
+  }
+  async setRemoteDescription(description: RTCSessionDescriptionInit) {
+    this.remoteDescription = description as RTCSessionDescription
+  }
+  close() { this.closed = true }
+}

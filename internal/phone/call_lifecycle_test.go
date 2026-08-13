@@ -121,9 +121,9 @@ func TestControlLeaseProtectsDTMFAndHangup(t *testing.T) {
 	gateway, store := newFakeVoiceGateway(), newMemoryCallStore()
 	service := newPhoneTestService(t, gateway, store, time.Second)
 	call := &activeCall{
-		view:   CallView{CallID: "call-1", DeviceID: "dev-1", Status: StatusConnected},
+		view:   CallView{CallID: "call-1", DeviceID: "dev-1", Status: StatusConnected, MediaID: "media-1"},
 		record: CallRecord{CallID: "call-1", DeviceID: "dev-1", Status: StatusConnected},
-		owner:  "admin", lease: "lease-1", terminalDone: make(chan struct{}),
+		owner:  "admin", lease: "lease-1", mediaID: "media-1", terminalDone: make(chan struct{}),
 	}
 	service.mu.Lock()
 	service.calls[call.view.CallID] = call
@@ -146,6 +146,12 @@ func TestControlLeaseProtectsDTMFAndHangup(t *testing.T) {
 	}
 	if active := service.Active("lease-1"); len(active) != 1 || active[0].ReadOnly {
 		t.Fatalf("owner active view = %+v", active)
+	}
+	service.publish("call_connected", call)
+	backlog, _, cancel := service.Subscribe(0)
+	cancel()
+	if len(backlog) != 1 || !backlog[0].Call.ReadOnly {
+		t.Fatalf("shared event exposed writable view = %+v", backlog)
 	}
 }
 

@@ -212,7 +212,9 @@ func (s *Service) persist(record CallRecord) {
 
 func (s *Service) publish(kind string, call *activeCall) {
 	s.mu.RLock()
-	view := call.snapshot(call.lease)
+	// SSE is shared by all authenticated browsers, so it must never confer the
+	// controller's lease-specific writable view. Clients match their media ID.
+	view := call.snapshot("")
 	s.mu.RUnlock()
 	s.events.publish(Event{Type: kind, Call: view, Time: time.Now()})
 }
