@@ -63,11 +63,14 @@ const metrics = computed(() => {
   const protocol = { label: '协议', value: props.device?.backend_mode?.toUpperCase() || '不可用', hint: '' }
   const deviceInterface = { label: '接口', value: props.device?.interface || '不可用', hint: '' }
   if (props.device?.vowifi_enabled) {
+    const runtime = props.device.vowifi_runtime
     return [
-      { label: '链路状态', value: serviceState.value.title, hint: '' },
       { label: '接入方式', value: 'Wi-Fi Calling', hint: '' },
+      { label: '数据平面', value: runtime?.dataplane_mode || '不可用', hint: '' },
       protocol,
-      deviceInterface
+      deviceInterface,
+      { label: '最后原因', value: runtime?.last_reason || runtime?.sms_ready_reason || '无', hint: '' },
+      { label: '错误分类', value: runtime?.last_error_class || '无', hint: '' }
     ]
   }
   return [
@@ -259,7 +262,8 @@ function stageLabel(ready: boolean | undefined): string {
 }
 
 .overview-connection-metrics div:nth-child(odd) { border-right: 1px solid var(--ui-border); }
-.overview-connection-metrics div:nth-child(-n+2) { border-bottom: 1px solid var(--ui-border); }
+.overview-connection-metrics div { border-bottom: 1px solid var(--ui-border); }
+.overview-connection-metrics div:nth-last-child(-n+2) { border-bottom: 0; }
 .overview-connection-metrics dt { color: var(--ui-text-muted); font-size: 10px; }
 .overview-connection-metrics dd { margin: 6px 0 0; color: var(--ui-text); font: 13px "v-mono", ui-monospace, monospace; overflow-wrap: anywhere; }
 .overview-connection-metrics small { color: var(--ui-primary); font-size: 9px; }
