@@ -9,13 +9,13 @@ import { toAppError } from '../services/http'
 import type { SmsThreadQueryParams } from '../services/sms'
 import EmptyState from '../components/EmptyState.vue'
 import ErrorState from '../components/ErrorState.vue'
-import ListSkeleton from '../components/ListSkeleton.vue'
-import RefreshButton from '../components/RefreshButton.vue'
+import SmsDeviceRail from '../components/sms/SmsDeviceRail.vue'
+import SmsThreadListPane from '../components/sms/SmsThreadListPane.vue'
 import type { DeviceMgmtListItem, SMSMessage } from '../types/api'
-import { Delete24Regular, Mail24Regular, Send24Regular } from '@vicons/fluent'
-import { RecycleScroller } from 'vue-virtual-scroller'
+import { Delete24Regular, Send24Regular } from '@vicons/fluent'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
-import { formatDeviceDate, formatDeviceDateTime, formatDeviceTime } from '../utils/deviceTime'
+import { formatDeviceDate, formatDeviceDateTime } from '../utils/deviceTime'
+import { createSmsDeviceChannels } from '../utils/smsPresentation'
 
 type SmsThread = {
   key: string
@@ -60,10 +60,6 @@ function syncSmsPageWidth() {
 function parseTs(s: string) {
   const ms = new Date(s).getTime()
   return Number.isFinite(ms) ? ms : 0
-}
-
-function formatClock(ms: number) {
-  return ms ? formatDeviceTime(ms) : ''
 }
 
 function dateKey(timestamp: string) {
@@ -189,12 +185,7 @@ const sendEstimate = computed(() => estimateSegments(String(sendForm.value.messa
 const selectedSendDeviceId = ref('')
 const sendDeviceOptions = computed(() => devices.value.map(d => ({ label: `${d.name || d.id}`, value: d.id })))
 
-const deviceSidebarItems = computed(() => {
-  return [
-    { id: 'all', label: '全部设备', healthy: true },
-    ...devices.value.map(d => ({ id: d.id, label: d.name || d.id, healthy: !!d.running && (d.control_online ?? d.healthy) === true }))
-  ]
-})
+const deviceSidebarItems = computed(() => createSmsDeviceChannels(devices.value))
 
 function normalizeQueryDevice(device: string) {
   const v = String(device || '').trim()
@@ -339,8 +330,9 @@ function moveLongPress(e: PointerEvent) {
   }
 }
 
-function openThreadActionSheet(thread: SmsThread, e: PointerEvent) {
-  startLongPress({ type: 'thread', thread }, e)
+function showThreadActionSheet(thread: SmsThread) {
+  actionSheetTarget.value = { type: 'thread', thread }
+  showActionSheet.value = true
 }
 
 function openMessageActionSheet(message: SMSMessage, e: PointerEvent) {
@@ -508,10 +500,6 @@ async function handleSelectDevice(deviceId: string, options: { syncRoute?: boole
   const ok = await fetchMessages(silent)
   if (!ok || selectedDevice.value !== nextDevice) return
   await ensureThreadSelection({ syncRoute, silent, scrollToBottom: false })
-}
-
-function handleNarrowDeviceChange(value: unknown) {
-  void handleSelectDevice(String(value || 'all'))
 }
 
 async function fetchMessagesAndThread(silent = false) {
@@ -717,14 +705,6 @@ async function confirmDeleteThread(thread: SmsThread) {
 
 <template>
   <div ref="smsPageRef" class="app-page sms-page h-[calc(100vh-144px)] flex flex-col">
-    <div class="sms-action-row">
-      <RefreshButton :loading="loading" @click="refreshAll" />
-      <el-button type="primary" @click="openSendModal" class="font-bold !border-0">
-        <el-icon><Send24Regular /></el-icon>
-        新建短信
-      </el-button>
-    </div>
-
     <ErrorState
       v-if="devicesError"
       class="mb-4"
@@ -757,107 +737,25 @@ async function confirmDeleteThread(thread: SmsThread) {
       </div>
 
       <div class="sms-main-layout">
-        <aside v-if="showDeviceSidebar" class="sms-device-pane flex flex-col">
-          <div class="sms-pane-header">
-            <div>
-              <span>DEVICE CHANNELS</span>
-              <strong>设备通道</strong>
-            </div>
-            <small>{{ devices.length }}</small>
-          </div>
-          <div class="p-3 space-y-1 overflow-auto">
-            <button
-              v-for="d in deviceSidebarItems"
-              :key="d.id"
-              type="button"
-              class="sms-device-row w-full flex items-center justify-between gap-3 px-3 py-2 border text-left transition-all"
-              :class="selectedDevice === d.id
-                ? 'sms-device-row-active'
-                : 'border-transparent'"
-              @click="void handleSelectDevice(d.id)"
-            >
-              <div class="min-w-0">
-                <div class="text-sm font-bold text-gray-800 dark:text-gray-100 truncate">{{ d.label }}</div>
-                <div class="text-xs text-gray-400 truncate">{{ d.id === 'all' ? '汇总所有设备短信' : d.id }}</div>
-              </div>
-              <span v-if="d.id !== 'all'" class="w-2 h-2 rounded-full" :class="d.healthy ? 'bg-green-500' : 'bg-red-500'" />
-            </button>
-          </div>
-        </aside>
+        <SmsDeviceRail
+          v-if="showDeviceSidebar"
+          :items="deviceSidebarItems"
+          :selected-id="selectedDevice"
+          @select="(deviceId) => void handleSelectDevice(deviceId)"
+        />
 
-        <section v-if="showListPane" class="sms-thread-pane flex flex-col min-h-0 min-w-0">
-          <div class="sms-pane-header sms-thread-search">
-            <div class="space-y-3">
-              <el-select v-if="isNarrowLayout" :model-value="selectedDevice" placeholder="选择设备" filterable @change="handleNarrowDeviceChange">
-                <el-option v-for="d in deviceSidebarItems" :key="d.id" :label="d.label" :value="d.id" />
-              </el-select>
-              <el-input v-model="searchQuery" placeholder="搜索联系人/内容" clearable />
-            </div>
-          </div>
-
-          <ListSkeleton v-if="loading && filteredThreads.length === 0" :rows="10" />
-
-          <div v-else-if="filteredThreads.length === 0" class="flex-1 flex items-center justify-center p-6">
-            <EmptyState title="暂无会话" subtitle="等待设备收到短信或点击“新建短信”">
-              <template #icon>
-                <el-icon size="28"><Mail24Regular /></el-icon>
-              </template>
-            </EmptyState>
-          </div>
-
-          <RecycleScroller v-else :items="filteredThreads" :item-size="78" key-field="key" class="flex-1 min-h-0 overflow-auto">
-            <template #default="{ item: t }">
-              <div
-                class="border-b border-gray-100 dark:border-white/10 sms-thread-item-shell"
-                :class="{ 'sms-thread-item-shell-active': selectedThreadKey === t.key }"
-              >
-                <div
-                  class="sms-thread-row group flex items-start gap-2 px-4 py-3 transition-all"
-                  :class="selectedThreadKey === t.key ? 'sms-thread-row-active' : 'hover:bg-gray-50/60 dark:hover:bg-white/5'"
-                  @pointerdown="(e) => openThreadActionSheet(t, e)"
-                  @pointermove="moveLongPress"
-                  @pointerup="clearLongPress"
-                  @pointercancel="clearLongPress"
-                >
-                  <button
-                    type="button"
-                    class="min-w-0 flex-1 text-left"
-                    @click="void selectThread(t.key)"
-                  >
-                    <div class="flex items-start justify-between gap-3">
-                      <div class="min-w-0">
-                        <div class="flex items-center gap-2">
-                          <div class="font-extrabold text-gray-900 dark:text-white truncate">{{ t.peer }}</div>
-                          <span v-if="isUnread(t)" class="w-2 h-2 rounded-full bg-blue-500" />
-                        </div>
-                        <div class="text-xs text-gray-500 dark:text-gray-400 truncate mt-1">{{ t.lastMessage }}</div>
-                      </div>
-                      <div class="text-right sms-thread-meta">
-                        <div class="text-[11px] text-gray-400 font-mono">{{ formatClock(t.lastTs) }}</div>
-                        <div v-if="t.localPhone || t.lastDeviceName" class="text-[10px] text-gray-400 mt-1 truncate">
-                          {{ t.localPhone || t.lastDeviceName }}
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                  <el-button
-                    v-if="!isNarrowLayout"
-                    text
-                    class="sms-danger-ghost-btn sms-delete-trigger sms-thread-delete-btn"
-                    size="small"
-                    :class="{ 'sms-delete-visible': !supportsHover }"
-                    :loading="deletingThreadKey === t.key"
-                    :aria-label="`删除与 ${t.peer} 的对话`"
-                    title="删除对话"
-                    @click.stop="void confirmDeleteThread(t)"
-                  >
-                    <el-icon><Delete24Regular /></el-icon>
-                  </el-button>
-                </div>
-              </div>
-            </template>
-          </RecycleScroller>
-        </section>
+        <SmsThreadListPane
+          v-if="showListPane"
+          v-model="searchQuery"
+          :items="filteredThreads"
+          :selected-key="selectedThreadKey"
+          :loading="loading"
+          :deleting-key="deletingThreadKey"
+          @select="(key) => void selectThread(key)"
+          @delete="(thread) => void confirmDeleteThread(thread)"
+          @open-actions="showThreadActionSheet"
+          @new-message="openSendModal"
+        />
 
         <section v-if="showDetailPane" class="sms-conversation-pane flex flex-col min-w-0 min-h-0">
           <div class="sms-conversation-header flex items-center justify-between gap-3">
@@ -1036,94 +934,42 @@ async function confirmDeleteThread(thread: SmsThread) {
   container-type: inline-size;
 }
 
-.sms-pane-header span {
-  color: var(--ui-primary);
-  font: 700 9px "v-mono", monospace;
-  letter-spacing: .13em;
-}
-
 .sms-workspace {
   min-height: 0;
-}
-
-.sms-action-row {
-  min-height: 44px;
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+  animation: sms-workspace-enter 220ms var(--ui-ease-out) both;
 }
 
 .sms-main-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
+  gap: 0;
   height: 100%;
   min-height: 0;
 }
 
-.sms-device-pane,
-.sms-thread-pane,
 .sms-conversation-pane {
   overflow: hidden;
-  border: 1px solid var(--ui-border);
-  border-radius: 17px;
   background: var(--ui-surface);
-  animation: sms-pane-enter 240ms var(--ui-ease-out) both;
 }
 
-.sms-thread-pane { animation-delay: 40ms; }
-.sms-conversation-pane { animation-delay: 80ms; }
-
-.sms-pane-header,
 .sms-conversation-header {
-  min-height: 65px;
+  min-height: 64px;
   padding: 13px 15px;
   border-bottom: 1px solid var(--ui-border);
 }
 
-.sms-pane-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.sms-pane-header > div:first-child {
-  display: grid;
-  gap: 3px;
-}
-
-.sms-pane-header strong {
-  color: var(--ui-text);
-  font-size: 14px;
-}
-
-.sms-pane-header small {
-  color: var(--ui-text-muted);
-  font: 13px "v-mono", monospace;
-}
-
-.sms-thread-search {
-  display: block;
-}
-
-@keyframes sms-pane-enter {
-  from { opacity: 0; transform: translateY(8px); }
+@keyframes sms-workspace-enter {
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sms-device-pane,
-  .sms-thread-pane,
-  .sms-conversation-pane {
-    animation-name: sms-pane-fade;
-  }
-
-  @keyframes sms-pane-fade {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
+  .sms-workspace { animation-name: sms-workspace-fade; }
+  @keyframes sms-workspace-fade { from { opacity: 0; } to { opacity: 1; } }
 }
 
 .sms-msg-wrapper {
@@ -1135,46 +981,6 @@ async function confirmDeleteThread(thread: SmsThread) {
   width: 28px;
   height: 28px;
   padding: 0;
-}
-
-.sms-thread-row {
-  position: relative;
-}
-
-.sms-thread-item-shell {
-  transition: background-color 0.16s ease, border-color 0.16s ease;
-}
-
-.sms-thread-item-shell-active {
-  background: color-mix(in srgb, var(--ui-primary) 9%, transparent);
-  position: relative;
-  z-index: 1;
-}
-
-.sms-thread-item-shell-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -1px;
-  height: 1px;
-  background: color-mix(in srgb, var(--ui-primary) 9%, transparent);
-}
-
-.sms-thread-row-active {
-  background: transparent;
-}
-
-.sms-thread-delete-btn {
-  position: absolute;
-  right: 16px;
-  top: 50%;
-  transform: translate(10px, -50%);
-  z-index: 3;
-}
-
-.sms-thread-meta {
-  transition: transform 0.2s ease;
 }
 
 .sms-message-delete-btn {
@@ -1208,21 +1014,6 @@ async function confirmDeleteThread(thread: SmsThread) {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.sms-device-row {
-  min-height: 52px;
-  border-radius: 12px;
-}
-
-.sms-device-row:hover {
-  background: var(--ui-surface-muted);
-}
-
-.sms-device-row-active {
-  border-color: color-mix(in srgb, var(--ui-primary) 35%, var(--ui-border));
-  background: color-mix(in srgb, var(--ui-primary) 9%, var(--ui-surface));
-  box-shadow: inset 3px 0 0 var(--ui-primary), 0 0 24px color-mix(in srgb, var(--ui-primary) 7%, transparent);
 }
 
 .sms-action-sheet-title {
@@ -1262,7 +1053,7 @@ async function confirmDeleteThread(thread: SmsThread) {
 
 @container (min-width: 980px) {
   .sms-main-layout {
-    grid-template-columns: 238px 326px minmax(0, 1fr);
+    grid-template-columns: 218px 310px minmax(0, 1fr);
   }
 
   .sms-delete-trigger {
@@ -1277,15 +1068,6 @@ async function confirmDeleteThread(thread: SmsThread) {
     pointer-events: auto;
   }
 
-  .sms-thread-row:hover .sms-thread-meta,
-  .sms-thread-row:focus-within .sms-thread-meta {
-    transform: translateX(-36px);
-  }
-
-  .sms-thread-row:hover .sms-thread-delete-btn,
-  .sms-thread-row:focus-within .sms-thread-delete-btn {
-    transform: translate(0, -50%);
-  }
 }
 
 @container (max-width: 979px) {
