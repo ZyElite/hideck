@@ -50,14 +50,7 @@ const pathIsFlowing = computed(() => {
     && !hasFailedStage.value
 })
 
-const primaryMetric = computed(() => {
-  if (props.device?.vowifi_enabled) {
-    return {
-      label: '公网 IPv4',
-      value: props.device.public_ip || '未分配',
-      hint: ''
-    }
-  }
+const cellularSignalMetric = computed(() => {
   const signal = props.device?.modem?.signal_dbm
   return {
     label: '蜂窝信号',
@@ -66,12 +59,24 @@ const primaryMetric = computed(() => {
   }
 })
 
-const metrics = computed(() => [
-  primaryMetric.value,
-  { label: '公网 IPv6', value: props.device?.public_ipv6 || '未分配', hint: '' },
-  { label: '协议', value: props.device?.backend_mode?.toUpperCase() || '不可用', hint: '' },
-  { label: '接口', value: props.device?.interface || '不可用', hint: '' }
-])
+const metrics = computed(() => {
+  const protocol = { label: '协议', value: props.device?.backend_mode?.toUpperCase() || '不可用', hint: '' }
+  const deviceInterface = { label: '接口', value: props.device?.interface || '不可用', hint: '' }
+  if (props.device?.vowifi_enabled) {
+    return [
+      { label: '链路状态', value: serviceState.value.title, hint: '' },
+      { label: '接入方式', value: 'Wi-Fi Calling', hint: '' },
+      protocol,
+      deviceInterface
+    ]
+  }
+  return [
+    cellularSignalMetric.value,
+    { label: '公网 IPv4', value: props.device?.public_ip || '未分配', hint: '' },
+    { label: '公网 IPv6', value: props.device?.public_ipv6 || '未分配', hint: '' },
+    deviceInterface
+  ]
+})
 
 function signalQuality(value: number): string {
   if (value >= -75) return '优秀'

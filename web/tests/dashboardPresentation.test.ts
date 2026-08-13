@@ -43,8 +43,9 @@ test('derives VoWiFi facts and preserves all runtime stage states', () => {
   assert.equal(presentation.connectionTitle, 'Wi-Fi Calling')
   assert.equal(presentation.connectionState, '已连接')
   assert.equal(presentation.connectionType, 'VoWiFi')
-  assert.equal(presentation.ipv4, '198.51.100.12')
-  assert.equal(presentation.ipv6, '2001:db8:1200:34::89')
+  assert.equal(presentation.ipv4, '')
+  assert.equal(presentation.ipv6, '')
+  assert.equal(presentation.showsCellularFacts, false)
   assert.deepEqual(presentation.stages.map(stage => stage.ready), [true, true, false, undefined, true])
   assert.equal(Object.isFrozen(presentation), true)
 })
@@ -100,7 +101,12 @@ test('animates the service path only for active VoWiFi without failed stages', (
 })
 
 test('formats cellular connection and validates signal sentinels', () => {
+  const presentation = createDashboardDevicePresentation(createDevice())
+
   assert.equal(formatDashboardNetworkType(createDevice()), 'FDD LTE')
+  assert.equal(presentation.ipv4, '198.51.100.12')
+  assert.equal(presentation.ipv6, '2001:db8:1200:34::89')
+  assert.equal(presentation.showsCellularFacts, true)
   assert.equal(formatDashboardSignal(-105), '-105 dBm')
   assert.equal(formatDashboardSignal(0), '不可用')
   assert.equal(formatDashboardSignal(-999), '不可用')

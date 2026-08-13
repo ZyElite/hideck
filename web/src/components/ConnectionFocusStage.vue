@@ -118,14 +118,26 @@ function stageStatusLabel(ready: boolean | undefined): string {
           <dt>运营商 / 连接</dt>
           <dd>{{ presentation ? `${presentation.operator} · ${presentation.connectionType}` : '不可用' }}</dd>
         </div>
-        <div>
-          <dt>公网 IPv4</dt>
-          <dd class="is-address" :title="presentation?.ipv4 || '未分配'">{{ presentation?.ipv4 || '未分配' }}</dd>
-        </div>
-        <div>
-          <dt>公网 IPv6</dt>
-          <dd class="is-address" :title="presentation?.ipv6 || '未分配'">{{ presentation?.ipv6 || '未分配' }}</dd>
-        </div>
+        <template v-if="device?.vowifi_active">
+          <div>
+            <dt>接入方式</dt>
+            <dd>Wi-Fi</dd>
+          </div>
+          <div>
+            <dt>IMS / SMS</dt>
+            <dd>{{ presentation?.connectionState || '等待状态' }}</dd>
+          </div>
+        </template>
+        <template v-else>
+          <div>
+            <dt>公网 IPv4</dt>
+            <dd class="is-address" :title="presentation?.ipv4 || '未分配'">{{ presentation?.ipv4 || '未分配' }}</dd>
+          </div>
+          <div>
+            <dt>公网 IPv6</dt>
+            <dd class="is-address" :title="presentation?.ipv6 || '未分配'">{{ presentation?.ipv6 || '未分配' }}</dd>
+          </div>
+        </template>
       </dl>
       <button type="button" class="focus-open-button" @click="emit('open', device?.id)">
         <span>{{ device ? '打开设备工作区' : '前往设备管理' }}</span>

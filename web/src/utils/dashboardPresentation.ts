@@ -16,6 +16,7 @@ export type DashboardDevicePresentation = Readonly<{
   ipv4: string
   ipv6: string
   operator: string
+  showsCellularFacts: boolean
   signal: string
   stages: readonly DashboardConnectionStage[]
   statusLabel: '在线' | '离线'
@@ -105,16 +106,17 @@ export function createDashboardDevicePresentation(
 ): DashboardDevicePresentation {
   const connectionType = formatDashboardNetworkType(device)
   const isOnline = device.healthy
-  const isVoWiFi = isOnline && device.vowifi_active === true
+  const isVoWiFi = device.vowifi_active === true
 
   return Object.freeze({
     connectionState: getConnectionState(isOnline, isVoWiFi, connectionType),
     connectionTitle: getConnectionTitle(device, isOnline, isVoWiFi),
     connectionType,
     displayName: String(device.name || device.id).trim() || device.id,
-    ipv4: normalizeAddress(device.public_ip),
-    ipv6: normalizeAddress(device.public_ipv6),
+    ipv4: isVoWiFi ? '' : normalizeAddress(device.public_ip),
+    ipv6: isVoWiFi ? '' : normalizeAddress(device.public_ipv6),
     operator: normalizeFact(device.operator),
+    showsCellularFacts: !isVoWiFi,
     signal: formatDashboardSignal(device.signal_dbm),
     stages: createDashboardStages(device.vowifi_runtime),
     statusLabel: isOnline ? '在线' : '离线'

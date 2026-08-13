@@ -167,6 +167,7 @@ const cellularStatusText = computed(() => {
 })
 
 const networkPanelMessage = computed(() => {
+  if (props.device?.vowifi_enabled) return 'VoWiFi 模式不使用蜂窝数据地址'
   if (!props.device?.network_enabled) return '数据未开启'
   if (!props.device?.network_connected) return '数据网络未连接'
   return ''

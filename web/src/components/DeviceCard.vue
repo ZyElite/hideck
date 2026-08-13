@@ -53,14 +53,14 @@ const signalTone = computed(() => {
   if (signalBars.value === 2) return 'is-warning'
   return 'is-good'
 })
-const showCellularSignal = computed(() => props.device.vowifi_active !== true)
+const showCellularFacts = computed(() => presentation.value.showsCellularFacts)
 </script>
 
 <template>
   <button
     type="button"
     class="device-card ui-card ui-card-hover"
-    :class="{ 'device-card-selected': selected }"
+    :class="{ 'device-card-selected': selected, 'is-vowifi': !showCellularFacts }"
     :aria-label="`选择 ${presentation.displayName}；双击打开设备工作区`"
     :aria-pressed="selected"
   >
@@ -88,7 +88,7 @@ const showCellularSignal = computed(() => props.device.vowifi_active !== true)
       </span>
     </span>
 
-    <span class="device-card-footer" :class="{ 'is-vowifi': !showCellularSignal }">
+    <span v-if="showCellularFacts" class="device-card-footer">
       <span class="device-addresses">
         <span class="address-heading">
           <Globe24Regular aria-hidden="true" />
@@ -105,7 +105,7 @@ const showCellularSignal = computed(() => props.device.vowifi_active !== true)
           </span>
         </span>
       </span>
-      <span v-if="showCellularSignal" class="device-signal">
+      <span class="device-signal">
         <span class="signal-label">
           <DataUsage24Regular aria-hidden="true" />
           <span>蜂窝信号</span>
@@ -123,6 +123,7 @@ const showCellularSignal = computed(() => props.device.vowifi_active !== true)
 
 <style scoped>
 .device-card { position: relative; min-width: 0; min-height: 188px; padding: 0; overflow: hidden; border-color: var(--ui-border); border-radius: 12px; background: linear-gradient(145deg, color-mix(in srgb, var(--ui-surface) 98%, var(--ui-primary) 2%), var(--ui-surface)); color: var(--ui-text); text-align: left; cursor: pointer; }
+.device-card.is-vowifi { min-height: 112px; }
 .device-card-selected { border-color: color-mix(in srgb, var(--ui-primary) 58%, var(--ui-border)); background: linear-gradient(150deg, color-mix(in srgb, var(--ui-surface) 84%, var(--ui-primary) 16%), var(--ui-surface) 62%); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-primary) 8%, transparent), var(--ui-shadow-md); }
 .device-card-header { min-height: 62px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .device-title-group { min-width: 0; display: flex; align-items: center; gap: 11px; }
@@ -148,7 +149,6 @@ const showCellularSignal = computed(() => props.device.vowifi_active !== true)
 .connection-primary strong { font-size: 14px; }
 .connection-primary small { color: var(--ui-text-muted); font-size: 11px; }
 .device-card-footer { min-height: 76px; padding: 8px 12px 8px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
-.device-card-footer.is-vowifi { grid-template-columns: minmax(0, 1fr); }
 .device-addresses { min-width: 0; display: grid; }
 .address-heading { display: flex; align-items: flex-start; gap: 7px; color: var(--ui-text-muted); font-size: 11px; }
 .address-heading svg { width: 16px; height: 16px; flex: 0 0 16px; }
