@@ -314,6 +314,9 @@ type Manager struct {
 // 读操作（GetProfiles / GetEsimOverview）在检测到此情况时立即降级，不进入 SIM 卡通道
 var ErrOperationInProgress = fmt.Errorf("eSIM 操作进行中，请稍后重试")
 
+// ErrNoEUICC 表示所有候选 eUICC AID 均不存在；物理 SIM 卡属于正常的此状态。
+var ErrNoEUICC = errors.New("未检测到 eUICC")
+
 type ManagerOptions struct {
 	DeviceID             string
 	Transport            string
@@ -965,6 +968,13 @@ func (m *Manager) forEachEUICC(fn func(client *lpa.Client, aid []byte, eidStr st
 		return err
 	}
 
+	if errors.Is(err, ErrQMIUIMApplicationMissing) {
+		logger.Info("AID 扫描确认当前卡片不含 eUICC",
+			"device", m.deviceID,
+			"policy", plan.Policy,
+			"triedCount", len(aids))
+		return fmt.Errorf("%w: %v", ErrNoEUICC, err)
+	}
 	logger.Warn("AID 扫描未发现 eUICC",
 		"device", m.deviceID,
 		"policy", plan.Policy,
@@ -973,7 +983,7 @@ func (m *Manager) forEachEUICC(fn func(client *lpa.Client, aid []byte, eidStr st
 	if err != nil {
 		return fmt.Errorf("未发现任何 eUICC: %w", err)
 	}
-	return fmt.Errorf("未发现任何 eUICC")
+	return ErrNoEUICC
 }
 
 func (m *Manager) waitForNoWriteOperation() error {
@@ -1101,6 +1111,7 @@ func (m *Manager) doForEachEUICC(aids [][]byte, fn func(client *lpa.Client, aid 
 	var successAIDs [][]byte
 	foundAny := false
 	var lastErr error
+	var lastUnexpectedErr error
 
 	for _, aid := range aids {
 		if !shouldContinueAIDScanAfterSuccess(successAIDs, aid) {
@@ -1159,10 +1170,16 @@ func (m *Manager) doForEachEUICC(aids [][]byte, fn func(client *lpa.Client, aid 
 
 		if err != nil {
 			lastErr = err
+			if !errors.Is(err, ErrQMIUIMApplicationMissing) {
+				lastUnexpectedErr = err
+			}
 		}
 	}
 
 	if !foundAny {
+		if lastUnexpectedErr != nil {
+			return false, lastUnexpectedErr
+		}
 		return false, lastErr
 	}
 
@@ -1388,7 +1405,7 @@ func formatBytes(b int64) string {
 }
 
 func cloneProfiles(groups []EUICCProfiles) []EUICCProfiles {
-	if len(groups) == 0 {
+	if groups == nil {
 		return nil
 	}
 	cloned := make([]EUICCProfiles, len(groups))
@@ -1620,6 +1637,12 @@ func (m *Manager) loadOverview() (*EsimOverview, error) {
 		}
 		overview, loadErr := loader()
 		if loadErr != nil {
+			if errors.Is(loadErr, ErrNoEUICC) {
+				empty := &EsimOverview{Profiles: []EUICCProfiles{}}
+				logger.Info("未检测到 eUICC，返回空总览", "device", m.deviceID, "reason", loadErr)
+				m.setOverviewCache(empty, nil, generation)
+				return cloneOverview(empty), nil
+			}
 			m.setOverviewCache(nil, loadErr, generation)
 			return nil, loadErr
 		}

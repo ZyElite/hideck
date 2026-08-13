@@ -57,6 +57,7 @@ const (
 	QMIErrClientIDsExhausted     uint16 = 0x001F // Client IDs exhausted / 客户端 ID 耗尽
 	QMIErrInvalidRegisterAction  uint16 = 0x0020 // Invalid register action / 无效驻网动作
 	QMIErrInvalidQmiCmd          uint16 = 0x0047 // Invalid QMI command / 不支持的QMI命令
+	QMIErrSIMFileNotFound        uint16 = 0x0050 // SIM file or application not found / SIM 文件或应用不存在
 	QMIErrNotSupported           uint16 = 0x005E // Not supported / 不支持
 	QMIErrOpDeviceUnsupported    uint16 = 0x0034 // Operation not supported by device (EC20 对 WMS 0x004A 的常见回应)
 	QMIErrCardCallControlRefFail uint16 = 0x0030 // Card APDU call control reference failed (卡片执行 EnableProfile+refresh 触发内部 RESET 时的预期返回码)

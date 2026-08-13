@@ -37,6 +37,7 @@ func TestNewQMIUIMTransportWithOptionsStoresClientOptions(t *testing.T) {
 type qmiChannelTransportFake struct {
 	controlDevice    string
 	openChannel      byte
+	openErr          error
 	transmitResp     []byte
 	transmitErr      error
 	openedAID        []byte
@@ -61,6 +62,9 @@ func (f *qmiChannelTransportFake) ControlDevice() string {
 
 func (f *qmiChannelTransportFake) OpenEUICCLogicalChannel(ctx context.Context, slot byte, aid []byte) (byte, error) {
 	f.openedAID = append([]byte(nil), aid...)
+	if f.openErr != nil {
+		return 0, f.openErr
+	}
 	if f.openChannel == 0 {
 		f.openChannel = 2
 	}
@@ -286,5 +290,33 @@ func TestQMIChannelConnectStillReportsMissingTransport(t *testing.T) {
 	channel := NewQMIChannel(nil, 1)
 	if err := channel.Connect(); !errors.Is(err, ErrQMITransportNotAvailable) {
 		t.Fatalf("Connect() error = %v, want ErrQMITransportNotAvailable", err)
+	}
+}
+
+func TestQMIChannelClassifiesMissingUIMApplication(t *testing.T) {
+	transport := &qmiChannelTransportFake{openErr: &qmiq.QMIError{
+		Service:   qmiq.ServiceUIM,
+		MessageID: qmiq.UIMOpenLogicalChannel,
+		Result:    1,
+		ErrorCode: qmiq.QMIErrSIMFileNotFound,
+	}}
+	channel := NewQMIChannel(transport, 1)
+
+	_, err := channel.OpenLogicalChannel([]byte{0xA0, 0x65})
+	if !errors.Is(err, ErrQMIUIMApplicationMissing) {
+		t.Fatalf("OpenLogicalChannel() error = %v, want ErrQMIUIMApplicationMissing", err)
+	}
+}
+
+func TestQMIChannelDoesNotClassifySIMFileNotFoundFromOtherOperationsAsMissingApplication(t *testing.T) {
+	err := wrapQMIChannelError("transmit APDU", &qmiq.QMIError{
+		Service:   qmiq.ServiceUIM,
+		MessageID: qmiq.UIMSendAPDU,
+		Result:    1,
+		ErrorCode: qmiq.QMIErrSIMFileNotFound,
+	})
+
+	if errors.Is(err, ErrQMIUIMApplicationMissing) {
+		t.Fatalf("wrapQMIChannelError() error = %v, must preserve non-open SIM_FILE_NOT_FOUND", err)
 	}
 }

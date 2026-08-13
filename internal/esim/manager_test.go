@@ -1270,6 +1270,57 @@ func TestGetEsimOverviewCachesSuccessfulLoad(t *testing.T) {
 	}
 }
 
+func TestGetEsimOverviewTreatsMissingEUICCAsCachedEmptyState(t *testing.T) {
+	var calls atomic.Int32
+	mgr := newTestManagerWithOverviewLoader(func() (*EsimOverview, error) {
+		calls.Add(1)
+		return nil, fmt.Errorf("scan failed: %w", ErrNoEUICC)
+	})
+
+	for attempt := 0; attempt < 2; attempt++ {
+		overview, err := mgr.GetEsimOverview()
+		if err != nil {
+			t.Fatalf("GetEsimOverview() attempt %d error = %v", attempt+1, err)
+		}
+		if overview.ChipInfo != nil || overview.Profiles == nil || len(overview.Profiles) != 0 {
+			t.Fatalf("GetEsimOverview() attempt %d = %#v, want explicit empty state", attempt+1, overview)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("overview loader calls = %d, want cached single load", calls.Load())
+	}
+}
+
+func TestGetEsimOverviewStillReturnsUnexpectedScanFailure(t *testing.T) {
+	wantErr := errors.New("QMI transport failed")
+	mgr := newTestManagerWithOverviewLoader(func() (*EsimOverview, error) {
+		return nil, wantErr
+	})
+
+	if _, err := mgr.GetEsimOverview(); !errors.Is(err, wantErr) {
+		t.Fatalf("GetEsimOverview() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestGetEsimOverviewMapsMissingCandidateAIDsToEmptyState(t *testing.T) {
+	var calls atomic.Int32
+	mgr := NewManagerWithChannelFactory("physical-sim", func([]byte) (*lpa.Client, error) {
+		calls.Add(1)
+		return nil, ErrQMIUIMApplicationMissing
+	}, nil, nil, nil)
+
+	overview, err := mgr.GetEsimOverview()
+	if err != nil {
+		t.Fatalf("GetEsimOverview() error = %v", err)
+	}
+	if overview.ChipInfo != nil || overview.Profiles == nil || len(overview.Profiles) != 0 {
+		t.Fatalf("GetEsimOverview() = %#v, want explicit empty state", overview)
+	}
+	if calls.Load() < 2 {
+		t.Fatalf("channel factory calls = %d, want all candidate AIDs scanned", calls.Load())
+	}
+}
+
 func TestGetProfilesUsesCachedOverview(t *testing.T) {
 	var calls atomic.Int32
 	wantProfiles := []EUICCProfiles{{

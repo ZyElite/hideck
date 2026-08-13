@@ -19,6 +19,7 @@ var (
 	ErrQMITransportNotAvailable = errors.New("qmi_transport_not_available")
 	ErrQMIUIMNotAvailable       = errors.New("qmi_uim_not_available")
 	ErrQMIUIMNotSupported       = errors.New("qmi_uim_not_supported")
+	ErrQMIUIMApplicationMissing = errors.New("qmi_uim_application_missing")
 	ErrQMIControlDeviceMissing  = errors.New("qmi_control_device_missing")
 	// ErrQMIUIMCardReset 表示卡片在执行 APDU（通常是携带 refresh=true 的 EnableProfile）时触发了内部 UICC RESET。
 	// 模组会返回 QMI_ERR_CARD_CALL_CONTROL_REF_FAILED (0x0030)，这是正常预期行为，不代表切卡失败。
@@ -170,6 +171,10 @@ func wrapQMIChannelError(operation string, err error) error {
 	}
 	if qe := qmiq.GetQMIError(err); qe != nil {
 		switch qe.ErrorCode {
+		case qmiq.QMIErrSIMFileNotFound:
+			if qe.Service == qmiq.ServiceUIM && qe.MessageID == qmiq.UIMOpenLogicalChannel {
+				return fmt.Errorf("%w: %s", ErrQMIUIMApplicationMissing, operation)
+			}
 		case qmiq.QMIErrNotSupported, qmiq.QMIErrInvalidQmiCmd:
 			return fmt.Errorf("%w: %s", ErrQMIUIMNotSupported, operation)
 		case qmiq.QMIErrDeviceNotReady, qmiq.QMIErrInvalidID:

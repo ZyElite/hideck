@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -333,6 +334,34 @@ func TestHandleEsimGetOverviewRefreshUsesFullRefreshPath(t *testing.T) {
 	}
 	if body := recorder.Body.String(); body == "" || !containsAll(body, "after", "iccid-new", "NEW") {
 		t.Fatalf("body=%q want fully refreshed overview payload", body)
+	}
+}
+
+func TestHandleEsimGetOverviewReturnsEmptyStateWhenEUICCIsMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mgr := newTestEsimManager()
+	setNestedPrivateField(t, mgr, []string{"overviewLoader"}, func() (*esim.EsimOverview, error) {
+		return nil, fmt.Errorf("AID scan failed: %w", esim.ErrNoEUICC)
+	})
+	p := device.NewPool(&config.Config{})
+	setNestedPrivateField(t, p, []string{"workers"}, map[string]*device.Worker{
+		"physical-sim": {ID: "physical-sim", EsimMgr: mgr},
+	})
+	server := &Server{pool: p}
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: "physical-sim"}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/devices/physical-sim/esim", nil)
+
+	server.handleEsimGetOverview(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d want=%d body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := strings.TrimSpace(recorder.Body.String()); got != `{"chip_info":null,"profiles":[]}` {
+		t.Fatalf("body=%s want explicit empty eSIM overview", got)
 	}
 }
 
