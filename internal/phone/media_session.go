@@ -31,6 +31,7 @@ type MediaSession struct {
 	mu               sync.RWMutex
 	remote           rtpEndpoint
 	realtimeCodec    RealtimeCodec
+	recorder         *mixedRecorder
 	attached         bool
 	closed           chan struct{}
 	closeOnce        sync.Once
@@ -160,6 +161,12 @@ func (s *MediaSession) Matches(owner, lease string) bool {
 	return s != nil && s.Owner == owner && secureEqual(s.Lease, lease)
 }
 
+func (s *MediaSession) SetRecorder(recorder *mixedRecorder) {
+	s.mu.Lock()
+	s.recorder = recorder
+	s.mu.Unlock()
+}
+
 func (s *MediaSession) Stats() MediaStats {
 	return MediaStats{
 		PacketsFromIMS: s.fromIMS.Load(), PacketsToIMS: s.toIMS.Load(), PacketsLost: s.lost.Load(),
@@ -176,6 +183,7 @@ func (s *MediaSession) Close() error {
 		s.mu.Lock()
 		codec := s.realtimeCodec
 		s.realtimeCodec = nil
+		s.recorder = nil
 		s.mu.Unlock()
 		if codec != nil {
 			result = errors.Join(result, codec.Close())

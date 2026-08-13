@@ -7,6 +7,10 @@ import (
 	"runtime"
 )
 
-func loadNativeLibraries() (nativeLibraries, error) {
-	return nativeLibraries{}, errors.New("native audio transcoding is unavailable on " + runtime.GOOS)
+func loadNativeLame() (*lameAPI, error) {
+	return nil, errors.New("native MP3 encoding is unavailable on " + runtime.GOOS)
+}
+
+func loadRecordingAMRDecoder(codec string) (*amrDecoderAPI, error) {
+	return nil, errors.New(codec + " recording decoder is unavailable on " + runtime.GOOS)
 }

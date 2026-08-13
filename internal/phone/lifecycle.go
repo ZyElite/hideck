@@ -64,7 +64,7 @@ func (s *Service) newIncomingCall(incoming voicehost.IncomingCall, startedAt tim
 	return &activeCall{
 		view: view, record: record, incomingSDP: incoming.OfferSDP,
 		recordingBase: s.captureBase(incoming.DeviceID, startedAt),
-		terminalDone:  make(chan struct{}),
+		terminalDone:  make(chan struct{}), finalizedDone: make(chan struct{}),
 	}
 }
 
@@ -137,21 +137,25 @@ func (s *Service) updateAnswered(event voicehost.CallEvent) {
 	call.view.Status, call.record.Status = StatusConnected, StatusConnected
 	call.view.AnsweredAt, call.record.AnsweredAt = &answeredAt, &answeredAt
 	mediaID, direction, deviceID := call.mediaID, call.view.Direction, call.view.DeviceID
-	record := call.record
 	s.mu.Unlock()
 	if direction == "outbound" {
-		s.attachOutboundMedia(event.CallID, deviceID, mediaID)
+		if media := s.attachOutboundMedia(event.CallID, deviceID, mediaID); media != nil {
+			s.startMixedRecording(call, media)
+		}
 	}
+	s.mu.RLock()
+	record := call.record
+	s.mu.RUnlock()
 	s.persist(record)
 	s.publish("call_answered", call)
 }
 
-func (s *Service) attachOutboundMedia(callID, deviceID, mediaID string) {
+func (s *Service) attachOutboundMedia(callID, deviceID, mediaID string) *MediaSession {
 	media := s.media.Get(mediaID)
 	snapshot := s.gateway.ActiveCall(deviceID)
 	if media == nil || snapshot == nil || snapshot.ClientSDP == "" {
 		s.failMediaAttachment(callID, errors.New("phone: negotiated outbound media endpoint is unavailable"))
-		return
+		return nil
 	}
 	endpoint, err := parseRTPEndpoint(snapshot.ClientSDP)
 	if err == nil {
@@ -163,7 +167,9 @@ func (s *Service) attachOutboundMedia(callID, deviceID, mediaID string) {
 	}
 	if err = media.Attach(snapshot.ClientSDP); err != nil {
 		s.failMediaAttachment(callID, err)
+		return nil
 	}
+	return media
 }
 
 func (s *Service) failMediaAttachment(callID string, err error) {
@@ -208,13 +214,17 @@ func (s *Service) finishCall(event voicehost.CallEvent) {
 	}
 	delete(s.mediaCalls, call.mediaID)
 	s.terminalSeen[event.CallID] = struct{}{}
-	mediaID, record := call.mediaID, call.record
+	mediaID := call.mediaID
 	deviceID, peer, direction := call.view.DeviceID, call.view.Peer, call.view.Direction
 	s.mu.Unlock()
 	call.terminalOnce.Do(func() { close(call.terminalDone) })
+	s.stopMixedRecording(call)
 	if mediaID != "" {
 		s.media.Remove(mediaID)
 	}
+	s.mu.RLock()
+	record := call.record
+	s.mu.RUnlock()
 	s.persist(record)
 	s.publish("call_ended", call)
 	if s.notifier != nil {
@@ -248,39 +258,6 @@ func callDurationSeconds(record CallRecord, endedAt time.Time) int64 {
 		return 0
 	}
 	return int64(endedAt.Sub(start) / time.Second)
-}
-
-func (s *Service) recordBusyResult(event voicehost.CallEvent, responseErr error) {
-	s.mu.Lock()
-	if _, duplicate := s.terminalSeen[event.CallID]; duplicate {
-		s.mu.Unlock()
-		return
-	}
-	s.terminalSeen[event.CallID] = struct{}{}
-	s.mu.Unlock()
-	at := event.Time
-	if at.IsZero() {
-		at = time.Now()
-	}
-	status, reason := StatusBusy, "device_busy"
-	if responseErr != nil {
-		status, reason = StatusFailed, responseErr.Error()
-	}
-	record := CallRecord{
-		CallID: event.CallID, DeviceID: event.DeviceID, ICCID: s.iccid(event.DeviceID),
-		Direction: "inbound", Peer: event.Caller, Status: status,
-		StartedAt: at, EndedAt: &at, EndReason: reason,
-	}
-	s.persist(record)
-	call := &activeCall{view: CallView{
-		CallID: event.CallID, DeviceID: event.DeviceID, Direction: "inbound",
-		Peer: event.Caller, Status: status, StartedAt: at, EndedAt: &at, EndReason: reason,
-	}, record: record, terminal: true, terminalDone: make(chan struct{})}
-	call.terminalOnce.Do(func() { close(call.terminalDone) })
-	s.publish("call_ended", call)
-	if s.notifier != nil {
-		go s.notifier.NotifyCallResult(event.DeviceID, event.Caller, "inbound", status, reason, at)
-	}
 }
 
 func (s *Service) publishMediaUpdate(event voicehost.CallEvent) {

@@ -60,7 +60,8 @@ func addActiveCallForRecovery(service *Service, callID, mediaID string) {
 	call := &activeCall{
 		view:   CallView{CallID: callID, DeviceID: "dev-1", Status: StatusConnected, MediaID: mediaID},
 		record: CallRecord{CallID: callID, DeviceID: "dev-1", Status: StatusConnected, StartedAt: time.Now()},
-		owner:  "admin", lease: "lease-1", mediaID: mediaID, terminalDone: make(chan struct{}),
+		owner:  "admin", lease: "lease-1", mediaID: mediaID,
+		terminalDone: make(chan struct{}), finalizedDone: make(chan struct{}),
 	}
 	service.mu.Lock()
 	service.calls[callID] = call

@@ -143,8 +143,14 @@ type activeCall struct {
 	userRejected    bool
 	terminal        bool
 	disconnectTimer *time.Timer
+	mixedRecorder   *mixedRecorder
+	mixedAudioPath  string
+	mixedRecordOnce sync.Once
+	mixedAttempted  bool
 	terminalDone    chan struct{}
 	terminalOnce    sync.Once
+	finalizedDone   chan struct{}
+	finalizedOnce   sync.Once
 }
 
 func (call *activeCall) snapshot(lease string) CallView {

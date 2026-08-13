@@ -91,6 +91,10 @@ func (g *fakeVoiceGateway) HangupCall(_ context.Context, deviceID, callID string
 		Type: "CallEnded", DeviceID: deviceID, CallID: callID,
 		Reason: "local_hangup", Time: time.Now(),
 	})
+	g.emitEvent(voicehost.CallEvent{
+		Type: "CallFinalized", DeviceID: deviceID, CallID: callID,
+		AudioCodec: "PCMU", Time: time.Now(),
+	})
 	return nil
 }
 

@@ -126,30 +126,15 @@ func (s *Service) Close(ctx context.Context) error {
 }
 
 func (s *Service) close(ctx context.Context) error {
-	s.mu.RLock()
-	calls := make([]*activeCall, 0, len(s.calls))
-	for _, call := range s.calls {
-		if !call.terminal {
-			calls = append(calls, call)
-		}
-	}
-	s.mu.RUnlock()
+	calls := s.callSnapshotForClose()
 	var result error
 	for _, call := range calls {
+		result = errors.Join(result, s.closeCall(ctx, call))
 		if ctx.Err() != nil {
-			result = errors.Join(result, ctx.Err())
 			break
 		}
-		s.mu.RLock()
-		deviceID, callID, done := call.view.DeviceID, call.view.CallID, call.terminalDone
-		s.mu.RUnlock()
-		result = errors.Join(result, s.gateway.HangupCall(ctx, deviceID, callID))
-		select {
-		case <-done:
-		case <-ctx.Done():
-			result = errors.Join(result, ctx.Err())
-		}
 	}
+	s.stopAllMixedRecordings(calls)
 	if s.unsubscribeIncoming != nil {
 		s.unsubscribeIncoming()
 	}
@@ -158,6 +143,47 @@ func (s *Service) close(ctx context.Context) error {
 	}
 	s.cancel()
 	return errors.Join(result, s.media.Close())
+}
+
+func (s *Service) callSnapshotForClose() []*activeCall {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	calls := make([]*activeCall, 0, len(s.calls))
+	for _, call := range s.calls {
+		if !call.terminal {
+			calls = append(calls, call)
+		}
+	}
+	return calls
+}
+
+func (s *Service) closeCall(ctx context.Context, call *activeCall) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	s.mu.RLock()
+	deviceID, callID := call.view.DeviceID, call.view.CallID
+	terminalDone, finalizedDone := call.terminalDone, call.finalizedDone
+	s.mu.RUnlock()
+	result := s.gateway.HangupCall(ctx, deviceID, callID)
+	if !waitForCallCleanup(ctx, terminalDone, finalizedDone) {
+		result = errors.Join(result, ctx.Err())
+	}
+	return result
+}
+
+func waitForCallCleanup(ctx context.Context, terminalDone, finalizedDone <-chan struct{}) bool {
+	for _, done := range []<-chan struct{}{terminalDone, finalizedDone} {
+		if done == nil {
+			continue
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) captureBase(deviceID string, at time.Time) string {

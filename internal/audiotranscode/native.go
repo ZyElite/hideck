@@ -10,26 +10,21 @@ import (
 	"github.com/ebitengine/purego"
 )
 
-func loadNativeLibraries() (nativeLibraries, error) {
-	lame, err := loadLameAPI()
-	if err != nil {
-		return nativeLibraries{}, err
+func loadNativeLame() (*lameAPI, error) {
+	return loadLameAPI()
+}
+
+func loadRecordingAMRDecoder(codec string) (*amrDecoderAPI, error) {
+	if codec == "AMR" {
+		return loadAMRDecoderAPI(amrDecoderSymbols{
+			libraries: []string{"libopencore-amrnb.so.0", "libopencore-amrnb.so", "libopencore-amrnb.dylib"},
+			init:      "Decoder_Interface_init", decode: "Decoder_Interface_Decode", close: "Decoder_Interface_exit",
+		})
 	}
-	amrNB, err := loadAMRDecoderAPI(amrDecoderSymbols{
-		libraries: []string{"libopencore-amrnb.so.0", "libopencore-amrnb.so", "libopencore-amrnb.dylib"},
-		init:      "Decoder_Interface_init", decode: "Decoder_Interface_Decode", close: "Decoder_Interface_exit",
-	})
-	if err != nil {
-		return nativeLibraries{}, err
-	}
-	amrWB, err := loadAMRDecoderAPI(amrDecoderSymbols{
+	return loadAMRDecoderAPI(amrDecoderSymbols{
 		libraries: []string{"libopencore-amrwb.so.0", "libopencore-amrwb.so", "libopencore-amrwb.dylib"},
 		init:      "D_IF_init", decode: "D_IF_decode", close: "D_IF_exit",
 	})
-	if err != nil {
-		return nativeLibraries{}, err
-	}
-	return nativeLibraries{lame: lame, amrNB: amrNB, amrWB: amrWB}, nil
 }
 
 func openLibrary(candidates []string) (uintptr, error) {

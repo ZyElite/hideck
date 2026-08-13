@@ -26,6 +26,7 @@ func (s *MediaSession) forwardBrowserRTP(track *webrtc.TrackRemote) {
 		if !ok {
 			continue
 		}
+		s.recordMixedFrame(mixToIMS, packet.Payload)
 		packet.Payload, err = browserPayloadForIMS(packet.Payload, endpoint, codec)
 		if err != nil {
 			s.lost.Add(1)
@@ -92,10 +93,20 @@ func (s *MediaSession) writeBrowserRTP(packet *rtp.Packet) {
 		return
 	}
 	packet.Payload = payload
+	s.recordMixedFrame(mixFromIMS, payload)
 	packet.PayloadType = pcmPayloadType
 	packet.Timestamp = scaleTimestamp(packet.Timestamp, endpoint.ClockRate, browserClockRate)
 	if err := s.track.WriteRTP(packet); err == nil {
 		s.fromIMS.Add(1)
+	}
+}
+
+func (s *MediaSession) recordMixedFrame(direction mixDirection, payload []byte) {
+	s.mu.RLock()
+	recorder := s.recorder
+	s.mu.RUnlock()
+	if recorder != nil {
+		recorder.Add(direction, payload)
 	}
 }
 

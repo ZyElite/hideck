@@ -68,7 +68,7 @@ func (s *Service) newOutboundCall(
 	return &activeCall{
 		view: view, record: record, owner: request.Owner, lease: request.Lease,
 		mediaID: request.MediaID, recordingBase: s.captureBase(request.DeviceID, startedAt),
-		terminalDone: make(chan struct{}),
+		terminalDone: make(chan struct{}), finalizedDone: make(chan struct{}),
 	}
 }
 
@@ -93,6 +93,7 @@ func (s *Service) Answer(ctx context.Context, request ControlRequest) (CallView,
 		return CallView{}, err
 	}
 	s.assignControl(call.view.CallID, request.Owner, request.MediaID, request.Lease)
+	s.startMixedRecording(call, media)
 	return s.callView(callID, request.Lease), nil
 }
 
@@ -160,6 +161,10 @@ func (s *Service) RefreshMedia(request RefreshRequest) (CallView, string, error)
 	if err := s.attachCurrentMedia(request.CallID, media); err != nil {
 		return CallView{}, "", err
 	}
+	s.mu.RLock()
+	callForRecorder := s.calls[request.CallID]
+	s.mu.RUnlock()
+	s.attachMixedRecorder(callForRecorder, media)
 	s.mu.Lock()
 	call = s.calls[request.CallID]
 	if call == nil || call.terminal {
