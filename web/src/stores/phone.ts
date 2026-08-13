@@ -60,7 +60,7 @@ export const usePhoneStore = defineStore('phone', {
       return state.mediaState === 'connecting' || state.mediaState === 'connected'
     },
     secureContext() {
-      return typeof window !== 'undefined' && window.isSecureContext
+      return typeof window !== 'undefined' && window.location.protocol === 'https:' && window.isSecureContext
     }
   },
   actions: {
@@ -166,7 +166,7 @@ export const usePhoneStore = defineStore('phone', {
     },
 
     async reject(call: PhoneCall) {
-      const media = await this.prepareMedia()
+      const media = await this.prepareControlMedia()
       await phoneService.reject(call.call_id, media.mediaId, media.lease)
       this.releaseMedia()
     },
@@ -222,6 +222,18 @@ export const usePhoneStore = defineStore('phone', {
         this.error = phoneErrorMessage(error, '听筒和麦克风启用失败')
         throw error
       }
+    },
+
+    async prepareControlMedia() {
+      if (this.mediaReady && this.mediaId && this.lease) {
+        return { mediaId: this.mediaId, lease: this.lease }
+      }
+      this.ensureMediaController()
+      const prepared = await mediaController!.prepare({ microphone: false })
+      this.mediaId = prepared.mediaId
+      this.lease = prepared.lease
+      this.saveControl()
+      return prepared
     },
 
     upsertCall(call: PhoneCall) {

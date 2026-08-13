@@ -2,10 +2,12 @@
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { usePhoneStore } from '../stores/phone'
 import { Expand, Fold } from '@element-plus/icons-vue'
 import LoadingScreen from '../components/LoadingScreen.vue'
 import ErrorBoundary from '../components/ErrorBoundary.vue'
 import SwitchDark from '../components/SwitchDark.vue'
+import PhoneCallBar from '../components/PhoneCallBar.vue'
 import { debugCollector } from '../debug/collector'
 import {
   Mail24Regular,
@@ -16,7 +18,8 @@ import {
   Globe24Regular,
   DocumentText24Regular,
   Chat24Regular,
-  CalendarClock24Regular
+  CalendarClock24Regular,
+  Dialpad24Regular
 } from '@vicons/fluent'
 
 defineProps({
@@ -31,6 +34,7 @@ const emit = defineEmits(['toggle-theme'])
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+const phone = usePhoneStore()
 const collapsed = ref(localStorage.getItem('sidebar_collapsed') === '1')
 const isMobile = ref(false)
 const viewportCompact = ref(false)
@@ -42,6 +46,7 @@ const DebugPanel = defineAsyncComponent(() => import('../components/DebugPanel.v
 const menuItems = [
   { index: '/', label: '仪表盘', icon: Board24Regular },
   { index: '/devices', label: '设备管理', icon: Phone24Regular },
+  { index: '/phone', label: '电话', icon: Dialpad24Regular },
   { index: '/proxy', label: '代理管理', icon: Globe24Regular },
   { index: '/sms', label: '短信中心', icon: Mail24Regular },
   { index: '/commands', label: '命令中心', icon: Chat24Regular },
@@ -49,6 +54,7 @@ const menuItems = [
   { index: '/logs', label: '实时日志', icon: DocumentText24Regular },
   { index: '/settings', label: '系统设置', icon: Settings24Regular }
 ]
+const mobileMenuItems = menuItems.filter((item) => ['/', '/phone', '/devices', '/sms', '/commands'].includes(item.index))
 const effectiveCollapsed = computed(() => collapsed.value || viewportCompact.value)
 const expandedSidebarWidth = computed(() => viewportNarrow.value ? '190px' : '218px')
 
@@ -101,11 +107,13 @@ onMounted(() => {
   debugOpen.value = saved === '1'
 
   window.addEventListener('keydown', onKeydown)
+  void phone.initialize()
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', syncIsMobile)
   window.removeEventListener('keydown', onKeydown)
+  phone.dispose()
 })
 
 watch(
@@ -246,6 +254,8 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
         </div>
       </el-header>
 
+      <PhoneCallBar />
+
       <el-main class="app-main px-4 pb-6 sm:px-7 sm:pb-8 overflow-auto">
         <div class="main-inner mx-auto w-full">
           <router-view v-slot="{ Component, route: r }">
@@ -260,7 +270,7 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
 
     <nav v-if="isMobile" class="mobile-bottom-nav" aria-label="移动导航">
       <button
-        v-for="item in menuItems"
+        v-for="item in mobileMenuItems"
         :key="item.index"
         type="button"
         :class="{ 'is-active': activePath === item.index }"
@@ -667,7 +677,7 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
     left: 12px;
     height: 58px;
     display: grid;
-    grid-template-columns: repeat(8, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(44px, 1fr));
     border: 1px solid color-mix(in srgb, var(--ui-text) 12%, transparent);
     border-radius: 18px;
     background: color-mix(in srgb, var(--ui-surface) 88%, transparent);

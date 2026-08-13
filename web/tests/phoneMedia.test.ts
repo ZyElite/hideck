@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   PhoneMediaController,
+  isTrustedHTTPSContext,
   supportsPCMU,
   type PhoneMediaDependencies,
   type PhoneMediaState
@@ -53,6 +54,14 @@ test('refuses microphone access outside a trusted secure context', async () => {
   assert.equal(fixture.constraints(), null)
 })
 
+test('creates a receive-only control session for rejection without microphone access', async () => {
+  const fixture = mediaFixture(false)
+  await fixture.controller.prepare({ microphone: false })
+  assert.equal(fixture.constraints(), null)
+  assert.equal(fixture.peer.transceiverDirection, 'recvonly')
+  fixture.controller.close()
+})
+
 test('prepares PCMU media, controls mute, and releases browser resources', async () => {
   const fixture = mediaFixture()
   assert.deepEqual(await fixture.controller.prepare(), { mediaId: 'media-1', lease: 'lease-1' })
@@ -72,15 +81,27 @@ test('recognizes only an explicit PCMU 8000 SDP mapping', () => {
   assert.equal(supportsPCMU('a=rtpmap:8 PCMA/8000\r\n'), false)
 })
 
+test('does not treat the localhost HTTP exception as an HTTPS phone context', () => {
+  assert.equal(isTrustedHTTPSContext('http:', true, true), false)
+  assert.equal(isTrustedHTTPSContext('https:', false, true), false)
+  assert.equal(isTrustedHTTPSContext('https:', true, true), true)
+})
+
 class FakePeer extends EventTarget {
   iceGatheringState: RTCIceGatheringState = 'complete'
   connectionState: RTCPeerConnectionState = 'new'
   localDescription: RTCSessionDescription | null = null
   remoteDescription: RTCSessionDescription | null = null
   closed = false
+  transceiverDirection = ''
+  private readonly transceiver = { sender: {}, setCodecPreferences: () => {} } as unknown as RTCRtpTransceiver
 
-  addTrack() { return {} as RTCRtpSender }
-  getTransceivers() { return [] as RTCRtpTransceiver[] }
+  addTrack() { return this.transceiver.sender }
+  addTransceiver(_track: string, init?: RTCRtpTransceiverInit) {
+    this.transceiverDirection = init?.direction || ''
+    return this.transceiver
+  }
+  getTransceivers() { return [this.transceiver] }
   async createOffer() { return { type: 'offer', sdp: PCMU_OFFER } as RTCSessionDescriptionInit }
   async setLocalDescription(description: RTCLocalSessionDescriptionInit) {
     this.localDescription = description as RTCSessionDescription

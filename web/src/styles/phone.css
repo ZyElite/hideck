@@ -1,0 +1,79 @@
+.phone-page { max-width: 1180px; margin: 0 auto; }
+.security-notice { margin-bottom: 16px; padding: 14px 16px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; border: 1px solid color-mix(in srgb, var(--ui-warning) 38%, var(--ui-border)); border-radius: 10px; background: color-mix(in srgb, var(--ui-warning) 8%, var(--ui-surface)); }
+.notice-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--ui-warning) 14%, var(--ui-surface)); color: var(--ui-warning); font-size: 20px; }
+.security-notice strong { font-size: 13px; }
+.security-notice p { margin: 3px 0 0; color: var(--ui-text-muted); font-size: 12px; }
+.notice-actions { display: flex; gap: 8px; }
+.notice-actions a { min-height: 40px; padding: 0 12px; display: inline-flex; align-items: center; border: 1px solid var(--ui-border); border-radius: 6px; background: var(--ui-surface); color: var(--ui-primary); font-size: 12px; font-weight: 600; text-decoration: none; }
+.phone-error { margin-bottom: 16px; padding: 10px 12px; display: flex; justify-content: space-between; gap: 16px; border: 1px solid color-mix(in srgb, var(--ui-danger) 38%, var(--ui-border)); border-radius: 8px; background: color-mix(in srgb, var(--ui-danger) 8%, var(--ui-surface)); color: var(--ui-danger); font-size: 12px; }
+.phone-error button { width: 28px; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 20px; }
+.phone-grid { display: grid; grid-template-columns: minmax(460px, .95fr) minmax(360px, 1.05fr); gap: 18px; align-items: start; }
+.phone-console { min-height: 680px; overflow: hidden; }
+.console-header { min-height: 82px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--ui-border); }
+.console-header > div:first-child > span { color: var(--ui-primary); font-family: "v-mono", monospace; font-size: 9px; font-weight: 700; letter-spacing: .12em; }
+.console-header h2 { margin: 3px 0 0; font-size: 18px; }
+.device-selector { min-width: 220px; display: grid; gap: 4px; }
+.device-selector label, .number-field label { color: var(--ui-text-muted); font-size: 10px; font-weight: 600; }
+.device-selector select { width: 100%; height: 40px; padding: 0 32px 0 10px; border: 1px solid var(--ui-border); border-radius: 6px; background: var(--ui-surface); color: var(--ui-text); }
+.console-loading { min-height: 560px; display: grid; place-items: center; color: var(--ui-text-muted); }
+.media-state { min-height: 36px; padding: 0 10px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--ui-border); border-radius: 18px; background: var(--ui-surface); color: var(--ui-text-muted); font-size: 11px; font-weight: 600; }
+.media-state > span, .selected-device-status > span { width: 7px; height: 7px; border-radius: 50%; background: var(--ui-text-muted); }
+.media-state.is-connected > span, .media-state.is-connecting > span, .selected-device-status.is-ready > span { background: var(--ui-success); }
+.media-state.is-failed > span { background: var(--ui-danger); }
+.dialer { padding: 22px 22px 28px; display: grid; justify-items: center; gap: 18px; }
+.selected-device-status { min-height: 28px; display: flex; align-items: center; gap: 7px; color: var(--ui-text-muted); font-size: 11px; }
+.number-field { width: 320px; max-width: 100%; display: grid; gap: 5px; }
+.number-field > div { display: flex; border-bottom: 1px solid var(--ui-border); }
+.number-field input { min-width: 0; height: 56px; flex: 1; border: 0; background: transparent; color: var(--ui-text); font-family: "v-mono", monospace; font-size: 27px; text-align: center; outline: 0; }
+.number-field button { width: 48px; border: 0; background: transparent; color: var(--ui-text-muted); cursor: pointer; font-size: 20px; }
+.number-field button:disabled { opacity: .3; }
+.number-field small { color: var(--ui-danger); font-size: 10px; text-align: center; }
+.enable-media-button, .dial-button, .restore-button, .secondary-button { min-height: 48px; padding: 0 20px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--ui-primary); border-radius: 24px; background: var(--ui-primary-solid); color: #fff; cursor: pointer; font-weight: 650; }
+.enable-media-button:disabled, .dial-button:disabled, .restore-button:disabled, .secondary-button:disabled { cursor: not-allowed; opacity: .45; }
+.active-call { padding: 28px 24px; display: grid; justify-items: center; gap: 22px; }
+.call-identity { width: 100%; text-align: center; }
+.call-identity > span { color: var(--ui-primary); font-family: "v-mono", monospace; font-size: 9px; font-weight: 700; letter-spacing: .16em; }
+.call-identity strong { margin-top: 8px; display: block; overflow-wrap: anywhere; font-family: "v-mono", monospace; font-size: clamp(26px, 4vw, 36px); }
+.call-identity p { margin: 5px 0 0; color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
+.call-meta { width: 100%; margin: 0; display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--ui-border); border-radius: 8px; overflow: hidden; }
+.call-meta div { min-width: 0; padding: 10px; border-right: 1px solid var(--ui-border); text-align: center; }
+.call-meta div:last-child { border-right: 0; }
+.call-meta dt { color: var(--ui-text-muted); font-size: 9px; font-weight: 600; text-transform: uppercase; }
+.call-meta dd { margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; font-family: "v-mono", monospace; font-size: 11px; white-space: nowrap; }
+.takeover-panel { width: 100%; padding: 16px; border: 1px solid var(--ui-border); border-radius: 8px; background: var(--ui-surface-muted); text-align: center; }
+.takeover-panel p { max-width: 460px; margin: 5px auto 14px; color: var(--ui-text-muted); font-size: 12px; }
+.secondary-button { min-height: 44px; border-color: var(--ui-border); border-radius: 6px; background: var(--ui-surface); color: var(--ui-text); }
+.incoming-actions { min-height: 180px; display: flex; align-items: center; justify-content: center; gap: 70px; }
+.round-action { width: 82px; min-height: 98px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 8px; border: 0; background: transparent; color: var(--ui-text); cursor: pointer; }
+.round-action .el-icon { width: 64px; height: 64px; display: grid; place-items: center; border-radius: 50%; color: #fff; font-size: 26px; }
+.round-action.is-reject .el-icon { background: var(--ui-danger); }
+.round-action.is-answer .el-icon { background: var(--ui-success); }
+.round-action:disabled { cursor: not-allowed; opacity: .45; }
+.restore-button { border-radius: 6px; }
+.active-keypad { width: 100%; padding: 14px 0 2px; border-top: 1px solid var(--ui-border); }
+.active-keypad > p { margin: 0 0 12px; color: var(--ui-text-muted); font-size: 11px; text-align: center; }
+.call-controls { width: 100%; display: flex; justify-content: center; gap: 22px; }
+.control-button { width: 78px; min-height: 82px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; border: 0; background: transparent; color: var(--ui-text-muted); cursor: pointer; font-size: 11px; }
+.control-button .el-icon { width: 52px; height: 52px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 50%; background: var(--ui-surface-muted); color: var(--ui-text); font-size: 21px; }
+.control-button[aria-pressed="true"] .el-icon { border-color: var(--ui-primary); color: var(--ui-primary); }
+.control-button.is-hangup .el-icon { border-color: var(--ui-danger); background: var(--ui-danger); color: #fff; }
+.control-button:disabled { cursor: not-allowed; opacity: .38; }
+
+@media (max-width: 900px) {
+  .phone-grid { grid-template-columns: 1fr; }
+  .phone-console { min-height: auto; }
+}
+
+@media (max-width: 640px) {
+  .security-notice { grid-template-columns: auto 1fr; }
+  .notice-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; }
+  .notice-actions a { justify-content: center; }
+  .console-header { align-items: stretch; flex-direction: column; }
+  .device-selector { width: 100%; min-width: 0; }
+  .dialer, .active-call { padding: 20px 14px 24px; }
+  .call-meta { grid-template-columns: 1fr; }
+  .call-meta div { border-right: 0; border-bottom: 1px solid var(--ui-border); }
+  .call-meta div:last-child { border-bottom: 0; }
+  .incoming-actions { gap: 44px; }
+  .call-controls { gap: 8px; }
+}

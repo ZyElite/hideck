@@ -22,6 +22,8 @@ export type PreparedPhoneMedia = {
   lease: string
 }
 
+type PrepareMediaOptions = { microphone?: boolean }
+
 const ICE_GATHERING_TIMEOUT_MS = 10_000
 
 export class PhoneMediaController {
@@ -37,12 +39,13 @@ export class PhoneMediaController {
     this.audio.autoplay = true
   }
 
-  async prepare(): Promise<PreparedPhoneMedia> {
-    this.assertSecureContext()
+  async prepare(options: PrepareMediaOptions = {}): Promise<PreparedPhoneMedia> {
+    const useMicrophone = options.microphone !== false
+    if (useMicrophone) this.assertSecureContext()
     this.callbacks.onState('requesting')
     let peer: RTCPeerConnection | null = null
     try {
-      const microphone = await this.getMicrophone()
+      const microphone = useMicrophone ? await this.getMicrophone() : null
       peer = this.createPeer(microphone)
       this.replacePeer(peer)
       const offer = await this.createOffer(peer)
@@ -92,13 +95,13 @@ export class PhoneMediaController {
     return this.microphone
   }
 
-  private createPeer(microphone: MediaStream) {
+  private createPeer(microphone: MediaStream | null) {
     const peer = this.dependencies.createPeer()
     try {
-      const track = microphone.getAudioTracks()[0]
-      if (!track) throw new Error('浏览器没有返回可用的麦克风音轨')
-      const sender = peer.addTrack(track, microphone)
-      this.preferPCMU(peer, sender)
+      const transceiver = microphone
+        ? this.addMicrophone(peer, microphone)
+        : peer.addTransceiver('audio', { direction: 'recvonly' })
+      this.preferPCMU(transceiver)
       peer.addEventListener('track', (event) => this.attachRemoteAudio(event))
       peer.addEventListener('connectionstatechange', () => this.reportPeerState(peer))
       return peer
@@ -108,10 +111,18 @@ export class PhoneMediaController {
     }
   }
 
-  private preferPCMU(peer: RTCPeerConnection, sender: RTCRtpSender) {
+  private addMicrophone(peer: RTCPeerConnection, microphone: MediaStream) {
+    const track = microphone.getAudioTracks()[0]
+    if (!track) throw new Error('浏览器没有返回可用的麦克风音轨')
+    const sender = peer.addTrack(track, microphone)
     const transceiver = peer.getTransceivers().find((item) => item.sender === sender)
+    if (!transceiver) throw new Error('浏览器未创建麦克风 WebRTC transceiver')
+    return transceiver
+  }
+
+  private preferPCMU(transceiver: RTCRtpTransceiver) {
     const capabilities = typeof RTCRtpSender === 'undefined' ? null : RTCRtpSender.getCapabilities?.('audio')
-    if (!transceiver?.setCodecPreferences) return
+    if (!transceiver.setCodecPreferences) return
     const codecs = selectPCMUCodecs(capabilities)
     if (codecs.length > 0) transceiver.setCodecPreferences(codecs)
   }
@@ -164,6 +175,10 @@ export function supportsPCMU(sdp: string) {
   return /^a=rtpmap:\d+ PCMU\/8000(?:\/1)?\s*$/im.test(sdp)
 }
 
+export function isTrustedHTTPSContext(protocol: string, secure: boolean, mediaDevicesAvailable: boolean) {
+  return protocol === 'https:' && secure && mediaDevicesAvailable
+}
+
 function waitForICEGathering(peer: RTCPeerConnection, dependencies: PhoneMediaDependencies) {
   if (peer.iceGatheringState === 'complete') return Promise.resolve()
   return new Promise<void>((resolve, reject) => {
@@ -186,7 +201,11 @@ function waitForICEGathering(peer: RTCPeerConnection, dependencies: PhoneMediaDe
 
 function browserMediaDependencies(): PhoneMediaDependencies {
   return {
-    secureContext: () => window.isSecureContext && typeof navigator.mediaDevices?.getUserMedia === 'function',
+    secureContext: () => isTrustedHTTPSContext(
+      window.location.protocol,
+      window.isSecureContext,
+      typeof navigator.mediaDevices?.getUserMedia === 'function'
+    ),
     getUserMedia: (constraints) => navigator.mediaDevices.getUserMedia(constraints),
     createPeer: () => new RTCPeerConnection(),
     createAudio: () => new Audio(),
