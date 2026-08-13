@@ -19,6 +19,7 @@ import {
   createOutboundProxyPresentation,
   createUpstreamProxyPresentation
 } from '../utils/proxyPresentation'
+import { createLatestRequestGate } from '../utils/latestRequestGate'
 import { upstreamProxyAddressWarning } from '../utils/upstreamProxyAddress'
 
 // ── Tab 控制 ──
@@ -283,6 +284,7 @@ const runningOutboundCount = computed(() => outboundRows.value.filter((instance)
 const upstreamLoading = ref(true)
 const upstreamRefreshing = ref(false)
 const upstreamError = ref<{ message: string; status?: number } | null>(null)
+const upstreamRequestGate = createLatestRequestGate()
 
 // ── 编辑 Drawer ──
 const upstreamDrawerOpen = ref(false)
@@ -330,29 +332,28 @@ const countryRuleTargetPresentation = computed(() => {
 })
 
 async function fetchUpstream(opts: { silent?: boolean; initial?: boolean } = {}) {
+  const request = upstreamRequestGate.begin()
   const isInitial = opts.initial === true
   const silent = opts.silent === true
-  if (isInitial) {
-    upstreamLoading.value = true
-  } else if (!silent) {
-    upstreamRefreshing.value = true
-  }
+  upstreamLoading.value = isInitial
+  upstreamRefreshing.value = !isInitial && !silent
   upstreamError.value = null
 
   try {
     const result = await upstreamStore.fetchAll()
+    if (!request.isCurrent()) return
     const error = result.ok ? upstreamStore.error : result.error
     if (error) throw error
   } catch (e: unknown) {
+    if (!request.isCurrent()) return
     const err = toAppError(e)
     upstreamError.value = {
       message: err.message || '加载前置代理失败',
       status: err.status
     }
   } finally {
-    if (isInitial) {
+    if (request.isCurrent()) {
       upstreamLoading.value = false
-    } else if (!silent) {
       upstreamRefreshing.value = false
     }
   }
