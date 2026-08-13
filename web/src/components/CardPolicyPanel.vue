@@ -85,24 +85,43 @@ const sourceLabel = computed(() => {
   if (!props.policy) return ''
   return props.policy.source === 'user' ? '手动设置' : '自动默认'
 })
+
+const policyStatus = computed(() => {
+  if (fieldError.value || networkFailed.value || vowifiFailed.value || airplaneFailed.value) {
+    return { tone: 'is-error', label: '部分设置未生效' }
+  }
+  if (fieldPending.value || networkPending.value || vowifiPending.value || airplanePending.value) {
+    return { tone: 'is-pending', label: '正在同步' }
+  }
+  return { tone: 'is-saved', label: props.policy ? '已同步' : '等待策略' }
+})
+
+const policyProjection = computed(() => [
+  `网络 ${local.value.network_enabled ? '开启' : '关闭'}`,
+  `VoWiFi ${local.value.vowifi_enabled ? '开启' : '关闭'}`,
+  `飞行模式 ${local.value.airplane_enabled ? '开启' : '关闭'}`,
+  `IP ${ipVersion.value.toUpperCase()}`
+].join(' · '))
 </script>
 
 <template>
-  <div>
-    <!-- 标题行 -->
-    <div class="flex items-center gap-3 mb-4">
-      <div class="w-10 h-10 rounded-xl bg-violet-50 dark:bg-violet-500/10 flex items-center justify-center text-violet-600 dark:text-violet-400">
-        <el-icon size="22"><Sim24Regular /></el-icon>
+  <section class="policy-workspace">
+    <header class="policy-workspace-header">
+      <div class="policy-heading-icon" aria-hidden="true">
+        <el-icon><Sim24Regular /></el-icon>
       </div>
       <div>
-        <div class="text-lg font-bold text-gray-900 dark:text-white">卡策略</div>
-        <div class="text-xs text-gray-500 dark:text-gray-400">网络/VoWiFi 开关跟着 SIM 卡走，切换即时生效</div>
+        <span>SIM POLICY</span>
+        <h2>卡策略</h2>
+        <p>网络和 VoWiFi 设置跟随当前 SIM 卡，修改后通过真实设备与策略接口生效</p>
       </div>
-    </div>
+    </header>
 
     <!-- 无 ICCID 提示 -->
-    <div v-show="!iccid" class="ui-panel-muted p-4 text-center text-sm text-gray-500 dark:text-gray-400">
-      设备尚未识别到 SIM 卡 ICCID，策略不可操作
+    <div v-show="!iccid" class="policy-empty-state ui-panel-muted">
+      <el-icon><Sim24Regular /></el-icon>
+      <strong>SIM 身份未就绪</strong>
+      <span>设备尚未识别到 ICCID，策略不可操作</span>
     </div>
 
     <!-- 离线提示（有 ICCID 但设备离线） -->
@@ -111,20 +130,23 @@ const sourceLabel = computed(() => {
     </div>
 
     <!-- 用 v-show 让 el-switch 始终挂载，避免 element-plus 2.13 在挂载前访问未就绪 input 而崩溃 -->
-    <div v-show="iccid" class="space-y-3">
+    <div v-show="iccid" class="policy-card">
       <!-- ICCID + 来源 -->
-      <div class="ui-panel-muted p-3 flex items-center justify-between">
+      <div class="policy-card-status">
         <div>
-          <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-0.5">当前卡 ICCID</div>
-          <div class="text-sm font-mono text-gray-800 dark:text-gray-100">{{ iccid }}</div>
+          <span>当前卡 ICCID</span>
+          <strong>{{ iccid }}</strong>
         </div>
-        <el-tag v-if="sourceLabel" :type="policy?.source === 'user' ? 'primary' : 'info'" size="small">{{ sourceLabel }}</el-tag>
+        <div class="policy-status-meta">
+          <el-tag v-if="sourceLabel" :type="policy?.source === 'user' ? 'primary' : 'info'" size="small">{{ sourceLabel }}</el-tag>
+          <span class="policy-sync-state" :class="policyStatus.tone"><i aria-hidden="true" />{{ policyStatus.label }}</span>
+        </div>
       </div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                <!-- IP 版本 -->
-        <div class="space-y-1">
-          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">IP 版本</label>
+      <div class="policy-setting-list">
+        <div class="policy-setting-row">
+          <span><strong>IP 版本</strong><small>修改后自动保存，下次开启网络时生效</small></span>
+          <div class="policy-field-control">
           <el-select
             v-model="ipVersion"
             class="w-full"
@@ -135,17 +157,16 @@ const sourceLabel = computed(() => {
             <el-option label="IPv6" value="v6" />
             <el-option label="IPv4 + IPv6（双栈）" value="v4v6" />
           </el-select>
-          <div class="text-xs text-gray-400">
-            {{ fieldPending === 'ip_version' ? '正在保存...' : '修改后自动保存，下次开启网络时生效' }}
-          </div>
+          <small v-if="fieldPending === 'ip_version'">正在保存...</small>
           <div v-if="fieldError && errorField === 'ip_version'" role="alert" class="text-xs text-red-600 dark:text-red-400">
             {{ fieldError }}，请重试
           </div>
+          </div>
         </div>
 
-        <!-- APN -->
-        <div class="space-y-1">
-          <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">APN（可选）</label>
+        <div class="policy-setting-row">
+          <span><strong>APN</strong><small>留空时继续使用自动识别结果</small></span>
+          <div class="policy-field-control">
           <el-input
             v-model="apn"
             placeholder="留空自动识别"
@@ -153,23 +174,18 @@ const sourceLabel = computed(() => {
             @blur="saveAPN"
             @keyup.enter="onAPNEnter"
           />
-          <div class="text-xs text-gray-400">
-            {{ fieldPending === 'apn' ? '正在保存...' : '修改后自动保存，下次开启网络时生效' }}
-          </div>
+          <small v-if="fieldPending === 'apn'">正在保存...</small>
           <div v-if="fieldError && errorField === 'apn'" role="alert" class="text-xs text-red-600 dark:text-red-400">
             {{ fieldError }}，请重试
           </div>
+          </div>
         </div>
-        <!-- 开启网络 -->
+
         <div
-          class="ui-panel-muted p-3 space-y-1"
-          :class="local.network_enabled ? 'border border-emerald-300 bg-emerald-50/50 dark:bg-emerald-900/20' : ''"
+          class="policy-setting-row"
+          :class="{ 'is-active': local.network_enabled }"
         >
-          <div class="flex items-center justify-between">
-            <div>
-              <div class="text-sm font-bold text-gray-800 dark:text-gray-100">开启网络</div>
-              <div class="text-xs text-gray-500 dark:text-gray-400">VoWiFi/飞行开启时不可用</div>
-            </div>
+          <span><strong>网络</strong><small>VoWiFi 或飞行模式开启时不可用</small></span>
             <div class="flex items-center gap-2">
               <span v-if="networkFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
               <el-icon v-if="networkPending" class="animate-spin text-gray-400"><Loading /></el-icon>
@@ -178,20 +194,14 @@ const sourceLabel = computed(() => {
                 :disabled="!canToggle || local.vowifi_enabled || local.airplane_enabled || networkPending"
                 @change="onNetworkToggle"
               />
-            </div>
           </div>
         </div>
 
-        <!-- VoWiFi -->
         <div
-          class="ui-panel-muted p-3 space-y-1"
-          :class="local.vowifi_enabled ? 'border border-orange-300 bg-orange-50/50 dark:bg-orange-900/20' : ''"
+          class="policy-setting-row"
+          :class="{ 'is-active': local.vowifi_enabled }"
         >
-          <div class="flex items-center justify-between">
-            <div>
-              <div class="text-sm font-bold text-gray-800 dark:text-gray-100">VoWiFi</div>
-              <div class="text-xs text-gray-500 dark:text-gray-400">启用后进飞行模式，不支持国内运营商</div>
-            </div>
+          <span><strong>VoWiFi</strong><small>启用后进入飞行模式，不支持国内运营商</small></span>
             <div class="flex items-center gap-2">
               <span v-if="vowifiFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
               <el-icon v-if="vowifiPending" class="animate-spin text-gray-400"><Loading /></el-icon>
@@ -200,22 +210,14 @@ const sourceLabel = computed(() => {
                 :disabled="!canToggle || vowifiPending"
                 @change="onVoWiFiToggle"
               />
-            </div>
           </div>
         </div>
 
-        <!-- 飞行模式 -->
         <div
-          class="ui-panel-muted p-3 space-y-1"
-          :class="local.airplane_enabled ? 'border border-sky-300 bg-sky-50/50 dark:bg-sky-900/20' : ''"
+          class="policy-setting-row"
+          :class="{ 'is-active': local.airplane_enabled }"
         >
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <div>
-                <div class="text-sm font-bold text-gray-800 dark:text-gray-100">飞行模式</div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">射频关闭，断网；VoWiFi 开启时由其接管</div>
-              </div>
-            </div>
+          <span><strong>飞行模式</strong><small>关闭射频和移动网络；VoWiFi 开启时由其接管</small></span>
             <div class="flex items-center gap-2">
               <span v-if="airplaneFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
               <el-icon v-if="airplanePending" class="animate-spin text-gray-400"><Loading /></el-icon>
@@ -224,12 +226,64 @@ const sourceLabel = computed(() => {
                 :disabled="!canToggle || local.vowifi_enabled || airplanePending"
                 @change="onAirplaneToggle"
               />
-            </div>
           </div>
         </div>
-
-
       </div>
+
+      <footer class="policy-projection">
+        <div><span>策略投影</span><strong>{{ policyProjection }}</strong></div>
+        <small>开关即时应用；IP 与 APN 在字段变更后自动保存</small>
+      </footer>
     </div>
-  </div>
+  </section>
 </template>
+
+<style scoped>
+.policy-workspace-header { min-height: 82px; display: flex; align-items: center; gap: 12px; }
+.policy-heading-icon { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 11px; color: var(--ui-primary); font-size: 22px; }
+.policy-workspace-header span,
+.policy-card-status > div > span,
+.policy-projection span { color: var(--ui-primary); font: 700 9px "v-mono", ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; }
+.policy-workspace-header h2 { margin: 3px 0 0; color: var(--ui-text); font-size: 20px; font-weight: 650; }
+.policy-workspace-header p { margin: 3px 0 0; color: var(--ui-text-muted); font-size: 11px; }
+
+.policy-empty-state { min-height: 220px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; color: var(--ui-text-muted); }
+.policy-empty-state .el-icon { color: var(--ui-primary); font-size: 28px; }
+.policy-empty-state strong { color: var(--ui-text); }
+.policy-empty-state span { font-size: 11px; }
+
+.policy-card { overflow: hidden; border: 1px solid var(--ui-border); border-radius: 12px; background: var(--ui-surface-strong); }
+.policy-card-status { min-height: 72px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-primary) 5%, var(--ui-surface)); }
+.policy-card-status strong { display: block; margin-top: 4px; color: var(--ui-text); font: 12px "v-mono", ui-monospace, monospace; overflow-wrap: anywhere; }
+.policy-status-meta,
+.policy-sync-state { display: flex; align-items: center; }
+.policy-status-meta { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.policy-sync-state { gap: 5px; color: var(--ui-text-muted); font-size: 10px; }
+.policy-sync-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.policy-sync-state.is-saved { color: var(--ui-success); }
+.policy-sync-state.is-pending { color: var(--ui-warning); }
+.policy-sync-state.is-error { color: var(--ui-danger); }
+
+.policy-setting-list { padding: 0 16px; }
+.policy-setting-row { min-height: 72px; padding: 13px 0; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--ui-border-muted); }
+.policy-setting-row.is-active { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-primary) 5%, transparent)); }
+.policy-setting-row > span { min-width: 0; display: flex; flex-direction: column; }
+.policy-setting-row > span strong { color: var(--ui-text); font-size: 13px; }
+.policy-setting-row > span small { margin-top: 3px; color: var(--ui-text-muted); font-size: 10px; }
+.policy-field-control { width: min(360px, 52%); }
+.policy-field-control > small { color: var(--ui-warning); font-size: 9px; }
+
+.policy-projection { min-height: 74px; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--ui-surface-muted); }
+.policy-projection strong { display: block; margin-top: 4px; color: var(--ui-text); font-size: 11px; }
+.policy-projection > small { max-width: 280px; color: var(--ui-text-muted); font-size: 9px; text-align: right; }
+
+@media (max-width: 620px) {
+  .policy-workspace-header { align-items: flex-start; }
+  .policy-card-status,
+  .policy-setting-row,
+  .policy-projection { align-items: stretch; flex-direction: column; }
+  .policy-status-meta { justify-content: flex-start; }
+  .policy-field-control { width: 100%; }
+  .policy-projection > small { max-width: none; text-align: left; }
+}
+</style>
