@@ -36,6 +36,8 @@ tags:
     description: 日志历史与实时流
   - name: automatic-tasks
     description: eSIM 自动任务与运行记录
+  - name: phone
+    description: VoWiFi 浏览器实时电话、媒体、事件与录音
 paths:
   /docs:
     get:
@@ -2337,6 +2339,373 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /phone/ca.crt:
+    get:
+      tags: [phone]
+      summary: 下载自动本地 CA 公钥证书
+      description: 正式证书模式下没有本地 CA，返回 404；该接口绝不返回 CA 私钥。
+      security: []
+      responses:
+        '200':
+          description: PEM 编码的本地 CA 公钥证书
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/x-x509-ca-cert:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /phone/devices:
+    get:
+      tags: [phone]
+      summary: 获取可用于电话的设备与 IMS 语音状态
+      responses:
+        '200':
+          description: 设备列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PhoneDevice'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/media:
+    post:
+      tags: [phone]
+      summary: 用浏览器 SDP offer 创建 WebRTC 媒体与控制租约
+      description: 浏览器音频固定使用单声道 PCMU/8000；服务端同步完成 ICE/DTLS 媒体端创建。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneMediaRequest'
+      responses:
+        '201':
+          description: WebRTC SDP answer、媒体 ID 与标签页控制租约
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneMediaAnswer'
+        '400':
+          $ref: '#/components/responses/PhoneError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/calls:
+    post:
+      tags: [phone]
+      summary: 异步发起 VoWiFi 电话
+      description: 接受后立即返回真实 SIP Call-ID；后续状态通过电话事件流发布。
+      parameters:
+        - $ref: '#/components/parameters/PhoneLease'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneStartCallRequest'
+      responses:
+        '202':
+          description: 已开始呼叫
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneCall'
+        '400':
+          $ref: '#/components/responses/PhoneError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PhoneError'
+        '409':
+          $ref: '#/components/responses/PhoneError'
+        '503':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/calls/active:
+    get:
+      tags: [phone]
+      summary: 获取活动电话并按租约标记只读状态
+      parameters:
+        - $ref: '#/components/parameters/PhoneLeaseOptional'
+      responses:
+        '200':
+          description: 活动电话
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [calls]
+                properties:
+                  calls:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PhoneCall'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/calls/{call_id}/answer:
+    post:
+      tags: [phone]
+      summary: 接听呼入电话
+      parameters:
+        - $ref: '#/components/parameters/PhoneCallID'
+        - $ref: '#/components/parameters/PhoneLease'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneControlRequest'
+      responses:
+        '200':
+          description: 已接听电话
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneCall'
+        '400':
+          $ref: '#/components/responses/PhoneError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PhoneError'
+        '404':
+          $ref: '#/components/responses/PhoneError'
+        '503':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/calls/{call_id}/reject:
+    post:
+      tags: [phone]
+      summary: 拒接呼入电话
+      parameters:
+        - $ref: '#/components/parameters/PhoneCallID'
+        - $ref: '#/components/parameters/PhoneLease'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneControlRequest'
+      responses:
+        '204':
+          description: 已发送拒接响应
+        '400':
+          $ref: '#/components/responses/PhoneError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PhoneError'
+        '404':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/calls/{call_id}/dtmf:
+    post:
+      tags: [phone]
+      summary: 在已接通电话发送一个 RFC 4733 DTMF 键
+      parameters:
+        - $ref: '#/components/parameters/PhoneCallID'
+        - $ref: '#/components/parameters/PhoneLease'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneDTMFRequest'
+      responses:
+        '204':
+          description: DTMF 已发送
+        '400':
+          $ref: '#/components/responses/PhoneError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PhoneError'
+        '404':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/calls/{call_id}:
+    delete:
+      tags: [phone]
+      summary: 取消未接通电话或挂断已接通电话
+      description: 服务端按 SIP 对话状态选择 CANCEL 或 BYE。
+      parameters:
+        - $ref: '#/components/parameters/PhoneCallID'
+        - $ref: '#/components/parameters/PhoneLease'
+      responses:
+        '204':
+          description: 已开始结束电话
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PhoneError'
+        '404':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/calls/{call_id}/media:
+    put:
+      tags: [phone]
+      summary: 恢复媒体或显式接管活动电话
+      description: 非接管恢复必须提交旧控制租约；成功后返回新媒体的租约。显式接管会使原浏览器变为只读。
+      parameters:
+        - $ref: '#/components/parameters/PhoneCallID'
+        - $ref: '#/components/parameters/PhoneLeaseOptional'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneRefreshMediaRequest'
+      responses:
+        '200':
+          description: 媒体已绑定
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneRefreshMediaResponse'
+        '400':
+          $ref: '#/components/responses/PhoneError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/PhoneError'
+        '404':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/events:
+    get:
+      tags: [phone]
+      summary: 订阅电话状态 SSE 事件流
+      description: 使用 Last-Event-ID 或 after_id 补发仍在服务器有限缓冲中的后续事件；事件 Call 视图不授予控制权。
+      parameters:
+        - in: header
+          name: Last-Event-ID
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - in: query
+          name: after_id
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: text/event-stream，事件 data 为 PhoneEvent JSON
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/history:
+    get:
+      tags: [phone]
+      summary: 获取最近电话记录
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: 最近电话记录
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [records]
+                properties:
+                  records:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PhoneCallRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/PhoneError'
+
+  /phone/recordings/{recording}:
+    get:
+      tags: [phone]
+      summary: 下载或分段播放认证电话 MP3 录音
+      parameters:
+        - in: path
+          name: recording
+          required: true
+          schema:
+            type: string
+          description: 历史记录返回的安全文件名，不接受路径分隔符。
+        - in: header
+          name: Range
+          schema:
+            type: string
+          example: bytes=0-65535
+      responses:
+        '200':
+          description: 完整 MP3 录音
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: MP3 字节区间
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                example: bytes
+            Content-Range:
+              schema:
+                type: string
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/PhoneError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/PhoneError'
+        '416':
+          description: Range 不可满足（标准库返回 text/plain）
+        '500':
+          $ref: '#/components/responses/PhoneError'
+        '503':
+          $ref: '#/components/responses/PhoneError'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -2405,6 +2774,27 @@ components:
         minimum: 1
         maximum: 200
         default: 100
+    PhoneCallID:
+      in: path
+      name: call_id
+      required: true
+      schema:
+        type: string
+      description: SIP Call-ID
+    PhoneLease:
+      in: header
+      name: X-Phone-Lease
+      required: true
+      schema:
+        type: string
+      description: 创建媒体时返回的浏览器标签页控制租约
+    PhoneLeaseOptional:
+      in: header
+      name: X-Phone-Lease
+      required: false
+      schema:
+        type: string
+      description: 恢复时为旧控制租约；只读查询或显式接管时可省略
 
   responses:
     Unauthorized:
@@ -2419,8 +2809,199 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    PhoneError:
+      description: 电话边界、状态或控制租约错误；message 包含可操作的真实失败原因。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    PhoneDevice:
+      type: object
+      required: [id, name, iccid, voice]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        iccid:
+          type: string
+        voice:
+          type: object
+          additionalProperties: true
+          properties:
+            device_id:
+              type: string
+            ready:
+              type: boolean
+            registered:
+              type: boolean
+
+    PhoneMediaRequest:
+      type: object
+      required: [sdp]
+      properties:
+        sdp:
+          type: string
+          description: 浏览器 WebRTC SDP offer
+
+    PhoneMediaAnswer:
+      type: object
+      required: [media_id, lease, sdp]
+      properties:
+        media_id:
+          type: string
+        lease:
+          type: string
+        sdp:
+          type: string
+          description: 服务端 WebRTC SDP answer
+
+    PhoneStartCallRequest:
+      type: object
+      required: [device_id, callee, media_id]
+      properties:
+        device_id:
+          type: string
+        callee:
+          type: string
+          pattern: '^\+?[0-9]{1,32}$'
+        media_id:
+          type: string
+
+    PhoneControlRequest:
+      type: object
+      required: [media_id]
+      properties:
+        media_id:
+          type: string
+
+    PhoneDTMFRequest:
+      type: object
+      required: [digit]
+      properties:
+        digit:
+          type: string
+          pattern: '^[0-9*#]$'
+
+    PhoneRefreshMediaRequest:
+      type: object
+      required: [media_id]
+      properties:
+        media_id:
+          type: string
+        takeover:
+          type: boolean
+          default: false
+
+    PhoneRefreshMediaResponse:
+      type: object
+      required: [call, lease]
+      properties:
+        call:
+          $ref: '#/components/schemas/PhoneCall'
+        lease:
+          type: string
+
+    PhoneCall:
+      type: object
+      required: [call_id, device_id, direction, peer, status, started_at, read_only]
+      properties:
+        call_id:
+          type: string
+        device_id:
+          type: string
+        direction:
+          type: string
+          enum: [inbound, outbound]
+        peer:
+          type: string
+        status:
+          $ref: '#/components/schemas/PhoneCallStatus'
+        media_id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        answered_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        end_reason:
+          type: string
+        codec:
+          type: string
+        recording_error:
+          type: string
+        read_only:
+          type: boolean
+
+    PhoneCallRecord:
+      type: object
+      required: [id, call_id, device_id, direction, peer, status, started_at, duration_seconds]
+      properties:
+        id:
+          type: integer
+          format: int64
+        call_id:
+          type: string
+        device_id:
+          type: string
+        iccid:
+          type: string
+        direction:
+          type: string
+          enum: [inbound, outbound]
+        peer:
+          type: string
+        status:
+          $ref: '#/components/schemas/PhoneCallStatus'
+        started_at:
+          type: string
+          format: date-time
+        answered_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        duration_seconds:
+          type: integer
+          format: int64
+        end_reason:
+          type: string
+        codec:
+          type: string
+        recording_name:
+          type: string
+        pcap_name:
+          type: string
+        recording_error:
+          type: string
+
+    PhoneCallStatus:
+      type: string
+      enum: [calling, ringing, connected, completed, missed, rejected, busy, failed]
+
+    PhoneEvent:
+      type: object
+      required: [id, type, call, time]
+      properties:
+        id:
+          type: integer
+          format: int64
+        type:
+          type: string
+          description: incoming_call、call_started、call_ringing、call_connected、media_disconnected、media_recovered、call_ended、recording_ready 或 recording_failed。
+        call:
+          $ref: '#/components/schemas/PhoneCall'
+        time:
+          type: string
+          format: date-time
+
     AutomaticTaskPayload:
       type: object
       properties:
