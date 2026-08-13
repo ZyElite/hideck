@@ -34,6 +34,7 @@ type Service struct {
 	calls               map[string]*activeCall
 	deviceCalls         map[string]string
 	mediaCalls          map[string]string
+	pendingMediaDrops   map[string]struct{}
 	pendingEvents       map[string][]voicehost.CallEvent
 	terminalSeen        map[string]struct{}
 	closeOnce           sync.Once
@@ -51,7 +52,8 @@ func NewService(options ServiceOptions) (*Service, error) {
 		resolveICCID: options.ResolveICCID, recoveryGrace: options.RecoveryGrace,
 		ctx: ctx, cancel: cancel, calls: make(map[string]*activeCall),
 		deviceCalls: make(map[string]string), mediaCalls: make(map[string]string),
-		pendingEvents: make(map[string][]voicehost.CallEvent), terminalSeen: make(map[string]struct{}),
+		pendingMediaDrops: make(map[string]struct{}),
+		pendingEvents:     make(map[string][]voicehost.CallEvent), terminalSeen: make(map[string]struct{}),
 	}
 	if service.recoveryGrace <= 0 {
 		service.recoveryGrace = defaultRecoveryGrace

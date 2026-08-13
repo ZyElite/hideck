@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/iniwex5/vohive/pkg/logger"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
@@ -164,10 +165,19 @@ func (s *MediaSession) forwardSilentRTP() {
 			timestamp += uint32(endpoint.ClockRate / audioFramesPerSecond)
 			if err := s.writeSilentRTP(sequence, timestamp); err != nil {
 				s.lost.Add(1)
+				s.reportSilentRTPFailure(err)
+				return
 			}
 		case <-s.closed:
 			return
 		}
+	}
+}
+
+func (s *MediaSession) reportSilentRTPFailure(err error) {
+	logger.Error("仅听静音 RTP 发送失败", "media_id", s.ID, "err", err)
+	if s.onState != nil {
+		s.onState(s.ID, webrtc.PeerConnectionStateFailed)
 	}
 }
 

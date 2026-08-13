@@ -25,20 +25,27 @@ function mediaFixture(secure = true) {
     getAudioTracks: () => [track],
     getTracks: () => [track]
   } as unknown as MediaStream
-  const peer = new FakePeer()
+  const peers: FakePeer[] = []
   let requestedConstraints: MediaStreamConstraints | null = null
-  let requestedOffer = ''
+  const requestedOffers: string[] = []
+  const microphoneStoppedAtMediaCreation: boolean[] = []
   const dependencies: PhoneMediaDependencies = {
     secureContext: () => secure,
     getUserMedia: async (constraints) => {
       requestedConstraints = constraints
       return microphone
     },
-    createPeer: () => peer as unknown as RTCPeerConnection,
+    createPeer: () => {
+      const peer = new FakePeer()
+      peers.push(peer)
+      return peer as unknown as RTCPeerConnection
+    },
     createAudio: () => ({ autoplay: false, srcObject: null, play: async () => {} }) as unknown as HTMLAudioElement,
     createMedia: async (sdp) => {
-      requestedOffer = sdp
-      return { media_id: 'media-1', lease: 'lease-1', sdp: PCMU_OFFER }
+      requestedOffers.push(sdp)
+      microphoneStoppedAtMediaCreation.push(track.stopped)
+      const suffix = requestedOffers.length
+      return { media_id: `media-${suffix}`, lease: `lease-${suffix}`, sdp: PCMU_OFFER }
     },
     setTimer: () => 1,
     clearTimer: () => {}
@@ -51,9 +58,10 @@ function mediaFixture(secure = true) {
     controller,
     states,
     track,
-    peer,
+    peers,
     constraints: () => requestedConstraints,
-    offer: () => requestedOffer
+    offers: () => requestedOffers,
+    microphoneStoppedAtMediaCreation: () => microphoneStoppedAtMediaCreation
   }
 }
 
@@ -70,8 +78,21 @@ test('creates a receive-only listening session without microphone access', async
     { mediaId: 'media-1', lease: 'lease-1' }
   )
   assert.equal(fixture.constraints(), null)
-  assert.equal(fixture.peer.transceiverDirection, 'recvonly')
-  assert.equal(fixture.offer(), RECVONLY_PCMU_OFFER)
+  assert.equal(fixture.peers[0].transceiverDirection, 'recvonly')
+  assert.deepEqual(fixture.offers(), [RECVONLY_PCMU_OFFER])
+  fixture.controller.close()
+})
+
+test('switching from two-way to receive-only stops microphone capture before replacement', async () => {
+  const fixture = mediaFixture()
+  await fixture.controller.prepare()
+  assert.equal(fixture.track.stopped, false)
+  await fixture.controller.prepare({ microphone: false })
+  assert.equal(fixture.track.stopped, true)
+  assert.equal(fixture.peers[0].closed, true)
+  assert.equal(fixture.peers[1].transceiverDirection, 'recvonly')
+  assert.deepEqual(fixture.offers(), [PCMU_OFFER, RECVONLY_PCMU_OFFER])
+  assert.deepEqual(fixture.microphoneStoppedAtMediaCreation(), [false, true])
   fixture.controller.close()
 })
 
@@ -80,13 +101,13 @@ test('prepares PCMU media, controls mute, and releases browser resources', async
   assert.deepEqual(await fixture.controller.prepare(), { mediaId: 'media-1', lease: 'lease-1' })
   assert.deepEqual(fixture.states, ['requesting', 'connecting'])
   assert.equal((fixture.constraints()?.audio as MediaTrackConstraints).channelCount, 1)
-  assert.equal(fixture.offer(), PCMU_OFFER)
-  assert.equal(fixture.peer.remoteDescription?.sdp, PCMU_OFFER)
+  assert.deepEqual(fixture.offers(), [PCMU_OFFER])
+  assert.equal(fixture.peers[0].remoteDescription?.sdp, PCMU_OFFER)
   fixture.controller.setMuted(true)
   assert.equal(fixture.track.enabled, false)
   fixture.controller.close()
   assert.equal(fixture.track.stopped, true)
-  assert.equal(fixture.peer.closed, true)
+  assert.equal(fixture.peers[0].closed, true)
   assert.equal(fixture.states.at(-1), 'idle')
 })
 

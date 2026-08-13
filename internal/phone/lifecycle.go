@@ -213,6 +213,7 @@ func (s *Service) finishCall(event voicehost.CallEvent) {
 		delete(s.deviceCalls, call.view.DeviceID)
 	}
 	delete(s.mediaCalls, call.mediaID)
+	delete(s.pendingMediaDrops, call.mediaID)
 	s.terminalSeen[event.CallID] = struct{}{}
 	mediaID := call.mediaID
 	deviceID, peer, direction := call.view.DeviceID, call.view.Peer, call.view.Direction

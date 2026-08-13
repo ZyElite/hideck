@@ -231,8 +231,12 @@ export const usePhoneStore = defineStore('phone', {
       })
     },
 
+    hasReusableMedia(mode: Exclude<PhoneMediaMode, 'none'>) {
+      return this.mediaReady && !!this.mediaId && !!this.lease && this.mediaMode === mode
+    },
+
     async prepareMedia() {
-      if (this.mediaReady && this.mediaId && this.lease && this.mediaMode === 'two-way') {
+      if (this.hasReusableMedia('two-way')) {
         return { mediaId: this.mediaId, lease: this.lease }
       }
       this.ensureMediaController()
@@ -256,7 +260,7 @@ export const usePhoneStore = defineStore('phone', {
     },
 
     async prepareReceiveOnlyMedia() {
-      if (this.mediaReady && this.mediaId && this.lease) {
+      if (this.hasReusableMedia('listen-only')) {
         return { mediaId: this.mediaId, lease: this.lease }
       }
       this.ensureMediaController()

@@ -52,6 +52,20 @@ test('listen-only mode cannot be presented as a muteable microphone', () => {
   assert.equal(store.muted, true)
 })
 
+test('media reuse requires the requested privacy mode to match', () => {
+  setActivePinia(createPinia())
+  const store = usePhoneStore()
+  store.mediaState = 'connected'
+  store.mediaId = 'media-1'
+  store.lease = 'lease-1'
+  store.mediaMode = 'two-way'
+  assert.equal(store.hasReusableMedia('two-way'), true)
+  assert.equal(store.hasReusableMedia('listen-only'), false)
+  store.mediaMode = 'listen-only'
+  assert.equal(store.hasReusableMedia('listen-only'), true)
+  assert.equal(store.hasReusableMedia('two-way'), false)
+})
+
 test('surfaces API error messages without hiding the underlying failure', () => {
   const error = { response: { data: { message: 'phone: media session is unavailable' } } }
   assert.equal(phoneErrorMessage(error, 'fallback'), 'phone: media session is unavailable')

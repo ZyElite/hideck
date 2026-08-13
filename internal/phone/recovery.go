@@ -24,6 +24,7 @@ func (s *Service) handleMediaState(mediaID string, state webrtc.PeerConnectionSt
 func (s *Service) cancelDisconnectTimer(mediaID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.pendingMediaDrops, mediaID)
 	call := s.calls[s.mediaCalls[mediaID]]
 	if call != nil && call.disconnectTimer != nil {
 		call.disconnectTimer.Stop()
@@ -32,16 +33,33 @@ func (s *Service) cancelDisconnectTimer(mediaID string) {
 }
 
 func (s *Service) scheduleDisconnectHangup(mediaID string) {
+	mediaExists := s.media.Get(mediaID) != nil
 	s.mu.Lock()
 	callID := s.mediaCalls[mediaID]
 	call := s.calls[callID]
 	if call == nil || call.terminal || call.mediaID != mediaID || call.disconnectTimer != nil {
+		if callID == "" && mediaExists {
+			s.pendingMediaDrops[mediaID] = struct{}{}
+		}
 		s.mu.Unlock()
 		return
 	}
 	call.disconnectTimer = time.AfterFunc(s.recoveryGrace, func() { s.expireDisconnectedMedia(callID, mediaID) })
 	s.mu.Unlock()
 	s.publish("media_disconnected", call)
+}
+
+func (s *Service) bindMediaLocked(callID, mediaID string) bool {
+	s.mediaCalls[mediaID] = callID
+	_, pending := s.pendingMediaDrops[mediaID]
+	delete(s.pendingMediaDrops, mediaID)
+	return pending
+}
+
+func (s *Service) resumePendingMediaDrop(mediaID string, pending bool) {
+	if pending {
+		s.scheduleDisconnectHangup(mediaID)
+	}
 }
 
 func (s *Service) expireDisconnectedMedia(callID, mediaID string) {

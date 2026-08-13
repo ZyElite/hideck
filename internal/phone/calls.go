@@ -39,11 +39,12 @@ func (s *Service) StartCall(request StartCallRequest) (CallView, error) {
 	s.mu.Lock()
 	s.calls[call.view.CallID] = call
 	s.deviceCalls[call.view.DeviceID] = call.view.CallID
-	s.mediaCalls[call.mediaID] = call.view.CallID
+	pendingMediaDrop := s.bindMediaLocked(call.view.CallID, call.mediaID)
 	pendingEvents := s.pendingEvents[call.view.CallID]
 	delete(s.pendingEvents, call.view.CallID)
 	startedView := call.snapshot(request.Lease)
 	s.mu.Unlock()
+	s.resumePendingMediaDrop(call.mediaID, pendingMediaDrop)
 	s.persist(call.record)
 	s.publish("call_started", call)
 	for _, event := range pendingEvents {
@@ -106,9 +107,10 @@ func (s *Service) Reject(request ControlRequest) error {
 	call.userRejected = true
 	call.owner, call.lease, call.mediaID = request.Owner, request.Lease, request.MediaID
 	call.view.MediaID = request.MediaID
-	s.mediaCalls[request.MediaID] = request.CallID
+	pendingMediaDrop := s.bindMediaLocked(request.CallID, request.MediaID)
 	deviceID := call.view.DeviceID
 	s.mu.Unlock()
+	s.resumePendingMediaDrop(request.MediaID, pendingMediaDrop)
 	return s.gateway.RejectIncomingCall(voicehost.RejectRequest{
 		DeviceID: deviceID, CallID: request.CallID, StatusCode: 486,
 	})
@@ -179,12 +181,14 @@ func (s *Service) RefreshMedia(request RefreshRequest) (CallView, string, error)
 	call.owner, call.lease, call.mediaID = request.Owner, media.Lease, request.MediaID
 	call.view.MediaID = request.MediaID
 	delete(s.mediaCalls, oldMediaID)
-	s.mediaCalls[request.MediaID] = request.CallID
+	delete(s.pendingMediaDrops, oldMediaID)
+	pendingMediaDrop := s.bindMediaLocked(request.CallID, request.MediaID)
 	if call.disconnectTimer != nil {
 		call.disconnectTimer.Stop()
 		call.disconnectTimer = nil
 	}
 	s.mu.Unlock()
+	s.resumePendingMediaDrop(request.MediaID, pendingMediaDrop)
 	if oldMediaID != "" && oldMediaID != request.MediaID {
 		s.media.Remove(oldMediaID)
 	}
@@ -268,14 +272,16 @@ func (s *Service) releaseDeviceReservation(deviceID string) {
 
 func (s *Service) assignControl(callID, owner, mediaID, lease string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	call := s.calls[callID]
 	if call == nil {
+		s.mu.Unlock()
 		return
 	}
 	call.owner, call.lease, call.mediaID = owner, lease, mediaID
 	call.view.MediaID = mediaID
-	s.mediaCalls[mediaID] = callID
+	pendingMediaDrop := s.bindMediaLocked(callID, mediaID)
+	s.mu.Unlock()
+	s.resumePendingMediaDrop(mediaID, pendingMediaDrop)
 }
 
 func (s *Service) iccid(deviceID string) string {

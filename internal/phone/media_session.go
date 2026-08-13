@@ -35,7 +35,8 @@ type MediaSession struct {
 	attached         bool
 	closed           chan struct{}
 	closeOnce        sync.Once
-	keepaliveOnce    sync.Once
+	silentWorker     sync.WaitGroup
+	silentStarted    bool
 	receiveOnly      bool
 	fromIMS          atomic.Uint64
 	toIMS            atomic.Uint64
@@ -142,7 +143,7 @@ func (s *MediaSession) Attach(remoteSDP string) error {
 	}
 	primeErr := s.primeRelay()
 	if primeErr == nil && s.receiveOnly {
-		s.keepaliveOnce.Do(func() { go s.forwardSilentRTP() })
+		s.startSilentRTP()
 	}
 	return errors.Join(closeErr, primeErr)
 }
@@ -190,7 +191,7 @@ func (s *MediaSession) Close() error {
 	}
 	var result error
 	s.closeOnce.Do(func() {
-		close(s.closed)
+		s.stopSilentRTP()
 		s.mu.Lock()
 		codec := s.realtimeCodec
 		s.realtimeCodec = nil
@@ -202,6 +203,37 @@ func (s *MediaSession) Close() error {
 		result = errors.Join(result, s.peer.Close(), s.rtpConn.Close())
 	})
 	return result
+}
+
+func (s *MediaSession) startSilentRTP() {
+	s.mu.Lock()
+	if s.silentStarted || sessionClosed(s.closed) {
+		s.mu.Unlock()
+		return
+	}
+	s.silentStarted = true
+	s.silentWorker.Add(1)
+	s.mu.Unlock()
+	go func() {
+		defer s.silentWorker.Done()
+		s.forwardSilentRTP()
+	}()
+}
+
+func (s *MediaSession) stopSilentRTP() {
+	s.mu.Lock()
+	close(s.closed)
+	s.mu.Unlock()
+	s.silentWorker.Wait()
+}
+
+func sessionClosed(closed <-chan struct{}) bool {
+	select {
+	case <-closed:
+		return true
+	default:
+		return false
+	}
 }
 
 func drainRTCP(sender *webrtc.RTPSender, done <-chan struct{}) {

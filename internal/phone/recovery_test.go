@@ -31,6 +31,25 @@ func TestDisconnectedMediaHangsUpAfterGraceAndCanRecover(t *testing.T) {
 	}
 }
 
+func TestMediaFailureBeforeBindingHangsUpAfterBinding(t *testing.T) {
+	gateway, store := newFakeVoiceGateway(), newMemoryCallStore()
+	service := newPhoneTestService(t, gateway, store, 30*time.Millisecond)
+	addActiveCallForRecovery(service, "call-late-media", "")
+	addStubMedia(t, service, "media-late", "admin", "lease-late")
+
+	service.handleMediaState("media-late", webrtc.PeerConnectionStateFailed)
+	service.assignControl("call-late-media", "admin", "media-late", "lease-late")
+
+	select {
+	case callID := <-gateway.hangupCalls:
+		if callID != "call-late-media" {
+			t.Fatalf("hung up call = %q", callID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pending media failure did not enter the disconnect hangup path")
+	}
+}
+
 func TestServiceCloseHangsUpActiveCallAndUnsubscribes(t *testing.T) {
 	gateway, store := newFakeVoiceGateway(), newMemoryCallStore()
 	service, err := NewService(ServiceOptions{

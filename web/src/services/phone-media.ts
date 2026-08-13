@@ -42,6 +42,7 @@ export class PhoneMediaController {
   async prepare(options: PrepareMediaOptions = {}): Promise<PreparedPhoneMedia> {
     const useMicrophone = options.microphone !== false
     if (useMicrophone) this.assertSecureContext()
+    else this.releaseMicrophone()
     this.callbacks.onState('requesting')
     let peer: RTCPeerConnection | null = null
     try {
@@ -69,8 +70,7 @@ export class PhoneMediaController {
   close() {
     this.peer?.close()
     this.peer = null
-    this.microphone?.getTracks().forEach((track) => track.stop())
-    this.microphone = null
+    this.releaseMicrophone()
     this.audio.srcObject = null
     this.callbacks.onState('idle')
   }
@@ -161,9 +161,13 @@ export class PhoneMediaController {
   private releaseFailedMedia(peer: RTCPeerConnection | null) {
     peer?.close()
     if (this.peer === peer) this.peer = null
+    this.releaseMicrophone()
+    this.audio.srcObject = null
+  }
+
+  private releaseMicrophone() {
     this.microphone?.getTracks().forEach((track) => track.stop())
     this.microphone = null
-    this.audio.srcObject = null
   }
 }
 
