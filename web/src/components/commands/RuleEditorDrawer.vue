@@ -141,7 +141,7 @@ function lines(value: string) {
     </div>
 
     <el-tabs v-model="activeTab" class="rule-tabs">
-      <el-tab-pane :label="`数据库自定义 ${custom.length}`" name="custom">
+      <el-tab-pane :label="`数据库自定义 ${loaded ? custom.length : '—'}`" name="custom">
         <div class="inventory-heading">
           <div>
             <strong>自定义规则</strong>
@@ -245,7 +245,7 @@ function lines(value: string) {
         </el-form>
       </el-tab-pane>
 
-      <el-tab-pane :label="`服务端内置 ${builtIn.length}`" name="builtin">
+      <el-tab-pane :label="`服务端内置 ${loaded ? builtIn.length : '—'}`" name="builtin">
         <div class="readonly-note">
           <strong>服务端内置 · 只读</strong>
           <span>以下规则由后端内置规则集实时返回，不能在这里修改或删除；需要覆盖时请新建数据库自定义规则。</span>

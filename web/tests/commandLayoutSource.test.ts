@@ -136,6 +136,8 @@ test('carrier rule source and mutation states are explicit without demo data', (
   assert.match(ruleEditor, /服务端内置规则只读；自定义规则持久化到数据库/)
   assert.match(ruleEditor, /数据库中暂无自定义规则/)
   assert.match(ruleEditor, /自定义规则尚未从后端读取成功/)
+  assert.match(ruleEditor, /`数据库自定义 \$\{loaded \? custom\.length : '—'\}`/)
+  assert.match(ruleEditor, /`服务端内置 \$\{loaded \? builtIn\.length : '—'\}`/)
   assert.match(ruleEditor, /服务端内置 · 只读/)
   assert.match(ruleEditor, /@click="emit\('delete', rule\.id\)"/)
   assert.match(ruleEditor, /emit\('save',[\s\S]*isExisting\.value\)/)
