@@ -22,7 +22,7 @@ defineProps<{ query: BalanceQuery }>()
 </template>
 
 <style scoped>
-.balance-message { min-width: 0; padding-top: 5px; display: grid; gap: 6px; color: var(--ui-primary); }
+.balance-message { min-width: 0; padding-top: 5px; display: grid; gap: 6px; color: var(--ui-success); }
 .balance-result-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .balance-result-row strong { color: currentColor; font-size: 16px; overflow-wrap: anywhere; }
 .balance-result-row span { color: currentColor; font-size: 10px; }
@@ -31,5 +31,6 @@ defineProps<{ query: BalanceQuery }>()
 .balance-message p { margin: 0; color: var(--ui-danger); font-size: 11px; overflow-wrap: anywhere; }
 .tone-waiting, .tone-running { color: var(--ui-warning); }
 .tone-parsed { color: var(--ui-info); }
+.tone-success { color: var(--ui-success); }
 .tone-danger { color: var(--ui-danger); }
 </style>

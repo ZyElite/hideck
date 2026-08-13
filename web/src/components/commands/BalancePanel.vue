@@ -11,6 +11,7 @@ import {
 } from '../../utils/commandPresentation'
 import {
   ArrowSync24Regular,
+  Chat24Regular,
   CheckmarkCircle24Regular,
   Clock24Regular,
   Database24Regular,
@@ -115,6 +116,7 @@ function ruleRoute(rule: CarrierQueryRule): string {
           <span class="history-icon" :class="presentBalanceState(query).tone" aria-hidden="true">
             <el-icon v-if="presentBalanceState(query).tone === 'danger'"><ErrorCircle24Regular /></el-icon>
             <el-icon v-else-if="['running', 'waiting'].includes(presentBalanceState(query).tone)"><Clock24Regular /></el-icon>
+            <el-icon v-else-if="presentBalanceState(query).tone === 'parsed'"><Chat24Regular /></el-icon>
             <el-icon v-else><CheckmarkCircle24Regular /></el-icon>
           </span>
           <div>
