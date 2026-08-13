@@ -11,6 +11,18 @@ const outboundInventory = await readFile(
   new URL('../src/components/proxy/ProxyOutboundInventory.vue', import.meta.url),
   'utf8'
 )
+const upstreamInventory = await readFile(
+  new URL('../src/components/proxy/ProxyUpstreamInventory.vue', import.meta.url),
+  'utf8'
+)
+const inventoryShell = await readFile(
+  new URL('../src/components/proxy/ProxyInventoryShell.vue', import.meta.url),
+  'utf8'
+)
+const emptyState = await readFile(
+  new URL('../src/components/EmptyState.vue', import.meta.url),
+  'utf8'
+)
 
 test('proxy page uses the compact production inventory workspace', () => {
   assert.match(proxyView, /<PageHeader title="代理管理"/)
@@ -42,6 +54,17 @@ test('proxy controls retain real runtime facts and accessible actions', () => {
   for (const action of ['启动', '停止', '重启', '编辑', '删除']) {
     assert.ok(outboundInventory.includes(`aria-label="\`${action}`))
   }
+})
+
+test('both proxy modes share one compact inventory shell', () => {
+  assert.match(upstreamInventory, /<ProxyInventoryShell/)
+  assert.match(outboundInventory, /<ProxyInventoryShell/)
+  assert.match(inventoryShell, /min-height: 76px/)
+  assert.match(inventoryShell, /<EmptyState[\s\S]*compact/)
+  assert.match(emptyState, /min-height: 156px/)
+  assert.doesNotMatch(inventoryShell, /letter-spacing/)
+  assert.doesNotMatch(upstreamInventory, /proxy-inventory-header/)
+  assert.doesNotMatch(outboundInventory, /proxy-inventory-header/)
 })
 
 test('outbound editing never falls back to incomplete overview data', () => {

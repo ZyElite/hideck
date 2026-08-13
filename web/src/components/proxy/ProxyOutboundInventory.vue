@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import {
-  Add24Regular,
-  ArrowClockwise24Regular,
   ArrowSync24Regular,
   Delete24Regular,
   Edit24Regular,
@@ -10,8 +8,7 @@ import {
   Stop24Regular
 } from '@vicons/fluent'
 import type { OutboundProxyPresentation } from '../../utils/proxyPresentation'
-import EmptyState from '../EmptyState.vue'
-import ListSkeleton from '../ListSkeleton.vue'
+import ProxyInventoryShell from './ProxyInventoryShell.vue'
 import ProxyStatusBadge from './ProxyStatusBadge.vue'
 
 defineProps<{
@@ -32,40 +29,24 @@ defineEmits<{
 </script>
 
 <template>
-  <section class="proxy-inventory ui-card" aria-labelledby="outbound-inventory-title">
-    <header class="proxy-inventory-header">
-      <div class="proxy-inventory-heading">
-        <span class="section-icon section-icon-primary" aria-hidden="true">
-          <el-icon><Router24Regular /></el-icon>
-        </span>
-        <div>
-          <span>LOCAL EGRESS INVENTORY</span>
-          <h2 id="outbound-inventory-title">本地出站实例</h2>
-          <p>每个实例绑定一个真实设备网络接口，提供 SOCKS5 或 HTTP 出口。</p>
-        </div>
-      </div>
+  <ProxyInventoryShell
+    add-label="新增实例"
+    :empty="rows.length === 0"
+    empty-subtitle="创建实例并绑定设备后，运行状态和出口信息会显示在这里。"
+    empty-title="暂无本地出站实例"
+    kicker="LOCAL EGRESS INVENTORY"
+    :loading="loading"
+    :refreshing="refreshing"
+    subtitle="每个实例绑定一个真实设备网络接口，提供 SOCKS5 或 HTTP 出口。"
+    title="本地出站实例"
+    title-id="outbound-inventory-title"
+    tone="primary"
+    @add="$emit('add')"
+    @refresh="$emit('refresh')"
+  >
+    <template #icon><el-icon><Router24Regular /></el-icon></template>
 
-      <div class="proxy-inventory-actions">
-        <el-button :loading="refreshing" @click="$emit('refresh')">
-          <el-icon aria-hidden="true"><ArrowClockwise24Regular /></el-icon>
-          {{ refreshing ? '刷新中' : '刷新' }}
-        </el-button>
-        <el-button type="primary" @click="$emit('add')">
-          <el-icon aria-hidden="true"><Add24Regular /></el-icon>
-          新增实例
-        </el-button>
-      </div>
-    </header>
-
-    <ListSkeleton v-if="loading && rows.length === 0" :rows="3" />
-
-    <EmptyState
-      v-else-if="rows.length === 0"
-      title="暂无本地出站实例"
-      subtitle="创建实例并绑定设备后，运行状态和出口信息会显示在这里。"
-    />
-
-    <div v-else class="proxy-table-wrap">
+    <div class="proxy-table-wrap">
       <table class="proxy-inventory-table">
         <thead>
           <tr>
@@ -133,18 +114,10 @@ defineEmits<{
         </tbody>
       </table>
     </div>
-  </section>
+  </ProxyInventoryShell>
 </template>
 
 <style scoped>
-.proxy-inventory { padding: 0; overflow: hidden; }
-.proxy-inventory-header { min-height: 82px; padding: 15px 16px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--ui-border); }
-.proxy-inventory-heading { min-width: 0; display: flex; align-items: center; gap: 12px; }
-.proxy-inventory-heading > div > span { color: var(--ui-primary); font: 700 9px "v-mono", ui-monospace, monospace; letter-spacing: .13em; }
-.proxy-inventory-heading h2 { margin: 3px 0 0; color: var(--ui-text); font-size: 17px; font-weight: 650; }
-.proxy-inventory-heading p { margin: 3px 0 0; color: var(--ui-text-muted); font-size: 11px; }
-.proxy-inventory-actions { display: flex; gap: 8px; }
-.proxy-inventory-actions button { min-height: 36px; }
 .proxy-table-wrap { min-width: 0; }
 .proxy-inventory-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .proxy-inventory-table th { height: 40px; padding: 0 10px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-muted); font-size: 10px; font-weight: 600; text-align: left; }
@@ -164,7 +137,7 @@ defineEmits<{
 .proxy-inventory-table code { color: var(--ui-text); font-size: 11px; }
 .proxy-runtime-error { color: var(--ui-danger) !important; overflow-wrap: anywhere; }
 .proxy-row-actions { display: flex; justify-content: flex-end; gap: 3px; }
-.proxy-row-actions button { width: 31px; height: 34px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ui-text-muted); cursor: pointer; }
+.proxy-row-actions button { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ui-text-muted); cursor: pointer; }
 .proxy-row-actions button:hover,
 .proxy-row-actions button:focus-visible { border-color: var(--ui-border); background: var(--ui-surface-muted); color: var(--ui-text); }
 .proxy-row-actions button:disabled { opacity: .35; cursor: not-allowed; }
@@ -179,8 +152,6 @@ defineEmits<{
 }
 
 @media (max-width: 900px) {
-  .proxy-inventory-header { align-items: stretch; flex-direction: column; }
-  .proxy-inventory-actions button { min-height: 44px; flex: 1; }
   .proxy-inventory-table thead { display: none; }
   .proxy-inventory-table,
   .proxy-inventory-table tbody { display: grid; gap: 10px; }
@@ -197,8 +168,6 @@ defineEmits<{
 }
 
 @media (max-width: 460px) {
-  .proxy-inventory-heading { align-items: flex-start; }
-  .proxy-inventory-heading .section-icon { display: none; }
   .proxy-inventory-table tr { grid-template-columns: minmax(0, 1fr); }
   .proxy-inventory-table td:nth-child(odd) { border-right: 0; }
   .proxy-inventory-table td:nth-last-child(2) { border-bottom: 1px solid var(--ui-border-muted) !important; }

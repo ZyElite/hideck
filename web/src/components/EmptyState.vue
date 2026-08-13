@@ -1,12 +1,16 @@
 <script setup lang="ts">
 defineProps<{
+  compact?: boolean
   title: string
   subtitle?: string
 }>()
 </script>
 
 <template>
-  <div class="empty-state p-10 text-center border border-dashed ui-surface-muted">
+  <div
+    class="empty-state text-center ui-surface-muted"
+    :class="compact ? 'is-compact' : 'p-10 border border-dashed'"
+  >
     <div class="empty-state-icon mx-auto w-11 h-11 flex items-center justify-center">
       <slot name="icon">
         <span class="text-xl font-bold">∅</span>
@@ -31,5 +35,30 @@ defineProps<{
   border-radius: 5px;
   background: var(--ui-surface);
   color: var(--ui-text-muted);
+}
+
+.empty-state.is-compact {
+  min-height: 156px;
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: var(--ui-surface);
+}
+
+.empty-state.is-compact .empty-state-icon {
+  width: 36px;
+  height: 36px;
+}
+
+.empty-state.is-compact > .mt-4 {
+  margin-top: 10px;
+}
+
+.empty-state.is-compact > .mt-5 {
+  margin-top: 0;
 }
 </style>
