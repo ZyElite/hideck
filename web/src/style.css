@@ -26,6 +26,12 @@
   --ui-success: #198754;
   --ui-warning: #b86a0b;
   --ui-danger: #c53b3b;
+  --ui-font-caption: 12px;
+  --ui-font-body-sm: 13px;
+  --ui-font-body: 14px;
+  --ui-font-title: 16px;
+  --ui-font-section: 20px;
+  --ui-font-page-title: 24px;
   --ui-radius-sm: 4px;
   --ui-radius-md: 12px;
   --ui-radius-lg: 16px;
