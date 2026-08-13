@@ -49,3 +49,13 @@ test('conversation actions remain wired to production handlers', () => {
   assert.match(smsView, /@send="sendToCurrentThread"/)
   assert.match(composer, /Shift\+Enter 换行/)
 })
+
+test('narrow SMS workspace keeps all three panes visible in the prototype composition', () => {
+  assert.doesNotMatch(smsView, /v-if="showDeviceSidebar"/)
+  assert.doesNotMatch(smsView, /v-if="showListPane"/)
+  assert.doesNotMatch(smsView, /v-if="showDetailPane"/)
+  assert.match(smsView, /grid-template-columns:\s*64px minmax\(0, 1fr\)/)
+  assert.match(smsView, /grid-template-rows:\s*250px minmax\(620px, 1fr\)/)
+  assert.match(smsView, /grid-template-columns:\s*52px minmax\(0, 1fr\)/)
+  assert.match(smsView, /@media \(prefers-reduced-motion: reduce\)/)
+})

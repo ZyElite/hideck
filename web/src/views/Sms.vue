@@ -129,9 +129,6 @@ const selectedThreadGroups = computed(() => {
 })
 
 const isNarrowLayout = computed(() => smsPageWidth.value > 0 && smsPageWidth.value < SMS_NARROW_BREAKPOINT)
-const showDeviceSidebar = computed(() => !isNarrowLayout.value)
-const showListPane = computed(() => !isNarrowLayout.value || !selectedThreadKey.value)
-const showDetailPane = computed(() => !isNarrowLayout.value || !!selectedThreadKey.value)
 
 const showSendModal = ref(false)
 const sending = ref(false)
@@ -706,14 +703,12 @@ async function confirmDeleteThread(thread: SmsThread) {
 
       <div class="sms-main-layout">
         <SmsDeviceRail
-          v-if="showDeviceSidebar"
           :items="deviceSidebarItems"
           :selected-id="selectedDevice"
           @select="(deviceId) => void handleSelectDevice(deviceId)"
         />
 
         <SmsThreadListPane
-          v-if="showListPane"
           v-model="searchQuery"
           :items="filteredThreads"
           :selected-key="selectedThreadKey"
@@ -725,13 +720,12 @@ async function confirmDeleteThread(thread: SmsThread) {
           @new-message="openSendModal"
         />
 
-        <section v-if="showDetailPane" class="sms-conversation-pane flex flex-col min-w-0 min-h-0">
+        <section class="sms-conversation-pane flex flex-col min-w-0 min-h-0">
           <SmsConversationHeader
             :peer="selectedThread?.peer || ''"
             :context="conversationContext"
             :loading="threadLoading"
-            :show-back="isNarrowLayout && !!selectedThreadKey"
-            @back="backToList"
+            :show-back="false"
             @refresh="() => void fetchThreadLatest(false)"
             @latest="scrollThreadToBottom"
             @delete="selectedThread && void confirmDeleteThread(selectedThread)"
@@ -915,6 +909,55 @@ async function confirmDeleteThread(thread: SmsThread) {
 @container (min-width: 980px) {
   .sms-main-layout {
     grid-template-columns: 218px 310px minmax(0, 1fr);
+  }
+}
+
+@container (max-width: 979px) {
+  .sms-workspace {
+    flex: none;
+    min-height: 870px;
+    overflow: hidden;
+  }
+
+  .sms-main-layout {
+    min-height: 870px;
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-rows: 250px minmax(620px, 1fr);
+  }
+
+  .sms-main-layout > :deep(.sms-device-rail) {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .sms-main-layout > :deep(.sms-thread-list) {
+    grid-column: 2;
+    grid-row: 1;
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-border);
+  }
+
+  .sms-conversation-pane {
+    min-height: 620px;
+    grid-column: 2;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 1180px) {
+  .sms-page {
+    height: auto !important;
+    min-height: calc(100dvh - 104px);
+  }
+}
+
+@container (max-width: 560px) {
+  .sms-main-layout {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .sms-workspace {
+    border-radius: 10px;
   }
 }
 

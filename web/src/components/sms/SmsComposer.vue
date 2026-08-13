@@ -73,7 +73,11 @@ function updateMessage(value: unknown) {
 .sms-composer-meta { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 12px; color: var(--ui-text-muted); font-size: 9px; }
 
 @media (max-width: 520px) {
-  .sms-composer { padding: 10px 9px; grid-template-columns: minmax(0, 1fr) 48px; }
+  .sms-composer {
+    padding: 10px 9px;
+    grid-template-columns: minmax(0, 1fr) 48px;
+    scroll-margin-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
   .sms-send { min-width: 48px; width: 48px; min-height: 44px; padding: 0; }
   .sms-send span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .sms-composer-meta span:last-child { display: none; }
