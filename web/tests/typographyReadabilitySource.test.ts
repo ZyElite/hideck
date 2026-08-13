@@ -25,6 +25,17 @@ const deviceTypographyFiles = [
   '../src/components/DeviceConfigTab.vue',
   '../src/components/CardPolicyPanel.vue'
 ] as const
+const proxyTypographyFiles = [
+  '../src/views/Proxy.vue',
+  '../src/components/proxy/ProxyInventoryShell.vue',
+  '../src/components/proxy/ProxyModeSwitch.vue',
+  '../src/components/proxy/ProxyOutboundInventory.vue',
+  '../src/components/proxy/ProxyUpstreamInventory.vue',
+  '../src/components/proxy/ProxyStatusBadge.vue',
+  '../src/components/proxy/ProxyCountryRuleDrawer.vue',
+  '../src/components/proxy/ProxyInstanceEditorDrawer.vue',
+  '../src/components/proxy/ProxyUpstreamEditorDrawer.vue'
+] as const
 
 const FONT_DECLARATION_PATTERNS = [
   /font-size:\s*([0-9.]+)px/g,
@@ -68,6 +79,13 @@ test('dashboard text does not declare font sizes below 12px', async () => {
 
 test('device workspace text does not declare font sizes below 12px', async () => {
   for (const path of deviceTypographyFiles) {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8')
+    assert.deepEqual(findUnreadableFontSizes(source), [], path)
+  }
+})
+
+test('proxy workspace text does not declare font sizes below 12px', async () => {
+  for (const path of proxyTypographyFiles) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8')
     assert.deepEqual(findUnreadableFontSizes(source), [], path)
   }

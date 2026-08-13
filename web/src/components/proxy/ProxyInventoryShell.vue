@@ -92,7 +92,7 @@ defineEmits<{
 .proxy-inventory-heading > div > span {
   display: block;
   color: var(--ui-primary);
-  font: 700 9px/12px "v-mono", ui-monospace, monospace;
+  font: 700 var(--ui-font-caption)/1.25 "v-mono", ui-monospace, monospace;
 }
 
 .proxy-inventory-heading h2 {
@@ -106,7 +106,7 @@ defineEmits<{
 .proxy-inventory-heading p {
   margin: 0;
   color: var(--ui-text-muted);
-  font-size: 11px;
+  font-size: var(--ui-font-body-sm);
   line-height: 16px;
 }
 

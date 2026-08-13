@@ -158,16 +158,16 @@ function formatCountryOption(country: UpstreamProxyCountry): string {
 .proxy-rule-intro > header > span { width: 34px; height: 34px; display: grid; place-items: center; color: var(--ui-primary); }
 .proxy-rule-intro svg { width: 21px; height: 21px; }
 .proxy-rule-intro small,
-.proxy-rule-list header small { color: var(--ui-primary); font: 700 9px "v-mono", ui-monospace, monospace; letter-spacing: .11em; }
+.proxy-rule-list header small { color: var(--ui-primary); font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace; letter-spacing: .11em; }
 .proxy-rule-intro h3,
 .proxy-rule-list h3 { margin: 3px 0 0; color: var(--ui-text); font-size: 15px; }
 .proxy-rule-intro dl { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .proxy-rule-intro dl > div { min-width: 0; min-height: 68px; padding: 12px 14px; display: grid; align-content: center; gap: 7px; border-bottom: 1px solid var(--ui-border-muted); }
 .proxy-rule-intro dl > div:nth-child(odd) { border-right: 1px solid var(--ui-border-muted); }
 .proxy-rule-intro dl > div:nth-last-child(-n+2) { border-bottom: 0; }
-.proxy-rule-intro dt { color: var(--ui-text-muted); font-size: 10px; }
+.proxy-rule-intro dt { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .proxy-rule-intro dd { min-width: 0; margin: 0; color: var(--ui-text); font-size: 12px; overflow-wrap: anywhere; }
-.proxy-rule-intro code { font: 11px/1.5 "v-mono", ui-monospace, monospace; }
+.proxy-rule-intro code { font: var(--ui-font-body-sm)/1.5 "v-mono", ui-monospace, monospace; }
 .proxy-rule-composer { padding: 14px; display: grid; gap: 8px; border: 1px solid var(--ui-border); border-radius: 8px; background: var(--ui-surface); }
 .proxy-rule-composer > label { color: var(--ui-text); font-size: 12px; font-weight: 650; }
 .proxy-rule-composer > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
@@ -176,19 +176,19 @@ function formatCountryOption(country: UpstreamProxyCountry): string {
 .proxy-rule-list > header strong { min-width: 30px; padding: 4px 8px; border-radius: 999px; background: var(--ui-surface-muted); color: var(--ui-text); font: 12px "v-mono", ui-monospace, monospace; text-align: center; }
 .proxy-rule-table-head,
 .proxy-rule-row { display: grid; grid-template-columns: minmax(118px, 1.35fr) minmax(84px, .9fr) minmax(94px, .9fr) 36px; align-items: center; gap: 8px; }
-.proxy-rule-table-head { min-height: 38px; padding: 0 12px; color: var(--ui-text-muted); font-size: 10px; }
+.proxy-rule-table-head { min-height: 38px; padding: 0 12px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .proxy-rule-row { min-height: 78px; padding: 11px 12px; border-top: 1px solid var(--ui-border-muted); color: var(--ui-text); font-size: 12px; }
 .proxy-rule-row > span { min-width: 0; }
 .proxy-rule-row b,
 .proxy-rule-row small,
 .proxy-rule-row code { display: block; overflow-wrap: anywhere; }
-.proxy-rule-row small { margin-top: 3px; color: var(--ui-text-muted); font-size: 10px; }
-.proxy-rule-row code { margin-top: 5px; color: var(--ui-text-muted); font: 9px "v-mono", ui-monospace, monospace; }
+.proxy-rule-row small { margin-top: 3px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
+.proxy-rule-row code { margin-top: 5px; color: var(--ui-text-muted); font: var(--ui-font-body-sm) "v-mono", ui-monospace, monospace; }
 .proxy-rule-row button { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ui-text-muted); cursor: pointer; }
 .proxy-rule-row button:hover,
 .proxy-rule-row button:focus-visible { border-color: var(--ui-border); background: var(--ui-surface-muted); color: var(--ui-danger); }
 .proxy-rule-row button svg { width: 17px; height: 17px; }
-.proxy-rule-notice { margin: 0; padding: 11px 13px; display: flex; align-items: flex-start; gap: 9px; border: 1px solid color-mix(in srgb, var(--ui-communication) 35%, var(--ui-border)); border-radius: 7px; background: color-mix(in srgb, var(--ui-communication) 6%, var(--ui-surface)); color: var(--ui-text-muted); font-size: 11px; line-height: 1.55; }
+.proxy-rule-notice { margin: 0; padding: 11px 13px; display: flex; align-items: flex-start; gap: 9px; border: 1px solid color-mix(in srgb, var(--ui-communication) 35%, var(--ui-border)); border-radius: 7px; background: color-mix(in srgb, var(--ui-communication) 6%, var(--ui-surface)); color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); line-height: 1.55; }
 .proxy-rule-notice svg { width: 17px; height: 17px; flex: 0 0 17px; color: var(--ui-communication); }
 
 @media (max-width: 480px) {

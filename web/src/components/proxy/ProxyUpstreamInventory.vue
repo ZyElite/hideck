@@ -108,7 +108,7 @@ defineEmits<{
 <style scoped>
 .proxy-table-wrap { min-width: 0; }
 .proxy-inventory-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.proxy-inventory-table th { height: 40px; padding: 0 12px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-muted); font-size: 10px; font-weight: 600; text-align: left; }
+.proxy-inventory-table th { height: 40px; padding: 0 12px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-muted); font-size: var(--ui-font-caption); font-weight: 600; text-align: left; }
 .proxy-inventory-table td { min-width: 0; min-height: 58px; padding: 11px 12px; border-bottom: 1px solid var(--ui-border-muted); color: var(--ui-text); font-size: 12px; vertical-align: middle; overflow-wrap: anywhere; }
 .proxy-inventory-table tr:last-child td { border-bottom: 0; }
 .proxy-inventory-table th:nth-child(1) { width: 15%; }
@@ -119,14 +119,14 @@ defineEmits<{
 .proxy-inventory-table th:nth-child(6) { width: 12%; }
 .proxy-inventory-table th:nth-child(7) { width: 96px; }
 .proxy-inventory-table strong { display: block; font-weight: 650; }
-.proxy-row-id { display: block; margin-top: 3px; color: var(--ui-text-muted); font: 10px "v-mono", ui-monospace, monospace; }
-.proxy-health-detail { max-width: 100%; margin-top: 5px; display: -webkit-box; overflow: hidden; color: var(--ui-danger); font-size: 10px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.proxy-inventory-table code { color: var(--ui-text); font: 11px/1.5 "v-mono", ui-monospace, monospace; }
+.proxy-row-id { display: block; margin-top: 3px; color: var(--ui-text-muted); font: var(--ui-font-caption) "v-mono", ui-monospace, monospace; }
+.proxy-health-detail { max-width: 100%; margin-top: 5px; display: -webkit-box; overflow: hidden; color: var(--ui-danger); font-size: var(--ui-font-caption); line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.proxy-inventory-table code { color: var(--ui-text); font: var(--ui-font-body-sm)/1.5 "v-mono", ui-monospace, monospace; }
 .proxy-rule-button { min-height: 34px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ui-communication); cursor: pointer; }
 .proxy-rule-button:hover,
 .proxy-rule-button:focus-visible { border-color: var(--ui-border); background: var(--ui-surface-muted); }
 .proxy-rule-button svg { width: 15px; height: 15px; }
-.proxy-rule-button small { color: var(--ui-text-muted); font-size: 10px; }
+.proxy-rule-button small { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .proxy-row-actions { display: flex; justify-content: flex-end; gap: 4px; }
 .proxy-row-actions button { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ui-text-muted); cursor: pointer; }
 .proxy-row-actions button:hover,
@@ -144,7 +144,7 @@ defineEmits<{
   .proxy-inventory-table tr:last-child { margin-bottom: 12px; }
   .proxy-inventory-table td { min-height: 66px; padding: 11px 12px; display: grid; align-content: center; gap: 6px; border-bottom: 1px solid var(--ui-border-muted) !important; }
   .proxy-inventory-table td:nth-child(odd) { border-right: 1px solid var(--ui-border-muted); }
-  .proxy-inventory-table td::before { content: attr(data-label); color: var(--ui-text-muted); font: 700 9px "v-mono", ui-monospace, monospace; letter-spacing: .06em; }
+  .proxy-inventory-table td::before { content: attr(data-label); color: var(--ui-text-muted); font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace; letter-spacing: .06em; }
   .proxy-inventory-table td:nth-last-child(-n+2) { border-bottom: 0 !important; }
   .proxy-inventory-table td:last-child { border-right: 0; }
   .proxy-rule-button { min-height: 44px; width: fit-content; padding-inline: 0; }

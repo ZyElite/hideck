@@ -69,12 +69,12 @@ const form = defineModel<UpstreamProxy>('form', { required: true })
 .proxy-editor h3 { margin: 0; color: var(--ui-text); font-size: 13px; font-weight: 700; }
 .proxy-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .proxy-editor label { min-width: 0; display: grid; gap: 6px; }
-.proxy-editor label > span { color: var(--ui-text-muted); font: 700 10px "v-mono", ui-monospace, monospace; letter-spacing: .06em; text-transform: uppercase; }
-.proxy-editor label > small { color: var(--ui-text-muted); font-size: 10px; line-height: 1.5; }
+.proxy-editor label > span { color: var(--ui-text-muted); font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace; letter-spacing: .06em; text-transform: uppercase; }
+.proxy-editor label > small { color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); line-height: 1.5; }
 .proxy-editor-toggle { min-height: 66px; padding: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid var(--ui-border); border-radius: 7px; background: var(--ui-surface-muted); }
 .proxy-editor-toggle div { min-width: 0; display: grid; gap: 3px; }
 .proxy-editor-toggle strong { color: var(--ui-text); font-size: 13px; }
-.proxy-editor-toggle small { color: var(--ui-text-muted); font-size: 11px; }
+.proxy-editor-toggle small { color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 .proxy-editor-footer { display: flex; justify-content: flex-end; gap: 8px; }
 
 @media (max-width: 560px) {
