@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/iniwex5/vohive/internal/db"
 	"github.com/iniwex5/vohive/internal/device"
 	"github.com/iniwex5/vohive/internal/global"
+	"github.com/iniwex5/vohive/internal/localtls"
 	"github.com/iniwex5/vohive/internal/notify"
 	"github.com/iniwex5/vohive/internal/phone"
 	"github.com/iniwex5/vohive/internal/proxy/server"
@@ -82,6 +84,7 @@ type Server struct {
 	voiceGW                 *voicehost.Gateway
 	voiceRecordingDirectory string
 	phone                   *phone.Service
+	phoneCACertificate      string
 	notifyMgr               *notify.Manager
 	commandCenter           *commandcenter.Service
 	automaticTasks          automaticTaskService
@@ -94,6 +97,7 @@ type Server struct {
 
 	httpSrvMu sync.Mutex
 	httpSrv   *http.Server
+	httpsSrv  *http.Server
 
 	loginMu       sync.Mutex
 	loginAttempts map[string]loginAttempt
@@ -303,6 +307,7 @@ func (s *Server) newRouter() *gin.Engine {
 	api.GET("/docs", s.handleAPIDocs)
 	api.GET("/docs/assets/*filepath", s.handleDocsAsset)
 	api.POST("/auth/login", s.handleLogin)
+	api.GET("/phone/ca.crt", s.handlePhoneCACertificate)
 	api.POST("/rotateip", s.handleRotate)
 	api.OPTIONS("/logs/stream", s.handleLogStreamOptions)
 	s.registerWebsheetRoutes(api)
@@ -421,22 +426,19 @@ func (s *Server) newRouter() *gin.Engine {
 }
 
 func (s *Server) Run() error {
-	r := s.newRouter()
-
-	srv := &http.Server{
-		Addr:              s.cfg.Port,
-		Handler:           withCommandEventStreamDeadlineDisabled(r),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       120 * time.Second,
-		WriteTimeout:      120 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    1 << 20,
+	tlsFiles, err := localtls.Ensure(localtls.Config{
+		CertificateFile: s.cfg.TLSCertFile, PrivateKeyFile: s.cfg.TLSKeyFile,
+		DataDirectory: s.cfg.TLSDataDir,
+	})
+	if err != nil {
+		return fmt.Errorf("初始化 HTTPS 证书: %w", err)
 	}
-	s.httpSrvMu.Lock()
-	s.httpSrv = srv
-	s.httpSrvMu.Unlock()
-	logger.Info("启动 API 服务器", "port", s.cfg.Port)
-	return srv.ListenAndServe()
+	certificate, err := tls.LoadX509KeyPair(tlsFiles.CertificateFile, tlsFiles.PrivateKeyFile)
+	if err != nil {
+		return fmt.Errorf("加载 HTTPS 证书: %w", err)
+	}
+	s.phoneCACertificate = tlsFiles.CACertificateFile
+	return s.serveHTTPAndHTTPS(certificate)
 }
 
 func withCommandEventStreamDeadlineDisabled(next http.Handler) http.Handler {
@@ -475,12 +477,26 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 
 	s.httpSrvMu.Lock()
-	srv := s.httpSrv
+	httpServer, httpsServer := s.httpSrv, s.httpsSrv
 	s.httpSrvMu.Unlock()
-	if srv == nil {
+	if httpServer == nil && httpsServer == nil {
 		return errors.Join(automaticTaskErr, phoneErr)
 	}
-	return errors.Join(automaticTaskErr, phoneErr, srv.Shutdown(ctx))
+	shutdownErrors := make(chan error, 2)
+	shutdownCount := 0
+	if httpServer != nil {
+		shutdownCount++
+		go func() { shutdownErrors <- httpServer.Shutdown(ctx) }()
+	}
+	if httpsServer != nil {
+		shutdownCount++
+		go func() { shutdownErrors <- httpsServer.Shutdown(ctx) }()
+	}
+	result := errors.Join(automaticTaskErr, phoneErr)
+	for range shutdownCount {
+		result = errors.Join(result, <-shutdownErrors)
+	}
+	return result
 }
 
 func (s *Server) requestIDMiddleware() gin.HandlerFunc {

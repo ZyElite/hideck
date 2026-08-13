@@ -123,7 +123,11 @@ type WebConfig struct {
 
 type ServerConfig struct {
 	Port                 string   `mapstructure:"port"`
+	HTTPSPort            string   `mapstructure:"https_port"`
 	WebRTCUDPAddress     string   `mapstructure:"webrtc_udp_address"`
+	TLSCertFile          string   `mapstructure:"tls_cert_file"`
+	TLSKeyFile           string   `mapstructure:"tls_key_file"`
+	TLSDataDir           string   `mapstructure:"tls_data_dir"`
 	ICEServers           []string `mapstructure:"ice_servers"`
 	Debug                bool     `mapstructure:"debug"`
 	SMSRateLimitDisabled bool     `mapstructure:"sms_rate_limit_disabled"`
@@ -273,7 +277,9 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("pushplus.enabled", false)
 	viper.SetDefault("web.username", "admin")
 	viper.SetDefault("web.password", "admin")
+	viper.SetDefault("server.https_port", 7576)
 	viper.SetDefault("server.webrtc_udp_address", ":7580")
+	viper.SetDefault("server.tls_data_dir", "data/tls")
 	viper.SetDefault("vowifi.enabled", false)
 	viper.SetDefault("vowifi.mode", "vowifi")
 	viper.SetDefault("imscore.use_sipgo_udp", false)
@@ -300,6 +306,9 @@ func Load(path string) (*Config, error) {
 	// 兼容 server.port 格式 (例如: 7575 和 :7575)
 	if cfg.Server.Port != "" && !strings.Contains(cfg.Server.Port, ":") {
 		cfg.Server.Port = ":" + cfg.Server.Port
+	}
+	if cfg.Server.HTTPSPort != "" && !strings.Contains(cfg.Server.HTTPSPort, ":") {
+		cfg.Server.HTTPSPort = ":" + cfg.Server.HTTPSPort
 	}
 	return &cfg, nil
 }
