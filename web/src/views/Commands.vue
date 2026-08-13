@@ -9,6 +9,7 @@ import { useCommandRuntimeStatus } from '../composables/useCommandRuntimeStatus'
 import { commandService } from '../services/commands'
 import { devicesService } from '../services/devices'
 import type { CarrierQueryRule, CommandDefinition, CommandEvent } from '../types/commands'
+import { isCarrierRuleOperationBlocked } from '../utils/carrierRuleRuntime'
 import { buildDangerousCommand } from '../utils/commandInput'
 
 const pageSize = 100
@@ -32,6 +33,11 @@ const deletingRuleID = ref('')
 const rulesLoading = ref(false)
 const rulesLoaded = ref(false)
 const rulesError = ref('')
+const ruleOperationBlocked = computed(() => isCarrierRuleOperationBlocked({
+  loading: rulesLoading.value,
+  saving: savingRule.value,
+  deletingId: deletingRuleID.value
+}))
 const dangerousDefinition = ref<CommandDefinition | null>(null)
 const dangerForm = reactive({ device: '', target: '', phone: '', duration: 15 })
 let disposed = false
@@ -123,6 +129,7 @@ async function loadOlder() {
 }
 
 async function loadRules() {
+  if (ruleOperationBlocked.value) return false
   const requestID = ++rulesRequestID
   rulesLoading.value = true
   rulesError.value = ''
@@ -240,7 +247,7 @@ async function confirmDangerous() {
 }
 
 async function saveRule(rule: CarrierQueryRule, updating: boolean) {
-  if (savingRule.value || deletingRuleID.value) return
+  if (ruleOperationBlocked.value) return
   savingRule.value = true
   const result = updating
     ? await commandService.updateRule(rule.id, rule)
@@ -250,17 +257,18 @@ async function saveRule(rule: CarrierQueryRule, updating: boolean) {
     ElMessage.error(result.error.message || '规则保存失败')
     return
   }
-  const refreshed = await loadRules()
   savingRule.value = false
+  const refreshed = await loadRules()
   if (refreshed) ElMessage.success(updating ? '自定义规则已更新' : '自定义规则已创建')
 }
 
 async function deleteRule(id: string) {
-  if (savingRule.value || deletingRuleID.value) return
+  if (ruleOperationBlocked.value) return
   const confirmed = await ElMessageBox.confirm(`删除自定义规则 ${id}？`, '删除规则', {
     confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning'
   }).then(() => true).catch(() => false)
   if (!confirmed) return
+  if (ruleOperationBlocked.value) return
   deletingRuleID.value = id
   const result = await commandService.deleteRule(id)
   if (!result.ok) {
@@ -268,8 +276,8 @@ async function deleteRule(id: string) {
     ElMessage.error(result.error.message || '规则删除失败')
     return
   }
-  const refreshed = await loadRules()
   deletingRuleID.value = ''
+  const refreshed = await loadRules()
   if (refreshed) ElMessage.success('自定义规则已删除')
 }
 </script>

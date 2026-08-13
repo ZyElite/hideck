@@ -10,6 +10,7 @@ import {
   Save24Regular
 } from '@vicons/fluent'
 import { carrierReplySenderError } from '../../utils/commandInput'
+import { isCarrierRuleOperationBlocked } from '../../utils/carrierRuleRuntime'
 
 const props = defineProps<{
   modelValue: boolean
@@ -36,7 +37,11 @@ const limitationsText = ref('')
 const submitAttempted = ref(false)
 const form = reactive<CarrierQueryRule>(blankRule())
 const isExisting = computed(() => props.custom.some((rule) => rule.id === editingID.value))
-const mutationBusy = computed(() => props.saving || Boolean(props.deletingId))
+const mutationBusy = computed(() => isCarrierRuleOperationBlocked({
+  loading: props.loading,
+  saving: props.saving,
+  deletingId: props.deletingId
+}))
 const sendersError = computed(() => submitAttempted.value
   ? carrierReplySenderError(form.response_mode, sendersText.value)
   : '')
@@ -148,10 +153,11 @@ function lines(value: string) {
         </div>
 
         <div v-if="loading && !loaded" class="inventory-state">正在读取数据库自定义规则</div>
+        <div v-else-if="!loaded" class="inventory-state">自定义规则尚未从后端读取成功</div>
         <div v-else-if="!custom.length" class="inventory-state">数据库中暂无自定义规则</div>
         <div v-else class="custom-list" aria-label="数据库自定义规则列表">
           <article v-for="rule in custom" :key="rule.id" :class="{ selected: editingID === rule.id }">
-            <button type="button" class="rule-select" @click="assignRule(rule)">
+            <button type="button" class="rule-select" :disabled="mutationBusy" @click="assignRule(rule)">
               <span>
                 <strong>{{ rule.operator || rule.id }}</strong>
                 <small>{{ rule.id }} · {{ rule.mcc }}/{{ rule.mnc }}</small>
@@ -167,7 +173,7 @@ function lines(value: string) {
                 type="danger"
                 :aria-label="`删除 ${rule.id}`"
                 :loading="deletingId === rule.id"
-                :disabled="mutationBusy && deletingId !== rule.id"
+                :disabled="mutationBusy"
                 @click="emit('delete', rule.id)"
               >
                 <el-icon v-if="deletingId !== rule.id"><Delete24Regular /></el-icon>
@@ -227,12 +233,12 @@ function lines(value: string) {
               type="danger"
               plain
               :loading="deletingId === form.id"
-              :disabled="mutationBusy && deletingId !== form.id"
+              :disabled="mutationBusy"
               @click="emit('delete', form.id)"
             >
               <el-icon v-if="deletingId !== form.id"><Delete24Regular /></el-icon>删除
             </el-button>
-            <el-button type="primary" native-type="submit" :loading="saving" :disabled="mutationBusy && !saving">
+            <el-button type="primary" native-type="submit" :loading="saving" :disabled="mutationBusy">
               <el-icon v-if="!saving"><Save24Regular /></el-icon>{{ isExisting ? '保存修改' : '创建规则' }}
             </el-button>
           </div>
@@ -245,6 +251,7 @@ function lines(value: string) {
           <span>以下规则由后端内置规则集实时返回，不能在这里修改或删除；需要覆盖时请新建数据库自定义规则。</span>
         </div>
         <div v-if="loading && !loaded" class="inventory-state">正在读取服务端内置规则</div>
+        <div v-else-if="!loaded" class="inventory-state">内置规则尚未从后端读取成功</div>
         <div v-else-if="!builtIn.length" class="inventory-state">后端当前未返回内置规则</div>
         <div v-else class="builtin-list">
           <article v-for="rule in builtIn" :key="rule.id">
@@ -284,6 +291,7 @@ function lines(value: string) {
 .custom-list article { min-width: 0; min-height: 56px; border-bottom: 1px solid var(--ui-border); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; transition: background-color 120ms ease; }
 .custom-list article.selected { background: color-mix(in srgb, var(--ui-primary) 8%, transparent); box-shadow: inset 2px 0 var(--ui-primary); }
 .rule-select { min-width: 0; min-height: 55px; padding: 8px 10px; border: 0; background: transparent; color: inherit; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; cursor: pointer; }
+.rule-select:disabled { cursor: not-allowed; opacity: .5; }
 .rule-select > span { min-width: 0; }
 .rule-select strong, .rule-select small { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rule-select strong { color: var(--ui-text); font-size: 12px; }
