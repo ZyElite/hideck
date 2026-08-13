@@ -22,6 +22,7 @@ export const useUpstreamProxyStore = defineStore('upstreamProxy', () => {
   const loading = ref(false)
   const lastOkAt = ref<number | null>(null)
   const error = ref<AppError | null>(null)
+  let activeFetch = 0
 
   const probeRunner = createUpstreamProbeRunner({
     probe: id => upstreamProxyService.probe(id),
@@ -30,6 +31,8 @@ export const useUpstreamProxyStore = defineStore('upstreamProxy', () => {
 
   // 同时拉取代理列表、国家列表和国家规则
   async function fetchAll() {
+    const fetchId = ++activeFetch
+    probeRunner.invalidate()
     loading.value = true
     error.value = null
     const [proxiesResult, countriesResult, rulesResult] = await Promise.all([
@@ -37,9 +40,10 @@ export const useUpstreamProxyStore = defineStore('upstreamProxy', () => {
       upstreamProxyService.listCountries(),
       upstreamProxyService.listCountryRules()
     ])
+    if (fetchId !== activeFetch) return proxiesResult
+
     if (proxiesResult.ok) {
       proxies.value = proxiesResult.data
-      await probeRunner.run(proxiesResult.data)
     } else {
       error.value = proxiesResult.error
     }
@@ -56,7 +60,11 @@ export const useUpstreamProxyStore = defineStore('upstreamProxy', () => {
     if (proxiesResult.ok && countriesResult.ok && rulesResult.ok) {
       lastOkAt.value = Date.now()
     }
-    loading.value = false
+    try {
+      if (proxiesResult.ok) await probeRunner.run(proxiesResult.data)
+    } finally {
+      if (fetchId === activeFetch) loading.value = false
+    }
     return proxiesResult
   }
 

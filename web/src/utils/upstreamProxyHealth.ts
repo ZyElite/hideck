@@ -37,7 +37,11 @@ export function createUpstreamProbeRunner(config: ProbeRunnerConfig) {
     }))
   }
 
-  return Object.freeze({ run })
+  function invalidate(): void {
+    activeRun += 1
+  }
+
+  return Object.freeze({ invalidate, run })
 }
 
 function initialHealthMap(proxies: readonly UpstreamProxy[]): UpstreamProxyHealthMap {
