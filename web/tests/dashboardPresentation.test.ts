@@ -7,7 +7,8 @@ import {
   filterDashboardDevices,
   formatDashboardNetworkType,
   formatDashboardSignal,
-  hasDashboardSignal
+  hasDashboardSignal,
+  mergeDashboardDeviceOperators
 } from '../src/utils/dashboardPresentation.ts'
 
 function createDevice(overrides: Partial<DashboardDevice> = {}): DashboardDevice {
@@ -129,4 +130,24 @@ test('filters real device fields by status and normalized search text', () => {
     query: 'telecom b',
     status: 'offline'
   }).map(device => device.id), ['modem-2'])
+})
+
+test('fills a missing dashboard operator from the real managed device identity', () => {
+  const devices = [createDevice({ operator: '' })]
+  const merged = mergeDashboardDeviceOperators(devices, [{
+    id: 'modem-1',
+    modem: { native_spn: 'giffgaff' }
+  }])
+
+  assert.equal(merged[0]?.operator, 'giffgaff')
+  assert.equal(devices[0]?.operator, '')
+})
+
+test('keeps the dashboard serving operator when both real sources are present', () => {
+  const merged = mergeDashboardDeviceOperators([createDevice()], [{
+    id: 'modem-1',
+    modem: { operator: 'Fallback carrier', native_spn: 'SIM carrier' }
+  }])
+
+  assert.equal(merged[0]?.operator, 'giffgaff')
 })

@@ -122,11 +122,11 @@ const showCellularSignal = computed(() => props.device.vowifi_active !== true)
 </template>
 
 <style scoped>
-.device-card { position: relative; min-width: 0; min-height: 250px; padding: 0; overflow: hidden; border-color: var(--ui-border); border-radius: 12px; background: linear-gradient(145deg, color-mix(in srgb, var(--ui-surface) 98%, var(--ui-primary) 2%), var(--ui-surface)); color: var(--ui-text); text-align: left; cursor: pointer; }
+.device-card { position: relative; min-width: 0; min-height: 188px; padding: 0; overflow: hidden; border-color: var(--ui-border); border-radius: 12px; background: linear-gradient(145deg, color-mix(in srgb, var(--ui-surface) 98%, var(--ui-primary) 2%), var(--ui-surface)); color: var(--ui-text); text-align: left; cursor: pointer; }
 .device-card-selected { border-color: color-mix(in srgb, var(--ui-primary) 58%, var(--ui-border)); background: linear-gradient(150deg, color-mix(in srgb, var(--ui-surface) 84%, var(--ui-primary) 16%), var(--ui-surface) 62%); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-primary) 8%, transparent), var(--ui-shadow-md); }
-.device-card-header { min-height: 78px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.device-card-header { min-height: 62px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .device-title-group { min-width: 0; display: flex; align-items: center; gap: 11px; }
-.device-glyph { width: 42px; height: 42px; flex: 0 0 42px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--ui-primary) 35%, var(--ui-border)); border-radius: 10px; background: color-mix(in srgb, var(--ui-primary) 12%, transparent); color: var(--ui-primary); }
+.device-glyph { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--ui-primary) 35%, var(--ui-border)); border-radius: 9px; background: color-mix(in srgb, var(--ui-primary) 12%, transparent); color: var(--ui-primary); }
 .device-glyph svg { width: 20px; height: 20px; }
 .device-identity { min-width: 0; display: grid; }
 .device-identity strong,
@@ -139,7 +139,7 @@ const showCellularSignal = computed(() => props.device.vowifi_active !== true)
 .device-state.is-offline { color: var(--ui-danger); }
 .device-state.is-online i { animation: device-online-pulse 2.4s var(--ui-ease-in-out) infinite; }
 
-.device-connection-summary { min-height: 72px; padding: 12px 16px; display: flex; align-items: center; border-top: 1px solid var(--ui-border-muted); border-bottom: 1px solid var(--ui-border-muted); background: radial-gradient(ellipse at center, color-mix(in srgb, var(--ui-primary) 5%, transparent), transparent 70%); }
+.device-connection-summary { min-height: 50px; padding: 8px 14px; display: flex; align-items: center; border-top: 1px solid var(--ui-border-muted); border-bottom: 1px solid var(--ui-border-muted); background: radial-gradient(ellipse at center, color-mix(in srgb, var(--ui-primary) 5%, transparent), transparent 70%); }
 .connection-primary { min-width: 0; display: flex; align-items: center; gap: 10px; }
 .connection-primary > svg { width: 21px; height: 21px; flex: 0 0 21px; color: var(--ui-primary); }
 .connection-primary > span { min-width: 0; display: grid; gap: 3px; }
@@ -147,12 +147,12 @@ const showCellularSignal = computed(() => props.device.vowifi_active !== true)
 .connection-primary small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connection-primary strong { font-size: 14px; }
 .connection-primary small { color: var(--ui-text-muted); font-size: 11px; }
-.device-card-footer { min-height: 100px; padding: 10px 12px 10px 16px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.device-card-footer { min-height: 76px; padding: 8px 12px 8px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .device-card-footer.is-vowifi { grid-template-columns: minmax(0, 1fr); }
 .device-addresses { min-width: 0; display: grid; }
 .address-heading { display: flex; align-items: flex-start; gap: 7px; color: var(--ui-text-muted); font-size: 11px; }
 .address-heading svg { width: 16px; height: 16px; flex: 0 0 16px; }
-.address-list { min-width: 0; margin-top: 7px; display: grid; gap: 4px; }
+.address-list { min-width: 0; margin-top: 4px; display: grid; gap: 2px; }
 .address-list > span { min-width: 0; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 6px; }
 .address-list small { color: var(--ui-text-muted); font: 9px/1.45 "v-mono", monospace; }
 .address-list code { min-width: 0; color: color-mix(in srgb, var(--ui-text) 82%, transparent); font: 10px/1.35 "v-mono", monospace; overflow-wrap: anywhere; }

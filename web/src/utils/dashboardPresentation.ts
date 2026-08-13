@@ -26,6 +26,14 @@ export type DashboardDeviceFilter = Readonly<{
   status: 'all' | 'online' | 'offline'
 }>
 
+export type DashboardOperatorSource = Readonly<{
+  id: string
+  modem?: Readonly<{
+    operator?: string
+    native_spn?: string
+  }>
+}>
+
 const SIGNAL_SENTINELS = new Set([0, -999])
 
 export function hasDashboardSignal(value: unknown): value is number {
@@ -74,6 +82,21 @@ export function filterDashboardDevices(
     if (!query) return true
     return [device.id, device.name, device.operator, device.public_ip, device.public_ipv6]
       .some(value => String(value || '').toLocaleLowerCase().includes(query))
+  })
+}
+
+export function mergeDashboardDeviceOperators(
+  devices: readonly DashboardDevice[],
+  managedDevices: readonly DashboardOperatorSource[]
+): DashboardDevice[] {
+  const operators = new Map(managedDevices.map((device) => [
+    device.id,
+    String(device.modem?.operator || device.modem?.native_spn || '').trim()
+  ]))
+  return devices.map((device) => {
+    if (String(device.operator || '').trim()) return device
+    const operator = operators.get(device.id)
+    return operator ? { ...device, operator } : device
   })
 }
 
