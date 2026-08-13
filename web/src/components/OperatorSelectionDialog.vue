@@ -171,8 +171,8 @@ watch(scanState, (next) => {
           <div>
             <div class="font-medium text-gray-900 dark:text-white flex items-center gap-2">
               {{ c.operator_name || c.short_name || '未知网络' }}
-              <span v-if="c.status === 'current'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300 font-bold border border-emerald-200 dark:border-emerald-500/30">当前</span>
-              <span v-else-if="c.status === 'forbidden'" class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300 font-bold border border-red-200 dark:border-red-500/30">禁用</span>
+              <span v-if="c.status === 'current'" class="text-xs px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300 font-bold border border-emerald-200 dark:border-emerald-500/30">当前</span>
+              <span v-else-if="c.status === 'forbidden'" class="text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300 font-bold border border-red-200 dark:border-red-500/30">禁用</span>
             </div>
             <div class="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5">
               {{ c.plmn }} • {{ ratDisplay(c) }}

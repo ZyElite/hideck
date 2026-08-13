@@ -174,7 +174,7 @@ function exportATHistory() {
 
     <div class="at-command-composer">
       <div class="space-y-1">
-        <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">快捷指令模板</div>
+        <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">快捷指令模板</div>
         <el-select v-model="atTemplate" filterable clearable placeholder="选择常用命令（可选）">
            <el-option-group v-for="g in atTemplates" :key="g.label" :label="g.label">
             <el-option v-for="it in g.items" :key="it.value" :label="it.label" :value="it.value" />
@@ -183,7 +183,7 @@ function exportATHistory() {
       </div>
 
       <div class="space-y-1">
-        <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">命令</div>
+        <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">命令</div>
         <el-input
           v-model="atCmd"
           placeholder='例如 AT+CSQ (可自由编辑)'
@@ -193,12 +193,12 @@ function exportATHistory() {
       </div>
 
       <div class="space-y-1">
-        <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">超时(ms)</div>
+        <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">超时(ms)</div>
         <el-input v-model.number="atTimeoutMs" type="number" inputmode="numeric" placeholder="10000" />
       </div>
 
       <div class="space-y-1 self-end at-send-action">
-        <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wider opacity-0 select-none">操作</div>
+        <div class="text-xs font-bold text-gray-500 uppercase tracking-wider opacity-0 select-none">操作</div>
         <div class="flex items-center justify-end gap-2">
           <el-button type="primary" :loading="atSending" :disabled="!atCmd" @click="sendAT" class="!border-0">
             <el-icon><Send24Regular /></el-icon>

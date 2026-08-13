@@ -55,10 +55,18 @@ const commandTypographyFiles = [
   '../src/components/commands/BalanceMessage.vue',
   '../src/components/commands/RuleEditorDrawer.vue'
 ] as const
+const sharedTypographyFiles = [
+  '../src/App.vue',
+  '../src/components/LoadingScreen.vue',
+  '../src/components/ErrorState.vue',
+  '../src/components/EsimCardPolicyInline.vue',
+  '../src/components/OperatorSelectionDialog.vue'
+] as const
 
 const FONT_DECLARATION_PATTERNS = [
   /font-size:\s*([0-9.]+)px/g,
-  /font:\s*[^;{}]*?([0-9.]+)px(?:\/[^\s;{}]+)?/g
+  /font:\s*[^;{}]*?([0-9.]+)px(?:\/[^\s;{}]+)?/g,
+  /text-\[([0-9.]+)px\]/g
 ] as const
 
 function findUnreadableFontSizes(source: string): number[] {
@@ -86,6 +94,7 @@ test('shared typography tokens follow the production design scale', () => {
 test('typography audit detects declarations below the readable minimum', () => {
   assert.deepEqual(findUnreadableFontSizes('.metadata { font-size: 11px; }'), [11])
   assert.deepEqual(findUnreadableFontSizes('.code { font: 10px/1.4 monospace; }'), [10])
+  assert.deepEqual(findUnreadableFontSizes('<span class="text-[11px]">meta</span>'), [11])
   assert.deepEqual(findUnreadableFontSizes('.body { font-size: 12px; }'), [])
 })
 
@@ -119,6 +128,13 @@ test('SMS workspace text does not declare font sizes below 12px', async () => {
 
 test('command workspace text does not declare font sizes below 12px', async () => {
   for (const path of commandTypographyFiles) {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8')
+    assert.deepEqual(findUnreadableFontSizes(source), [], path)
+  }
+})
+
+test('shared target-route text does not declare font sizes below 12px', async () => {
+  for (const path of sharedTypographyFiles) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8')
     assert.deepEqual(findUnreadableFontSizes(source), [], path)
   }

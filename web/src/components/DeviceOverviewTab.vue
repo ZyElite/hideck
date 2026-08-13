@@ -153,7 +153,7 @@ const networkPanelMessage = computed(() => {
 
         <!-- 信号大字 -->
         <div class="rounded-xl border border-gray-200 dark:border-white/10 px-3.5 py-3 mb-3">
-          <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">信号强度</div>
+          <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">信号强度</div>
           <div class="flex items-center gap-3">
             <div>
               <div class="flex items-baseline gap-1">
@@ -162,7 +162,7 @@ const networkPanelMessage = computed(() => {
                 </span>
                 <span class="text-xs text-gray-400">dBm</span>
               </div>
-              <div class="text-[10px] text-gray-400 mt-1">
+              <div class="text-xs text-gray-400 mt-1">
                 RSRP {{ device?.modem?.signal_rsrp ?? '--' }}
                 &nbsp;·&nbsp;
                 RSRQ {{ device?.modem?.signal_rsrq ?? '--' }}

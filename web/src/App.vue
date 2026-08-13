@@ -252,7 +252,7 @@ const canRenderShell = computed(() => !auth.isAuthenticated || deviceTimeState.v
   background: color-mix(in srgb, var(--ui-primary) 12%, var(--ui-surface));
   color: var(--ui-primary);
   font-family: "v-mono", ui-monospace, monospace;
-  font-size: 11px;
+  font-size: var(--ui-font-caption);
   font-weight: 700;
 }
 

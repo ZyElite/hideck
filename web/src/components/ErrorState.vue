@@ -35,7 +35,7 @@ const metaText = computed(() => {
       <div class="min-w-0">
         <div class="text-sm font-extrabold text-red-700 dark:text-red-300">{{ title || '加载失败' }}</div>
         <div class="mt-1 text-xs text-red-700/80 dark:text-red-200/80 break-words">{{ message }}</div>
-        <div v-if="metaText" class="mt-2 text-[11px] text-red-800/60 dark:text-red-100/60 font-mono break-words">
+        <div v-if="metaText" class="mt-2 text-xs text-red-800/60 dark:text-red-100/60 font-mono break-words">
           {{ metaText }}
         </div>
         <div v-if="details" class="mt-2 text-xs font-mono text-red-900/60 dark:text-red-100/60 whitespace-pre-wrap break-words">{{ details }}</div>

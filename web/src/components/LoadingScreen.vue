@@ -62,7 +62,7 @@ defineProps({
 .loading-copy span {
   overflow: hidden;
   color: var(--ui-text-muted);
-  font-size: 11px;
+  font-size: var(--ui-font-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

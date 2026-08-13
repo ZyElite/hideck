@@ -574,7 +574,7 @@ onBeforeUnmount(() => {
                   <span class="w-2 h-2 rounded-full" :class="eid.free_nvram_bytes > 100000 ? 'bg-green-500' : 'bg-yellow-500'" />
                   可用 {{ eid.free_nvram }}
                 </span>
-                <span v-if="recentSpaceDelta && normalizeAidHex(group.aid_hex) === recentSpaceDelta.aidHex" class="text-[11px] text-emerald-600 dark:text-emerald-400">
+                <span v-if="recentSpaceDelta && normalizeAidHex(group.aid_hex) === recentSpaceDelta.aidHex" class="text-xs text-emerald-600 dark:text-emerald-400">
                   {{ recentSpaceDelta.message }}
                 </span>
               </span>
@@ -584,24 +584,24 @@ onBeforeUnmount(() => {
         <!-- PKI 信息行 -->
         <template v-if="chipInfo?.eids">
           <template v-for="eid in chipInfo.eids" :key="'pki-' + eid.eid">
-            <div v-if="eid.eid === group.eid && (eid.manufacturer || eid.certificates?.length || eid.default_smdp_address || eid.root_ds_address || eid.sas_accreditation_number || eid.info_source)" class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400 dark:text-gray-500">
+            <div v-if="eid.eid === group.eid && (eid.manufacturer || eid.certificates?.length || eid.default_smdp_address || eid.root_ds_address || eid.sas_accreditation_number || eid.info_source)" class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400 dark:text-gray-500">
               <span v-if="eid.manufacturer" class="inline-flex items-center gap-1">
-                <span class="text-[10px]">生产商:</span> {{ eid.manufacturer }}
+                <span class="text-xs">生产商:</span> {{ eid.manufacturer }}
               </span>
               <span v-if="eid.certificates?.length" class="inline-flex items-center gap-1">
-                <span class="text-[10px]">证书:</span> {{ eid.certificates.join(' · ') }}
+                <span class="text-xs">证书:</span> {{ eid.certificates.join(' · ') }}
               </span>
               <span v-if="eid.default_smdp_address" class="inline-flex items-center gap-1">
-                <span class="text-[10px]">Default SM-DP+:</span> {{ eid.default_smdp_address }}
+                <span class="text-xs">Default SM-DP+:</span> {{ eid.default_smdp_address }}
               </span>
               <span v-if="eid.root_ds_address" class="inline-flex items-center gap-1">
-                <span class="text-[10px]">Root SM-DS:</span> {{ eid.root_ds_address }}
+                <span class="text-xs">Root SM-DS:</span> {{ eid.root_ds_address }}
               </span>
               <span v-if="eid.sas_accreditation_number" class="inline-flex items-center gap-1">
-                <span class="text-[10px]">SAS:</span> {{ eid.sas_accreditation_number }}
+                <span class="text-xs">SAS:</span> {{ eid.sas_accreditation_number }}
               </span>
               <span v-if="eid.info_source" class="inline-flex items-center gap-1">
-                <span class="text-[10px]">来源:</span> {{ eid.info_source }}
+                <span class="text-xs">来源:</span> {{ eid.info_source }}
               </span>
             </div>
           </template>
@@ -761,23 +761,23 @@ onBeforeUnmount(() => {
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div class="space-y-1">
-          <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">SM-DP+ 地址 *</div>
+          <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">SM-DP+ 地址 *</div>
           <el-input v-model="downloadForm.smdp" placeholder="例如 rsp.truphone.com" />
         </div>
         <div class="space-y-1">
-          <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Matching ID</div>
+          <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">Matching ID</div>
           <el-input v-model="downloadForm.matchingId" placeholder="可选" />
         </div>
         <div class="space-y-1">
-          <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">确认码</div>
+          <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">确认码</div>
           <el-input v-model="downloadForm.confirmationCode" placeholder="可选" />
         </div>
         <div class="space-y-1">
-          <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">IMEI</div>
+          <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">IMEI</div>
           <el-input v-model="downloadForm.imei" maxlength="15" placeholder="默认使用设备 IMEI，可修改" />
         </div>
         <div class="space-y-1">
-          <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">目标 eUICC</div>
+          <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">目标 eUICC</div>
           <el-select v-model="downloadForm.aidHex" placeholder="选择目标 eUICC">
             <el-option
               v-for="(eid, ei) in (chipInfo?.eids || [])"

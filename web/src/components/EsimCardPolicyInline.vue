@@ -116,7 +116,7 @@ const {
       <el-button size="small" text @click="loadPolicy">重试</el-button>
     </div>
     <template v-else>
-      <div v-if="hint" class="text-[11px] text-amber-600 dark:text-amber-400">{{ hint }}</div>
+      <div v-if="hint" class="text-xs text-amber-600 dark:text-amber-400">{{ hint }}</div>
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <!-- 网络 -->
         <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
