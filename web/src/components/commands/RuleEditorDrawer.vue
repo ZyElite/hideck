@@ -10,7 +10,7 @@ import {
   Save24Regular
 } from '@vicons/fluent'
 import { carrierReplySenderError } from '../../utils/commandInput'
-import { isCarrierRuleOperationBlocked } from '../../utils/carrierRuleRuntime'
+import { editableCarrierRule, isCarrierRuleOperationBlocked } from '../../utils/carrierRuleRuntime'
 
 const props = defineProps<{
   modelValue: boolean
@@ -21,6 +21,7 @@ const props = defineProps<{
   loaded: boolean
   error: string
   deletingId: string
+  initialRule?: CarrierQueryRule | null
 }>()
 
 const emit = defineEmits<{
@@ -37,6 +38,7 @@ const limitationsText = ref('')
 const submitAttempted = ref(false)
 const form = reactive<CarrierQueryRule>(blankRule())
 const isExisting = computed(() => props.custom.some((rule) => rule.id === editingID.value))
+const isBuiltInOverride = computed(() => !isExisting.value && props.builtIn.some((rule) => rule.id === editingID.value))
 const mutationBusy = computed(() => isCarrierRuleOperationBlocked({
   loading: props.loading,
   saving: props.saving,
@@ -48,7 +50,13 @@ const sendersError = computed(() => submitAttempted.value
 const formError = computed(() => submitAttempted.value ? validateRequiredFields() : '')
 
 watch(() => props.modelValue, (open) => {
-  if (open && !editingID.value) startNew()
+  if (!open) return
+  if (props.initialRule) startEditing(props.initialRule)
+  else startNew()
+})
+
+watch(() => props.initialRule, (rule) => {
+  if (props.modelValue && rule) startEditing(rule)
 })
 
 watch(() => props.custom.map((rule) => rule.id).join('\n'), () => {
@@ -75,7 +83,13 @@ function assignRule(rule: CarrierQueryRule) {
   submitAttempted.value = false
 }
 
+function startEditing(rule: CarrierQueryRule) {
+  activeTab.value = 'custom'
+  assignRule(editableCarrierRule(rule, props.custom))
+}
+
 function startNew() {
+  activeTab.value = 'custom'
   Object.assign(form, blankRule())
   editingID.value = ''
   sendersText.value = ''
@@ -184,8 +198,8 @@ function lines(value: string) {
 
         <div class="editor-heading">
           <div>
-            <span>{{ isExisting ? 'EDIT CUSTOM RULE' : 'CREATE CUSTOM RULE' }}</span>
-            <h3>{{ isExisting ? `编辑 ${editingID}` : '新建自定义规则' }}</h3>
+            <span>{{ isExisting ? 'EDIT CUSTOM RULE' : isBuiltInOverride ? 'OVERRIDE BUILT-IN RULE' : 'CREATE CUSTOM RULE' }}</span>
+            <h3>{{ isExisting ? `编辑 ${editingID}` : isBuiltInOverride ? `覆盖编辑 ${editingID}` : '新建自定义规则' }}</h3>
           </div>
           <el-button v-if="isExisting" text :disabled="mutationBusy" @click="startNew">退出编辑</el-button>
         </div>
@@ -194,7 +208,7 @@ function lines(value: string) {
           <div v-if="formError && !sendersError" class="form-error" role="alert">{{ formError }}</div>
           <div class="form-grid">
             <el-form-item label="规则 ID" required>
-              <el-input v-model="form.id" :disabled="isExisting || mutationBusy" placeholder="carrier_variant" />
+              <el-input v-model="form.id" :disabled="isExisting || isBuiltInOverride || mutationBusy" placeholder="carrier_variant" />
             </el-form-item>
             <el-form-item label="运营商" required><el-input v-model="form.operator" :disabled="mutationBusy" /></el-form-item>
             <el-form-item label="MCC" required><el-input v-model="form.mcc" :disabled="mutationBusy" maxlength="3" /></el-form-item>
@@ -239,7 +253,7 @@ function lines(value: string) {
               <el-icon v-if="deletingId !== form.id"><Delete24Regular /></el-icon>删除
             </el-button>
             <el-button type="primary" native-type="submit" :loading="saving" :disabled="mutationBusy">
-              <el-icon v-if="!saving"><Save24Regular /></el-icon>{{ isExisting ? '保存修改' : '创建规则' }}
+              <el-icon v-if="!saving"><Save24Regular /></el-icon>{{ isExisting ? '保存修改' : isBuiltInOverride ? '保存数据库覆盖' : '创建规则' }}
             </el-button>
           </div>
         </el-form>
@@ -247,15 +261,21 @@ function lines(value: string) {
 
       <el-tab-pane :label="`服务端内置 ${loaded ? builtIn.length : '—'}`" name="builtin">
         <div class="readonly-note">
-          <strong>服务端内置 · 只读</strong>
-          <span>以下规则由后端内置规则集实时返回，不能在这里修改或删除；需要覆盖时请新建数据库自定义规则。</span>
+          <strong>服务端内置 · 数据库覆盖可编辑</strong>
+          <span>内置数据本身保持只读；点击“覆盖编辑”会以同一规则 ID 保存数据库自定义版本，删除覆盖后自动恢复内置规则。</span>
         </div>
         <div v-if="loading && !loaded" class="inventory-state">正在读取服务端内置规则</div>
         <div v-else-if="!loaded" class="inventory-state">内置规则尚未从后端读取成功</div>
         <div v-else-if="!builtIn.length" class="inventory-state">后端当前未返回内置规则</div>
         <div v-else class="builtin-list">
           <article v-for="rule in builtIn" :key="rule.id">
-            <div><strong>{{ rule.operator }}</strong><code>{{ rule.mcc }}/{{ rule.mnc }}</code></div>
+            <div>
+              <strong>{{ rule.operator }}</strong>
+              <code>{{ rule.mcc }}/{{ rule.mnc }}</code>
+              <el-button text :disabled="mutationBusy" @click="startEditing(rule)">
+                <el-icon><Edit24Regular /></el-icon>覆盖编辑
+              </el-button>
+            </div>
             <p v-if="rule.transport !== 'unsupported'">{{ rule.transport.toUpperCase() }} · {{ rule.destination || rule.payload }} · {{ rule.payload }}</p>
             <p v-else>{{ rule.alternative }}</p>
             <a v-if="rule.evidence_url" :href="rule.evidence_url" target="_blank" rel="noreferrer">查看规则依据</a>
@@ -314,7 +334,8 @@ function lines(value: string) {
 .readonly-note strong { color: var(--ui-primary); font-size: var(--ui-font-body-sm); }
 .readonly-note span { margin-top: 4px; color: var(--ui-text-subtle); font-size: var(--ui-font-body-sm); line-height: 1.5; }
 .builtin-list article { padding: 13px 2px; border-bottom: 1px solid var(--ui-border); }
-.builtin-list article > div { display: flex; justify-content: space-between; gap: 12px; }
+.builtin-list article > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; }
+.builtin-list article :deep(.el-button) { min-height: 40px; color: var(--ui-primary); }
 .builtin-list code, .builtin-list p { color: var(--ui-text-subtle); font-size: var(--ui-font-body-sm); }
 .builtin-list p { margin: 6px 0; line-height: 1.5; }
 .builtin-list a { color: var(--ui-primary); font-size: var(--ui-font-body-sm); }
@@ -327,6 +348,8 @@ function lines(value: string) {
   .inventory-heading span { max-width: 210px; }
   .rule-select { min-height: 60px; padding-inline: 8px; }
   .row-actions :deep(.el-button) { width: 44px; height: 44px; }
+  .builtin-list article > div { grid-template-columns: minmax(0, 1fr) auto; }
+  .builtin-list article :deep(.el-button) { grid-column: 1 / -1; justify-self: start; min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) { .custom-list article { transition: none; } }
 </style>

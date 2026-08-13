@@ -1,10 +1,32 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isCarrierRuleOperationBlocked } from '../src/utils/carrierRuleRuntime'
+import type { CarrierQueryRule } from '../src/types/commands'
+import { editableCarrierRule, isCarrierRuleOperationBlocked } from '../src/utils/carrierRuleRuntime'
+
+function rule(overrides: Partial<CarrierQueryRule> = {}): CarrierQueryRule {
+  return {
+    id: 'carrier', mcc: '234', mnc: '10', operator: 'Carrier', transport: 'sms',
+    destination: '123', payload: 'BAL', response_mode: 'sms', expected_senders: ['123'],
+    cost_status: 'unknown', evidence_type: 'user', enabled: true, ...overrides
+  }
+}
 
 test('carrier rule operations are available only while every async state is idle', () => {
   assert.equal(isCarrierRuleOperationBlocked({ loading: false, saving: false, deletingId: '' }), false)
   assert.equal(isCarrierRuleOperationBlocked({ loading: true, saving: false, deletingId: '' }), true)
   assert.equal(isCarrierRuleOperationBlocked({ loading: false, saving: true, deletingId: '' }), true)
   assert.equal(isCarrierRuleOperationBlocked({ loading: false, saving: false, deletingId: 'custom-rule' }), true)
+})
+
+test('built-in editing creates a database override and prefers an existing override', () => {
+  const builtIn = rule({ operator: 'Built in', built_in: true })
+  const editable = editableCarrierRule(builtIn, [])
+  assert.equal(editable.built_in, false)
+  assert.equal(editable.id, builtIn.id)
+
+  const custom = rule({ operator: 'Custom override', expected_senders: ['reply'] })
+  const existing = editableCarrierRule(builtIn, [custom])
+  assert.equal(existing.operator, 'Custom override')
+  existing.expected_senders?.push('changed')
+  assert.deepEqual(custom.expected_senders, ['reply'])
 })

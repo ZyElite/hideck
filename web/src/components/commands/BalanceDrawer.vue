@@ -23,6 +23,7 @@ const emit = defineEmits<{
   'update:selectedDevice': [value: string]
   query: []
   editRules: []
+  editRule: [rule: CarrierQueryRule]
   refreshRules: []
 }>()
 
@@ -54,6 +55,7 @@ watch(() => props.modelValue, async (open) => {
       @update:selected-device="emit('update:selectedDevice', $event)"
       @query="emit('query')"
       @edit-rules="emit('editRules')"
+      @edit-rule="emit('editRule', $event)"
       @refresh-rules="emit('refreshRules')"
     />
   </aside>

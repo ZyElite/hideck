@@ -27,6 +27,7 @@ const manualRefreshing = ref(false)
 const executing = ref(false)
 const querying = ref(false)
 const rulesOpen = ref(false)
+const selectedRule = ref<CarrierQueryRule | null>(null)
 const balanceOpen = ref(false)
 const savingRule = ref(false)
 const deletingRuleID = ref('')
@@ -280,6 +281,16 @@ async function deleteRule(id: string) {
   const refreshed = await loadRules()
   if (refreshed) ElMessage.success('自定义规则已删除')
 }
+
+function openRuleEditor(rule: CarrierQueryRule | null = null) {
+  selectedRule.value = rule
+  rulesOpen.value = true
+}
+
+function updateRulesOpen(open: boolean) {
+  rulesOpen.value = open
+  if (!open) selectedRule.value = null
+}
 </script>
 
 <template>
@@ -321,7 +332,8 @@ async function deleteRule(id: string) {
         :rules-loaded="rulesLoaded"
         :rules-error="rulesError"
         @query="startBalance"
-        @edit-rules="rulesOpen = true"
+        @edit-rules="openRuleEditor()"
+        @edit-rule="openRuleEditor"
         @refresh-rules="loadRules"
       />
     </div>
@@ -354,14 +366,16 @@ async function deleteRule(id: string) {
     </el-dialog>
 
     <RuleEditorDrawer
-      v-model="rulesOpen"
+      :model-value="rulesOpen"
       :built-in="builtInRules"
       :custom="customRules"
+      :initial-rule="selectedRule"
       :saving="savingRule"
       :loading="rulesLoading"
       :loaded="rulesLoaded"
       :error="rulesError"
       :deleting-id="deletingRuleID"
+      @update:model-value="updateRulesOpen"
       @save="saveRule"
       @delete="deleteRule"
       @refresh="loadRules"

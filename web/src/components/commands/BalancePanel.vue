@@ -17,7 +17,6 @@ import {
   Database24Regular,
   Edit24Regular,
   ErrorCircle24Regular,
-  Info24Regular,
   Phone24Regular,
   Wallet24Regular
 } from '@vicons/fluent'
@@ -39,6 +38,7 @@ const emit = defineEmits<{
   'update:selectedDevice': [value: string]
   query: []
   editRules: []
+  editRule: [rule: CarrierQueryRule]
   refreshRules: []
 }>()
 
@@ -157,16 +157,16 @@ function ruleRoute(rule: CarrierQueryRule): string {
         <el-button text @click="emit('refreshRules')">重试</el-button>
       </div>
       <div v-else-if="visibleRules.length" class="rule-list">
-        <article v-for="rule in visibleRules" :key="rule.id">
+        <button v-for="rule in visibleRules" :key="rule.id" type="button" @click="emit('editRule', rule)">
           <div>
             <strong>{{ rule.operator || rule.id }}</strong>
             <small>{{ rule.built_in ? '服务端内置' : '数据库自定义' }}</small>
           </div>
           <span>{{ ruleRoute(rule) }}</span>
-          <el-tooltip :content="`${rule.mcc}/${rule.mnc} · ${rule.id}`" placement="left">
-            <el-icon aria-label="规则详情"><Info24Regular /></el-icon>
+          <el-tooltip :content="`${rule.mcc}/${rule.mnc} · ${rule.id} · 点击编辑`" placement="left">
+            <el-icon aria-label="编辑规则"><Edit24Regular /></el-icon>
           </el-tooltip>
-        </article>
+        </button>
       </div>
       <button v-else-if="rulesLoaded" type="button" class="rules-empty" @click="emit('editRules')">
         后端当前没有可用规则，打开管理器
@@ -222,12 +222,13 @@ function ruleRoute(rule: CarrierQueryRule): string {
 .rules-state { min-height: 72px; padding: 12px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text-subtle); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: var(--ui-font-caption); text-align: center; }
 .rules-error { color: var(--ui-danger); flex-direction: column; }
 .rules-error :deep(.el-button) { color: var(--ui-danger); }
-.rule-list article { min-height: 48px; padding: 9px 8px; border: 1px solid var(--ui-border); border-top: 0; display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, auto) auto; align-items: center; gap: 8px; }
-.rule-list article > div { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.rule-list button { width: 100%; min-height: 48px; padding: 9px 8px; border: 1px solid var(--ui-border); border-top: 0; background: transparent; color: inherit; display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, auto) auto; align-items: center; gap: 8px; text-align: left; cursor: pointer; }
+.rule-list button:hover, .rule-list button:focus-visible { background: color-mix(in srgb, var(--ui-primary) 7%, transparent); outline: none; box-shadow: inset 2px 0 var(--ui-primary); }
+.rule-list button > div { min-width: 0; display: flex; align-items: center; gap: 5px; }
 .rule-list strong { min-width: 0; color: var(--ui-text); font-size: var(--ui-font-body-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rule-list small { color: var(--ui-primary); font-size: var(--ui-font-caption); white-space: nowrap; }
-.rule-list article > span { color: var(--ui-text-muted); font: var(--ui-font-body-sm) "v-mono", monospace; text-align: right; overflow-wrap: anywhere; }
-.rule-list article > .el-icon { color: var(--ui-text-subtle); }
+.rule-list button > span { color: var(--ui-text-muted); font: var(--ui-font-body-sm) "v-mono", monospace; text-align: right; overflow-wrap: anywhere; }
+.rule-list button > .el-icon { color: var(--ui-primary); }
 .rules-empty { width: 100%; min-height: 48px; border: 1px solid var(--ui-border); border-radius: 4px; background: transparent; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 @media (max-width: 1023px) {
   .balance-panel { min-height: 560px; }
