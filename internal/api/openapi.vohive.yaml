@@ -1443,8 +1443,6 @@ paths:
           $ref: '#/components/responses/ErrorMessage'
         '500':
           $ref: '#/components/responses/ErrorMessage'
-        '500':
-          $ref: '#/components/responses/ErrorMessage'
 
   /devices/{device_id}/esim/eids:
     get:
