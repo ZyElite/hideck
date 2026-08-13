@@ -17,6 +17,7 @@ import type { DashboardDevice } from '../types/api'
 import { formatDeviceTime } from '../utils/deviceTime'
 import { filterDashboardDevices } from '../utils/dashboardPresentation'
 import { Search } from '@element-plus/icons-vue'
+import { Add24Regular, ArrowRight24Regular } from '@vicons/fluent'
 
 const dashboard = useDashboardStore()
 const router = useRouter()
@@ -184,17 +185,27 @@ onMounted(() => {
             ]"
           />
       </div>
-      <el-button v-else @click="openDeviceOverview('')">设备管理</el-button>
     </section>
 
     <ListSkeleton v-if="loading && devices.length === 0" :rows="4" />
 
-    <EmptyState
+    <button
       v-else-if="devices.length === 0"
+      type="button"
       class="device-fleet-empty"
-      title="暂无设备接入"
-      subtitle="请先在设备管理中添加或接管设备"
-    />
+      aria-label="打开设备管理，添加或接管设备"
+      @click="openDeviceOverview()"
+    >
+      <span class="device-fleet-empty-icon" aria-hidden="true"><Add24Regular /></span>
+      <span class="device-fleet-empty-copy">
+        <strong>等待设备接入</strong>
+        <small>添加或接管设备后，这里会显示实时连接状态</small>
+      </span>
+      <span class="device-fleet-empty-action">
+        管理设备
+        <ArrowRight24Regular aria-hidden="true" />
+      </span>
+    </button>
 
     <template v-else>
       <EmptyState
@@ -246,7 +257,30 @@ onMounted(() => {
 .device-overview-toolbar p { margin: 0; color: var(--ui-text-muted); font-size: 13px; }
 .device-filter-controls { width: min(100%, 560px); display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 10px; }
 .device-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 12px; }
-.device-fleet-empty { min-height: 170px; display: grid; align-content: center; }
+.device-fleet-empty {
+  width: 100%;
+  min-height: 92px;
+  padding: 18px 20px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  background: linear-gradient(110deg, var(--ui-surface) 0 68%, color-mix(in srgb, var(--ui-primary) 5%, var(--ui-surface)) 100%);
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms var(--ui-ease-out), background-color 160ms var(--ui-ease-out), transform 140ms var(--ui-ease-out);
+}
+.device-fleet-empty-icon { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 11px; background: var(--ui-surface-strong); color: var(--ui-primary); }
+.device-fleet-empty-icon svg { width: 21px; height: 21px; }
+.device-fleet-empty-copy { min-width: 0; display: grid; gap: 4px; }
+.device-fleet-empty-copy strong { font-size: 14px; font-weight: 620; }
+.device-fleet-empty-copy small { color: var(--ui-text-muted); font-size: 12px; line-height: 1.45; }
+.device-fleet-empty-action { min-height: 38px; padding: 0 13px; display: inline-flex; align-items: center; gap: 8px; border: 1px solid color-mix(in srgb, var(--ui-primary) 42%, var(--ui-border)); border-radius: 9px; color: var(--ui-primary); font-size: 12px; font-weight: 620; }
+.device-fleet-empty-action svg { width: 17px; height: 17px; }
+.device-fleet-empty:active { transform: scale(.995); }
 .dashboard-traffic { margin-top: 18px !important; }
 .device-status-grid :deep(.device-card) { animation: device-card-enter 240ms var(--ui-ease-out) both; animation-delay: min(calc(var(--device-index, 0) * 35ms), 210ms); }
 .focus-swap-enter-active { transition: opacity 220ms var(--ui-ease-out), transform 220ms var(--ui-ease-out); }
@@ -254,7 +288,8 @@ onMounted(() => {
 .focus-swap-enter-from { opacity: 0; transform: translateY(10px) scale(.992); }
 .focus-swap-leave-to { opacity: 0; transform: translateY(-4px) scale(.996); }
 @keyframes device-card-enter { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@media (prefers-reduced-motion: reduce) { .device-status-grid :deep(.device-card) { animation: device-card-fade 160ms ease both; } .focus-swap-enter-from, .focus-swap-leave-to { transform: none; } @keyframes device-card-fade { from { opacity: 0; } to { opacity: 1; } } }
+@media (hover: hover) and (pointer: fine) { .device-fleet-empty:hover { border-color: color-mix(in srgb, var(--ui-primary) 48%, var(--ui-border)); background: color-mix(in srgb, var(--ui-primary) 6%, var(--ui-surface)); } }
+@media (prefers-reduced-motion: reduce) { .device-status-grid :deep(.device-card) { animation: device-card-fade 160ms ease both; } .focus-swap-enter-from, .focus-swap-leave-to, .device-fleet-empty:active { transform: none; } @keyframes device-card-fade { from { opacity: 0; } to { opacity: 1; } } }
 @media (max-width: 1050px) { .fleet-summary { grid-template-columns: auto auto 1fr; } .fleet-metrics { display: none; } }
-@media (max-width: 760px) { .fleet-summary { grid-template-columns: minmax(0, 1fr); border-radius: 12px; } .fleet-summary-copy { white-space: normal; } .device-overview-toolbar { align-items: stretch; flex-direction: column; } .device-filter-controls { width: 100%; grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .fleet-summary { grid-template-columns: minmax(0, 1fr); border-radius: 12px; } .fleet-summary-copy { white-space: normal; } .device-overview-toolbar { align-items: stretch; flex-direction: column; } .device-filter-controls { width: 100%; grid-template-columns: minmax(0, 1fr); } .device-fleet-empty { min-height: 118px; padding: 16px; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; } .device-fleet-empty-icon { width: 40px; height: 40px; } .device-fleet-empty-action { min-height: 44px; grid-column: 1 / -1; justify-content: space-between; } }
 </style>
