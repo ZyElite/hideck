@@ -51,6 +51,12 @@ const router = createRouter({
       name: 'Commands',
       component: () => import('../views/Commands.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/automatic-tasks',
+      name: 'AutomaticTasks',
+      component: () => import('../views/AutomaticTasks.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })

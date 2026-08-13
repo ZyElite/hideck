@@ -167,6 +167,8 @@ func Init(dbPath string) error {
 		&CommandEvent{},
 		&BalanceQuery{},
 		&CustomCarrierQueryRule{},
+		&AutomaticTaskRecord{},
+		&AutomaticTaskRunRecord{},
 		&TrafficMinute{},
 		&TrafficHour{},
 		&TrafficDay{},

@@ -34,6 +34,8 @@ tags:
     description: VoWiFi 控制
   - name: logs
     description: 日志历史与实时流
+  - name: automatic-tasks
+    description: eSIM 自动任务与运行记录
 paths:
   /docs:
     get:
@@ -2093,6 +2095,153 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /automatic-tasks:
+    get:
+      tags: [automatic-tasks]
+      summary: 获取自动任务列表
+      responses:
+        '200':
+          description: 自动任务列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks]
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AutomaticTask'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [automatic-tasks]
+      summary: 新建自动任务
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutomaticTaskInput'
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomaticTask'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /automatic-tasks/{task_id}:
+    parameters:
+      - $ref: '#/components/parameters/AutomaticTaskIDPath'
+    get:
+      tags: [automatic-tasks]
+      summary: 获取自动任务
+      responses:
+        '200':
+          description: 自动任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomaticTask'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+    put:
+      tags: [automatic-tasks]
+      summary: 更新自动任务
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutomaticTaskInput'
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomaticTask'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+    delete:
+      tags: [automatic-tasks]
+      summary: 删除自动任务及其运行记录
+      responses:
+        '204':
+          description: 已删除
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /automatic-tasks/{task_id}/actions/run:
+    post:
+      tags: [automatic-tasks]
+      summary: 立即排队运行自动任务
+      parameters:
+        - $ref: '#/components/parameters/AutomaticTaskIDPath'
+      responses:
+        '202':
+          description: 已进入设备串行队列
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomaticTaskRun'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '503':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /automatic-task-runs:
+    get:
+      tags: [automatic-tasks]
+      summary: 获取自动任务运行记录
+      parameters:
+        - in: query
+          name: task_id
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: 运行记录分页
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs, total, limit, offset]
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AutomaticTaskRun'
+                  total:
+                    type: integer
+                    format: int64
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+
   /balance/rules/{rule_id}:
     put:
       tags: [balance]
@@ -2175,6 +2324,14 @@ components:
       required: true
       schema:
         type: string
+    AutomaticTaskIDPath:
+      in: path
+      name: task_id
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
     AfterEventID:
       in: query
       name: after_id
@@ -2207,6 +2364,123 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
+    AutomaticTaskPayload:
+      type: object
+      properties:
+        phone:
+          type: string
+        message:
+          type: string
+        hold_seconds:
+          type: integer
+          minimum: 1
+          maximum: 60
+
+    AutomaticTaskInput:
+      type: object
+      required: [name, enabled, device_id, profile_iccid, task_type, environment, interval_days, start_date, run_time, timezone, payload, retry_count, notify]
+      properties:
+        name:
+          type: string
+        enabled:
+          type: boolean
+        device_id:
+          type: string
+        profile_iccid:
+          type: string
+        profile_aid:
+          type: string
+        task_type:
+          type: string
+          enum: [sms, call, public_ip]
+        environment:
+          type: string
+          enum: [vowifi, cellular]
+        interval_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+        start_date:
+          type: string
+          format: date
+        run_time:
+          type: string
+          pattern: '^[0-2][0-9]:[0-5][0-9]$'
+        timezone:
+          type: string
+        payload:
+          $ref: '#/components/schemas/AutomaticTaskPayload'
+        retry_count:
+          type: integer
+          minimum: 0
+          maximum: 10
+        notify:
+          type: boolean
+
+    AutomaticTask:
+      allOf:
+        - $ref: '#/components/schemas/AutomaticTaskInput'
+        - type: object
+          required: [id, next_run_at, created_at, updated_at]
+          properties:
+            id:
+              type: integer
+              format: int64
+            next_run_at:
+              type: string
+              format: date-time
+            last_run_at:
+              type: string
+              format: date-time
+            last_status:
+              type: string
+              enum: [queued, running, success, failed]
+            last_error:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    AutomaticTaskRun:
+      type: object
+      required: [id, task_id, device_id, scheduled_at, status, attempts, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        task_id:
+          type: integer
+          format: int64
+        device_id:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [queued, running, success, failed]
+        attempts:
+          type: integer
+        output:
+          type: string
+        error:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
     ErrorResponse:
       type: object
       properties:
