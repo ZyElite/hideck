@@ -65,4 +65,6 @@ test('manual balance dialog opens only after its device value is loaded', () => 
   assert.match(commands, /:manual-balance-opening="manualBalanceOpening"/)
   assert.match(panel, /:loading="manualBalanceOpening"/)
   assert.match(panel, /querying \|\| manualBalanceOpening/)
+  assert.match(commands, /watch\(runtimeStatus\.lastSyncedAt, \(\) => \{\s*if \(manualBalanceOpening\.value\) return/)
+  assert.match(commands, /if \(!manualBalanceOpening\.value\) await loadManualBalance\(true\)/)
 })

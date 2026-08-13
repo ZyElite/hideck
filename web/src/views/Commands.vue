@@ -101,6 +101,7 @@ watch(selectedDevice, () => {
 }, { flush: 'sync' })
 
 watch(runtimeStatus.lastSyncedAt, () => {
+  if (manualBalanceOpening.value) return
   void loadManualBalance()
 })
 
@@ -222,7 +223,7 @@ async function refreshAll() {
       loadRules()
     ])
     if (eventsLoaded) refreshVersion.value += 1
-    await loadManualBalance(true)
+    if (!manualBalanceOpening.value) await loadManualBalance(true)
   } finally {
     manualRefreshing.value = false
   }
