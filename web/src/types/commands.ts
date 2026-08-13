@@ -40,9 +40,9 @@ export type BalanceQuery = {
   device_id: string
   iccid: string
   rule_id: string
-  transport: 'sms' | 'ussd'
+  transport: 'sms' | 'ussd' | 'manual'
   state: 'sending' | 'awaiting_reply' | 'completed' | 'timed_out' | 'failed'
-  parse_state: 'pending' | 'parsed' | 'unparsed'
+  parse_state: 'pending' | 'parsed' | 'unparsed' | 'manual'
   amount?: string
   currency?: string
   summary?: string
@@ -54,6 +54,11 @@ export type BalanceQuery = {
   created_at: string
   updated_at: string
 }
+
+export type ManualBalanceInput = Readonly<{
+  amount: string
+  currency: string
+}>
 
 export type CarrierQueryRule = {
   id: string

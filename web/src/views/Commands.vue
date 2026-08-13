@@ -4,11 +4,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import CommandChat from '../components/commands/CommandChat.vue'
 import BalanceDrawer from '../components/commands/BalanceDrawer.vue'
 import RuleEditorDrawer from '../components/commands/RuleEditorDrawer.vue'
+import ManualBalanceDialog from '../components/commands/ManualBalanceDialog.vue'
 import { useEventStream } from '../composables/useEventStream'
 import { useCommandRuntimeStatus } from '../composables/useCommandRuntimeStatus'
 import { commandService } from '../services/commands'
 import { devicesService } from '../services/devices'
-import type { CarrierQueryRule, CommandDefinition, CommandEvent } from '../types/commands'
+import type { CarrierQueryRule, CommandDefinition, CommandEvent, ManualBalanceInput } from '../types/commands'
 import { isCarrierRuleOperationBlocked } from '../utils/carrierRuleRuntime'
 import { buildDangerousCommand } from '../utils/commandInput'
 
@@ -29,6 +30,9 @@ const querying = ref(false)
 const rulesOpen = ref(false)
 const selectedRule = ref<CarrierQueryRule | null>(null)
 const balanceOpen = ref(false)
+const manualBalanceOpen = ref(false)
+const manualBalanceSaving = ref(false)
+const manualBalanceClearing = ref(false)
 const savingRule = ref(false)
 const deletingRuleID = ref('')
 const rulesLoading = ref(false)
@@ -51,6 +55,10 @@ const runtimeStatus = useCommandRuntimeStatus({
 })
 const devices = runtimeStatus.devices
 const balances = runtimeStatus.balances
+const selectedDeviceModel = computed(() => devices.value.find((device) => device.id === selectedDevice.value))
+const selectedManualBalance = computed(() => balances.value.find((query) => (
+  query.device_id === selectedDevice.value && query.transport === 'manual'
+)))
 
 const stream = useEventStream<CommandEvent>({
   path: '/command-center/stream',
@@ -221,6 +229,40 @@ async function startBalance() {
   ElMessage.success(result.data.state === 'completed' ? '运营商已返回结果' : '查询已发送，正在等待运营商回复')
 }
 
+async function saveManualBalance(input: ManualBalanceInput) {
+  if (!selectedDevice.value || manualBalanceSaving.value) return
+  manualBalanceSaving.value = true
+  const result = await commandService.setManualBalance(selectedDevice.value, input)
+  manualBalanceSaving.value = false
+  if (!result.ok) {
+    ElMessage.error(result.error.message || '手动余额保存失败')
+    return
+  }
+  balances.value = [result.data, ...balances.value.filter((item) => item.id !== result.data.id)]
+  manualBalanceOpen.value = false
+  ElMessage.success('手动余额已保存')
+}
+
+async function clearManualBalance() {
+  if (!selectedDevice.value || manualBalanceClearing.value) return
+  const confirmed = await ElMessageBox.confirm('清除后将恢复显示该设备的自动查询记录。', '清除手动余额', {
+    confirmButtonText: '清除', cancelButtonText: '取消', type: 'warning'
+  }).then(() => true).catch(() => false)
+  if (!confirmed) return
+  manualBalanceClearing.value = true
+  const result = await commandService.clearManualBalance(selectedDevice.value)
+  manualBalanceClearing.value = false
+  if (!result.ok) {
+    ElMessage.error(result.error.message || '手动余额清除失败')
+    return
+  }
+  balances.value = balances.value.filter((item) => (
+    item.device_id !== selectedDevice.value || item.transport !== 'manual'
+  ))
+  manualBalanceOpen.value = false
+  ElMessage.success('手动余额已清除')
+}
+
 function openDangerous(definition: CommandDefinition) {
   dangerousDefinition.value = definition
   dangerForm.device = selectedDevice.value || devices.value[0]?.id || ''
@@ -332,6 +374,7 @@ function updateRulesOpen(open: boolean) {
         :rules-loaded="rulesLoaded"
         :rules-error="rulesError"
         @query="startBalance"
+        @edit-manual-balance="manualBalanceOpen = true"
         @edit-rules="openRuleEditor()"
         @edit-rule="openRuleEditor"
         @refresh-rules="loadRules"
@@ -379,6 +422,16 @@ function updateRulesOpen(open: boolean) {
       @save="saveRule"
       @delete="deleteRule"
       @refresh="loadRules"
+    />
+
+    <ManualBalanceDialog
+      v-model="manualBalanceOpen"
+      :device="selectedDeviceModel"
+      :existing="selectedManualBalance"
+      :saving="manualBalanceSaving"
+      :clearing="manualBalanceClearing"
+      @save="saveManualBalance"
+      @clear="clearManualBalance"
     />
   </div>
 </template>

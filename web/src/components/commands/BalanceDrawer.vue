@@ -22,6 +22,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   'update:selectedDevice': [value: string]
   query: []
+  editManualBalance: []
   editRules: []
   editRule: [rule: CarrierQueryRule]
   refreshRules: []
@@ -54,6 +55,7 @@ watch(() => props.modelValue, async (open) => {
       :rules-error="rulesError"
       @update:selected-device="emit('update:selectedDevice', $event)"
       @query="emit('query')"
+      @edit-manual-balance="emit('editManualBalance')"
       @edit-rules="emit('editRules')"
       @edit-rule="emit('editRule', $event)"
       @refresh-rules="emit('refreshRules')"

@@ -64,6 +64,9 @@ test('keeps all balance lifecycle states explicit', () => {
   assert.equal(presentBalanceState(balanceQuery({ state: 'completed', parse_state: 'unparsed' })).tone, 'success')
   assert.equal(presentBalanceState(balanceQuery({ state: 'timed_out' })).tone, 'danger')
   assert.equal(presentBalanceState(balanceQuery({ state: 'failed' })).label, '查询失败')
+  assert.deepEqual(presentBalanceState(balanceQuery({ transport: 'manual', parse_state: 'manual', state: 'completed' })), {
+    label: '手动设置', tone: 'manual'
+  })
 })
 
 test('renders only values and transport facts returned by the backend', () => {
@@ -72,4 +75,5 @@ test('renders only values and transport facts returned by the backend', () => {
   assert.equal(balanceResultText(balanceQuery({ state: 'failed', error: '未匹配规则' })), '未匹配规则')
   assert.equal(balanceTransportLabel(balanceQuery({ transport: 'sms' })), 'SMS')
   assert.equal(balanceTransportLabel(balanceQuery({ transport: 'ussd' })), 'USSD')
+  assert.equal(balanceTransportLabel(balanceQuery({ transport: 'manual' })), '手动录入')
 })

@@ -1,7 +1,7 @@
 import type { BalanceQuery, CommandEvent } from '../types/commands'
 
 export type CommandEventTone = 'sent' | 'running' | 'success' | 'danger'
-export type BalanceTone = 'running' | 'waiting' | 'parsed' | 'success' | 'danger'
+export type BalanceTone = 'running' | 'waiting' | 'parsed' | 'manual' | 'success' | 'danger'
 
 export type CommandEventPresentation = Readonly<{
   title: string
@@ -36,6 +36,7 @@ export function presentCommandEvent(event: CommandEvent): CommandEventPresentati
 }
 
 export function presentBalanceState(query: BalanceQuery): BalanceStatePresentation {
+  if (query.transport === 'manual') return { label: '手动设置', tone: 'manual' }
   if (query.state === 'failed') return { label: '查询失败', tone: 'danger' }
   if (query.state === 'timed_out') return { label: '等待超时', tone: 'danger' }
   if (query.state === 'awaiting_reply') return { label: '等待回复', tone: 'waiting' }
@@ -54,5 +55,6 @@ export function balanceResultText(query: BalanceQuery): string {
 }
 
 export function balanceTransportLabel(query: BalanceQuery): string {
+  if (query.transport === 'manual') return '手动录入'
   return query.transport === 'ussd' ? 'USSD' : 'SMS'
 }

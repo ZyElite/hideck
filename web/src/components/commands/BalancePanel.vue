@@ -37,6 +37,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:selectedDevice': [value: string]
   query: []
+  editManualBalance: []
   editRules: []
   editRule: [rule: CarrierQueryRule]
   refreshRules: []
@@ -46,6 +47,7 @@ const selectedQueries = computed(() => [...props.queries
   .filter((query) => !props.selectedDevice || query.device_id === props.selectedDevice)]
   .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at)))
 const latestQuery = computed(() => selectedQueries.value[0])
+const manualQuery = computed(() => selectedQueries.value.find((query) => query.transport === 'manual'))
 const visibleRules = computed(() => [...props.customRules, ...props.builtInRules]
   .filter((rule) => rule.enabled)
   .slice(0, 4))
@@ -89,8 +91,11 @@ function ruleRoute(rule: CarrierQueryRule): string {
           <template #prefix><el-icon><Phone24Regular /></el-icon></template>
           <el-option v-for="device in devices" :key="device.id" :label="deviceLabel(device)" :value="device.id" />
         </el-select>
-        <el-button type="primary" :loading="querying" :disabled="!selectedDevice" @click="emit('query')">
-          查询
+      </div>
+      <div class="query-actions">
+        <el-button type="primary" :loading="querying" :disabled="!selectedDevice" @click="emit('query')">自动查询</el-button>
+        <el-button :disabled="!selectedDevice || querying" @click="emit('editManualBalance')">
+          <el-icon><Edit24Regular /></el-icon>{{ manualQuery ? '编辑手动余额' : '手动设置' }}
         </el-button>
       </div>
     </div>
@@ -186,9 +191,10 @@ function ruleRoute(rule: CarrierQueryRule): string {
 .manage-rules-button span { font-size: var(--ui-font-caption); }
 .query-controls { display: grid; gap: 7px; margin: 18px 0 16px; }
 .query-controls > label, .section-label { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
-.query-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.query-row { display: grid; grid-template-columns: minmax(0, 1fr); }
+.query-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .device-select { min-width: 0; }
-.query-row :deep(.el-input__wrapper), .query-row :deep(.el-button) { min-height: 40px; border-radius: 4px; }
+.query-row :deep(.el-input__wrapper), .query-actions :deep(.el-button) { min-height: 40px; border-radius: 4px; }
 .latest-result { display: flex; flex-direction: column; gap: 6px; padding: 15px 0; border-block: 1px solid var(--ui-border); }
 .latest-result > strong { color: var(--ui-primary); font-size: clamp(25px, 2.4vw, 36px); font-weight: 550; overflow-wrap: anywhere; }
 .latest-meta { color: var(--ui-text-subtle); display: flex; align-items: center; gap: 5px; font-size: var(--ui-font-caption); }
@@ -200,6 +206,7 @@ function ruleRoute(rule: CarrierQueryRule): string {
 .history-icon { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: var(--ui-success); background: color-mix(in srgb, currentColor 10%, transparent); }
 .history-icon.waiting, .history-icon.running, .tone-waiting, .tone-running { color: var(--ui-warning); }
 .history-icon.parsed, .tone-parsed { color: var(--ui-info); }
+.history-icon.manual, .tone-manual { color: var(--ui-primary); }
 .history-icon.success, .tone-success { color: var(--ui-success); }
 .history-icon.danger, .tone-danger, .query-error { color: var(--ui-danger); }
 .balance-item b { font-size: var(--ui-font-body-sm); }
@@ -236,7 +243,7 @@ function ruleRoute(rule: CarrierQueryRule): string {
 }
 @media (max-width: 640px) {
   .balance-panel { padding: 16px 12px 88px; }
-  .query-row :deep(.el-input__wrapper), .query-row :deep(.el-button) { min-height: 44px; }
+  .query-row :deep(.el-input__wrapper), .query-actions :deep(.el-button) { min-height: 44px; }
   .manage-rules-button, .rules-heading :deep(.el-button), .rules-state :deep(.el-button) { min-height: 44px; }
   .rule-source { grid-template-columns: auto minmax(0, 1fr); }
   .source-counts { grid-column: 2; flex-wrap: wrap; }

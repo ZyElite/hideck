@@ -1,5 +1,5 @@
 import { api } from '../stores/auth'
-import type { BalanceQuery, CarrierQueryRule, CommandDefinition, CommandEvent, CommandExecution } from '../types/commands'
+import type { BalanceQuery, CarrierQueryRule, CommandDefinition, CommandEvent, CommandExecution, ManualBalanceInput } from '../types/commands'
 import { callService } from './http'
 
 export const commandService = {
@@ -59,6 +59,20 @@ export const commandService = {
     return callService(async () => {
       const response = await api.post(`/devices/${encodeURIComponent(deviceId)}/balance-queries`)
       return response.data?.query as BalanceQuery
+    })
+  },
+
+  setManualBalance(deviceId: string, input: ManualBalanceInput) {
+    return callService(async () => {
+      const response = await api.put(`/devices/${encodeURIComponent(deviceId)}/manual-balance`, input)
+      return response.data?.query as BalanceQuery
+    })
+  },
+
+  clearManualBalance(deviceId: string) {
+    return callService(async () => {
+      await api.delete(`/devices/${encodeURIComponent(deviceId)}/manual-balance`)
+      return true
     })
   },
 
