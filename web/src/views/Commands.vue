@@ -32,6 +32,7 @@ const rulesOpen = ref(false)
 const selectedRule = ref<CarrierQueryRule | null>(null)
 const balanceOpen = ref(false)
 const manualBalanceOpen = ref(false)
+const manualBalanceOpening = ref(false)
 const manualBalanceDeviceID = ref('')
 const manualBalanceDialogExisting = ref<BalanceQuery | null>(null)
 const manualBalanceSaving = ref(false)
@@ -227,8 +228,7 @@ async function refreshAll() {
   }
 }
 
-async function loadManualBalance(showError = false) {
-  const deviceID = selectedDevice.value
+async function loadManualBalance(showError = false, deviceID = selectedDevice.value) {
   const request = manualBalanceRequestScope.begin(deviceID)
   if (!deviceID) {
     manualBalance.value = null
@@ -327,10 +327,15 @@ async function clearManualBalance() {
   ElMessage.success('手动余额已清除')
 }
 
-function openManualBalance() {
-  if (!selectedDevice.value) return
-  manualBalanceDeviceID.value = selectedDevice.value
-  manualBalanceDialogExisting.value = selectedManualBalance.value || null
+async function openManualBalance() {
+  const operationDeviceID = selectedDevice.value
+  if (!operationDeviceID || manualBalanceOpening.value) return
+  manualBalanceOpening.value = true
+  const loaded = await loadManualBalance(true, operationDeviceID)
+  manualBalanceOpening.value = false
+  if (!loaded || selectedDevice.value !== operationDeviceID) return
+  manualBalanceDeviceID.value = operationDeviceID
+  manualBalanceDialogExisting.value = manualBalance.value
   manualBalanceOpen.value = true
 }
 
@@ -441,6 +446,7 @@ function updateRulesOpen(open: boolean) {
         :custom-rules="customRules"
         :loading="loading"
         :querying="querying"
+        :manual-balance-opening="manualBalanceOpening"
         :rules-loading="rulesLoading"
         :rules-loaded="rulesLoaded"
         :rules-error="rulesError"

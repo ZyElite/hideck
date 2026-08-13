@@ -13,6 +13,7 @@ const props = defineProps<{
   customRules: CarrierQueryRule[]
   loading: boolean
   querying: boolean
+  manualBalanceOpening: boolean
   rulesLoading: boolean
   rulesLoaded: boolean
   rulesError: string
@@ -50,6 +51,7 @@ watch(() => props.modelValue, async (open) => {
       :custom-rules="customRules"
       :loading="loading"
       :querying="querying"
+      :manual-balance-opening="manualBalanceOpening"
       :rules-loading="rulesLoading"
       :rules-loaded="rulesLoaded"
       :rules-error="rulesError"

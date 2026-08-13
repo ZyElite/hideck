@@ -57,3 +57,12 @@ test('manual balance mutations stay bound to the device that opened the dialog',
   assert.match(commands, /:device="manualBalanceDevice"/)
   assert.doesNotMatch(commands, /clearManualBalance\(selectedDevice\.value\)/)
 })
+
+test('manual balance dialog opens only after its device value is loaded', () => {
+  assert.match(commands, /const loaded = await loadManualBalance\(true, operationDeviceID\)/)
+  assert.match(commands, /if \(!loaded \|\| selectedDevice\.value !== operationDeviceID\) return/)
+  assert.match(commands, /manualBalanceDialogExisting\.value = manualBalance\.value/)
+  assert.match(commands, /:manual-balance-opening="manualBalanceOpening"/)
+  assert.match(panel, /:loading="manualBalanceOpening"/)
+  assert.match(panel, /querying \|\| manualBalanceOpening/)
+})

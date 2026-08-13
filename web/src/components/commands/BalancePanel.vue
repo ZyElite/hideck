@@ -30,6 +30,7 @@ const props = defineProps<{
   customRules: CarrierQueryRule[]
   loading: boolean
   querying: boolean
+  manualBalanceOpening: boolean
   rulesLoading: boolean
   rulesLoaded: boolean
   rulesError: string
@@ -93,7 +94,11 @@ function ruleRoute(rule: CarrierQueryRule): string {
       </div>
       <div class="query-actions">
         <el-button type="primary" :loading="querying" :disabled="!selectedDevice" @click="emit('query')">自动查询</el-button>
-        <el-button :disabled="!selectedDevice || querying" @click="emit('editManualBalance')">
+        <el-button
+          :loading="manualBalanceOpening"
+          :disabled="!selectedDevice || querying || manualBalanceOpening"
+          @click="emit('editManualBalance')"
+        >
           <el-icon><Edit24Regular /></el-icon>{{ manualQuery ? '编辑手动余额' : '手动设置' }}
         </el-button>
       </div>
