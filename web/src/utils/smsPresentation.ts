@@ -61,6 +61,10 @@ export function smsUnreadBadge(unreadCount: number, readLocally = false): number
   return Math.max(0, Number(unreadCount) || 0)
 }
 
+export function normalizeSmsUnreadCount(value: unknown): number {
+  return Math.max(0, Number(value) || 0)
+}
+
 export function smsPeerInitial(peer: string): string {
   return Array.from(cleanValue(peer))[0]?.toLocaleUpperCase() || '—'
 }

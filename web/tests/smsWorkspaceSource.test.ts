@@ -8,6 +8,7 @@ const threadList = readFileSync(new URL('../src/components/sms/SmsThreadListPane
 const conversationHeader = readFileSync(new URL('../src/components/sms/SmsConversationHeader.vue', import.meta.url), 'utf8')
 const messageTimeline = readFileSync(new URL('../src/components/sms/SmsMessageTimeline.vue', import.meta.url), 'utf8')
 const composer = readFileSync(new URL('../src/components/sms/SmsComposer.vue', import.meta.url), 'utf8')
+const smsService = readFileSync(new URL('../src/services/sms.ts', import.meta.url), 'utf8')
 
 test('SMS workspace uses one continuous shell with dedicated navigation panes', () => {
   assert.match(smsView, /<SmsDeviceRail/)
@@ -58,4 +59,14 @@ test('narrow SMS workspace keeps all three panes visible in the prototype compos
   assert.match(smsView, /grid-template-rows:\s*250px minmax\(620px, 1fr\)/)
   assert.match(smsView, /grid-template-columns:\s*52px minmax\(0, 1fr\)/)
   assert.match(smsView, /@media \(prefers-reduced-motion: reduce\)/)
+})
+
+test('unread presentation and history failures stay explicit', () => {
+  assert.match(smsService, /unreadCount: normalizeSmsUnreadCount\(contact\.unread_count\)/)
+  assert.match(smsView, /:items="presentedThreads"/)
+  assert.match(smsView, /unreadCount: isThreadUnreadForDisplay\(thread\)/)
+  assert.match(smsView, /messagesError\.value = result\.error/)
+  assert.match(smsView, /messagesError\.value = toAppError\(error\)/)
+  assert.doesNotMatch(smsView, /Ignore history load errors/)
+  assert.match(messageTimeline, /当前接口未返回此会话的历史短信/)
 })

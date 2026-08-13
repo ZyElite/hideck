@@ -4,6 +4,7 @@ import type { DeviceMgmtListItem } from '../src/types/api'
 import {
   createSmsConversationContext,
   createSmsDeviceChannels,
+  normalizeSmsUnreadCount,
   smsPeerInitial,
   smsUnreadBadge
 } from '../src/utils/smsPresentation'
@@ -66,4 +67,10 @@ test('unread badges and initials are explicit and bounded', () => {
   assert.equal(smsUnreadBadge(3, true), 0)
   assert.equal(smsPeerInitial(' giffgaff '), 'G')
   assert.equal(smsPeerInitial(''), '—')
+})
+
+test('normalizes backend unread counts without inventing negative values', () => {
+  assert.equal(normalizeSmsUnreadCount(7), 7)
+  assert.equal(normalizeSmsUnreadCount(-3), 0)
+  assert.equal(normalizeSmsUnreadCount(undefined), 0)
 })

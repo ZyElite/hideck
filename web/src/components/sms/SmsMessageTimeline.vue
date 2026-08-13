@@ -3,9 +3,11 @@ import { onUnmounted } from 'vue'
 import { Delete24Regular } from '@vicons/fluent'
 import type { SMSMessage } from '../../types/api'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
+import EmptyState from '../EmptyState.vue'
 
 defineProps<{
   groups: readonly Readonly<{ date: string; items: SMSMessage[] }>[]
+  loading: boolean
   canLoadMore: boolean
   loadingMore: boolean
   deletingId: number | null
@@ -67,6 +69,14 @@ onUnmounted(clearLongPress)
 
 <template>
   <div class="sms-timeline">
+    <div v-if="loading && groups.length === 0" class="sms-timeline-notice" role="status">正在加载短信历史…</div>
+    <EmptyState
+      v-else-if="groups.length === 0"
+      class="sms-timeline-empty"
+      title="暂无短信记录"
+      subtitle="当前接口未返回此会话的历史短信"
+    />
+
     <div v-if="canLoadMore" class="sms-load-more">
       <el-button text type="primary" :loading="loadingMore" @click="emit('loadMore')">加载更多</el-button>
     </div>
@@ -106,6 +116,8 @@ onUnmounted(clearLongPress)
 
 <style scoped>
 .sms-timeline { padding: 18px 22px 28px; }
+.sms-timeline-notice,
+.sms-timeline-empty { min-height: 240px; display: grid; place-items: center; color: var(--ui-text-muted); font-size: 12px; }
 .sms-load-more { display: flex; justify-content: center; margin-bottom: 12px; }
 .sms-day-group + .sms-day-group { margin-top: 22px; }
 .sms-day-label { width: max-content; margin: 0 auto 18px; padding: 4px 10px; display: block; border: 1px solid var(--ui-border); border-radius: 999px; color: var(--ui-text-muted); font: 10px "v-mono", monospace; }

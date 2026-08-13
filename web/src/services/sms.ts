@@ -3,6 +3,7 @@ import { callService } from './http'
 import type { ServiceResult } from '../types/domain'
 import type { DeviceMgmtListItem } from '../types/api'
 import type { SMSContactDTO, SMSMessageDTO, SmsThreadVM } from '../types/view-model'
+import { normalizeSmsUnreadCount } from '../utils/smsPresentation'
 
 export type SmsThreadQueryParams = {
   peer: string
@@ -42,6 +43,7 @@ function normalizeThread(contact: SMSContactDTO): SmsThreadVM {
     lastMessage: String(contact.last_content || '').slice(0, 80),
     lastDeviceName: contact.device_name,
     localPhone: contact.local_phone || '',
+    unreadCount: normalizeSmsUnreadCount(contact.unread_count),
     peerLower: String(contact.peer || '').toLowerCase(),
     lastMessageLower: String(contact.last_content || '').toLowerCase()
   }

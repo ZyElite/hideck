@@ -30,6 +30,7 @@ type SmsThread = {
   lastMessage: string
   lastDeviceName?: string
   localPhone?: string
+  unreadCount: number
   peerLower: string
   lastMessageLower: string
 }
@@ -50,6 +51,7 @@ const messagesError = ref<{ message: string; status?: number; method?: string; u
 const selectedDevice = ref<string>(typeof route.query.device === 'string' ? route.query.device : 'all')
 const selectedThreadKey = ref<string>(typeof route.query.contact === 'string' ? route.query.contact : '')
 const searchQuery = ref('')
+const unreadPresentationVersion = ref(0)
 
 const smsPageRef = ref<HTMLElement | null>(null)
 const smsPageWidth = ref(0)
@@ -73,15 +75,6 @@ function lastSeenKey(threadKey: string) {
   return `sms_thread_last_seen:${selectedDevice.value}:${threadKey}`
 }
 
-function getLastSeen(threadKey: string) {
-  try {
-    const v = localStorage.getItem(lastSeenKey(threadKey))
-    return v ? Number(v) || 0 : 0
-  } catch {
-    return 0
-  }
-}
-
 function setLastSeen(threadKey: string, ts: number) {
   try {
     localStorage.setItem(lastSeenKey(threadKey), String(ts || Date.now()))
@@ -97,6 +90,14 @@ const filteredThreads = computed(() => {
     if (t.peerLower.includes(q)) return true
     return t.lastMessageLower.includes(q)
   })
+})
+
+const presentedThreads = computed(() => {
+  void unreadPresentationVersion.value
+  return filteredThreads.value.map(thread => ({
+    ...thread,
+    unreadCount: isThreadUnreadForDisplay(thread) ? Math.max(0, Number(thread.unreadCount) || 0) : 0
+  }))
 })
 
 const selectedThread = computed(() => {
@@ -190,6 +191,16 @@ const conversationContext = computed(() => createSmsConversationContext({
   devices: devices.value
 }))
 
+function isThreadUnreadForDisplay(thread: SmsThread): boolean {
+  try {
+    const key = `sms_thread_last_seen:${selectedDevice.value}:${thread.key}`
+    const lastSeen = Number(localStorage.getItem(key) || 0)
+    return thread.lastTs > lastSeen
+  } catch {
+    return true
+  }
+}
+
 function normalizeQueryDevice(device: string) {
   const v = String(device || '').trim()
   if (!v || v === 'all') return undefined
@@ -208,15 +219,6 @@ function buildSmsQuery(device: string, contact?: string) {
 function markThreadSeen(t: SmsThread | null) {
   if (!t) return
   setLastSeen(t.key, t.lastTs)
-}
-
-function isUnread(t: SmsThread) {
-  return t.lastTs > getLastSeen(t.key)
-}
-
-function backToList() {
-  if (!selectedThreadKey.value) return
-  clearSelectedThread(true)
 }
 
 function scrollThreadToBottom() {
@@ -268,7 +270,10 @@ async function loadMoreHistory() {
       params.imsi = selectedThread.value.imsi
     }
     const result = await smsStore.fetchThread(params)
-    if (!result.ok) throw new Error(result.error.message)
+    if (!result.ok) {
+      messagesError.value = result.error
+      return
+    }
     const list = (result.data || []) as SMSMessage[]
     const merged = list.slice().sort((a, b) => parseTs(a.timestamp) - parseTs(b.timestamp) || a.id - b.id).concat(threadMessages.value)
     threadMessages.value = merged
@@ -281,8 +286,9 @@ async function loadMoreHistory() {
       const delta = Math.max(0, nextHeight - prevHeight)
       w.scrollTop = prevTop + delta
     })
-  } catch {
-    // Ignore history load errors to keep current thread state unchanged.
+    messagesError.value = null
+  } catch (error: unknown) {
+    messagesError.value = toAppError(error)
   } finally {
     loadingHistoryMore.value = false
   }
@@ -411,7 +417,7 @@ async function ensureThreadSelection(options: { syncRoute?: boolean; silent?: bo
   if (current) {
     const ok = await fetchThreadLatest(silent)
     if (ok) {
-      markThreadSeen(current)
+      await applyThreadSeen(current)
       if (scrollToBottom) scrollThreadToBottom()
     }
     return
@@ -451,8 +457,13 @@ async function selectThread(key: string, options: { syncRoute?: boolean; silent?
 
   const ok = await fetchThreadLatest(silent)
   if (!ok) return
-  markThreadSeen(t)
+  await applyThreadSeen(t)
   if (scrollToBottom) scrollThreadToBottom()
+}
+
+async function applyThreadSeen(thread: SmsThread) {
+  await markThreadSeen(thread)
+  unreadPresentationVersion.value += 1
 }
 
 async function handleSelectDevice(deviceId: string, options: { syncRoute?: boolean; silent?: boolean } = {}) {
@@ -710,7 +721,7 @@ async function confirmDeleteThread(thread: SmsThread) {
 
         <SmsThreadListPane
           v-model="searchQuery"
-          :items="filteredThreads"
+          :items="presentedThreads"
           :selected-key="selectedThreadKey"
           :loading="loading"
           :deleting-key="deletingThreadKey"
@@ -738,6 +749,7 @@ async function confirmDeleteThread(thread: SmsThread) {
           <div v-else ref="detailScrollbar" class="flex-1 min-h-0 overflow-y-auto sms-detail-scroll" @scroll="onDetailScroll">
             <SmsMessageTimeline
               :groups="selectedThreadGroups"
+              :loading="threadLoading"
               :can-load-more="canLoadMoreHistory"
               :loading-more="loadingHistoryMore"
               :deleting-id="deletingMessageId"
