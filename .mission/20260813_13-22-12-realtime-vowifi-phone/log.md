@@ -103,11 +103,13 @@
 
 ## LIVE-01: 验证 CTExcel 实机外呼与 IVR
 
-- **状态**: BLOCKED
-- **只读证据**: 目标主机 `192.168.11.179` 存在 `wwan1`，现有状态为 VoWiFi active、IMS registered、SMS ready。
-- **部署阻塞**: 主机运行的是 HEAD `43ab8a1` 的定制旧进程，`/api/phone/devices` 返回 404，HTTPS `:7576` 未监听；当前 `:7575` 和设备被并行硬件实验占用，未擅自中断替换。
-- **浏览器阻塞**: Browser 运行时无可用浏览器，无法完成实际 HTTPS 麦克风、听取 888 IVR、DTMF 听觉确认与 MP3 播放。
-- **安全结论**: 未拨号 `888`，未用 API 脚本或 mock 冒充浏览器实测。
+- **状态**: DONE（浏览器听觉交互受限）
+- **部署与设备**: 用户授权后在 `192.168.11.179` 隔离构建并部署电话版本；`wwan1` 明确为 CTExcel，VoWiFi、IMS 和 voice ready，HTTPS `7576`、WebRTC UDP `7580` 均监听，自动 CA 对服务器 IP 校验通过。
+- **首通发现与修复**: 第一通真实 `888` 已接通、按 `1` 并正常 BYE，但 MP3 因混音 WAV 缺少 `fmt ` chunk ID 失败；新增失败回归断言并修正 44 字节 WAV header，提交 `9bd74bb95160c14630ede51de8a3660bf0fa4fac` 后重部署。
+- **第二通实机结果**: Call-ID `vohive-433f9a3dd56029147d9c0edb43861b76`，`calling → connected → completed`，AMR，14 秒，`local_hangup`；发送一次 DTMF `1`，随后 BYE，无活动电话残留。
+- **媒体证据**: WebRTC 下行 584 包；PCAP 共 1304 包/14.12 秒，含 584 个下行 AMR、707 个上行 AMR和 13 个 PT101 RFC 4733 event-id=1 包，事件时长从 160 增至 1600，并以 3 个结束包收尾。按键前后 PCMU RMS 为 440/2544。
+- **录音证据**: 历史 `recording_error` 为空；认证 HTTPS Range 返回 206。MP3 为 8kHz 单声道、32kbps、57600 字节、14.4 秒，SHA-256 `229b682bebe8eb6c149393d413ca6f61690589c1c2bdc18a99693683e56889ec`；PCAP 与 MP3 名均已持久化。
+- **验证限制**: Browser MCP 已实际调用并按排障流程确认 runtime 列表为空，无法从真实页面点击、人工听取菜单语义或播放录音；没有把 RTP 能量变化写成人工听觉确认。
 
 ## LIVE-02: 验证授权实机来电通知一致性
 
