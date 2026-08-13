@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import BalancePanel from './BalancePanel.vue'
 import type { DeviceMgmtListItem } from '../../types/api'
-import type { BalanceQuery } from '../../types/commands'
+import type { BalanceQuery, CarrierQueryRule } from '../../types/commands'
 
-defineProps<{
+const props = defineProps<{
   modelValue: boolean
   devices: DeviceMgmtListItem[]
   selectedDevice: string
   queries: BalanceQuery[]
+  builtInRules: CarrierQueryRule[]
+  customRules: CarrierQueryRule[]
   loading: boolean
   querying: boolean
 }>()
@@ -20,47 +22,46 @@ const emit = defineEmits<{
   editRules: []
 }>()
 
-const narrowViewport = ref(false)
-const direction = computed<'btt' | 'rtl'>(() => narrowViewport.value ? 'btt' : 'rtl')
-const size = computed(() => narrowViewport.value ? '70%' : '400px')
-let mediaQuery: MediaQueryList | null = null
+const rail = ref<HTMLElement | null>(null)
 
-onMounted(() => {
-  mediaQuery = window.matchMedia('(max-width: 640px)')
-  narrowViewport.value = mediaQuery.matches
-  mediaQuery.addEventListener('change', updateViewport)
+watch(() => props.modelValue, async (open) => {
+  if (!open) return
+  await nextTick()
+  rail.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  rail.value?.focus({ preventScroll: true })
+  emit('update:modelValue', false)
 })
-
-onUnmounted(() => mediaQuery?.removeEventListener('change', updateViewport))
-
-function updateViewport(event: MediaQueryListEvent) {
-  narrowViewport.value = event.matches
-}
 </script>
 
 <template>
-  <el-drawer
-    :model-value="modelValue"
-    class="balance-drawer"
-    :with-header="false"
-    :direction="direction"
-    :size="size"
-    append-to-body
-    @update:model-value="emit('update:modelValue', $event)"
-  >
+  <aside id="command-balance-rail" ref="rail" class="balance-rail" tabindex="-1">
     <BalancePanel
       :selected-device="selectedDevice"
       :devices="devices"
       :queries="queries"
+      :built-in-rules="builtInRules"
+      :custom-rules="customRules"
       :loading="loading"
       :querying="querying"
       @update:selected-device="emit('update:selectedDevice', $event)"
       @query="emit('query')"
       @edit-rules="emit('editRules')"
     />
-  </el-drawer>
+  </aside>
 </template>
 
-<style>
-.balance-drawer .el-drawer__body { padding: 0; overflow: hidden; }
+<style scoped>
+.balance-rail {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--ui-border);
+  background: color-mix(in srgb, var(--ui-surface-strong) 72%, var(--ui-surface));
+  outline: none;
+}
+.balance-rail:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ui-primary) 34%, transparent); }
+@media (max-width: 1023px) {
+  .balance-rail { min-height: 560px; border-top: 1px solid var(--ui-border); border-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .balance-rail { scroll-behavior: auto; } }
 </style>

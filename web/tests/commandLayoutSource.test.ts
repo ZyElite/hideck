@@ -9,13 +9,16 @@ const commandTimeline = await readFile(new URL('../src/components/commands/Comma
 const commandAudioPlayer = await readFile(new URL('../src/components/commands/CommandAudioPlayer.vue', import.meta.url), 'utf8')
 const commandComposer = await readFile(new URL('../src/components/commands/CommandComposer.vue', import.meta.url), 'utf8')
 
-test('command workspace keeps balance inside chat and a responsive history drawer', () => {
+test('command workspace keeps an inline responsive balance rail beside the conversation', () => {
   const chatIndex = commandsView.indexOf('<CommandChat')
+  const balanceIndex = commandsView.indexOf('<BalanceDrawer')
 
   assert.ok(chatIndex >= 0, 'independent chat is present')
-  assert.match(commandsView, /<BalanceDrawer/)
-  assert.match(balanceDrawer, /<el-drawer[\s\S]*<BalancePanel/)
-  assert.match(balanceDrawer, /narrowViewport\.value \? 'btt' : 'rtl'/)
+  assert.ok(balanceIndex > chatIndex, 'balance rail follows chat inside the workspace')
+  assert.match(balanceDrawer, /class="balance-rail"/)
+  assert.match(balanceDrawer, /<BalancePanel/)
+  assert.doesNotMatch(balanceDrawer, /<el-drawer/)
+  assert.match(commandsView, /grid-template-columns:\s*minmax\(0, 1fr\) clamp\(300px, 25vw, 360px\)/)
   assert.match(commandChat, /Wallet24Regular/)
   assert.match(commandChat, /:events="visibleEvents"/)
   assert.match(commandChat, /:balance-queries="visibleBalanceQueries"/)

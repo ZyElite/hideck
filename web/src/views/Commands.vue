@@ -248,18 +248,19 @@ async function deleteRule(id: string) {
         @submit="execute"
         @dangerous="openDangerous"
       />
+      <BalanceDrawer
+        v-model="balanceOpen"
+        v-model:selected-device="selectedDevice"
+        :devices="devices"
+        :queries="balances"
+        :built-in-rules="builtInRules"
+        :custom-rules="customRules"
+        :loading="loading"
+        :querying="querying"
+        @query="startBalance"
+        @edit-rules="rulesOpen = true"
+      />
     </div>
-
-    <BalanceDrawer
-      v-model="balanceOpen"
-      v-model:selected-device="selectedDevice"
-      :devices="devices"
-      :queries="balances"
-      :loading="loading"
-      :querying="querying"
-      @query="startBalance"
-      @edit-rules="rulesOpen = true"
-    />
 
     <el-dialog
       :model-value="!!dangerousDefinition"
@@ -300,12 +301,25 @@ async function deleteRule(id: string) {
 </template>
 
 <style scoped>
-.commands-page { min-width: 0; }
-.commands-layout { height: calc(100dvh - 112px); min-height: 520px; }
+.commands-page { min-width: 0; min-height: 0; }
+.commands-layout {
+  min-width: 0;
+  height: calc(100dvh - 112px);
+  min-height: 540px;
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-surface);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 25vw, 360px);
+}
+.commands-layout :deep(.chat-shell) { border: 0; border-radius: 0; }
 @media (max-width: 1023px) {
-  .commands-layout { height: 620px; min-height: 520px; }
+  .commands-layout { height: auto; min-height: 0; grid-template-columns: minmax(0, 1fr); overflow: visible; }
+  .commands-layout :deep(.chat-shell) { height: 690px; min-height: 690px; }
 }
 @media (max-width: 640px) {
-  .commands-layout { height: 620px; min-height: 480px; margin: 0 -4px; }
+  .commands-layout { margin: 0 -4px; }
+  .commands-layout :deep(.chat-shell) { height: 720px; min-height: 720px; }
 }
 </style>

@@ -1,33 +1,35 @@
 <script setup lang="ts">
 import type { BalanceQuery } from '../../types/commands'
-import { balanceResultText, presentBalanceState } from '../../utils/commandPresentation'
-import { Wallet24Regular } from '@vicons/fluent'
+import {
+  balanceResultText,
+  balanceTransportLabel,
+  presentBalanceState
+} from '../../utils/commandPresentation'
 
 defineProps<{ query: BalanceQuery }>()
-
 </script>
 
 <template>
-  <div class="balance-message" :class="query.state">
-    <div class="balance-heading">
-      <span><el-icon><Wallet24Regular /></el-icon>运营商余额</span>
-      <span class="balance-state">{{ presentBalanceState(query).label }}</span>
+  <div class="balance-message" :class="`tone-${presentBalanceState(query).tone}`">
+    <div class="balance-result-row">
+      <strong>{{ balanceResultText(query) }}</strong>
+      <span>{{ presentBalanceState(query).label }}</span>
     </div>
-    <strong>{{ balanceResultText(query) }}</strong>
-    <span class="balance-device">{{ query.device_id }}</span>
+    <span class="balance-device">{{ query.device_id }} · {{ balanceTransportLabel(query) }}</span>
     <pre v-if="query.raw_response">{{ query.raw_response }}</pre>
     <p v-if="query.error">{{ query.error }}</p>
   </div>
 </template>
 
 <style scoped>
-.balance-message { min-width: 0; padding-top: 4px; display: grid; gap: 7px; }
-.balance-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #0f766e; font-size: 12px; }
-.balance-heading > span:first-child { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
-.balance-state { color: #64748b; font-size: 11px; }
-.balance-message strong { font-size: 14px; overflow-wrap: anywhere; }
-.balance-device { color: #64748b; font: 11px "v-mono", monospace; }
-.balance-message pre { margin: 1px 0 0; padding-top: 8px; border-top: 1px solid var(--ui-border); font: 12px/1.5 "v-mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.balance-message p { margin: 0; color: #dc2626; font-size: 12px; overflow-wrap: anywhere; }
-.balance-message.failed .balance-heading, .balance-message.timed_out .balance-heading { color: #dc2626; }
+.balance-message { min-width: 0; padding-top: 5px; display: grid; gap: 6px; color: var(--ui-primary); }
+.balance-result-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.balance-result-row strong { color: currentColor; font-size: 16px; overflow-wrap: anywhere; }
+.balance-result-row span { color: currentColor; font-size: 10px; }
+.balance-device { color: var(--ui-text-subtle); font: 10px "v-mono", monospace; }
+.balance-message pre { margin: 1px 0 0; padding-top: 7px; border-top: 1px solid var(--ui-border); color: var(--ui-text-muted); font: 11px/1.5 "v-mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.balance-message p { margin: 0; color: var(--ui-danger); font-size: 11px; overflow-wrap: anywhere; }
+.tone-waiting, .tone-running { color: var(--ui-warning); }
+.tone-parsed { color: var(--ui-info); }
+.tone-danger { color: var(--ui-danger); }
 </style>
