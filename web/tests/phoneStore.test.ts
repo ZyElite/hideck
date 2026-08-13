@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createPinia, setActivePinia } from 'pinia'
 import type { PhoneCall, PhoneEvent } from '../src/services/phone'
 import { usePhoneStore } from '../src/stores/phone'
-import { normalizeCallOwnership, phoneErrorMessage } from '../src/utils/phone'
+import { normalizeCallOwnership, phoneErrorMessage, shouldRefreshCallMedia } from '../src/utils/phone'
 
 function call(mediaId: string, overrides: Partial<PhoneCall> = {}): PhoneCall {
   return {
@@ -45,4 +45,11 @@ test('surfaces API error messages without hiding the underlying failure', () => 
   const error = { response: { data: { message: 'phone: media session is unavailable' } } }
   assert.equal(phoneErrorMessage(error, 'fallback'), 'phone: media session is unavailable')
   assert.equal(phoneErrorMessage(new Error('network down'), 'fallback'), 'network down')
+})
+
+test('refreshes ringing outbound media but leaves an unclaimed incoming call unattached', () => {
+  assert.equal(shouldRefreshCallMedia(call('old', { status: 'ringing' }), 'new'), true)
+  assert.equal(shouldRefreshCallMedia(call('', { direction: 'inbound', status: 'ringing' }), 'new'), false)
+  assert.equal(shouldRefreshCallMedia(call('old', { direction: 'inbound', status: 'ringing' }), 'new'), true)
+  assert.equal(shouldRefreshCallMedia(call('new'), 'new'), false)
 })

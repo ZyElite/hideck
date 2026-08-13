@@ -7,7 +7,7 @@ import {
   savePhoneControl,
   type SavedPhoneControl
 } from '../services/phone-session'
-import { normalizeCallOwnership, phoneErrorMessage } from '../utils/phone'
+import { normalizeCallOwnership, phoneErrorMessage, shouldRefreshCallMedia } from '../utils/phone'
 
 const ACTIVE_STATUSES = new Set(['calling', 'ringing', 'connected'])
 
@@ -113,7 +113,7 @@ export const usePhoneStore = defineStore('phone', {
       const current = this.currentCall
       const previous: SavedPhoneControl = { mediaId: this.mediaId, lease: this.lease }
       const prepared = await this.prepareMedia()
-      if (!current || current.status === 'ringing' || current.media_id === prepared.mediaId) return
+      if (!current || !shouldRefreshCallMedia(current, prepared.mediaId)) return
       try {
         const result = await phoneService.refreshMedia(current.call_id, prepared.mediaId, previous.lease)
         this.lease = result.lease

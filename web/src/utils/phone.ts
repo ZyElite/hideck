@@ -42,6 +42,11 @@ export function normalizeCallOwnership(call: PhoneCall, mediaId: string): PhoneC
   return { ...call, read_only: call.media_id !== mediaId }
 }
 
+export function shouldRefreshCallMedia(call: PhoneCall | undefined, mediaId: string) {
+  if (!call || call.media_id === mediaId) return false
+  return !(call.direction === 'inbound' && call.status === 'ringing' && !call.media_id)
+}
+
 export function phoneErrorMessage(error: unknown, fallback: string) {
   const responseMessage = (error as { response?: { data?: { message?: unknown } } })?.response?.data?.message
   if (typeof responseMessage === 'string' && responseMessage) return responseMessage
