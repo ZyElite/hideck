@@ -780,6 +780,7 @@ func (a *Agent) finalizeActiveCall(call *Call) error {
 	}
 	call.claimTerminalFinalization()
 	err := call.finalizeResourcesCurrent()
+	a.emitCallFinalized(call)
 	a.mu.Lock()
 	if a.activeCall == call {
 		a.activeCall = nil
@@ -791,6 +792,21 @@ func (a *Agent) finalizeActiveCall(call *Call) error {
 	}
 	a.mu.Unlock()
 	return err
+}
+
+func (a *Agent) emitCallFinalized(call *Call) {
+	call.finalizedEventOnce.Do(func() {
+		pcapPath, audioPath, codec, captureErr := call.captureResult()
+		recordingError := ""
+		if captureErr != nil {
+			recordingError = captureErr.Error()
+		}
+		a.emit(events.EventCallFinalized{
+			DevID: a.deviceID, CallID: call.CallID(), PCAPPath: pcapPath,
+			AudioPath: audioPath, AudioCodec: codec, RecordingError: recordingError,
+			Time: time.Now(),
+		})
+	})
 }
 
 // register registers the device with the IMS network.

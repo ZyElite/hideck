@@ -173,7 +173,7 @@ func (a *Agent) completeOutboundMedia(call *Call, response imscore.SIPResponse) 
 	}
 	call.setRemoteSDP(string(response.Body), string(clientAnswer))
 	a.enableMediaMonitor(call)
-	return nil
+	return relay.StartCurrent()
 }
 
 func finalOrEarlyMediaResponse(call *Call, response imscore.SIPResponse) imscore.SIPResponse {

@@ -119,6 +119,7 @@ type Call struct {
 	terminalFinalized    bool
 	captureBasePath      string
 	cleanupOnce          sync.Once
+	finalizedEventOnce   sync.Once
 	cleanupErr           error
 }
 
@@ -135,6 +136,7 @@ type Gateway struct {
 	epoch           uint64
 	ctx             context.Context
 	cancel          context.CancelFunc
+	incomingSeen    map[string]struct{}
 }
 
 // CallNotifier is the v1.5.5 incoming-call notification contract.
@@ -219,6 +221,7 @@ type CallSnapshot struct {
 	StartTime time.Time
 	EndTime   time.Time
 	Duration  time.Duration
+	ClientSDP string
 }
 
 // AgentSnapshot is a point-in-time view of the agent.

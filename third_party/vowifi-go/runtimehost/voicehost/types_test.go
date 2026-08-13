@@ -219,16 +219,14 @@ func TestGatewaySimulateCallReturnsMediaFailure(t *testing.T) {
 
 func TestGatewayExposesIncomingCallLifecycle(t *testing.T) {
 	gateway := NewGateway()
-	var delivered IncomingCall
-	gateway.SetIncomingCallHandler(func(call IncomingCall) { delivered = call })
+	delivered := make(chan IncomingCall, 1)
+	gateway.SetIncomingCallHandler(func(call IncomingCall) { delivered <- call })
 	agent := &fakeIncomingAgent{}
 	if err := gateway.SetAgent("dev-1", agent); err != nil {
 		t.Fatal(err)
 	}
 	agent.handler(IncomingCall{DeviceID: "dev-1", CallID: "incoming-1"})
-	if delivered.CallID != "incoming-1" {
-		t.Fatalf("delivered call = %+v", delivered)
-	}
+	assertIncomingCall(t, delivered, "incoming-1")
 	calls, err := gateway.IncomingCalls("dev-1")
 	if err != nil || len(calls) != 1 || calls[0].CallID != "incoming-1" {
 		t.Fatalf("IncomingCalls calls=%+v err=%v", calls, err)

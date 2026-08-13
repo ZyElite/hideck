@@ -180,6 +180,9 @@ func (g *Gateway) ensureMapsLocked() {
 	if g.entryWorkers == nil {
 		g.entryWorkers = make(map[string]*gatewayEntryWorker)
 	}
+	if g.incomingSeen == nil {
+		g.incomingSeen = make(map[string]struct{})
+	}
 }
 
 func (g *Gateway) startAgent(agent *Agent) error {
@@ -209,9 +212,27 @@ func (g *Gateway) forwardAgentEvent(event events.Event) {
 	if !ok {
 		return
 	}
-	if notifier := g.GetNotifier(); notifier != nil {
-		notifier.NotifyIncomingCall(incoming.DevID, incoming.Caller, incoming.Callee)
+	if !g.markIncomingNotification(incoming.CallID) {
+		return
 	}
+	if notifier := g.GetNotifier(); notifier != nil {
+		go notifier.NotifyIncomingCall(incoming.DevID, incoming.Caller, incoming.Callee)
+	}
+}
+
+func (g *Gateway) markIncomingNotification(callID string) bool {
+	callID = strings.TrimSpace(callID)
+	if callID == "" {
+		return true
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.ensureMapsLocked()
+	if _, exists := g.incomingSeen[callID]; exists {
+		return false
+	}
+	g.incomingSeen[callID] = struct{}{}
+	return true
 }
 
 func (g *Gateway) dispatchEvent(ctx context.Context, event events.Event) {

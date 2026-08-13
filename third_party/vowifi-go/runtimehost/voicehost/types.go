@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice"
+	"github.com/iniwex5/vowifi-go/runtimehost/eventhost"
 )
 
 const (
@@ -56,22 +58,47 @@ type Profile struct {
 type Gateway struct {
 	inner *voice.Gateway
 
-	mu              sync.RWMutex
-	agents          map[string]voiceAgent
-	currentClient   ClientAdapterCurrent
-	incomingHandler func(IncomingCall)
-	innerDevices    map[string]struct{}
-	pcapDirectory   string
-	audioTranscoder AudioTranscoder
-	started         bool
+	mu                   sync.RWMutex
+	agents               map[string]voiceAgent
+	currentClient        ClientAdapterCurrent
+	innerDevices         map[string]struct{}
+	pcapDirectory        string
+	audioTranscoder      AudioTranscoder
+	started              bool
+	nextSubscriptionID   uint64
+	incomingLegacy       *incomingSubscription
+	incomingSubscribers  map[uint64]*incomingSubscription
+	callEventSubscribers map[uint64]*callEventSubscription
+	incomingSeen         map[string]struct{}
+	eventDispatcher      eventhost.Dispatcher
+}
+
+// CallEvent is the stable host projection of voice lifecycle events.
+type CallEvent struct {
+	Type           string    `json:"type"`
+	DeviceID       string    `json:"device_id"`
+	CallID         string    `json:"call_id"`
+	Caller         string    `json:"caller,omitempty"`
+	Callee         string    `json:"callee,omitempty"`
+	Reason         string    `json:"reason,omitempty"`
+	Direction      string    `json:"direction,omitempty"`
+	State          string    `json:"state,omitempty"`
+	PCAPPath       string    `json:"pcap_path,omitempty"`
+	AudioPath      string    `json:"audio_path,omitempty"`
+	AudioCodec     string    `json:"audio_codec,omitempty"`
+	RecordingError string    `json:"recording_error,omitempty"`
+	Time           time.Time `json:"time"`
 }
 
 // NewGateway is additive; the original Gateway was constructed by runtimehost.
 func NewGateway() *Gateway {
 	return &Gateway{
-		inner:        voice.NewGateway(nil),
-		agents:       make(map[string]voiceAgent),
-		innerDevices: make(map[string]struct{}),
+		inner:                voice.NewGateway(nil),
+		agents:               make(map[string]voiceAgent),
+		innerDevices:         make(map[string]struct{}),
+		incomingSubscribers:  make(map[uint64]*incomingSubscription),
+		callEventSubscribers: make(map[uint64]*callEventSubscription),
+		incomingSeen:         make(map[string]struct{}),
 	}
 }
 

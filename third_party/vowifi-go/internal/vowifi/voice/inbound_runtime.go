@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/imscore"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
@@ -94,6 +95,7 @@ func (a *Agent) handleInboundInvite(request imscore.InboundVoiceRequest, call *C
 	var err error
 	call, created, err = a.reserveInboundCall(request)
 	if err != nil {
+		a.emitCallBusy(request)
 		return voiceResult(486), nil
 	}
 	if !created {
@@ -109,6 +111,14 @@ func (a *Agent) handleInboundInvite(request imscore.InboundVoiceRequest, call *C
 	a.notifyIncomingCall(call)
 	a.maybeStartInboundClient(call)
 	return voiceResult(0), nil
+}
+
+func (a *Agent) emitCallBusy(request imscore.InboundVoiceRequest) {
+	a.emit(events.EventCallBusy{
+		DevID: a.deviceID, CallID: request.CallID,
+		Caller: voiceHeaderURI(request.From), Callee: voiceHeaderURI(request.To),
+		Time: time.Now(),
+	})
 }
 
 func (a *Agent) beginInboundInvite(call *Call, request imscore.InboundVoiceRequest) (int, error) {

@@ -55,9 +55,8 @@ func (g *Gateway) attachDevice(deviceID string, endpoint imsendpoint.Endpoint) e
 		g.innerDevices = make(map[string]struct{})
 	}
 	g.innerDevices[deviceID] = struct{}{}
-	handler := g.incomingHandler
 	g.mu.Unlock()
-	bindIncomingVoiceAgent(g.inner.GetAgent(deviceID), handler)
+	bindIncomingVoiceAgent(g.inner.GetAgent(deviceID), g.publishIncoming)
 	return nil
 }
 

@@ -56,7 +56,43 @@ func (g *Gateway) SetIncomingCallHandler(handler func(IncomingCall)) {
 		return
 	}
 	g.mu.Lock()
-	g.incomingHandler = handler
+	previous := g.incomingLegacy
+	g.incomingLegacy = nil
+	if handler != nil {
+		g.incomingLegacy = newIncomingSubscription(handler)
+	}
+	agents := make([]voiceAgent, 0, len(g.agents))
+	for _, agent := range g.agents {
+		agents = append(agents, agent)
+	}
+	deviceIDs := make([]string, 0, len(g.innerDevices))
+	for deviceID := range g.innerDevices {
+		deviceIDs = append(deviceIDs, deviceID)
+	}
+	g.mu.Unlock()
+	previous.close()
+	for _, agent := range agents {
+		g.bindIncomingHandlerCurrent(agent)
+	}
+	for _, deviceID := range deviceIDs {
+		bindIncomingVoiceAgent(g.internalAgent(deviceID), g.publishIncoming)
+	}
+}
+
+// SubscribeIncomingCalls adds an independent, cancelable incoming-call slot.
+// Delivery is buffered so a slow UI or notifier never blocks the SIP actor.
+func (g *Gateway) SubscribeIncomingCalls(handler func(IncomingCall)) func() {
+	if g == nil || handler == nil {
+		return func() {}
+	}
+	subscription := newIncomingSubscription(handler)
+	g.mu.Lock()
+	g.nextSubscriptionID++
+	id := g.nextSubscriptionID
+	if g.incomingSubscribers == nil {
+		g.incomingSubscribers = make(map[uint64]*incomingSubscription)
+	}
+	g.incomingSubscribers[id] = subscription
 	agents := make([]voiceAgent, 0, len(g.agents))
 	for _, agent := range g.agents {
 		agents = append(agents, agent)
@@ -70,8 +106,50 @@ func (g *Gateway) SetIncomingCallHandler(handler func(IncomingCall)) {
 		g.bindIncomingHandlerCurrent(agent)
 	}
 	for _, deviceID := range deviceIDs {
-		bindIncomingVoiceAgent(g.internalAgent(deviceID), handler)
+		bindIncomingVoiceAgent(g.internalAgent(deviceID), g.publishIncoming)
 	}
+	return func() {
+		g.mu.Lock()
+		if current := g.incomingSubscribers[id]; current == subscription {
+			delete(g.incomingSubscribers, id)
+		}
+		g.mu.Unlock()
+		subscription.close()
+	}
+}
+
+func (g *Gateway) publishIncoming(call IncomingCall) {
+	if g == nil || !g.markIncomingSeen(call.CallID) {
+		return
+	}
+	g.mu.RLock()
+	legacy := g.incomingLegacy
+	subscribers := make([]*incomingSubscription, 0, len(g.incomingSubscribers))
+	for _, subscription := range g.incomingSubscribers {
+		subscribers = append(subscribers, subscription)
+	}
+	g.mu.RUnlock()
+	legacy.enqueue(call)
+	for _, subscription := range subscribers {
+		subscription.enqueue(call)
+	}
+}
+
+func (g *Gateway) markIncomingSeen(callID string) bool {
+	callID = strings.TrimSpace(callID)
+	if callID == "" {
+		return true
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.incomingSeen == nil {
+		g.incomingSeen = make(map[string]struct{})
+	}
+	if _, exists := g.incomingSeen[callID]; exists {
+		return false
+	}
+	g.incomingSeen[callID] = struct{}{}
+	return true
 }
 
 // IncomingCalls returns the active inbound calls for a device.
@@ -146,10 +224,7 @@ func (g *Gateway) bindIncomingHandlerCurrent(agent voiceAgent) {
 	if !ok {
 		return
 	}
-	g.mu.RLock()
-	handler := g.incomingHandler
-	g.mu.RUnlock()
-	incoming.SetIncomingCallHandler(handler)
+	incoming.SetIncomingCallHandler(g.publishIncoming)
 }
 
 func bindIncomingVoiceAgent(agent *voice.Agent, handler func(IncomingCall)) {

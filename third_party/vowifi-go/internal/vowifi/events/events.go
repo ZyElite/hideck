@@ -188,6 +188,26 @@ type EventCallMediaUpdated struct {
 	Time      time.Time
 }
 
+// EventCallBusy is published when an inbound INVITE cannot reserve its device.
+type EventCallBusy struct {
+	DevID  string
+	CallID string
+	Caller string
+	Callee string
+	Time   time.Time
+}
+
+// EventCallFinalized is published after media and capture files are closed.
+type EventCallFinalized struct {
+	DevID          string
+	CallID         string
+	PCAPPath       string
+	AudioPath      string
+	AudioCodec     string
+	RecordingError string
+	Time           time.Time
+}
+
 // Type returns "SMSReceived".
 func (e EventSMSReceived) Type() string { return "SMSReceived" }
 
@@ -283,3 +303,15 @@ func (e EventCallMediaUpdated) Type() string { return "CallMediaUpdated" }
 
 // DeviceID returns the device ID.
 func (e EventCallMediaUpdated) DeviceID() string { return e.DevID }
+
+// Type returns "CallBusy".
+func (e EventCallBusy) Type() string { return "CallBusy" }
+
+// DeviceID returns the device ID.
+func (e EventCallBusy) DeviceID() string { return e.DevID }
+
+// Type returns "CallFinalized".
+func (e EventCallFinalized) Type() string { return "CallFinalized" }
+
+// DeviceID returns the device ID.
+func (e EventCallFinalized) DeviceID() string { return e.DevID }
