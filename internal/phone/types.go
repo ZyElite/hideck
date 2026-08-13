@@ -40,6 +40,15 @@ type AudioTranscoder interface {
 	ToMP3(context.Context, string) (string, error)
 }
 
+type RealtimeCodec interface {
+	SampleRate() int
+	Decode(payload []byte) ([]int16, error)
+	Encode(pcm []int16) ([]byte, error)
+	Close() error
+}
+
+type RealtimeCodecFactory func(codec, fmtp string) (RealtimeCodec, error)
+
 type ResultNotifier interface {
 	NotifyCallResult(deviceID, peer, direction, status, reason string, at time.Time)
 }
@@ -52,6 +61,8 @@ type ServiceOptions struct {
 	RecordingDir     string
 	WebRTCUDPAddress string
 	ICEServers       []string
+	RealtimeCodecs   []string
+	NewRealtimeCodec RealtimeCodecFactory
 	RecoveryGrace    time.Duration
 	ResolveICCID     func(string) string
 }

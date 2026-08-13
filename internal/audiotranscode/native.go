@@ -44,6 +44,12 @@ func openLibrary(candidates []string) (uintptr, error) {
 	return 0, errors.Join(failures...)
 }
 
+func closeLibrary(handle uintptr) {
+	if handle != 0 {
+		_ = purego.Dlclose(handle)
+	}
+}
+
 func registerNativeSymbol(handle uintptr, target any, name string) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {

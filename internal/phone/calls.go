@@ -81,7 +81,10 @@ func (s *Service) Answer(ctx context.Context, request ControlRequest) (CallView,
 	incomingSDP, deviceID, callID := call.incomingSDP, call.view.DeviceID, call.view.CallID
 	s.mu.RUnlock()
 	if err := media.Attach(incomingSDP); err != nil {
-		return CallView{}, err
+		rejectErr := s.gateway.RejectIncomingCall(voicehost.RejectRequest{
+			DeviceID: deviceID, CallID: callID, StatusCode: 488,
+		})
+		return CallView{}, errors.Join(err, rejectErr)
 	}
 	_, err = s.gateway.AnswerIncomingCall(ctx, voicehost.AnswerRequest{
 		DeviceID: deviceID, CallID: callID, SDP: media.PlainSDP(),

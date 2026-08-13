@@ -9,8 +9,11 @@ import (
 )
 
 const (
-	mediaPacketBuffer = 32
-	jitterTick        = 20 * time.Millisecond
+	mediaPacketBuffer      = 32
+	jitterTick             = 20 * time.Millisecond
+	browserClockRate       = 8000
+	audioFramesPerSecond   = 50
+	browserSamplesPerFrame = browserClockRate / audioFramesPerSecond
 )
 
 func (s *MediaSession) forwardBrowserRTP(track *webrtc.TrackRemote) {
@@ -19,12 +22,17 @@ func (s *MediaSession) forwardBrowserRTP(track *webrtc.TrackRemote) {
 		if err != nil {
 			return
 		}
-		endpoint, ok := s.endpoint()
+		endpoint, codec, ok := s.endpoint()
 		if !ok {
 			continue
 		}
-		transcodeG711(packet.Payload, "PCMU", endpoint.Codec)
+		packet.Payload, err = browserPayloadForIMS(packet.Payload, endpoint, codec)
+		if err != nil {
+			s.lost.Add(1)
+			continue
+		}
 		packet.PayloadType = endpoint.PayloadType
+		packet.Timestamp = scaleTimestamp(packet.Timestamp, browserClockRate, endpoint.ClockRate)
 		raw, err := packet.Marshal()
 		if err != nil {
 			continue
@@ -74,11 +82,18 @@ func (s *MediaSession) forwardIMSRTP() {
 }
 
 func (s *MediaSession) writeBrowserRTP(packet *rtp.Packet) {
-	endpoint, ok := s.endpoint()
-	if ok {
-		transcodeG711(packet.Payload, endpoint.Codec, "PCMU")
+	endpoint, codec, ok := s.endpoint()
+	if !ok {
+		return
 	}
+	payload, err := imsPayloadForBrowser(packet.Payload, endpoint, codec)
+	if err != nil {
+		s.lost.Add(1)
+		return
+	}
+	packet.Payload = payload
 	packet.PayloadType = pcmPayloadType
+	packet.Timestamp = scaleTimestamp(packet.Timestamp, endpoint.ClockRate, browserClockRate)
 	if err := s.track.WriteRTP(packet); err == nil {
 		s.fromIMS.Add(1)
 	}
@@ -104,29 +119,89 @@ func (s *MediaSession) readIMSRTP(destination chan<- *rtp.Packet) {
 	}
 }
 
-func (s *MediaSession) endpoint() (rtpEndpoint, bool) {
+func (s *MediaSession) endpoint() (rtpEndpoint, RealtimeCodec, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.remote, s.attached
+	return s.remote, s.realtimeCodec, s.attached
 }
 
 func (s *MediaSession) primeRelay() error {
-	endpoint, ok := s.endpoint()
+	endpoint, codec, ok := s.endpoint()
 	if !ok {
 		return errors.New("phone: media is not attached")
 	}
+	payload := make([]byte, browserSamplesPerFrame)
+	for index := range payload {
+		payload[index] = 0xff
+	}
+	payload, err := browserPayloadForIMS(payload, endpoint, codec)
+	if err != nil {
+		return err
+	}
 	packet := &rtp.Packet{Header: rtp.Header{
 		Version: 2, PayloadType: endpoint.PayloadType, SequenceNumber: 1,
-		Timestamp: 160, SSRC: 0x564f4849,
-	}, Payload: make([]byte, 160)}
-	for index := range packet.Payload {
-		packet.Payload[index] = 0xff
-	}
-	transcodeG711(packet.Payload, "PCMU", endpoint.Codec)
+		Timestamp: uint32(endpoint.ClockRate / 50), SSRC: 0x564f4849,
+	}, Payload: payload}
 	raw, err := packet.Marshal()
 	if err != nil {
 		return err
 	}
 	_, err = s.rtpConn.WriteToUDP(raw, endpoint.Address)
 	return err
+}
+
+func browserPayloadForIMS(payload []byte, endpoint rtpEndpoint, codec RealtimeCodec) ([]byte, error) {
+	if len(payload) != browserSamplesPerFrame {
+		return nil, errors.New("phone: browser PCMU packet must contain one 20ms frame")
+	}
+	if endpoint.Codec == "PCMU" {
+		return payload, nil
+	}
+	if endpoint.Codec == "PCMA" {
+		transcodeG711(payload, "PCMU", "PCMA")
+		return payload, nil
+	}
+	if codec == nil {
+		return nil, errors.New("phone: realtime encoder is unavailable")
+	}
+	pcm, err := resamplePCM(decodePCMU(payload), browserClockRate, codec.SampleRate())
+	if err != nil {
+		return nil, err
+	}
+	return codec.Encode(pcm)
+}
+
+func imsPayloadForBrowser(payload []byte, endpoint rtpEndpoint, codec RealtimeCodec) ([]byte, error) {
+	if endpoint.Codec == "PCMU" {
+		if len(payload) != browserSamplesPerFrame {
+			return nil, errors.New("phone: IMS PCMU packet must contain one 20ms frame")
+		}
+		return payload, nil
+	}
+	if endpoint.Codec == "PCMA" {
+		if len(payload) != browserSamplesPerFrame {
+			return nil, errors.New("phone: IMS PCMA packet must contain one 20ms frame")
+		}
+		transcodeG711(payload, "PCMA", "PCMU")
+		return payload, nil
+	}
+	if codec == nil {
+		return nil, errors.New("phone: realtime decoder is unavailable")
+	}
+	pcm, err := codec.Decode(payload)
+	if err != nil {
+		return nil, err
+	}
+	pcm, err = resamplePCM(pcm, codec.SampleRate(), browserClockRate)
+	if err != nil {
+		return nil, err
+	}
+	return encodePCMU(pcm), nil
+}
+
+func scaleTimestamp(timestamp uint32, fromRate, toRate int) uint32 {
+	if fromRate <= 0 || toRate <= 0 || fromRate == toRate {
+		return timestamp
+	}
+	return uint32(uint64(timestamp) * uint64(toRate) / uint64(fromRate))
 }

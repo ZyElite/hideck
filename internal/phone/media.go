@@ -19,9 +19,11 @@ const (
 )
 
 type MediaOptions struct {
-	UDPAddress string
-	ICEServers []webrtc.ICEServer
-	OnState    func(mediaID string, state webrtc.PeerConnectionState)
+	UDPAddress       string
+	ICEServers       []webrtc.ICEServer
+	RealtimeCodecs   []string
+	NewRealtimeCodec RealtimeCodecFactory
+	OnState          func(mediaID string, state webrtc.PeerConnectionState)
 }
 
 type MediaAnswer struct {
@@ -37,12 +39,14 @@ type MediaStats struct {
 }
 
 type MediaManager struct {
-	api        *webrtc.API
-	mux        ice.UDPMux
-	iceServers []webrtc.ICEServer
-	onState    func(string, webrtc.PeerConnectionState)
-	mu         sync.RWMutex
-	sessions   map[string]*MediaSession
+	api              *webrtc.API
+	mux              ice.UDPMux
+	iceServers       []webrtc.ICEServer
+	realtimeCodecs   []string
+	newRealtimeCodec RealtimeCodecFactory
+	onState          func(string, webrtc.PeerConnectionState)
+	mu               sync.RWMutex
+	sessions         map[string]*MediaSession
 }
 
 func NewMediaManager(options MediaOptions) (*MediaManager, error) {
@@ -66,7 +70,9 @@ func NewMediaManager(options MediaOptions) (*MediaManager, error) {
 	}
 	return &MediaManager{
 		api: api, mux: mux, iceServers: options.ICEServers,
-		onState: options.OnState, sessions: make(map[string]*MediaSession),
+		realtimeCodecs:   append([]string(nil), options.RealtimeCodecs...),
+		newRealtimeCodec: options.NewRealtimeCodec,
+		onState:          options.OnState, sessions: make(map[string]*MediaSession),
 	}, nil
 }
 
@@ -100,7 +106,8 @@ func (m *MediaManager) Create(ctx context.Context, owner, offer string) (MediaAn
 	}
 	session, answer, err := newMediaSession(ctx, mediaSessionOptions{
 		ID: mediaID, Lease: lease, Owner: owner, Offer: offer,
-		API: m.api, ICEServers: m.iceServers, OnState: m.onState,
+		API: m.api, ICEServers: m.iceServers, RealtimeCodecs: m.realtimeCodecs,
+		NewRealtimeCodec: m.newRealtimeCodec, OnState: m.onState,
 	})
 	if err != nil {
 		return MediaAnswer{}, err

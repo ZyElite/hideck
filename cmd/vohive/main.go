@@ -205,6 +205,10 @@ func main() {
 		Gateway: voiceGW, Store: db.NewVoiceCallStore(db.DB), Transcoder: audioTranscoder,
 		Notifier: callResultNotifier, RecordingDir: voiceRecordingDirectory,
 		WebRTCUDPAddress: cfg.Server.WebRTCUDPAddress, ICEServers: cfg.Server.ICEServers,
+		RealtimeCodecs: availableRealtimeCodecs(audioTranscoder),
+		NewRealtimeCodec: func(codec, fmtp string) (phone.RealtimeCodec, error) {
+			return audioTranscoder.NewRealtimeCodec(codec, fmtp)
+		},
 		ResolveICCID: pool.CurrentICCIDForDevice,
 	})
 	if err != nil {
@@ -297,4 +301,16 @@ func main() {
 	}
 
 	logger.Info("再见!")
+}
+
+func availableRealtimeCodecs(transcoder *audiotranscode.Transcoder) []string {
+	available := make([]string, 0, 2)
+	for _, codec := range []string{"AMR-WB", "AMR"} {
+		if err := transcoder.ValidateRealtimeCodec(codec); err != nil {
+			logger.Warn("实时语音编解码器不可用", "codec", codec, "err", err)
+			continue
+		}
+		available = append(available, codec)
+	}
+	return available
 }

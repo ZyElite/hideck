@@ -149,4 +149,29 @@ func TestControlLeaseProtectsDTMFAndHangup(t *testing.T) {
 	}
 }
 
+func TestAnswerRejectsIncomingCallWithUnavailableCodec(t *testing.T) {
+	gateway, store := newFakeVoiceGateway(), newMemoryCallStore()
+	service := newPhoneTestService(t, gateway, store, time.Second)
+	gateway.emitIncoming(voicehost.IncomingCall{
+		DeviceID: "dev-1", CallID: "unsupported-1", Caller: "+15550003",
+		OfferSDP:   "v=0\r\nc=IN IP4 127.0.0.1\r\nm=audio 41000 RTP/AVP 104\r\na=rtpmap:104 AMR-WB/16000\r\na=fmtp:104 octet-align=1\r\n",
+		ReceivedAt: time.Now(),
+	})
+	addStubMedia(t, service, "media-1", "admin", "lease-1")
+	_, err := service.Answer(context.Background(), ControlRequest{
+		Owner: "admin", CallID: "unsupported-1", MediaID: "media-1", Lease: "lease-1",
+	})
+	if err == nil {
+		t.Fatal("unsupported incoming codec was accepted")
+	}
+	select {
+	case rejected := <-gateway.rejectCalls:
+		if rejected.CallID != "unsupported-1" || rejected.StatusCode != 488 {
+			t.Fatalf("codec rejection = %+v", rejected)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unsupported incoming codec was not rejected")
+	}
+}
+
 const testPlainSDP = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 40000 RTP/AVP 0\r\n"

@@ -58,6 +58,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 	}
 	media, err := NewMediaManager(MediaOptions{
 		UDPAddress: options.WebRTCUDPAddress, ICEServers: buildICEServers(options.ICEServers),
+		RealtimeCodecs: options.RealtimeCodecs, NewRealtimeCodec: options.NewRealtimeCodec,
 		OnState: service.handleMediaState,
 	})
 	if err != nil {

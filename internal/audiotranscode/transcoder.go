@@ -52,9 +52,15 @@ type lameAPI struct {
 
 // Transcoder converts the direct call recording through injected system codec libraries.
 type Transcoder struct {
-	once sync.Once
-	libs nativeLibraries
-	err  error
+	once              sync.Once
+	libs              nativeLibraries
+	err               error
+	amrNBRealtimeOnce sync.Once
+	amrNBRealtime     *amrRealtimeAPI
+	amrNBRealtimeErr  error
+	amrWBRealtimeOnce sync.Once
+	amrWBRealtime     *amrRealtimeAPI
+	amrWBRealtimeErr  error
 }
 
 // New creates a lazy-loading system MP3 transcoder.

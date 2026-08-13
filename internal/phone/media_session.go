@@ -15,6 +15,8 @@ type mediaSessionOptions struct {
 	ID, Lease, Owner, Offer string
 	API                     *webrtc.API
 	ICEServers              []webrtc.ICEServer
+	RealtimeCodecs          []string
+	NewRealtimeCodec        RealtimeCodecFactory
 	OnState                 func(string, webrtc.PeerConnectionState)
 }
 
@@ -24,8 +26,11 @@ type MediaSession struct {
 	track            *webrtc.TrackLocalStaticRTP
 	rtpConn          *net.UDPConn
 	onState          func(string, webrtc.PeerConnectionState)
+	realtimeCodecs   []string
+	newRealtimeCodec RealtimeCodecFactory
 	mu               sync.RWMutex
 	remote           rtpEndpoint
+	realtimeCodec    RealtimeCodec
 	attached         bool
 	closed           chan struct{}
 	closeOnce        sync.Once
@@ -46,7 +51,9 @@ func newMediaSession(ctx context.Context, options mediaSessionOptions) (*MediaSe
 	}
 	session := &MediaSession{
 		ID: options.ID, Lease: options.Lease, Owner: options.Owner,
-		peer: peer, rtpConn: connection, onState: options.OnState, closed: make(chan struct{}),
+		peer: peer, rtpConn: connection, onState: options.OnState,
+		realtimeCodecs:   append([]string(nil), options.RealtimeCodecs...),
+		newRealtimeCodec: options.NewRealtimeCodec, closed: make(chan struct{}),
 	}
 	answer, err := session.negotiate(ctx, options.Offer)
 	if err != nil {
@@ -96,18 +103,57 @@ func (s *MediaSession) negotiate(ctx context.Context, offer string) (string, err
 }
 
 func (s *MediaSession) PlainSDP() string {
-	return plainAudioSDP(s.rtpConn.LocalAddr().(*net.UDPAddr).Port)
+	port := s.rtpConn.LocalAddr().(*net.UDPAddr).Port
+	s.mu.RLock()
+	endpoint, attached := s.remote, s.attached
+	s.mu.RUnlock()
+	if attached {
+		return plainSelectedAudioSDP(port, endpoint)
+	}
+	return plainAudioSDP(port, s.realtimeCodecs)
 }
 
 func (s *MediaSession) Attach(remoteSDP string) error {
-	endpoint, err := parseRTPEndpoint(remoteSDP)
+	supported := append([]string{"PCMU", "PCMA"}, s.realtimeCodecs...)
+	endpoint, err := parseRTPEndpoint(remoteSDP, supported...)
+	if err != nil {
+		return err
+	}
+	codec, err := s.createRealtimeCodec(endpoint)
 	if err != nil {
 		return err
 	}
 	s.mu.Lock()
+	previous := s.realtimeCodec
+	s.realtimeCodec = codec
 	s.remote, s.attached = endpoint, true
 	s.mu.Unlock()
-	return s.primeRelay()
+	var closeErr error
+	if previous != nil {
+		closeErr = previous.Close()
+	}
+	return errors.Join(closeErr, s.primeRelay())
+}
+
+func (s *MediaSession) createRealtimeCodec(endpoint rtpEndpoint) (RealtimeCodec, error) {
+	if endpoint.Codec != "AMR" && endpoint.Codec != "AMR-WB" {
+		return nil, nil
+	}
+	if s.newRealtimeCodec == nil {
+		return nil, fmt.Errorf("phone: negotiated %s codec requires an unavailable encoder", endpoint.Codec)
+	}
+	codec, err := s.newRealtimeCodec(endpoint.Codec, endpoint.Fmtp)
+	if err != nil {
+		return nil, fmt.Errorf("phone: initialize negotiated %s codec: %w", endpoint.Codec, err)
+	}
+	if codec == nil {
+		return nil, fmt.Errorf("phone: initialize negotiated %s codec: factory returned nil", endpoint.Codec)
+	}
+	if codec.SampleRate() != endpoint.ClockRate {
+		mismatch := fmt.Errorf("phone: negotiated %s clock rate %d does not match codec rate %d", endpoint.Codec, endpoint.ClockRate, codec.SampleRate())
+		return nil, errors.Join(mismatch, codec.Close())
+	}
+	return codec, nil
 }
 
 func (s *MediaSession) Matches(owner, lease string) bool {
@@ -127,7 +173,14 @@ func (s *MediaSession) Close() error {
 	var result error
 	s.closeOnce.Do(func() {
 		close(s.closed)
-		result = errors.Join(s.peer.Close(), s.rtpConn.Close())
+		s.mu.Lock()
+		codec := s.realtimeCodec
+		s.realtimeCodec = nil
+		s.mu.Unlock()
+		if codec != nil {
+			result = errors.Join(result, codec.Close())
+		}
+		result = errors.Join(result, s.peer.Close(), s.rtpConn.Close())
 	})
 	return result
 }

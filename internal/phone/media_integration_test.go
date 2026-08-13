@@ -53,7 +53,7 @@ func testWebRTCBridge(t *testing.T, imsCodec string, imsPayloadType uint8) {
 	if err := session.Attach(g711EndpointSDP(ims.LocalAddr().(*net.UDPAddr).Port, imsCodec, imsPayloadType)); err != nil {
 		t.Fatal(err)
 	}
-	if endpoint, ok := session.endpoint(); !ok || endpoint.Codec != imsCodec {
+	if endpoint, _, ok := session.endpoint(); !ok || endpoint.Codec != imsCodec {
 		t.Fatalf("attached endpoint = %+v, attached=%t", endpoint, ok)
 	}
 	readUDPRTP(t, ims) // relay priming packet
