@@ -43,6 +43,10 @@ test('command conversation uses the Studio event rail instead of chat bubbles', 
 test('command composer source stays visible above the mobile safe area', () => {
   assert.match(commandComposer, /env\(safe-area-inset-bottom\)/)
   assert.match(commandComposer, /@media \(max-width: 1023px\).*position:\s*sticky;\s*bottom:\s*0;/s)
+  assert.match(commandComposer, /v-for="definition in definitions"/)
+  assert.match(commandComposer, /definition\.dangerous/)
+  assert.match(commandComposer, /retargetDeviceCommand/)
+  assert.match(commandComposer, /prefers-reduced-motion: reduce/)
 })
 
 test('command realtime stream starts before secondary page data finishes', () => {
