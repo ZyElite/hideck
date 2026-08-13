@@ -32,6 +32,8 @@ const rulesOpen = ref(false)
 const selectedRule = ref<CarrierQueryRule | null>(null)
 const balanceOpen = ref(false)
 const manualBalanceOpen = ref(false)
+const manualBalanceDeviceID = ref('')
+const manualBalanceDialogExisting = ref<BalanceQuery | null>(null)
 const manualBalanceSaving = ref(false)
 const manualBalanceClearing = ref(false)
 const savingRule = ref(false)
@@ -59,7 +61,7 @@ const runtimeStatus = useCommandRuntimeStatus({
 })
 const devices = runtimeStatus.devices
 const balances = runtimeStatus.balances
-const selectedDeviceModel = computed(() => devices.value.find((device) => device.id === selectedDevice.value))
+const manualBalanceDevice = computed(() => devices.value.find((device) => device.id === manualBalanceDeviceID.value))
 const selectedManualBalance = computed(() => manualBalance.value?.device_id === selectedDevice.value
   ? manualBalance.value
   : undefined)
@@ -274,43 +276,62 @@ async function startBalance() {
 }
 
 async function saveManualBalance(input: ManualBalanceInput) {
-  if (!selectedDevice.value || manualBalanceSaving.value) return
+  const operationDeviceID = manualBalanceDeviceID.value
+  if (!operationDeviceID || manualBalanceSaving.value) return
   manualBalanceSaving.value = true
-  const result = await commandService.setManualBalance(selectedDevice.value, input)
+  const result = await commandService.setManualBalance(operationDeviceID, input)
   manualBalanceSaving.value = false
   if (!result.ok) {
     ElMessage.error(result.error.message || '手动余额保存失败')
     return
   }
-  manualBalanceRequestScope.invalidate(selectedDevice.value)
   balances.value = [result.data, ...balances.value.filter((item) => item.id !== result.data.id)]
-  manualBalance.value = result.data
-  manualBalanceError.value = ''
-  manualBalanceOpen.value = false
+  if (selectedDevice.value === operationDeviceID) {
+    manualBalanceRequestScope.invalidate(operationDeviceID)
+    manualBalance.value = result.data
+    manualBalanceError.value = ''
+  }
+  if (manualBalanceDeviceID.value === operationDeviceID) {
+    manualBalanceDialogExisting.value = result.data
+    manualBalanceOpen.value = false
+  }
   ElMessage.success('手动余额已保存')
 }
 
 async function clearManualBalance() {
-  if (!selectedDevice.value || manualBalanceClearing.value) return
-  const confirmed = await ElMessageBox.confirm('清除后将恢复显示该设备的自动查询记录。', '清除手动余额', {
+  const operationDeviceID = manualBalanceDeviceID.value
+  if (!operationDeviceID || manualBalanceClearing.value) return
+  const confirmed = await ElMessageBox.confirm(`清除 ${operationDeviceID} 的手动余额后，将恢复显示自动查询记录。`, '清除手动余额', {
     confirmButtonText: '清除', cancelButtonText: '取消', type: 'warning'
   }).then(() => true).catch(() => false)
-  if (!confirmed) return
+  if (!confirmed || manualBalanceDeviceID.value !== operationDeviceID) return
   manualBalanceClearing.value = true
-  const result = await commandService.clearManualBalance(selectedDevice.value)
+  const result = await commandService.clearManualBalance(operationDeviceID)
   manualBalanceClearing.value = false
   if (!result.ok) {
     ElMessage.error(result.error.message || '手动余额清除失败')
     return
   }
-  manualBalanceRequestScope.invalidate(selectedDevice.value)
   balances.value = balances.value.filter((item) => (
-    item.device_id !== selectedDevice.value || item.transport !== 'manual'
+    item.device_id !== operationDeviceID || item.transport !== 'manual'
   ))
-  manualBalance.value = null
-  manualBalanceError.value = ''
-  manualBalanceOpen.value = false
+  if (selectedDevice.value === operationDeviceID) {
+    manualBalanceRequestScope.invalidate(operationDeviceID)
+    manualBalance.value = null
+    manualBalanceError.value = ''
+  }
+  if (manualBalanceDeviceID.value === operationDeviceID) {
+    manualBalanceDialogExisting.value = null
+    manualBalanceOpen.value = false
+  }
   ElMessage.success('手动余额已清除')
+}
+
+function openManualBalance() {
+  if (!selectedDevice.value) return
+  manualBalanceDeviceID.value = selectedDevice.value
+  manualBalanceDialogExisting.value = selectedManualBalance.value || null
+  manualBalanceOpen.value = true
 }
 
 function openDangerous(definition: CommandDefinition) {
@@ -424,7 +445,7 @@ function updateRulesOpen(open: boolean) {
         :rules-loaded="rulesLoaded"
         :rules-error="rulesError"
         @query="startBalance"
-        @edit-manual-balance="manualBalanceOpen = true"
+        @edit-manual-balance="openManualBalance"
         @edit-rules="openRuleEditor()"
         @edit-rule="openRuleEditor"
         @refresh-rules="loadRules"
@@ -476,8 +497,8 @@ function updateRulesOpen(open: boolean) {
 
     <ManualBalanceDialog
       v-model="manualBalanceOpen"
-      :device="selectedDeviceModel"
-      :existing="selectedManualBalance"
+      :device="manualBalanceDevice"
+      :existing="manualBalanceDialogExisting || undefined"
       :saving="manualBalanceSaving"
       :clearing="manualBalanceClearing"
       @save="saveManualBalance"

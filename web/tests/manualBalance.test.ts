@@ -46,3 +46,14 @@ test('manual balance mutations invalidate stale reads and remain the current dis
   assert.match(commands, /manualBalanceRequestScope\.invalidate\(selectedDevice\.value\)[\s\S]*balances\.value = balances\.value\.filter/)
   assert.match(panel, /const latestQuery = computed\(\(\) => manualQuery\.value \|\| selectedQueries\.value\[0\]\)/)
 })
+
+test('manual balance mutations stay bound to the device that opened the dialog', () => {
+  assert.match(commands, /const operationDeviceID = manualBalanceDeviceID\.value/g)
+  assert.match(commands, /setManualBalance\(operationDeviceID, input\)/)
+  assert.match(commands, /clearManualBalance\(operationDeviceID\)/)
+  assert.match(commands, /item\.device_id !== operationDeviceID/)
+  assert.match(commands, /if \(selectedDevice\.value === operationDeviceID\) \{[\s\S]*manualBalanceRequestScope\.invalidate\(operationDeviceID\)/)
+  assert.match(commands, /manualBalanceDeviceID\.value !== operationDeviceID/)
+  assert.match(commands, /:device="manualBalanceDevice"/)
+  assert.doesNotMatch(commands, /clearManualBalance\(selectedDevice\.value\)/)
+})
