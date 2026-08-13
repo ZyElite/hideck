@@ -2,11 +2,13 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import WorkspaceStage from '../components/WorkspaceStage.vue'
 import ErrorState from '../components/ErrorState.vue'
+import PageHeader from '../components/PageHeader.vue'
 import ProxyCountryRuleDrawer from '../components/proxy/ProxyCountryRuleDrawer.vue'
 import ProxyInstanceEditorDrawer from '../components/proxy/ProxyInstanceEditorDrawer.vue'
+import ProxyModeSwitch from '../components/proxy/ProxyModeSwitch.vue'
 import ProxyOutboundInventory from '../components/proxy/ProxyOutboundInventory.vue'
+import ProxyUpstreamEditorDrawer from '../components/proxy/ProxyUpstreamEditorDrawer.vue'
 import ProxyUpstreamInventory from '../components/proxy/ProxyUpstreamInventory.vue'
 import { usePollingScheduler } from '../composables/usePollingScheduler'
 import { useProxyStore } from '../stores/proxy'
@@ -17,17 +19,10 @@ import {
   createOutboundProxyPresentation,
   createUpstreamProxyPresentation
 } from '../utils/proxyPresentation'
-import {
-  upstreamProxyAddressWarning,
-  upstreamProxyIPv6AddressHint
-} from '../utils/upstreamProxyAddress'
-import {
-  Router24Regular,
-  Earth24Regular
-} from '@vicons/fluent'
+import { upstreamProxyAddressWarning } from '../utils/upstreamProxyAddress'
 
 // ── Tab 控制 ──
-const activeTab = ref('upstream') // 默认展示前置代理
+const activeTab = ref<'outbound' | 'upstream'>('upstream')
 
 // ══════════════════════════════════════════════════════
 // 出站代理（原有逻辑，不动）
@@ -521,87 +516,66 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
 
 <template>
   <div class="app-page proxy-page">
-    <WorkspaceStage
-      class="proxy-workspace-stage"
-      kicker="ROUTE ORCHESTRATION"
-      :title="activeTab === 'upstream' ? '漫游路由' : '本地出口'"
-      :subtitle="activeTab === 'upstream'
-        ? '通过支持 UDP Associate 的 Socks5 节点连接海外运营商 ePDG'
-        : '将本地代理实例绑定到指定物理网络接口与设备出口'"
-      :status="activeTab === 'upstream' ? `${enabledUpstreamCount} 个节点启用` : `${runningOutboundCount} 个实例运行`"
-      :tone="(activeTab === 'upstream' ? enabledUpstreamCount : runningOutboundCount) > 0 ? 'success' : 'neutral'"
-    >
-      <nav class="proxy-mode-switch" aria-label="代理工作区">
-        <button type="button" :class="{ 'is-active': activeTab === 'upstream' }" @click="activeTab = 'upstream'">
-          <el-icon><Earth24Regular /></el-icon>
-          <span><small>ROAMING ROUTES</small><strong>漫游前置代理</strong></span>
-          <b>{{ upstreamStore.proxies.length }}</b>
-        </button>
-        <button type="button" :class="{ 'is-active': activeTab === 'outbound' }" @click="activeTab = 'outbound'">
-          <el-icon><Router24Regular /></el-icon>
-          <span><small>LOCAL EGRESS</small><strong>本地出站代理</strong></span>
-          <b>{{ instances.length }}</b>
-        </button>
-      </nav>
+    <PageHeader title="代理管理" subtitle="配置 VoWiFi 漫游路由与绑定物理网络接口的本地出口" />
 
-      <template #aside>
-        <dl class="workspace-stage-stats">
-          <div><dt>前置节点</dt><dd>{{ enabledUpstreamCount }} / {{ upstreamStore.proxies.length }}</dd></div>
-          <div><dt>国家规则</dt><dd>{{ upstreamStore.countryRules.length }}</dd></div>
-          <div><dt>本地实例</dt><dd>{{ runningOutboundCount }} / {{ instances.length }}</dd></div>
-        </dl>
-      </template>
-    </WorkspaceStage>
+    <ProxyModeSwitch
+      v-model="activeTab"
+      :enabled-upstream-count="enabledUpstreamCount"
+      :outbound-count="instances.length"
+      :rule-count="upstreamStore.countryRules.length"
+      :running-outbound-count="runningOutboundCount"
+      :upstream-count="upstreamStore.proxies.length"
+    />
 
-    <!-- ═══════════ 前置代理 Tab ═══════════ -->
-    <div v-show="activeTab === 'upstream'">
-      <ErrorState
-        v-if="upstreamError"
-        class="mb-6"
-        title="加载前置代理失败"
-        :message="upstreamError.message"
-        :status-code="upstreamError.status"
-        retry-text="重试"
-        @retry="fetchUpstream"
-      />
+    <Transition name="proxy-mode" mode="out-in">
+      <div v-if="activeTab === 'upstream'" key="upstream">
+        <ErrorState
+          v-if="upstreamError"
+          class="mb-6"
+          title="加载前置代理失败"
+          :message="upstreamError.message"
+          :status-code="upstreamError.status"
+          retry-text="重试"
+          @retry="fetchUpstream"
+        />
 
-      <ProxyUpstreamInventory
-        :loading="upstreamLoading"
-        :refreshing="upstreamRefreshing"
-        :rows="upstreamRows"
-        @add="openUpstreamDrawer()"
-        @delete="removeUpstreamProxy"
-        @edit="editUpstreamProxy"
-        @refresh="fetchUpstream"
-        @rules="manageUpstreamRules"
-      />
-    </div>
+        <ProxyUpstreamInventory
+          :loading="upstreamLoading"
+          :refreshing="upstreamRefreshing"
+          :rows="upstreamRows"
+          @add="openUpstreamDrawer()"
+          @delete="removeUpstreamProxy"
+          @edit="editUpstreamProxy"
+          @refresh="fetchUpstream"
+          @rules="manageUpstreamRules"
+        />
+      </div>
 
-    <!-- ═══════════ 出站代理 Tab ═══════════ -->
-    <div v-show="activeTab === 'outbound'">
-      <ErrorState
-        v-if="loadError"
-        class="mb-6"
-        title="加载代理配置失败"
-        :message="loadError.message"
-        :status-code="loadError.status"
-        retry-text="重试"
-        @retry="fetchOverview"
-      />
+      <div v-else key="outbound">
+        <ErrorState
+          v-if="loadError"
+          class="mb-6"
+          title="加载代理配置失败"
+          :message="loadError.message"
+          :status-code="loadError.status"
+          retry-text="重试"
+          @retry="fetchOverview"
+        />
 
-      <ProxyOutboundInventory
-        :loading="initialLoading"
-        :refreshing="refreshing"
-        :rows="outboundRows"
-        @add="openDrawer()"
-        @delete="deleteInstance"
-        @edit="editOutboundInstance"
-        @refresh="fetchOverview"
-        @restart="restartInstance"
-        @start="startInstance"
-        @stop="stopInstance"
-      />
-    </div>
+        <ProxyOutboundInventory
+          :loading="initialLoading"
+          :refreshing="refreshing"
+          :rows="outboundRows"
+          @add="openDrawer()"
+          @delete="deleteInstance"
+          @edit="editOutboundInstance"
+          @refresh="fetchOverview"
+          @restart="restartInstance"
+          @start="startInstance"
+          @stop="stopInstance"
+        />
+      </div>
+    </Transition>
 
     <ProxyInstanceEditorDrawer
       v-model="drawerOpen"
@@ -613,70 +587,12 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
       @save="saveForm"
     />
 
-    <!-- ═══════════ 前置代理编辑 Drawer ═══════════ -->
-    <el-drawer v-model="upstreamDrawerOpen" :title="editingUpstream ? '编辑前置代理' : '新增前置代理'" size="520px">
-      <div class="space-y-6 pb-6">
-        <div class="space-y-4">
-          <div class="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <div class="drawer-section-marker"></div>
-            <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">代理信息</h3>
-          </div>
-
-          <div class="grid grid-cols-2 gap-4">
-            <div class="space-y-1">
-              <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">代理 ID</label>
-              <el-input v-model="upstreamForm.id" :disabled="!!editingUpstream" placeholder="唯一标识，如 jp-proxy-01" />
-            </div>
-            <div class="space-y-1">
-              <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">名称</label>
-              <el-input v-model="upstreamForm.name" placeholder="例如：日本代理" />
-            </div>
-          </div>
-
-          <div class="space-y-1">
-            <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">Socks5 地址</label>
-            <el-input v-model="upstreamForm.addr" placeholder="host:port，例如 1.2.3.4:1080 或 [2001:db8::1]:1080" />
-            <div class="text-xs text-gray-400 mt-1">VoWiFi 通过此 Socks5 代理连接运营商，实现跨区域本地 VoWiFi。{{ upstreamProxyIPv6AddressHint }}。保存时会自动探测 Socks5 握手与 UDP Associate。</div>
-          </div>
-
-          <div class="ui-panel-muted p-3 flex items-center justify-between rounded-lg">
-            <div>
-              <div class="text-sm font-bold text-gray-800 dark:text-gray-100">启用代理</div>
-              <div class="text-xs text-gray-500">禁用后绑定到该代理的国家规则会回退为直连</div>
-            </div>
-            <el-switch v-model="upstreamForm.enabled" />
-          </div>
-        </div>
-
-        <div class="space-y-4">
-          <div class="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <div class="w-1 h-4 bg-amber-500 rounded-full"></div>
-            <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">鉴权设置（可选）</h3>
-          </div>
-
-          <div class="grid grid-cols-2 gap-4">
-            <div class="space-y-1">
-              <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">用户名</label>
-              <el-input v-model="upstreamForm.username" placeholder="留空则免鉴权" />
-            </div>
-            <div class="space-y-1">
-              <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">密码</label>
-              <el-input v-model="upstreamForm.password" type="password" show-password placeholder="留空则免鉴权" />
-              <div class="text-xs text-gray-400 mt-1">编辑已有代理时留空会保持原密码不变。</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <template #footer>
-        <div class="flex items-center justify-end gap-2">
-          <el-button @click="upstreamDrawerOpen = false">取消</el-button>
-          <el-button type="primary" @click="saveUpstreamForm">
-            {{ editingUpstream ? '更新' : '创建' }}
-          </el-button>
-        </div>
-      </template>
-    </el-drawer>
+    <ProxyUpstreamEditorDrawer
+      v-model="upstreamDrawerOpen"
+      v-model:form="upstreamForm"
+      :editing="!!editingUpstream"
+      @save="saveUpstreamForm"
+    />
 
     <ProxyCountryRuleDrawer
       v-model="countryRuleDrawerOpen"
@@ -691,96 +607,41 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
 </template>
 
 <style scoped>
-.proxy-mode-switch {
-  width: min(100%, 690px);
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.proxy-workspace-stage {
-  min-height: 286px;
-}
-
-.proxy-mode-switch button {
-  min-height: 82px;
-  padding: 15px 17px;
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid var(--ui-border);
-  border-radius: 15px;
-  background: var(--ui-surface);
-  color: var(--ui-text-muted);
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 140ms var(--ui-ease-out);
-}
-
-.proxy-mode-switch button:active {
-  transform: scale(.985);
-}
-
-.proxy-mode-switch button > .el-icon {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--ui-border);
-  border-radius: 10px;
-  font-size: 19px;
-}
-
-.proxy-mode-switch button > span {
-  display: grid;
-  gap: 4px;
-}
-
-.proxy-mode-switch small {
-  font: 700 9px "v-mono", monospace;
-  letter-spacing: .12em;
-}
-
-.proxy-mode-switch strong {
-  color: var(--ui-text);
-  font-size: 15px;
-}
-
-.proxy-mode-switch b {
-  color: var(--ui-text);
-  font: 22px "v-mono", monospace;
-}
-
-.proxy-mode-switch button.is-active {
-  border-color: color-mix(in srgb, var(--ui-primary) 48%, var(--ui-border));
-  background: color-mix(in srgb, var(--ui-primary) 8%, var(--ui-surface));
-  color: var(--ui-primary);
-}
-
-.proxy-mode-switch button.is-active > .el-icon {
-  border-color: color-mix(in srgb, var(--ui-primary) 45%, var(--ui-border));
-  color: var(--ui-primary);
-}
-
 .proxy-page :deep(.ui-card) {
-  border-radius: 18px;
+  border-radius: 7px;
 }
 
 .proxy-page :deep(.ui-panel-muted) {
-  border-radius: 14px;
+  border-radius: 7px;
 }
 
-.drawer-section-marker {
-  width: 3px;
-  height: 16px;
-  border-radius: 2px;
-  background: var(--ui-primary);
+.proxy-mode-enter-active {
+  transition: transform 180ms var(--ui-ease-out), opacity 180ms var(--ui-ease-out);
 }
 
-@media (max-width: 720px) {
-  .proxy-mode-switch {
-    grid-template-columns: minmax(0, 1fr);
+.proxy-mode-leave-active {
+  transition: transform 120ms var(--ui-ease-out), opacity 120ms var(--ui-ease-out);
+}
+
+.proxy-mode-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.proxy-mode-leave-to {
+  opacity: 0;
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proxy-mode-enter-active,
+  .proxy-mode-leave-active {
+    transition-property: opacity;
+  }
+
+  .proxy-mode-enter-from,
+  .proxy-mode-leave-to {
+    transform: none;
   }
 }
 </style>

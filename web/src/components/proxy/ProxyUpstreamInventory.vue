@@ -155,7 +155,7 @@ defineEmits<{
 .proxy-row-actions button.is-danger:focus-visible { color: var(--ui-danger); }
 .proxy-row-actions svg { width: 17px; height: 17px; }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .proxy-inventory-header { align-items: stretch; flex-direction: column; }
   .proxy-inventory-actions button { min-height: 44px; flex: 1; }
   .proxy-inventory-table thead { display: none; }
