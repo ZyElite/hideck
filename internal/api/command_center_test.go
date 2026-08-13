@@ -130,6 +130,8 @@ func TestApprovedCommandCenterRoutesAreProtected(t *testing.T) {
 		{method: http.MethodGet, path: "/api/balances"},
 		{method: http.MethodPost, path: "/api/devices/wwan0/balance-queries"},
 		{method: http.MethodGet, path: "/api/devices/wwan0/balance-queries"},
+		{method: http.MethodPut, path: "/api/devices/wwan0/manual-balance"},
+		{method: http.MethodDelete, path: "/api/devices/wwan0/manual-balance"},
 		{method: http.MethodGet, path: "/api/carrier-query-rules"},
 		{method: http.MethodPost, path: "/api/carrier-query-rules"},
 		{method: http.MethodPut, path: "/api/carrier-query-rules/custom"},
@@ -140,6 +142,53 @@ func TestApprovedCommandCenterRoutesAreProtected(t *testing.T) {
 		if response.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s status = %d, want 401", route.method, route.path, response.Code)
 		}
+	}
+}
+
+func TestManualBalanceRoutesPersistUpdateAndDeleteWithoutSending(t *testing.T) {
+	server, token, gateway := newCommandCenterAPITestServer(t)
+	router := server.newRouter()
+	put := func(body string) *httptest.ResponseRecorder {
+		return performAPIRequest(router, apiRequestOptions{
+			method: http.MethodPut, path: "/api/devices/wwan0/manual-balance", token: token,
+			body: bytes.NewBufferString(body),
+		})
+	}
+	created := put(`{"amount":"12.89","currency":"gbp"}`)
+	if created.Code != http.StatusOK || !strings.Contains(created.Body.String(), `"transport":"manual"`) {
+		t.Fatalf("create manual balance status=%d body=%s", created.Code, created.Body.String())
+	}
+	updated := put(`{"amount":"9.50","currency":"GBP"}`)
+	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"amount":"9.50"`) {
+		t.Fatalf("update manual balance status=%d body=%s", updated.Code, updated.Body.String())
+	}
+	listed := performAPIRequest(router, apiRequestOptions{method: http.MethodGet, path: "/api/balances", token: token})
+	if listed.Code != http.StatusOK || strings.Count(listed.Body.String(), `"transport":"manual"`) != 1 {
+		t.Fatalf("list manual balance status=%d body=%s", listed.Code, listed.Body.String())
+	}
+	if gateway.smsCalls != 0 {
+		t.Fatalf("manual balance sent SMS, calls=%d", gateway.smsCalls)
+	}
+	deleted := performAPIRequest(router, apiRequestOptions{
+		method: http.MethodDelete, path: "/api/devices/wwan0/manual-balance", token: token,
+	})
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete manual balance status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+	listed = performAPIRequest(router, apiRequestOptions{method: http.MethodGet, path: "/api/balances", token: token})
+	if strings.Contains(listed.Body.String(), `"transport":"manual"`) {
+		t.Fatalf("manual balance remains after delete: %s", listed.Body.String())
+	}
+}
+
+func TestManualBalanceRouteRejectsInvalidAmount(t *testing.T) {
+	server, token, _ := newCommandCenterAPITestServer(t)
+	response := performAPIRequest(server.newRouter(), apiRequestOptions{
+		method: http.MethodPut, path: "/api/devices/wwan0/manual-balance", token: token,
+		body: bytes.NewBufferString(`{"amount":"unknown","currency":"GBP"}`),
+	})
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "金额必须是数字") {
+		t.Fatalf("invalid manual balance status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

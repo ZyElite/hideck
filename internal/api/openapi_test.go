@@ -29,6 +29,7 @@ func TestOpenAPIVoHiveYAMLValid(t *testing.T) {
 		"/command-center/stream", "/command-center/history", "/balances",
 		"/command-center/recordings/{recording}",
 		"/devices/{device_id}/balance-queries", "/carrier-query-rules", "/carrier-query-rules/{rule_id}",
+		"/devices/{device_id}/manual-balance",
 		"/commands/catalog", "/commands/executions", "/commands/events",
 		"/commands/events/stream", "/commands/history", "/balance/queries",
 		"/balance/queries/{query_id}", "/balance/rules", "/balance/rules/{rule_id}",

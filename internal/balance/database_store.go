@@ -32,6 +32,17 @@ func (s *DatabaseStore) CreatePending(ctx context.Context, query Query) error {
 	})
 }
 
+func (s *DatabaseStore) SaveManual(ctx context.Context, query Query) error {
+	return s.db.WithContext(ctx).Save(toRecord(query)).Error
+}
+
+func (s *DatabaseStore) DeleteManual(ctx context.Context, deviceID string) (bool, error) {
+	result := s.db.WithContext(ctx).Where(
+		"id = ? AND device_id = ? AND transport = ?", manualBalanceID(deviceID), deviceID, TransportManual,
+	).Delete(&appdb.BalanceQuery{})
+	return result.RowsAffected == 1, result.Error
+}
+
 func (s *DatabaseStore) MarkAwaitingReply(ctx context.Context, id string, now time.Time) error {
 	result := s.db.WithContext(ctx).Model(&appdb.BalanceQuery{}).
 		Where("id = ? AND state = ?", id, StateSending).

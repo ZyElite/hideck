@@ -20,6 +20,11 @@ type balanceQueryRequest struct {
 	DeviceID string `json:"device_id" binding:"required"`
 }
 
+type manualBalanceRequest struct {
+	Amount   string `json:"amount" binding:"required"`
+	Currency string `json:"currency"`
+}
+
 type carrierRuleStore interface {
 	ListCustomCarrierQueryRules() ([]carrierquery.Rule, error)
 	SaveCustomCarrierQueryRule(carrierquery.Rule) error
@@ -57,6 +62,37 @@ func (s *Server) handleDeviceBalanceQueryStart(c *gin.Context) {
 		return
 	}
 	s.startBalanceQuery(c, c.Param("device_id"))
+}
+
+func (s *Server) handleDeviceManualBalancePut(c *gin.Context) {
+	if !s.requireBalance(c) {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	var request manualBalanceRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "手动余额 JSON 无效"})
+		return
+	}
+	query, err := s.balance.SetManualBalance(
+		c.Request.Context(), c.Param("device_id"), request.Amount, request.Currency,
+	)
+	if err != nil {
+		writeManualBalanceError(c, err, "手动余额保存失败")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"query": query})
+}
+
+func (s *Server) handleDeviceManualBalanceDelete(c *gin.Context) {
+	if !s.requireBalance(c) {
+		return
+	}
+	if _, err := s.balance.ClearManualBalance(c.Request.Context(), c.Param("device_id")); err != nil {
+		writeManualBalanceError(c, err, "手动余额清除失败")
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Server) startBalanceQuery(c *gin.Context, deviceID string) {
@@ -235,4 +271,18 @@ func writeBalanceError(c *gin.Context, err error) {
 		status = http.StatusConflict
 	}
 	c.JSON(status, gin.H{"status": "error", "message": err.Error()})
+}
+
+func writeManualBalanceError(c *gin.Context, err error, fallback string) {
+	status := http.StatusInternalServerError
+	message := fallback
+	switch {
+	case errors.Is(err, balance.ErrDeviceNotFound):
+		status, message = http.StatusNotFound, err.Error()
+	case errors.Is(err, balance.ErrIdentityMissing):
+		status, message = http.StatusConflict, err.Error()
+	case errors.Is(err, balance.ErrInvalidManual):
+		status, message = http.StatusBadRequest, err.Error()
+	}
+	c.JSON(status, gin.H{"status": "error", "message": message})
 }

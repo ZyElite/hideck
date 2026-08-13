@@ -22,7 +22,10 @@ const (
 	ParsePending  = "pending"
 	ParseParsed   = "parsed"
 	ParseUnparsed = "unparsed"
+	ParseManual   = "manual"
 )
+
+const TransportManual = "manual"
 
 var (
 	ErrDeviceNotFound  = errors.New("设备未找到")
@@ -30,6 +33,7 @@ var (
 	ErrRuleNotFound    = errors.New("未找到运营商余额查询规则")
 	ErrUnsupported     = errors.New("当前运营商不支持自动余额查询")
 	ErrPendingQuery    = errors.New("该 SIM 已有待处理的余额查询")
+	ErrInvalidManual   = errors.New("手动余额格式无效")
 )
 
 type DeviceSnapshot struct {
@@ -94,6 +98,8 @@ type Gateway interface {
 
 type Repository interface {
 	CreatePending(context.Context, Query) error
+	SaveManual(context.Context, Query) error
+	DeleteManual(context.Context, string) (bool, error)
 	MarkAwaitingReply(context.Context, string, time.Time) error
 	MarkFailed(context.Context, string, error, time.Time) error
 	Complete(context.Context, string, Completion, time.Time) (bool, error)

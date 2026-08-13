@@ -1957,6 +1957,54 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /devices/{device_id}/manual-balance:
+    put:
+      tags: [balance]
+      summary: 保存或更新指定设备的手动余额
+      description: 用于无法通过 SMS 或 USSD 查询的线路；不会触发任何运营商通信。
+      parameters:
+        - $ref: '#/components/parameters/DeviceIDPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: string
+                currency:
+                  type: string
+      responses:
+        '200':
+          description: 已保存手动余额
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query:
+                    $ref: '#/components/schemas/BalanceQuery'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+    delete:
+      tags: [balance]
+      summary: 清除指定设备的手动余额
+      parameters:
+        - $ref: '#/components/parameters/DeviceIDPath'
+      responses:
+        '204':
+          description: 手动余额已清除或原本不存在
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /carrier-query-rules:
     get:
       tags: [balance]
@@ -3300,13 +3348,13 @@ components:
           type: string
         transport:
           type: string
-          enum: [sms, ussd]
+          enum: [sms, ussd, manual]
         state:
           type: string
           enum: [sending, awaiting_reply, completed, timed_out, failed]
         parse_state:
           type: string
-          enum: [pending, parsed, unparsed]
+          enum: [pending, parsed, unparsed, manual]
         amount:
           type: string
         currency:

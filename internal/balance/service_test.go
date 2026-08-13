@@ -238,3 +238,50 @@ func TestDatabaseStoreSerializesPendingCreationPerICCID(t *testing.T) {
 		t.Fatalf("concurrent results = %v", errorsByCall)
 	}
 }
+
+func TestManualBalanceUpsertsWithoutSendingAndCanBeCleared(t *testing.T) {
+	now := time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC)
+	gateway := &fakeGateway{snapshot: DeviceSnapshot{
+		DeviceID: "wwan0", ICCID: "iccid-1", MCC: "234", MNC: "10",
+	}}
+	service, store := newTestService(t, gateway, smsTestRule(), now)
+
+	first, err := service.SetManualBalance(context.Background(), "wwan0", "12,89", "gbp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Transport != TransportManual || first.ParseState != ParseManual || first.Amount != "12.89" || first.Currency != "GBP" {
+		t.Fatalf("first manual balance = %+v", first)
+	}
+	if gateway.wifiSMS+gateway.backendSMS+gateway.wifiUSSD+gateway.backendUSSD != 0 {
+		t.Fatal("manual balance must not send SMS or USSD")
+	}
+
+	service.now = func() time.Time { return now.Add(time.Minute) }
+	updated, err := service.SetManualBalance(context.Background(), "wwan0", "9.5", "GBP")
+	if err != nil || updated.ID != first.ID || updated.Amount != "9.5" || !updated.CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("updated manual balance = %+v, err=%v", updated, err)
+	}
+	queries, err := store.List(context.Background(), "wwan0", 50, nil)
+	if err != nil || len(queries) != 1 || queries[0].Amount != "9.5" {
+		t.Fatalf("manual query list = %+v, err=%v", queries, err)
+	}
+	cleared, err := service.ClearManualBalance(context.Background(), "wwan0")
+	if err != nil || !cleared {
+		t.Fatalf("ClearManualBalance() = %v, %v", cleared, err)
+	}
+}
+
+func TestManualBalanceRejectsInvalidAmountWithoutPersisting(t *testing.T) {
+	now := time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC)
+	gateway := &fakeGateway{snapshot: DeviceSnapshot{DeviceID: "wwan0", ICCID: "iccid-1"}}
+	service, store := newTestService(t, gateway, smsTestRule(), now)
+
+	if _, err := service.SetManualBalance(context.Background(), "wwan0", "twelve", "GBP"); !errors.Is(err, ErrInvalidManual) {
+		t.Fatalf("SetManualBalance() error = %v", err)
+	}
+	queries, err := store.List(context.Background(), "wwan0", 50, nil)
+	if err != nil || len(queries) != 0 {
+		t.Fatalf("invalid manual balance persisted: %+v, err=%v", queries, err)
+	}
+}
