@@ -2,11 +2,52 @@ package voice
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/voice/callstate"
 )
+
+func (c *Call) setCaptureBasePath(path string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.captureBasePath = strings.TrimSpace(path)
+	c.mu.Unlock()
+}
+
+func (c *Call) startConfiguredCapture() error {
+	if c == nil {
+		return errors.New("voice: nil call")
+	}
+	c.mu.RLock()
+	path := c.captureBasePath
+	relay := c.rtpRelay
+	c.mu.RUnlock()
+	if path == "" {
+		return nil
+	}
+	if relay == nil {
+		return errors.New("voice: no media relay")
+	}
+	return relay.StartCallCapture(path)
+}
+
+func (c *Call) captureResult() (string, string, string, error) {
+	if c == nil {
+		return "", "", "", nil
+	}
+	c.mu.RLock()
+	relay := c.rtpRelay
+	c.mu.RUnlock()
+	if relay == nil {
+		return "", "", "", nil
+	}
+	snapshot := relay.CaptureSnapshot()
+	return snapshot.PCAPPath, snapshot.AudioPath, snapshot.Codec, snapshot.Err
+}
 
 // Hangup preserves the recovered local resource-release method.
 func (c *Call) Hangup() {

@@ -5,6 +5,37 @@ type CommandContext interface {
 	Reply(text string)
 }
 
+// CommandAttachment carries non-text output to command surfaces that support it.
+type CommandAttachment struct {
+	Type        string `json:"type"`
+	Recording   string `json:"recording"`
+	ContentType string `json:"content_type"`
+}
+
+type commandAttachmentContext interface {
+	ReplyWithAttachments(text string, attachments []CommandAttachment)
+}
+
+type commandProgressContext interface {
+	Progress(text string)
+}
+
+func replyWithAttachments(ctx CommandContext, text string, attachments []CommandAttachment) {
+	if rich, ok := ctx.(commandAttachmentContext); ok {
+		rich.ReplyWithAttachments(text, attachments)
+		return
+	}
+	ctx.Reply(text)
+}
+
+func reportProgress(ctx CommandContext, text string) {
+	if rich, ok := ctx.(commandProgressContext); ok {
+		rich.Progress(text)
+		return
+	}
+	ctx.Reply(text)
+}
+
 // CommandHandler 命令处理器，接收上下文及参数切片，返回回复文本
 type CommandHandler func(cmdCtx CommandContext, args []string) string
 

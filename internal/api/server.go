@@ -68,26 +68,27 @@ type loginAttempt struct {
 
 // Server 是 API 服务器的核心结构
 type Server struct {
-	cfg            config.ServerConfig // HTTP 服务器配置
-	fullCfg        *config.Config      // 完整配置引用
-	pool           *device.Pool        // 设备工作器池
-	auth           config.WebConfig    // Web 认证配置
-	fs             http.FileSystem     // 静态文件系统
-	configPath     string              // 配置文件路径
-	proxyMgr       *server.Manager     // 代理实例管理器
-	trafficRT      realtimeTrafficSubscriber
-	proxyRepo      repo.ProxyInstanceRepository
-	proxySyncMu    sync.Mutex
-	voiceGW        *voicehost.Gateway
-	notifyMgr      *notify.Manager
-	commandCenter  *commandcenter.Service
-	automaticTasks automaticTaskService
-	balance        *balance.Service
-	carrierRules   carrierRuleStore
-	websheets      *vwebsheet.Broker
-	cardPolicies   cardPolicyStore
-	systemTime     systemTimeProvider
-	backendSwitch  deviceBackendSwitcher
+	cfg                     config.ServerConfig // HTTP 服务器配置
+	fullCfg                 *config.Config      // 完整配置引用
+	pool                    *device.Pool        // 设备工作器池
+	auth                    config.WebConfig    // Web 认证配置
+	fs                      http.FileSystem     // 静态文件系统
+	configPath              string              // 配置文件路径
+	proxyMgr                *server.Manager     // 代理实例管理器
+	trafficRT               realtimeTrafficSubscriber
+	proxyRepo               repo.ProxyInstanceRepository
+	proxySyncMu             sync.Mutex
+	voiceGW                 *voicehost.Gateway
+	voiceRecordingDirectory string
+	notifyMgr               *notify.Manager
+	commandCenter           *commandcenter.Service
+	automaticTasks          automaticTaskService
+	balance                 *balance.Service
+	carrierRules            carrierRuleStore
+	websheets               *vwebsheet.Broker
+	cardPolicies            cardPolicyStore
+	systemTime              systemTimeProvider
+	backendSwitch           deviceBackendSwitcher
 
 	httpSrvMu sync.Mutex
 	httpSrv   *http.Server
@@ -169,6 +170,11 @@ func (s *Server) initializeCommandCenter() {
 
 func (s *Server) SetRealtimeTraffic(m *proxytraffic.RealtimeManager) {
 	s.trafficRT = m
+}
+
+// SetVoiceRecordingDirectory injects the directory owned by the voice gateway.
+func (s *Server) SetVoiceRecordingDirectory(directory string) {
+	s.voiceRecordingDirectory = strings.TrimSpace(directory)
 }
 
 // smsRateLimiter returns the SMS rate limiter, lazily creating it if needed.

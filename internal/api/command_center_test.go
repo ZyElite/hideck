@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +125,7 @@ func TestApprovedCommandCenterRoutesAreProtected(t *testing.T) {
 		{method: http.MethodPost, path: "/api/command-center/executions"},
 		{method: http.MethodGet, path: "/api/command-center/events"},
 		{method: http.MethodGet, path: "/api/command-center/stream"},
+		{method: http.MethodGet, path: "/api/command-center/recordings/call_test.mp3"},
 		{method: http.MethodDelete, path: "/api/command-center/history"},
 		{method: http.MethodGet, path: "/api/balances"},
 		{method: http.MethodPost, path: "/api/devices/wwan0/balance-queries"},
@@ -137,6 +140,71 @@ func TestApprovedCommandCenterRoutesAreProtected(t *testing.T) {
 		if response.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s status = %d, want 401", route.method, route.path, response.Code)
 		}
+	}
+}
+
+func TestCommandRecordingServesOnlyInjectedMP3Files(t *testing.T) {
+	server, token, _ := newCommandCenterAPITestServer(t)
+	directory := t.TempDir()
+	server.SetVoiceRecordingDirectory(directory)
+	name := "call_wwan1_20260813_100108.890350649.mp3"
+	want := []byte("ID3-test-audio")
+	if err := os.WriteFile(filepath.Join(directory, name), want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	router := server.newRouter()
+	response := performAPIRequest(router, apiRequestOptions{
+		method: http.MethodGet, path: "/api/command-center/recordings/" + name, token: token,
+	})
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "audio/mpeg" {
+		t.Fatalf("recording status=%d type=%q body=%q", response.Code, response.Header().Get("Content-Type"), response.Body.Bytes())
+	}
+	if !bytes.Equal(response.Body.Bytes(), want) {
+		t.Fatalf("recording body=%q want=%q", response.Body.Bytes(), want)
+	}
+	invalid := performAPIRequest(router, apiRequestOptions{
+		method: http.MethodGet, path: "/api/command-center/recordings/not-a-call.mp3", token: token,
+	})
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid filename status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
+func TestCommandRecordingRejectsSymlinkEscape(t *testing.T) {
+	server, token, _ := newCommandCenterAPITestServer(t)
+	directory := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.mp3")
+	if err := os.WriteFile(outside, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	name := "call_escape.mp3"
+	if err := os.Symlink(outside, filepath.Join(directory, name)); err != nil {
+		t.Fatal(err)
+	}
+	server.SetVoiceRecordingDirectory(directory)
+	response := performAPIRequest(server.newRouter(), apiRequestOptions{
+		method: http.MethodGet, path: "/api/command-center/recordings/" + name, token: token,
+	})
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("symlink status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestCommandRecordingSupportsByteRanges(t *testing.T) {
+	server, token, _ := newCommandCenterAPITestServer(t)
+	directory := t.TempDir()
+	name := "call_range.mp3"
+	if err := os.WriteFile(filepath.Join(directory, name), []byte("0123456789"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server.SetVoiceRecordingDirectory(directory)
+	request := httptest.NewRequest(http.MethodGet, "/api/command-center/recordings/"+name, nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Range", "bytes=2-5")
+	response := httptest.NewRecorder()
+	server.newRouter().ServeHTTP(response, request)
+	if response.Code != http.StatusPartialContent || response.Body.String() != "2345" {
+		t.Fatalf("range status=%d body=%q", response.Code, response.Body.String())
 	}
 }
 

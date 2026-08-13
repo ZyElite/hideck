@@ -36,6 +36,46 @@ func TestServicePersistsAsyncCommandTimeline(t *testing.T) {
 	}
 }
 
+func TestServicePersistsAsyncCommandAudioAttachmentReturnedBeforeActivation(t *testing.T) {
+	service := newTestService(t, map[string]notify.CommandHandler{
+		"vocall": func(ctx notify.CommandContext, _ []string) string {
+			progress, ok := ctx.(interface{ Progress(string) })
+			if !ok {
+				t.Fatal("command context does not support progress")
+			}
+			progress.Progress("发起 VoWiFi 呼叫 / 已接通")
+			rich, ok := ctx.(interface {
+				ReplyWithAttachments(string, []notify.CommandAttachment)
+			})
+			if !ok {
+				t.Fatal("command context does not support attachments")
+			}
+			rich.ReplyWithAttachments("发起 VoWiFi 呼叫 / 完成", []notify.CommandAttachment{{
+				Type: "audio", Recording: "call_wwan1_20260813_100108.890350649.mp3", ContentType: "audio/mpeg",
+			}})
+			return "发起 VoWiFi 呼叫 / 已受理"
+		},
+	})
+	if _, err := service.Execute(context.Background(), ExecuteRequest{Input: "/vocall wwan1 888 10"}); err != nil {
+		t.Fatal(err)
+	}
+	events := waitForEvents(t, service, 0, 4)
+	if events[1].Text != "发起 VoWiFi 呼叫 / 已受理" || events[2].Text != "发起 VoWiFi 呼叫 / 已接通" {
+		t.Fatalf("progress order = %+v", events)
+	}
+	result := events[3]
+	if result.Kind != EventResult || len(result.Attachments) != 1 {
+		t.Fatalf("result event = %+v", result)
+	}
+	if result.Attachments[0].Recording != "call_wwan1_20260813_100108.890350649.mp3" {
+		t.Fatalf("attachment = %+v", result.Attachments[0])
+	}
+	reloaded, err := service.ListEvents(context.Background(), 0, 20)
+	if err != nil || len(reloaded) != 4 || len(reloaded[3].Attachments) != 1 {
+		t.Fatalf("reloaded events = %+v, err=%v", reloaded, err)
+	}
+}
+
 func TestServiceCursorAndClearPreserveRunning(t *testing.T) {
 	service := newTestService(t, map[string]notify.CommandHandler{
 		"list": func(_ notify.CommandContext, _ []string) string { return "设备列表 / 完成" },

@@ -37,6 +37,15 @@ export const commandService = {
     })
   },
 
+  recording(recording: string, signal?: AbortSignal) {
+    return callService(async () => {
+      const response = await api.get(`/command-center/recordings/${encodeURIComponent(recording)}`, {
+        responseType: 'blob', signal
+      })
+      return response.data as Blob
+    })
+  },
+
   balances(params: { deviceId?: string; limit?: number; before?: string } = {}) {
     return callService(async () => {
       const response = await api.get('/balances', {

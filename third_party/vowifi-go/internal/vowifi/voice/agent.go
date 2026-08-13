@@ -258,6 +258,15 @@ func (a *Agent) DialContext(ctx context.Context, number string) (*Call, error) {
 }
 
 func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, error) {
+	return a.dialContextWithCapture(ctx, number, sdp, "")
+}
+
+func (a *Agent) dialContextWithCapture(
+	ctx context.Context,
+	number string,
+	sdp string,
+	captureBasePath string,
+) (*Call, error) {
 	if a == nil {
 		return nil, errors.New("voice: nil agent")
 	}
@@ -278,6 +287,7 @@ func (a *Agent) dialContext(ctx context.Context, number, sdp string) (*Call, err
 	if err != nil {
 		return nil, err
 	}
+	call.setCaptureBasePath(captureBasePath)
 	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
 	call.SetOutboundRuntimeCancel(cancelRuntime)
 	defer cancelRuntime()
@@ -295,6 +305,9 @@ func (a *Agent) executeOutboundCall(
 ) (imscore.SIPResponse, error) {
 	imsOffer, err := a.prepareOutboundCallSDP(call, sdp)
 	if err != nil {
+		return imscore.SIPResponse{}, a.handleOutboundInviteRuntimeError(call, err)
+	}
+	if err := call.startConfiguredCapture(); err != nil {
 		return imscore.SIPResponse{}, a.handleOutboundInviteRuntimeError(call, err)
 	}
 	invite, err := buildIMSInviteWithSDPChecked(a, call, imsOffer)

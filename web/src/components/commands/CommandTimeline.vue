@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import BalanceMessage from './BalanceMessage.vue'
+import CommandAudioPlayer from './CommandAudioPlayer.vue'
 import type { BalanceQuery, CommandEvent } from '../../types/commands'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
 import { Bot24Regular } from '@vicons/fluent'
@@ -36,6 +37,10 @@ function eventText(event: CommandEvent) {
   if (event.kind === 'accepted' && event.execution?.input) return event.execution.input
   return event.text
 }
+
+function audioAttachments(event: CommandEvent) {
+  return (event.attachments || []).filter((attachment) => attachment.type === 'audio')
+}
 </script>
 
 <template>
@@ -61,6 +66,11 @@ function eventText(event: CommandEvent) {
         </div>
         <template v-if="item.kind === 'command'">
           <pre>{{ eventText(item.event) }}</pre>
+          <CommandAudioPlayer
+            v-for="attachment in audioAttachments(item.event)"
+            :key="attachment.recording"
+            :attachment="attachment"
+          />
           <span v-if="item.event.execution?.state === 'running'" class="state running">执行中</span>
           <span v-else-if="item.event.execution?.state === 'failed'" class="state failed">失败</span>
         </template>

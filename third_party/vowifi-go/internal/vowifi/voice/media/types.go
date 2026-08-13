@@ -68,6 +68,13 @@ type RTPRelay struct {
 	lanPacket      net.PacketConn
 	pcapWriter     packetCaptureWriter
 	pcapErr        error
+	pcapPath       string
+	audioRecorder  *rtpAudioRecorder
+	audioTarget    string
+	audioPath      string
+	audioCodec     string
+	audioErr       error
+	captureErr     error
 	stopErr        error
 	imsRemote      *net.UDPAddr
 	lanRemote      *net.UDPAddr
@@ -151,6 +158,23 @@ type ComfortNoiseGenerator struct {
 type packetCaptureWriter interface {
 	Write([]byte) (int, error)
 	Close() error
+}
+
+// AudioCodec describes one negotiated RTP audio payload.
+type AudioCodec struct {
+	PayloadType int
+	Name        string
+	ClockRate   int
+	Channels    int
+	Fmtp        string
+}
+
+// CaptureSnapshot reports durable files produced for one call.
+type CaptureSnapshot struct {
+	PCAPPath  string
+	AudioPath string
+	Codec     string
+	Err       error
 }
 
 type syscallPacketConn interface {

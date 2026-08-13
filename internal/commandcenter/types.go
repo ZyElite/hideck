@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/vohive/internal/db"
+	"github.com/iniwex5/vohive/internal/notify"
 )
 
 const (
@@ -26,12 +27,13 @@ type ExecuteRequest struct {
 }
 
 type Event struct {
-	ID          uint64               `json:"id"`
-	ExecutionID string               `json:"execution_id"`
-	Kind        string               `json:"kind"`
-	Text        string               `json:"text"`
-	Execution   *db.CommandExecution `json:"execution,omitempty"`
-	CreatedAt   time.Time            `json:"created_at"`
+	ID          uint64                     `json:"id"`
+	ExecutionID string                     `json:"execution_id"`
+	Kind        string                     `json:"kind"`
+	Text        string                     `json:"text"`
+	Attachments []notify.CommandAttachment `json:"attachments,omitempty"`
+	Execution   *db.CommandExecution       `json:"execution,omitempty"`
+	CreatedAt   time.Time                  `json:"created_at"`
 }
 
 type Store interface {

@@ -117,6 +117,7 @@ type Call struct {
 	clientByeSent        bool
 	clientFinalSent      bool
 	terminalFinalized    bool
+	captureBasePath      string
 	cleanupOnce          sync.Once
 	cleanupErr           error
 }
@@ -249,9 +250,10 @@ type InboundAnswer struct {
 
 // SimulateCallRequest is the recovered v1.5.5 timed-call request.
 type SimulateCallRequest struct {
-	Callee      string `json:"callee"`
-	HoldSeconds int    `json:"hold_seconds,omitempty"`
-	OnConnected func() `json:"-" binding:"-"`
+	Callee          string `json:"callee"`
+	HoldSeconds     int    `json:"hold_seconds,omitempty"`
+	OnConnected     func() `json:"-" binding:"-"`
+	CaptureBasePath string `json:"-" binding:"-"`
 }
 
 // SimulateCallResult is the recovered v1.5.5 timed-call outcome.
@@ -259,6 +261,9 @@ type SimulateCallResult struct {
 	Success    bool   `json:"success"`
 	DurationMs int64  `json:"duration_ms"`
 	Reason     string `json:"reason"`
+	PCAPPath   string `json:"pcap_path,omitempty"`
+	AudioPath  string `json:"audio_path,omitempty"`
+	AudioCodec string `json:"audio_codec,omitempty"`
 }
 
 type simulateInviteRuntimeResult struct {

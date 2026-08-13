@@ -1643,7 +1643,8 @@ paths:
       summary: 通过 VoWiFi 发起真实外呼
       description: |
         使用与 `/vocall` 指令相同的 VoWiFi 语音网关发起 IMS 呼叫，
-        接通后保持指定时长并发送 BYE。该操作可能产生运营商通话费用。
+        接通后保持指定时长并发送 BYE，同时保存运营商下行音频与原始 RTP 抓包。
+        该操作可能产生运营商通话费用。
       parameters:
         - $ref: '#/components/parameters/DeviceIDPath'
       requestBody:
@@ -1799,6 +1800,32 @@ paths:
           description: 已删除的执行数量
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  /command-center/recordings/{recording}:
+    get:
+      tags: [commands]
+      summary: 读取命令产生的 VoWiFi 通话 MP3 录音
+      parameters:
+        - in: path
+          name: recording
+          required: true
+          schema:
+            type: string
+            pattern: '^call_[A-Za-z0-9_.-]+\\.mp3$'
+      responses:
+        '200':
+          description: MP3 通话录音
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
 
   /balances:
     get:
@@ -2592,11 +2619,28 @@ components:
           enum: [accepted, progress, result, error]
         text:
           type: string
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommandAttachment'
         execution:
           $ref: '#/components/schemas/CommandExecution'
         created_at:
           type: string
           format: date-time
+
+    CommandAttachment:
+      type: object
+      required: [type, recording, content_type]
+      properties:
+        type:
+          type: string
+          enum: [audio]
+        recording:
+          type: string
+        content_type:
+          type: string
+          enum: [audio/mpeg]
 
     BalanceQuery:
       type: object
@@ -3878,6 +3922,21 @@ components:
           format: int64
         trace_id:
           type: string
+        pcap_path:
+          type: string
+          description: 服务器上的原始双向 RTP PCAP 路径
+        audio_path:
+          type: string
+          description: 服务器上的 MP3 下行通话录音路径
+        audio_codec:
+          type: string
+          enum: [MP3]
+        source_audio_path:
+          type: string
+          description: 服务器上保留的原始 codec 录音路径
+        source_audio_codec:
+          type: string
+          enum: [AMR-WB, AMR, PCMU, PCMA]
 
     FlightModeResponse:
       type: object

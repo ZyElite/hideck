@@ -4,6 +4,7 @@ package voicehost
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -17,20 +18,31 @@ const (
 
 // SimulateCallRequest is the recovered v1.5.5 timed-call request.
 type SimulateCallRequest struct {
-	Callee      string `json:"callee"`
-	HoldSeconds int    `json:"hold_seconds,omitempty"`
-	OnConnected func() `json:"-" binding:"-"`
+	Callee          string `json:"callee"`
+	HoldSeconds     int    `json:"hold_seconds,omitempty"`
+	OnConnected     func() `json:"-" binding:"-"`
+	CaptureBasePath string `json:"-" binding:"-"`
 }
 
 // SimulateCallResult retains the recovered prefix; Message is additive.
 type SimulateCallResult struct {
-	Success    bool   `json:"success"`
-	DurationMs int64  `json:"duration_ms"`
-	Reason     string `json:"reason"`
-	Message    string `json:"message,omitempty"`
+	Success          bool   `json:"success"`
+	DurationMs       int64  `json:"duration_ms"`
+	Reason           string `json:"reason"`
+	Message          string `json:"message,omitempty"`
+	PCAPPath         string `json:"pcap_path,omitempty"`
+	AudioPath        string `json:"audio_path,omitempty"`
+	AudioCodec       string `json:"audio_codec,omitempty"`
+	SourceAudioPath  string `json:"source_audio_path,omitempty"`
+	SourceAudioCodec string `json:"source_audio_codec,omitempty"`
 }
 
 type Notifier interface{}
+
+// AudioTranscoder is injected by the host because codec libraries are infrastructure.
+type AudioTranscoder interface {
+	ToMP3(context.Context, string) (string, error)
+}
 
 // Profile is retained for callers of the additive host API.
 type Profile struct {
@@ -50,6 +62,7 @@ type Gateway struct {
 	incomingHandler func(IncomingCall)
 	innerDevices    map[string]struct{}
 	pcapDirectory   string
+	audioTranscoder AudioTranscoder
 	started         bool
 }
 
@@ -181,23 +194,53 @@ func (g *Gateway) SimulateCall(
 	deviceID string,
 	request SimulateCallRequest,
 ) (*SimulateCallResult, error) {
+	request.CaptureBasePath = g.simulatedCaptureBasePath(deviceID, request.CaptureBasePath)
 	if agent := g.internalAgent(deviceID); agent != nil {
 		result, err := g.inner.SimulateCall(ctx, deviceID, toVoiceSimulateRequest(request))
-		return fromVoiceSimulateResult(result), err
+		return g.finalizeSimulateCallAudio(ctx, fromVoiceSimulateResult(result), err)
 	}
 	if g != nil && g.currentVoiceAgent(deviceID) != nil {
-		return g.simulateCallWithCurrentAgent(ctx, deviceID, request)
+		result, err := g.simulateCallWithCurrentAgent(ctx, deviceID, request)
+		return g.finalizeSimulateCallAudio(ctx, result, err)
 	}
 	if g == nil || g.inner == nil {
 		return nil, nil
 	}
 	result, err := g.inner.SimulateCall(ctx, deviceID, toVoiceSimulateRequest(request))
-	return fromVoiceSimulateResult(result), err
+	return g.finalizeSimulateCallAudio(ctx, fromVoiceSimulateResult(result), err)
+}
+
+func (g *Gateway) finalizeSimulateCallAudio(
+	ctx context.Context,
+	result *SimulateCallResult,
+	callErr error,
+) (*SimulateCallResult, error) {
+	if callErr != nil || result == nil || strings.TrimSpace(result.AudioPath) == "" {
+		return result, callErr
+	}
+	g.mu.RLock()
+	transcoder := g.audioTranscoder
+	g.mu.RUnlock()
+	if transcoder == nil {
+		err := errors.New("voicehost: MP3 audio transcoder is not configured")
+		result.Success, result.Reason = false, err.Error()
+		return result, err
+	}
+	outputPath, err := transcoder.ToMP3(ctx, result.AudioPath)
+	if err != nil {
+		err = fmt.Errorf("voicehost: transcode call recording to MP3: %w", err)
+		result.Success, result.Reason = false, err.Error()
+		return result, err
+	}
+	result.SourceAudioPath, result.SourceAudioCodec = result.AudioPath, result.AudioCodec
+	result.AudioPath, result.AudioCodec = outputPath, "MP3"
+	return result, nil
 }
 
 func toVoiceSimulateRequest(request SimulateCallRequest) voice.SimulateCallRequest {
 	return voice.SimulateCallRequest{
-		Callee: request.Callee, HoldSeconds: request.HoldSeconds, OnConnected: request.OnConnected,
+		Callee: request.Callee, HoldSeconds: request.HoldSeconds,
+		OnConnected: request.OnConnected, CaptureBasePath: request.CaptureBasePath,
 	}
 }
 
@@ -207,6 +250,7 @@ func fromVoiceSimulateResult(result *voice.SimulateCallResult) *SimulateCallResu
 	}
 	converted := &SimulateCallResult{
 		Success: result.Success, DurationMs: result.DurationMs, Reason: result.Reason,
+		PCAPPath: result.PCAPPath, AudioPath: result.AudioPath, AudioCodec: result.AudioCodec,
 	}
 	if converted.Success {
 		converted.Message = "call completed"

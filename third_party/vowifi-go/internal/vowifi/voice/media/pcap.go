@@ -78,6 +78,10 @@ func (r *RTPRelay) startPCAP(config pcapStartConfig) error {
 	r.pcapFile = opened.file
 	r.pcapEnable = true
 	r.pcapErr = nil
+	r.captureErr = nil
+	if opened.file != nil {
+		r.pcapPath = opened.label
+	}
 	deviceID, _ := r.logContext()
 	logging.Debug("PCAP 录制已开始", "device", deviceID, "file", opened.label)
 	return nil
@@ -185,19 +189,98 @@ func (r *RTPRelay) StopPCAPCurrent() error {
 	defer r.pcapMu.Unlock()
 	w := r.pcapWriter
 	err := r.pcapErr
-	wasActive := w != nil || r.pcapFile != nil
+	recorder := r.audioRecorder
+	wasActive := w != nil || r.pcapFile != nil || recorder != nil
 	if w != nil {
 		err = errors.Join(err, w.Close())
+	}
+	if recorder != nil {
+		err = errors.Join(err, r.audioErr, recorder.close())
 	}
 	r.pcapWriter = nil
 	r.pcapFile = nil
 	r.pcapEnable = false
 	r.pcapErr = nil
+	r.audioRecorder = nil
+	r.audioErr = nil
+	r.captureErr = errors.Join(r.captureErr, err)
 	if wasActive {
 		deviceID, _ := r.logContext()
 		logging.Debug("PCAP 录制已停止", "device", deviceID)
 	}
 	return err
+}
+
+// StartCallCapture starts packet capture and reserves the matching audio base path.
+func (r *RTPRelay) StartCallCapture(basePath string) error {
+	if r == nil {
+		return errors.New("media: nil relay")
+	}
+	basePath = strings.TrimSpace(basePath)
+	if basePath == "" {
+		return errors.New("media: call capture path is empty")
+	}
+	r.pcapMu.Lock()
+	r.audioTarget = basePath
+	r.audioPath = ""
+	r.audioCodec = ""
+	r.captureErr = nil
+	r.pcapMu.Unlock()
+	if err := r.StartPCAPCurrent(basePath + ".pcap"); err != nil {
+		r.pcapMu.Lock()
+		r.audioTarget = ""
+		r.pcapMu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// ConfigureAudioCapture opens the direct audio file for the negotiated codec.
+func (r *RTPRelay) ConfigureAudioCapture(codecs []AudioCodec) error {
+	if r == nil {
+		return errors.New("media: nil relay")
+	}
+	r.pcapMu.Lock()
+	defer r.pcapMu.Unlock()
+	if r.audioTarget == "" {
+		return nil
+	}
+	if r.audioRecorder != nil {
+		return nil
+	}
+	recorder, err := newRTPAudioRecorder(r.audioTarget, codecs)
+	if err != nil {
+		r.captureErr = errors.Join(r.captureErr, err)
+		return err
+	}
+	r.audioRecorder = recorder
+	r.audioPath = recorder.path
+	r.audioCodec = recorder.codec
+	return nil
+}
+
+// CaptureSnapshot returns paths and retained recording errors after cleanup.
+func (r *RTPRelay) CaptureSnapshot() CaptureSnapshot {
+	if r == nil {
+		return CaptureSnapshot{}
+	}
+	r.pcapMu.Lock()
+	defer r.pcapMu.Unlock()
+	return CaptureSnapshot{
+		PCAPPath: r.pcapPath, AudioPath: r.audioPath, Codec: r.audioCodec,
+		Err: errors.Join(r.captureErr, r.pcapErr, r.audioErr),
+	}
+}
+
+func (r *RTPRelay) writeAudioPacket(packet []byte) {
+	r.pcapMu.Lock()
+	defer r.pcapMu.Unlock()
+	if r.audioRecorder == nil || r.audioErr != nil {
+		return
+	}
+	if err := r.audioRecorder.writeRTP(packet); err != nil {
+		r.audioErr = fmt.Errorf("media: write audio recording: %w", err)
+	}
 }
 
 func (r *RTPRelay) writePCAPPacket(packet []byte, direction byte) {

@@ -19,11 +19,18 @@ export type CommandExecution = {
   updated_at: string
 }
 
+export type CommandAttachment = {
+  type: 'audio'
+  recording: string
+  content_type: 'audio/mpeg'
+}
+
 export type CommandEvent = {
   id: number
   execution_id: string
   kind: 'accepted' | 'progress' | 'result' | 'error'
   text: string
+  attachments?: CommandAttachment[]
   execution?: CommandExecution
   created_at: string
 }

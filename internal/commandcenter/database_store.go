@@ -2,7 +2,9 @@ package commandcenter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	appdb "github.com/iniwex5/vohive/internal/db"
@@ -26,7 +28,11 @@ func (s *DatabaseStore) Create(ctx context.Context, execution appdb.CommandExecu
 		if err := tx.Create(&event).Error; err != nil {
 			return err
 		}
-		created = eventFromRecords(event, &execution)
+		decoded, decodeErr := eventFromRecords(event, &execution)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		created = decoded
 		return nil
 	})
 	return created, err
@@ -40,7 +46,7 @@ func (s *DatabaseStore) AddEvent(ctx context.Context, event appdb.CommandEvent) 
 	if err := s.db.WithContext(ctx).First(&execution, "id = ?", event.ExecutionID).Error; err != nil {
 		return Event{}, err
 	}
-	return eventFromRecords(event, &execution), nil
+	return eventFromRecords(event, &execution)
 }
 
 func (s *DatabaseStore) Finish(ctx context.Context, id, state, message string, at time.Time) error {
@@ -117,14 +123,27 @@ func (s *DatabaseStore) hydrateEvents(ctx context.Context, records []appdb.Comma
 	}
 	result := make([]Event, 0, len(records))
 	for _, record := range records {
-		result = append(result, eventFromRecords(record, byID[record.ExecutionID]))
+		event, err := eventFromRecords(record, byID[record.ExecutionID])
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, event)
 	}
 	return result, nil
 }
 
-func eventFromRecords(event appdb.CommandEvent, execution *appdb.CommandExecution) Event {
-	return Event{ID: event.ID, ExecutionID: event.ExecutionID, Kind: event.Kind,
-		Text: event.Text, Execution: execution, CreatedAt: event.CreatedAt}
+func eventFromRecords(record appdb.CommandEvent, execution *appdb.CommandExecution) (Event, error) {
+	event := Event{ID: record.ID, ExecutionID: record.ExecutionID, Kind: record.Kind,
+		Text: record.Text, Execution: execution, CreatedAt: record.CreatedAt}
+	if record.PayloadJSON == "" {
+		return event, nil
+	}
+	var payload eventPayload
+	if err := json.Unmarshal([]byte(record.PayloadJSON), &payload); err != nil {
+		return Event{}, fmt.Errorf("decode command event %d payload: %w", record.ID, err)
+	}
+	event.Attachments = payload.Attachments
+	return event, nil
 }
 
 func clampLimit(limit int) int {

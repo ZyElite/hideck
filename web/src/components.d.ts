@@ -18,6 +18,7 @@ declare module 'vue' {
     BalancePanel: typeof import('./components/commands/BalancePanel.vue')['default']
     CardPolicyPanel: typeof import('./components/CardPolicyPanel.vue')['default']
     CarrierWebsheetDialog: typeof import('./components/CarrierWebsheetDialog.vue')['default']
+    CommandAudioPlayer: typeof import('./components/commands/CommandAudioPlayer.vue')['default']
     CommandChat: typeof import('./components/commands/CommandChat.vue')['default']
     CommandComposer: typeof import('./components/commands/CommandComposer.vue')['default']
     CommandTimeline: typeof import('./components/commands/CommandTimeline.vue')['default']

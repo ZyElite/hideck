@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -667,7 +668,7 @@ func (m *Manager) handleCmdCall(cmdCtx CommandContext, args []string) string {
 			Callee:      callee,
 			HoldSeconds: holdSeconds,
 			OnConnected: func() {
-				cmdCtx.Reply(fmt.Sprintf("发起 VoWiFi 呼叫 / 已接通\n设备    %s\n主叫    %s\n被叫    %s\n保持    %d 秒", displayName, caller, callee, holdSeconds))
+				reportProgress(cmdCtx, fmt.Sprintf("发起 VoWiFi 呼叫 / 已接通\n设备    %s\n主叫    %s\n被叫    %s\n保持    %d 秒", displayName, caller, callee, holdSeconds))
 			},
 		}
 
@@ -682,11 +683,33 @@ func (m *Manager) handleCmdCall(cmdCtx CommandContext, args []string) string {
 			if res.DurationMs > 0 && durationSeconds == 0 {
 				durationSeconds = 1
 			}
-			cmdCtx.Reply(fmt.Sprintf("发起 VoWiFi 呼叫 / 完成\n设备    %s\n主叫    %s\n被叫    %s\n时长    %d 秒", displayName, caller, callee, durationSeconds))
+			message := fmt.Sprintf("发起 VoWiFi 呼叫 / 完成\n设备    %s\n主叫    %s\n被叫    %s\n时长    %d 秒", displayName, caller, callee, durationSeconds)
+			replyVoiceCallCompletion(cmdCtx, message, res)
 		} else {
 			cmdCtx.Reply(fmt.Sprintf("发起 VoWiFi 呼叫 / 未接通\n设备    %s\n主叫    %s\n被叫    %s\n原因    %s", displayName, caller, callee, res.Reason))
 		}
 	}()
 
 	return fmt.Sprintf("发起 VoWiFi 呼叫 / 已受理\n设备    %s\n主叫    %s\n被叫    %s\n保持    %d 秒", displayName, caller, callee, holdSeconds)
+}
+
+func replyVoiceCallCompletion(cmdCtx CommandContext, message string, result *voicehost.SimulateCallResult) {
+	attachment, ok := voiceRecordingAttachment(result)
+	if !ok {
+		cmdCtx.Reply(message)
+		return
+	}
+	message += "\n录音    " + attachment.Recording
+	replyWithAttachments(cmdCtx, message, []CommandAttachment{attachment})
+}
+
+func voiceRecordingAttachment(result *voicehost.SimulateCallResult) (CommandAttachment, bool) {
+	if result == nil || !strings.EqualFold(strings.TrimSpace(result.AudioCodec), "MP3") {
+		return CommandAttachment{}, false
+	}
+	name := filepath.Base(strings.TrimSpace(result.AudioPath))
+	if name == "." || !strings.EqualFold(filepath.Ext(name), ".mp3") {
+		return CommandAttachment{}, false
+	}
+	return CommandAttachment{Type: "audio", Recording: name, ContentType: "audio/mpeg"}, true
 }

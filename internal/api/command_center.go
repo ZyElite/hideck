@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +32,7 @@ func (s *Server) registerApprovedCommandRoutes(api *gin.RouterGroup) {
 	commands.POST("/executions", s.handleCommandExecute)
 	commands.GET("/events", s.handleCommandEvents)
 	commands.GET("/stream", s.handleCommandEventStream)
+	commands.GET("/recordings/:recording", s.handleCommandRecording)
 	commands.DELETE("/history", s.handleCommandHistoryClear)
 
 	api.GET("/balances", s.handleBalanceQueryList)
@@ -39,6 +42,59 @@ func (s *Server) registerApprovedCommandRoutes(api *gin.RouterGroup) {
 	api.POST("/carrier-query-rules", s.handleBalanceRulePost)
 	api.PUT("/carrier-query-rules/:rule_id", s.handleBalanceRulePut)
 	api.DELETE("/carrier-query-rules/:rule_id", s.handleBalanceRuleDelete)
+}
+
+func (s *Server) handleCommandRecording(c *gin.Context) {
+	name := strings.TrimSpace(c.Param("recording"))
+	if !validVoiceRecordingName(name) {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "录音文件名无效"})
+		return
+	}
+	directory := strings.TrimSpace(s.voiceRecordingDirectory)
+	if directory == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "message": "通话录音目录未配置"})
+		return
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if os.IsNotExist(err) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"status": "error", "message": "通话录音目录不可用"})
+		return
+	}
+	defer root.Close()
+	file, err := root.Open(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "通话录音不存在"})
+		return
+	}
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil || !stat.Mode().IsRegular() {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "通话录音不可读"})
+		return
+	}
+	c.Header("Content-Type", "audio/mpeg")
+	c.Header("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, name))
+	c.Header("Cache-Control", "private, no-store")
+	http.ServeContent(c.Writer, c.Request, name, stat.ModTime(), file)
+}
+
+func validVoiceRecordingName(name string) bool {
+	if !strings.HasPrefix(name, "call_") || !strings.EqualFold(filepath.Ext(name), ".mp3") {
+		return false
+	}
+	for _, char := range name {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' {
+			continue
+		}
+		if char != '_' && char != '-' && char != '.' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) registerCompatibilityCommandRoutes(api *gin.RouterGroup) {

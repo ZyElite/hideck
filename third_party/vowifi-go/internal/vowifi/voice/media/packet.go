@@ -16,6 +16,7 @@ const (
 
 func (r *RTPRelay) handleIMSPacket(packet []byte, source *net.UDPAddr) {
 	r.writePCAPPacket(packet, pcapDirectionIMSToLAN)
+	r.writeAudioPacket(packet)
 	remote := r.remoteAddr.Load()
 	if remote != nil && !remote.IP.Equal(source.IP) {
 		deviceID, _ := r.logContext()

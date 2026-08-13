@@ -42,7 +42,7 @@ func (a *Agent) SimulateCall(
 	inviteCtx, cancelInvite := context.WithTimeout(
 		ctx, voiceInviteTimeout+outboundCancelSettle,
 	)
-	call, err := a.startSimulateClientInvite(inviteCtx, request.Callee)
+	call, err := a.startSimulateClientInvite(inviteCtx, request)
 	cancelInvite()
 	if err != nil {
 		return simulateFailure(startedAt, err), err
@@ -87,11 +87,13 @@ func (a *Agent) holdSimulatedCall(
 	defer timer.Stop()
 	select {
 	case <-call.Done:
-		return &SimulateCallResult{
+		result := &SimulateCallResult{
 			Success:    false,
 			DurationMs: time.Since(startedAt).Milliseconds(),
 			Reason:     "中途被动终止",
-		}, nil
+		}
+		_ = applySimulatedCaptureResult(result, call)
+		return result, nil
 	case <-ctx.Done():
 		return a.waitSimulateCancelSettle(call, startedAt, ctx.Err())
 	case mediaErr := <-call.MediaErrors():
@@ -103,16 +105,31 @@ func (a *Agent) holdSimulatedCall(
 		if err := a.closeSimulatedCall(call); err != nil {
 			return simulateFailure(startedAt, err), err
 		}
-		return &SimulateCallResult{
+		result := &SimulateCallResult{
 			Success:    true,
 			DurationMs: time.Since(startedAt).Milliseconds(),
 			Reason:     "定时正常挂断",
-		}, nil
+		}
+		if err := applySimulatedCaptureResult(result, call); err != nil {
+			return simulateFailure(startedAt, err), err
+		}
+		return result, nil
 	}
 }
 
-func (a *Agent) startSimulateClientInvite(ctx context.Context, callee string) (*Call, error) {
-	return a.dialContext(ctx, callee, "")
+func applySimulatedCaptureResult(result *SimulateCallResult, call *Call) error {
+	if result == nil || call == nil {
+		return nil
+	}
+	pcapPath, audioPath, codec, err := call.captureResult()
+	result.PCAPPath = pcapPath
+	result.AudioPath = audioPath
+	result.AudioCodec = codec
+	return err
+}
+
+func (a *Agent) startSimulateClientInvite(ctx context.Context, request SimulateCallRequest) (*Call, error) {
+	return a.dialContextWithCapture(ctx, request.Callee, "", request.CaptureBasePath)
 }
 
 func (a *Agent) waitSimulateCancelSettle(

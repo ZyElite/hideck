@@ -49,8 +49,21 @@ func (s *Server) handleDeviceVoWiFiCall(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "code": "vowifi_call_failed", "message": err.Error(), "trace_id": traceID})
 		return
 	}
-	logger.Info("VoWiFi 外呼完成并已发送 BYE", "device", deviceID, "duration_ms", result.DurationMs, "trace_id", traceID)
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "success": result.Success, "message": result.Message, "duration_ms": result.DurationMs, "trace_id": traceID})
+	logger.Info(
+		"VoWiFi 外呼完成并已发送 BYE",
+		"device", deviceID, "duration_ms", result.DurationMs,
+		"audio_path", result.AudioPath, "audio_codec", result.AudioCodec,
+		"source_audio_path", result.SourceAudioPath, "source_audio_codec", result.SourceAudioCodec,
+		"pcap_path", result.PCAPPath, "trace_id", traceID,
+	)
+	c.JSON(http.StatusOK, gin.H{
+		"status": "ok", "success": result.Success, "message": result.Message,
+		"duration_ms": result.DurationMs, "trace_id": traceID,
+		"pcap_path": result.PCAPPath, "audio_path": result.AudioPath,
+		"audio_codec":        result.AudioCodec,
+		"source_audio_path":  result.SourceAudioPath,
+		"source_audio_codec": result.SourceAudioCodec,
+	})
 }
 
 func validateVoWiFiCallRequest(deviceID string, req deviceVoWiFiCallRequest) (int, string) {

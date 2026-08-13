@@ -23,6 +23,16 @@ type Service struct {
 	nextSubID   uint64
 }
 
+type eventContent struct {
+	kind        string
+	text        string
+	attachments []notify.CommandAttachment
+}
+
+type eventPayload struct {
+	Attachments []notify.CommandAttachment `json:"attachments,omitempty"`
+}
+
 func NewService(commands *notify.CommandService, store Store) *Service {
 	return &Service{commands: commands, store: store, now: time.Now, subscribers: make(map[uint64]chan Event)}
 }
@@ -95,29 +105,43 @@ func (s *Service) run(id string, async bool, input string) {
 }
 
 func (s *Service) finish(id, kind, text string) {
-	state := StateCompleted
-	message := ""
-	if kind == EventError {
-		state = StateFailed
-		message = text
+	s.finishContent(id, eventContent{kind: kind, text: text})
+}
+
+func (s *Service) finishContent(id string, content eventContent) {
+	state, message := StateCompleted, ""
+	if content.kind == EventError {
+		state, message = StateFailed, content.text
 	}
-	ctx := context.Background()
-	if err := s.store.Finish(ctx, id, state, message, s.now()); err != nil {
+	if err := s.store.Finish(context.Background(), id, state, message, s.now()); err != nil {
 		logger.Error("命令执行状态持久化失败", "execution_id", id, "err", err)
 		return
 	}
-	s.addEvent(id, kind, text)
+	s.addEvent(id, content)
 }
 
-func (s *Service) addEvent(id, kind, text string) {
+func (s *Service) addEvent(id string, content eventContent) {
+	payload, err := encodeEventPayload(content.attachments)
+	if err != nil {
+		logger.Error("命令事件附件编码失败", "execution_id", id, "err", err)
+		return
+	}
 	event, err := s.store.AddEvent(context.Background(), db.CommandEvent{
-		ExecutionID: id, Kind: kind, Text: text, CreatedAt: s.now(),
+		ExecutionID: id, Kind: content.kind, Text: content.text, PayloadJSON: payload, CreatedAt: s.now(),
 	})
 	if err == nil {
 		s.publish(event)
 		return
 	}
-	logger.Error("命令事件持久化失败", "execution_id", id, "kind", kind, "err", err)
+	logger.Error("命令事件持久化失败", "execution_id", id, "kind", content.kind, "err", err)
+}
+
+func encodeEventPayload(attachments []notify.CommandAttachment) (string, error) {
+	if len(attachments) == 0 {
+		return "", nil
+	}
+	encoded, err := json.Marshal(eventPayload{Attachments: attachments})
+	return string(encoded), err
 }
 
 func (s *Service) publish(event Event) {
@@ -152,22 +176,48 @@ type replyContext struct {
 	once        sync.Once
 	mu          sync.Mutex
 	active      bool
-	pending     string
+	pending     eventContent
+	hasPending  bool
+	progress    []string
 }
 
 func (c *replyContext) Reply(text string) {
+	c.reply(eventContent{kind: EventProgress, text: text})
+}
+
+func (c *replyContext) ReplyWithAttachments(text string, attachments []notify.CommandAttachment) {
+	c.reply(eventContent{kind: EventProgress, text: text, attachments: attachments})
+}
+
+func (c *replyContext) Progress(text string) {
 	if !c.finalReply {
-		c.service.addEvent(c.executionID, EventProgress, text)
+		c.service.addEvent(c.executionID, eventContent{kind: EventProgress, text: text})
 		return
 	}
 	c.mu.Lock()
 	if !c.active {
-		c.pending = text
+		c.progress = append(c.progress, text)
 		c.mu.Unlock()
 		return
 	}
 	c.mu.Unlock()
-	c.finish(text)
+	c.service.addEvent(c.executionID, eventContent{kind: EventProgress, text: text})
+}
+
+func (c *replyContext) reply(content eventContent) {
+	if !c.finalReply {
+		c.service.addEvent(c.executionID, content)
+		return
+	}
+	c.mu.Lock()
+	if !c.active {
+		c.pending = content
+		c.hasPending = true
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+	c.finish(content)
 }
 
 func (c *replyContext) activate(initial string) {
@@ -175,17 +225,27 @@ func (c *replyContext) activate(initial string) {
 		c.service.finish(c.executionID, resultKind(initial), initial)
 		return
 	}
-	c.service.addEvent(c.executionID, EventProgress, initial)
+	c.service.addEvent(c.executionID, eventContent{kind: EventProgress, text: initial})
 	c.mu.Lock()
 	c.active = true
 	pending := c.pending
-	c.pending = ""
+	hasPending := c.hasPending
+	progress := append([]string(nil), c.progress...)
+	c.pending = eventContent{}
+	c.hasPending = false
+	c.progress = nil
 	c.mu.Unlock()
-	if pending != "" {
+	for _, text := range progress {
+		c.service.addEvent(c.executionID, eventContent{kind: EventProgress, text: text})
+	}
+	if hasPending {
 		c.finish(pending)
 	}
 }
 
-func (c *replyContext) finish(text string) {
-	c.once.Do(func() { c.service.finish(c.executionID, resultKind(text), text) })
+func (c *replyContext) finish(content eventContent) {
+	c.once.Do(func() {
+		content.kind = resultKind(content.text)
+		c.service.finishContent(c.executionID, content)
+	})
 }

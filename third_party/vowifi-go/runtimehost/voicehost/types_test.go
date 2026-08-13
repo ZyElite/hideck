@@ -3,9 +3,25 @@ package voicehost
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestGatewayBuildsSimulatedCallCapturePath(t *testing.T) {
+	directory := t.TempDir()
+	gateway := NewGateway()
+	gateway.SetPCAPDirectory(directory)
+
+	path := gateway.simulatedCaptureBasePath("wwan/1", "")
+	if filepath.Dir(path) != directory || !strings.HasPrefix(filepath.Base(path), "call_wwan_1_") {
+		t.Fatalf("capture path=%q", path)
+	}
+	if explicit := gateway.simulatedCaptureBasePath("wwan1", "/tmp/requested"); explicit != "/tmp/requested" {
+		t.Fatalf("explicit capture path=%q", explicit)
+	}
+}
 
 // fakeAgent drives a simulated call without the voice engine.
 type fakeAgent struct {
@@ -45,6 +61,47 @@ func (f *fakeAgent) SendDTMF(callID, digit string) error {
 type fakeCall struct{ id string }
 
 func (c fakeCall) CallID() string { return c.id }
+
+type fakeAudioTranscoder struct {
+	input  string
+	output string
+	err    error
+}
+
+func (f *fakeAudioTranscoder) ToMP3(_ context.Context, input string) (string, error) {
+	f.input = input
+	return f.output, f.err
+}
+
+func TestGatewayFinalizesRecordingAsMP3(t *testing.T) {
+	transcoder := &fakeAudioTranscoder{output: "/recordings/call.mp3"}
+	gateway := NewGateway()
+	gateway.SetAudioTranscoder(transcoder)
+	result, err := gateway.finalizeSimulateCallAudio(context.Background(), &SimulateCallResult{
+		Success: true, AudioPath: "/recordings/call.amr", AudioCodec: "AMR",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transcoder.input != "/recordings/call.amr" || result.AudioPath != transcoder.output || result.AudioCodec != "MP3" {
+		t.Fatalf("transcoder=%+v result=%+v", transcoder, result)
+	}
+	if result.SourceAudioPath != "/recordings/call.amr" || result.SourceAudioCodec != "AMR" {
+		t.Fatalf("source recording=%+v", result)
+	}
+}
+
+func TestGatewayReportsMP3TranscodeFailure(t *testing.T) {
+	transcoder := &fakeAudioTranscoder{err: errors.New("codec failed")}
+	gateway := NewGateway()
+	gateway.SetAudioTranscoder(transcoder)
+	result, err := gateway.finalizeSimulateCallAudio(context.Background(), &SimulateCallResult{
+		Success: true, AudioPath: "/recordings/call.amr", AudioCodec: "AMR",
+	}, nil)
+	if err == nil || result.Success || !strings.Contains(result.Reason, "codec failed") {
+		t.Fatalf("result=%+v error=%v", result, err)
+	}
+}
 
 type fakeMediaCall struct {
 	fakeCall

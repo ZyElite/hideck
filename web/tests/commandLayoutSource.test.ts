@@ -6,6 +6,7 @@ const commandsView = await readFile(new URL('../src/views/Commands.vue', import.
 const balanceDrawer = await readFile(new URL('../src/components/commands/BalanceDrawer.vue', import.meta.url), 'utf8')
 const commandChat = await readFile(new URL('../src/components/commands/CommandChat.vue', import.meta.url), 'utf8')
 const commandTimeline = await readFile(new URL('../src/components/commands/CommandTimeline.vue', import.meta.url), 'utf8')
+const commandAudioPlayer = await readFile(new URL('../src/components/commands/CommandAudioPlayer.vue', import.meta.url), 'utf8')
 const commandComposer = await readFile(new URL('../src/components/commands/CommandComposer.vue', import.meta.url), 'utf8')
 
 test('command workspace keeps balance inside chat and a responsive history drawer', () => {
@@ -19,6 +20,14 @@ test('command workspace keeps balance inside chat and a responsive history drawe
   assert.match(commandChat, /:events="visibleEvents"/)
   assert.match(commandChat, /:balance-queries="visibleBalanceQueries"/)
   assert.match(commandTimeline, /<BalanceMessage v-else/)
+})
+
+test('VoWiFi command results render authenticated MP3 playback', () => {
+  assert.match(commandTimeline, /<CommandAudioPlayer/)
+  assert.match(commandAudioPlayer, /commandService\.recording/)
+  assert.match(commandAudioPlayer, /URL\.createObjectURL/)
+  assert.match(commandAudioPlayer, /URL\.revokeObjectURL/)
+  assert.match(commandAudioPlayer, /<audio[^>]*controls[^>]*preload="metadata"/)
 })
 
 test('command composer source stays visible above the mobile safe area', () => {

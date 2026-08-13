@@ -239,7 +239,10 @@ func (e *automaticTaskExecutor) executeCall(
 		if result == nil || !result.Success {
 			return "", automation.Permanent(errors.New("VoWiFi call did not complete successfully"))
 		}
-		return fmt.Sprintf("VoWiFi 通话已完成，duration_ms=%d", result.DurationMs), nil
+		return fmt.Sprintf(
+			"VoWiFi 通话已完成，duration_ms=%d，audio_path=%s",
+			result.DurationMs, result.AudioPath,
+		), nil
 	}
 	if worker.Modem == nil {
 		return "", errors.New("cellular calling requires an AT modem channel")

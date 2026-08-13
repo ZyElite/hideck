@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/iniwex5/vohive/internal/api"
+	"github.com/iniwex5/vohive/internal/audiotranscode"
 	"github.com/iniwex5/vohive/internal/config"
 	"github.com/iniwex5/vohive/internal/db"
 	"github.com/iniwex5/vohive/internal/device"
@@ -30,6 +31,7 @@ import (
 )
 
 func main() {
+	const voiceRecordingDirectory = "data/recordings/voice"
 	// Parse flags
 	var configPath string
 	var backendOnly bool
@@ -139,6 +141,8 @@ func main() {
 	// voiceGW 始终创建，用于管理 VoWiFi Agent（SimulateCall 等）。
 	var notifyMgr *notify.Manager
 	voiceGW := voicehost.NewGateway()
+	voiceGW.SetPCAPDirectory(voiceRecordingDirectory)
+	voiceGW.SetAudioTranscoder(audiotranscode.New())
 	pool.SetVoiceGateway(voiceGW)
 
 	if err := voiceGW.Start(context.Background()); err != nil {
@@ -193,6 +197,7 @@ func main() {
 	}
 
 	apiServer := api.New(cfg, pool, staticFS, proxyMgr, voiceGW, notifyMgr, configPath)
+	apiServer.SetVoiceRecordingDirectory(voiceRecordingDirectory)
 	apiServer.SetRealtimeTraffic(realtimeTraffic)
 
 	syncProxyConfigs := func(reason, deviceID string) {

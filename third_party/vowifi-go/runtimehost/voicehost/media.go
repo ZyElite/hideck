@@ -2,8 +2,45 @@ package voicehost
 
 import (
 	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
+	"time"
 )
+
+func (g *Gateway) simulatedCaptureBasePath(deviceID, explicit string) string {
+	if value := strings.TrimSpace(explicit); value != "" {
+		return value
+	}
+	if g == nil {
+		return ""
+	}
+	g.mu.RLock()
+	directory := g.pcapDirectory
+	g.mu.RUnlock()
+	if directory == "" {
+		return ""
+	}
+	deviceID = sanitizeCapturePart(deviceID)
+	if deviceID == "" {
+		deviceID = "device"
+	}
+	name := fmt.Sprintf("call_%s_%s", deviceID, time.Now().Format("20060102_150405.000000000"))
+	return filepath.Join(directory, name)
+}
+
+func sanitizeCapturePart(value string) string {
+	return strings.Map(func(char rune) rune {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char >= '0' && char <= '9':
+			return char
+		case char == '-', char == '_':
+			return char
+		default:
+			return '_'
+		}
+	}, strings.TrimSpace(value))
+}
 
 // SetPCAPDirectory injects the output directory used by StartPCAPCurrent.
 func (g *Gateway) SetPCAPDirectory(directory string) {
@@ -12,6 +49,16 @@ func (g *Gateway) SetPCAPDirectory(directory string) {
 	}
 	g.mu.Lock()
 	g.pcapDirectory = strings.TrimSpace(directory)
+	g.mu.Unlock()
+}
+
+// SetAudioTranscoder injects the host codec boundary used for MP3 publication.
+func (g *Gateway) SetAudioTranscoder(transcoder AudioTranscoder) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	g.audioTranscoder = transcoder
 	g.mu.Unlock()
 }
 
