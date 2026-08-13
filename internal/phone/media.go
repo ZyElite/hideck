@@ -1,0 +1,160 @@
+package phone
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"sync"
+
+	"github.com/pion/ice/v4"
+	"github.com/pion/webrtc/v4"
+)
+
+const (
+	pcmPayloadType = 0
+)
+
+type MediaOptions struct {
+	UDPAddress string
+	ICEServers []webrtc.ICEServer
+	OnState    func(mediaID string, state webrtc.PeerConnectionState)
+}
+
+type MediaAnswer struct {
+	MediaID string `json:"media_id"`
+	Lease   string `json:"lease"`
+	SDP     string `json:"sdp"`
+}
+
+type MediaStats struct {
+	PacketsFromIMS uint64 `json:"packets_from_ims"`
+	PacketsToIMS   uint64 `json:"packets_to_ims"`
+	PacketsLost    uint64 `json:"packets_lost"`
+}
+
+type MediaManager struct {
+	api        *webrtc.API
+	mux        ice.UDPMux
+	iceServers []webrtc.ICEServer
+	onState    func(string, webrtc.PeerConnectionState)
+	mu         sync.RWMutex
+	sessions   map[string]*MediaSession
+}
+
+func NewMediaManager(options MediaOptions) (*MediaManager, error) {
+	address := options.UDPAddress
+	if address == "" {
+		address = ":7580"
+	}
+	udpAddress, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		return nil, fmt.Errorf("phone: resolve WebRTC UDP address: %w", err)
+	}
+	connection, err := net.ListenUDP("udp", udpAddress)
+	if err != nil {
+		return nil, fmt.Errorf("phone: listen WebRTC UDP mux on %s: %w", address, err)
+	}
+	mux := webrtc.NewICEUDPMux(nil, connection)
+	api, err := newWebRTCAPI(mux)
+	if err != nil {
+		_ = mux.Close()
+		return nil, err
+	}
+	return &MediaManager{
+		api: api, mux: mux, iceServers: options.ICEServers,
+		onState: options.OnState, sessions: make(map[string]*MediaSession),
+	}, nil
+}
+
+func newWebRTCAPI(mux ice.UDPMux) (*webrtc.API, error) {
+	mediaEngine := &webrtc.MediaEngine{}
+	err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{
+			MimeType: webrtc.MimeTypePCMU, ClockRate: 8000, Channels: 1,
+		},
+		PayloadType: pcmPayloadType,
+	}, webrtc.RTPCodecTypeAudio)
+	if err != nil {
+		return nil, fmt.Errorf("phone: register PCMU codec: %w", err)
+	}
+	settings := webrtc.SettingEngine{}
+	settings.SetICEUDPMux(mux)
+	return webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithSettingEngine(settings)), nil
+}
+
+func (m *MediaManager) Create(ctx context.Context, owner, offer string) (MediaAnswer, error) {
+	if m == nil || m.api == nil {
+		return MediaAnswer{}, errors.New("phone: media manager is unavailable")
+	}
+	mediaID, err := randomToken(16)
+	if err != nil {
+		return MediaAnswer{}, err
+	}
+	lease, err := randomToken(32)
+	if err != nil {
+		return MediaAnswer{}, err
+	}
+	session, answer, err := newMediaSession(ctx, mediaSessionOptions{
+		ID: mediaID, Lease: lease, Owner: owner, Offer: offer,
+		API: m.api, ICEServers: m.iceServers, OnState: m.onState,
+	})
+	if err != nil {
+		return MediaAnswer{}, err
+	}
+	m.mu.Lock()
+	m.sessions[mediaID] = session
+	m.mu.Unlock()
+	return MediaAnswer{MediaID: mediaID, Lease: lease, SDP: answer}, nil
+}
+
+func (m *MediaManager) Get(mediaID string) *MediaSession {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.sessions[mediaID]
+}
+
+func (m *MediaManager) Remove(mediaID string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	session := m.sessions[mediaID]
+	delete(m.sessions, mediaID)
+	m.mu.Unlock()
+	if session != nil {
+		_ = session.Close()
+	}
+}
+
+func (m *MediaManager) Close() error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	sessions := make([]*MediaSession, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	m.sessions = make(map[string]*MediaSession)
+	m.mu.Unlock()
+	var result error
+	for _, session := range sessions {
+		result = errors.Join(result, session.Close())
+	}
+	return errors.Join(result, m.mux.Close())
+}
+
+func randomToken(bytes int) (string, error) {
+	buffer := make([]byte, bytes)
+	if _, err := io.ReadFull(rand.Reader, buffer); err != nil {
+		return "", fmt.Errorf("phone: generate secure token: %w", err)
+	}
+	return hex.EncodeToString(buffer), nil
+}
