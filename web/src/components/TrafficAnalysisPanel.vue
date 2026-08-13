@@ -237,11 +237,11 @@ const deviceSeriesName = computed(() => {
   return analysisChartData.value?.devices?.[0] || '当前设备'
 })
 
-const panelClass = computed(() => (
-  props.mode === 'device'
-    ? 'traffic-analysis-panel ui-panel-muted p-6 overflow-hidden'
-    : 'traffic-analysis-panel ui-card p-6 overflow-hidden'
-))
+const panelClass = computed(() => [
+  'traffic-analysis-panel overflow-hidden',
+  props.mode === 'device' ? 'ui-panel-muted' : 'ui-card is-global',
+  props.compact ? 'is-compact' : ''
+])
 
 const chartOption = computed(() => {
   const snapshot = chartSeriesSnapshot.value
@@ -490,12 +490,19 @@ function handleRangeChange(value: string | number | boolean | undefined) {
 <template>
   <div :class="panelClass">
     <div class="traffic-panel-header">
-      <div>
-        <div class="text-lg font-extrabold text-gray-900 dark:text-white">{{ title }}</div>
-        <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ subtitle }}</div>
+      <div class="traffic-panel-heading">
+        <span v-if="mode === 'global'" class="traffic-panel-kicker">TRAFFIC ANALYSIS</span>
+        <h2>{{ title }}</h2>
+        <p>{{ subtitle }}</p>
       </div>
       <div class="traffic-panel-actions">
-        <el-radio-group :model-value="range" :disabled="disabled" @change="handleRangeChange">
+        <el-radio-group
+          class="traffic-period-control"
+          :model-value="range"
+          :disabled="disabled"
+          aria-label="流量统计周期"
+          @change="handleRangeChange"
+        >
           <el-radio-button label="day">日</el-radio-button>
           <el-radio-button label="week">周</el-radio-button>
           <el-radio-button label="month">月</el-radio-button>
@@ -522,22 +529,22 @@ function handleRangeChange(value: string | number | boolean | undefined) {
         @retry="emit('refresh')"
       />
 
-      <div v-if="!compact" class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-        <div class="ui-panel-muted p-3">
-          <div class="text-xs text-gray-400">{{ rangeText }}下载</div>
-          <div class="text-lg font-mono font-bold mt-1">{{ formatBytes(analysisTotal.rx) }}</div>
+      <div v-if="!compact" class="traffic-metrics" aria-label="周期流量摘要">
+        <div class="traffic-metric is-download">
+          <span>{{ rangeText }}下载</span>
+          <strong>{{ formatBytes(analysisTotal.rx) }}</strong>
         </div>
-        <div class="ui-panel-muted p-3">
-          <div class="text-xs text-gray-400">{{ rangeText }}上传</div>
-          <div class="text-lg font-mono font-bold mt-1">{{ formatBytes(analysisTotal.tx) }}</div>
+        <div class="traffic-metric is-upload">
+          <span>{{ rangeText }}上传</span>
+          <strong>{{ formatBytes(analysisTotal.tx) }}</strong>
         </div>
-        <div class="ui-panel-muted p-3">
-          <div class="text-xs text-gray-400">{{ rangeText }}合计</div>
-          <div class="text-lg font-mono font-bold mt-1">{{ formatBytes(analysisTotal.total) }}</div>
+        <div class="traffic-metric is-total">
+          <span>{{ rangeText }}合计</span>
+          <strong>{{ formatBytes(analysisTotal.total) }}</strong>
         </div>
       </div>
 
-      <div v-if="chartOption && VChartComp" :class="compact ? 'compact-chart' : 'mb-6 h-[300px] w-full'">
+      <div v-if="chartOption && VChartComp" :class="compact ? 'compact-chart' : 'traffic-chart'">
         <component :is="VChartComp" class="chart" :option="chartOption" autoresize />
       </div>
       <ErrorState
@@ -567,27 +574,41 @@ function handleRangeChange(value: string | number | boolean | undefined) {
         <span>总流量 <strong>{{ formatBytes(analysisTotal.total) }}</strong></span>
       </footer>
 
-      <el-table v-else :data="analysisBuckets" size="small" stripe v-loading="!!loading" class="w-full">
-        <el-table-column label="时间" min-width="140">
-          <template #default="scope">{{ formatTrafficBucketTime(scope?.row || {}) }}</template>
-        </el-table-column>
-        <el-table-column label="下载" min-width="120">
-          <template #default="scope">{{ formatBytes(scope?.row?.rx_bytes) }}</template>
-        </el-table-column>
-        <el-table-column label="上传" min-width="120">
-          <template #default="scope">{{ formatBytes(scope?.row?.tx_bytes) }}</template>
-        </el-table-column>
-        <el-table-column label="合计" min-width="120">
-          <template #default="scope">{{ formatBytes(scope?.row?.total_bytes) }}</template>
-        </el-table-column>
-      </el-table>
+      <section v-else class="traffic-detail" aria-label="流量周期明细">
+        <header>
+          <div>
+            <strong>周期明细</strong>
+            <span>来自真实采样数据</span>
+          </div>
+          <span>{{ analysisBuckets.length }} 条记录</span>
+        </header>
+        <el-table
+          :data="analysisBuckets"
+          size="small"
+          stripe
+          v-loading="!!loading"
+          class="traffic-detail-table"
+        >
+          <el-table-column label="时间" min-width="140">
+            <template #default="scope">{{ formatTrafficBucketTime(scope?.row || {}) }}</template>
+          </el-table-column>
+          <el-table-column label="下载" min-width="120">
+            <template #default="scope">{{ formatBytes(scope?.row?.rx_bytes) }}</template>
+          </el-table-column>
+          <el-table-column label="上传" min-width="120">
+            <template #default="scope">{{ formatBytes(scope?.row?.tx_bytes) }}</template>
+          </el-table-column>
+          <el-table-column label="合计" min-width="120">
+            <template #default="scope">{{ formatBytes(scope?.row?.total_bytes) }}</template>
+          </el-table-column>
+        </el-table>
+      </section>
     </template>
   </div>
 </template>
 
 <style scoped>
 .traffic-panel-header {
-  margin-bottom: 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -595,17 +616,45 @@ function handleRangeChange(value: string | number | boolean | undefined) {
 }
 
 .traffic-analysis-panel {
+  padding: 28px 30px;
   border-radius: 20px;
-  background:
-    radial-gradient(circle at 78% 10%, color-mix(in srgb, var(--ui-communication) 6%, transparent), transparent 32%),
-    var(--ui-surface);
+  background: linear-gradient(155deg, color-mix(in srgb, var(--ui-surface) 96%, var(--ui-primary) 4%), var(--ui-surface));
+}
+
+.traffic-panel-heading { min-width: 0; }
+.traffic-panel-kicker { display: block; margin-bottom: 6px; color: var(--ui-primary); font: 700 10px "v-mono", monospace; letter-spacing: .14em; }
+.traffic-panel-heading h2 { margin: 0; color: var(--ui-text); font-size: 22px; font-weight: 650; line-height: 1.25; }
+.traffic-panel-heading p { margin: 4px 0 0; color: var(--ui-text-muted); font-size: 13px; }
+
+.traffic-metrics {
+  margin: 26px 0 18px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-block: 1px solid var(--ui-border);
+}
+
+.traffic-metric { min-width: 0; padding: 18px 20px; }
+.traffic-metric + .traffic-metric { border-left: 1px solid var(--ui-border); }
+.traffic-metric span { display: block; color: var(--ui-text-muted); font-size: 12px; }
+.traffic-metric strong { display: block; margin-top: 5px; color: var(--ui-text); font: 700 20px "v-mono", ui-monospace, monospace; overflow-wrap: anywhere; }
+.traffic-metric.is-download strong { color: var(--ui-communication); }
+.traffic-metric.is-upload strong { color: var(--ui-success); }
+.traffic-metric.is-total strong { color: var(--ui-primary); }
+
+.traffic-chart {
+  width: 100%;
+  height: 280px;
+  margin-bottom: 20px;
 }
 
 .traffic-panel-actions {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
 }
+
+.traffic-period-control :deep(.el-radio-button__inner) { min-width: 48px; min-height: 38px; display: grid; place-items: center; }
 
 .compact-chart {
   width: 100%;
@@ -622,6 +671,12 @@ function handleRangeChange(value: string | number | boolean | undefined) {
   color: var(--ui-text-muted);
   font-size: 13px;
 }
+
+.traffic-detail { min-width: 0; overflow: hidden; border-top: 1px solid var(--ui-border); }
+.traffic-detail > header { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--ui-text-muted); font-size: 12px; }
+.traffic-detail > header > div { min-width: 0; display: flex; align-items: baseline; gap: 9px; }
+.traffic-detail > header strong { color: var(--ui-text); font-size: 13px; }
+.traffic-detail-table { width: 100%; min-width: 0; }
 
 .traffic-summary {
   min-height: 42px;
@@ -645,6 +700,8 @@ function handleRangeChange(value: string | number | boolean | undefined) {
 .traffic-summary .upload-value { color: var(--ui-success); }
 
 @media (max-width: 639px) {
+  .traffic-analysis-panel { padding: 20px; }
+
   .traffic-panel-header {
     align-items: stretch;
     flex-direction: column;
@@ -653,6 +710,17 @@ function handleRangeChange(value: string | number | boolean | undefined) {
   .traffic-panel-actions {
     justify-content: space-between;
   }
+
+  .traffic-period-control { min-width: 0; }
+  .traffic-period-control :deep(.el-radio-button__inner) { min-width: 46px; min-height: 44px; padding-inline: 12px; }
+
+  .traffic-metrics { margin-top: 22px; grid-template-columns: 1fr; }
+  .traffic-metric { padding: 14px 4px; }
+  .traffic-metric + .traffic-metric { border-left: 0; border-top: 1px solid var(--ui-border); }
+
+  .traffic-chart { height: 230px; }
+
+  .traffic-detail > header > div { align-items: flex-start; flex-direction: column; gap: 1px; }
 
   .compact-chart {
     height: 220px;
