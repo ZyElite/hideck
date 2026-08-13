@@ -142,7 +142,7 @@ function submit() {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font: 11px "v-mono", ui-monospace, monospace;
+  font: var(--ui-font-caption) "v-mono", ui-monospace, monospace;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -186,8 +186,8 @@ function submit() {
 }
 .suggestions button:last-child { border-bottom: 0; }
 .suggestions button:hover, .suggestions button:focus-visible { background: color-mix(in srgb, var(--ui-primary) 8%, transparent); outline: none; }
-.suggestions strong { font: 12px "v-mono", monospace; }
-.suggestions span { color: var(--ui-text-muted); font-size: 11px; }
+.suggestions strong { font: var(--ui-font-body-sm) "v-mono", monospace; }
+.suggestions span { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .suggestions-pop-enter-active { transition: opacity 160ms ease-out, transform 160ms ease-out; }
 .suggestions-pop-leave-active { transition: opacity 100ms ease-in, transform 100ms ease-in; }
 .suggestions-pop-enter-from, .suggestions-pop-leave-to { opacity: 0; transform: translateY(4px); }

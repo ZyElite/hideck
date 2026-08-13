@@ -272,21 +272,21 @@ function lines(value: string) {
 :global(.command-rule-drawer .el-drawer__close-btn) { width: 44px; height: 44px; display: grid; place-items: center; }
 .source-banner > .el-icon { color: var(--ui-primary); font-size: 20px; }
 .source-banner strong, .source-banner span { display: block; }
-.source-banner strong { color: var(--ui-text); font-size: 12px; }
-.source-banner span { margin-top: 2px; color: var(--ui-text-subtle); font-size: 10px; }
+.source-banner strong { color: var(--ui-text); font-size: var(--ui-font-body-sm); }
+.source-banner span { margin-top: 2px; color: var(--ui-text-subtle); font-size: var(--ui-font-body-sm); }
 .source-summary { display: flex; gap: 6px; }
-.source-summary small { padding: 4px 6px; border: 1px solid var(--ui-border); border-radius: 3px; color: var(--ui-text-muted); font-size: 9px; white-space: nowrap; }
+.source-summary small { padding: 4px 6px; border: 1px solid var(--ui-border); border-radius: 3px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); white-space: nowrap; }
 .source-banner :deep(.el-button) { min-height: 40px; color: var(--ui-primary); }
-.source-error, .form-error { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ui-danger) 38%, var(--ui-border)); background: color-mix(in srgb, var(--ui-danger) 7%, transparent); color: var(--ui-danger); font-size: 11px; }
+.source-error, .form-error { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ui-danger) 38%, var(--ui-border)); background: color-mix(in srgb, var(--ui-danger) 7%, transparent); color: var(--ui-danger); font-size: var(--ui-font-body-sm); }
 .source-error { margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .source-error :deep(.el-button) { color: var(--ui-danger); }
 .inventory-heading, .editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .inventory-heading { padding: 4px 0 12px; }
 .inventory-heading strong, .inventory-heading span { display: block; }
 .inventory-heading strong { color: var(--ui-text); font-size: 13px; }
-.inventory-heading span { margin-top: 3px; color: var(--ui-text-subtle); font-size: 10px; }
+.inventory-heading span { margin-top: 3px; color: var(--ui-text-subtle); font-size: var(--ui-font-body-sm); }
 .inventory-heading :deep(.el-button) { min-height: 40px; }
-.inventory-state { min-height: 88px; border-block: 1px solid var(--ui-border); color: var(--ui-text-subtle); display: grid; place-items: center; font-size: 11px; }
+.inventory-state { min-height: 88px; border-block: 1px solid var(--ui-border); color: var(--ui-text-subtle); display: grid; place-items: center; font-size: var(--ui-font-caption); }
 .custom-list { border-top: 1px solid var(--ui-border); }
 .custom-list article { min-width: 0; min-height: 56px; border-bottom: 1px solid var(--ui-border); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; transition: background-color 120ms ease; }
 .custom-list article.selected { background: color-mix(in srgb, var(--ui-primary) 8%, transparent); box-shadow: inset 2px 0 var(--ui-primary); }
@@ -294,14 +294,14 @@ function lines(value: string) {
 .rule-select:disabled { cursor: not-allowed; opacity: .5; }
 .rule-select > span { min-width: 0; }
 .rule-select strong, .rule-select small { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rule-select strong { color: var(--ui-text); font-size: 12px; }
-.rule-select small { margin-top: 3px; color: var(--ui-text-subtle); font: 9px "v-mono", monospace; }
-.rule-select em { padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--ui-success) 42%, var(--ui-border)); border-radius: 999px; color: var(--ui-success); font-size: 9px; font-style: normal; white-space: nowrap; }
+.rule-select strong { color: var(--ui-text); font-size: var(--ui-font-body-sm); }
+.rule-select small { margin-top: 3px; color: var(--ui-text-subtle); font: var(--ui-font-body-sm) "v-mono", monospace; }
+.rule-select em { padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--ui-success) 42%, var(--ui-border)); border-radius: 999px; color: var(--ui-success); font-size: var(--ui-font-caption); font-style: normal; white-space: nowrap; }
 .rule-select em.disabled { border-color: var(--ui-border); color: var(--ui-text-subtle); }
 .row-actions { padding-right: 3px; display: flex; }
 .row-actions :deep(.el-button) { width: 40px; height: 40px; margin: 0; padding: 0; }
 .editor-heading { margin-top: 22px; padding: 15px 0 11px; border-top: 1px solid var(--ui-border); }
-.editor-heading span { color: var(--ui-primary); font: 8px/1.2 "v-mono", monospace; letter-spacing: .14em; }
+.editor-heading span { color: var(--ui-primary); font: var(--ui-font-caption)/1.2 "v-mono", monospace; letter-spacing: .14em; }
 .editor-heading h3 { margin: 4px 0 0; color: var(--ui-text); font-size: 15px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 .form-error { margin-bottom: 14px; }
@@ -311,13 +311,13 @@ function lines(value: string) {
 .form-actions { position: sticky; bottom: 0; z-index: 2; padding: 12px 0; display: flex; justify-content: flex-end; gap: 8px; background: var(--el-bg-color); border-top: 1px solid var(--ui-border); }
 .readonly-note { padding: 12px 0 14px; border-bottom: 1px solid var(--ui-border); }
 .readonly-note strong, .readonly-note span { display: block; }
-.readonly-note strong { color: var(--ui-primary); font-size: 12px; }
-.readonly-note span { margin-top: 4px; color: var(--ui-text-subtle); font-size: 10px; line-height: 1.5; }
+.readonly-note strong { color: var(--ui-primary); font-size: var(--ui-font-body-sm); }
+.readonly-note span { margin-top: 4px; color: var(--ui-text-subtle); font-size: var(--ui-font-body-sm); line-height: 1.5; }
 .builtin-list article { padding: 13px 2px; border-bottom: 1px solid var(--ui-border); }
 .builtin-list article > div { display: flex; justify-content: space-between; gap: 12px; }
-.builtin-list code, .builtin-list p { color: var(--ui-text-subtle); font-size: 11px; }
+.builtin-list code, .builtin-list p { color: var(--ui-text-subtle); font-size: var(--ui-font-body-sm); }
 .builtin-list p { margin: 6px 0; line-height: 1.5; }
-.builtin-list a { color: var(--ui-primary); font-size: 11px; }
+.builtin-list a { color: var(--ui-primary); font-size: var(--ui-font-body-sm); }
 @media (max-width: 560px) {
   .source-banner { grid-template-columns: auto minmax(0, 1fr) auto; }
   .source-summary { grid-column: 2 / -1; flex-wrap: wrap; }

@@ -237,16 +237,16 @@ function releaseRecording() {
 }
 .recording-icon .el-icon { font-size: 15px; }
 .recording-copy { min-width: 0; flex: 1; display: flex; align-items: baseline; gap: 8px; }
-.recording-copy strong { flex: 0 0 auto; color: var(--ui-text); font-size: 11px; font-weight: 600; }
+.recording-copy strong { flex: 0 0 auto; color: var(--ui-text); font-size: var(--ui-font-body-sm); font-weight: 600; }
 .recording-copy span {
   min-width: 0;
   overflow: hidden;
   color: var(--ui-text-subtle);
-  font: 10px "v-mono", ui-monospace, monospace;
+  font: var(--ui-font-body-sm) "v-mono", ui-monospace, monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.recording-format { color: var(--ui-text-subtle); font: 9px "v-mono", ui-monospace, monospace; }
+.recording-format { color: var(--ui-text-subtle); font: var(--ui-font-caption) "v-mono", ui-monospace, monospace; }
 .audio-controls {
   min-width: 0;
   display: grid;
@@ -278,7 +278,7 @@ function releaseRecording() {
   outline: 2px solid var(--ui-primary);
   outline-offset: 2px;
 }
-.audio-controls time { color: var(--ui-text-subtle); font: 10px "v-mono", ui-monospace, monospace; }
+.audio-controls time { color: var(--ui-text-subtle); font: var(--ui-font-caption) "v-mono", ui-monospace, monospace; }
 .playback-range, .volume-range {
   --range-progress: 0%;
   min-width: 0;
@@ -330,7 +330,7 @@ function releaseRecording() {
 }
 .volume-controls { min-width: 0; display: grid; grid-template-columns: 36px minmax(48px, 1fr); align-items: center; gap: 7px; }
 .native-audio { display: none; }
-.audio-state { min-height: 36px; color: var(--ui-text-muted); font-size: 11px; display: flex; align-items: center; gap: 7px; }
+.audio-state { min-height: 36px; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); display: flex; align-items: center; gap: 7px; }
 .audio-state .el-icon { flex: 0 0 auto; color: var(--ui-primary); font-size: 16px; }
 .audio-state.is-error { color: var(--ui-danger); }
 .audio-state.is-error .el-icon { color: currentColor; }

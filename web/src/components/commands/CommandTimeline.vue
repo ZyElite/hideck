@@ -270,15 +270,15 @@ function audioAttachments(event: CommandEvent) {
 }
 .event-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .event-card header strong { color: currentColor; font-size: 13px; font-weight: 700; }
-.event-card time { flex: 0 0 auto; color: var(--ui-text-subtle); font: 10px "v-mono", ui-monospace, monospace; }
+.event-card time { flex: 0 0 auto; color: var(--ui-text-subtle); font: var(--ui-font-caption) "v-mono", ui-monospace, monospace; }
 .event-card pre {
   margin: 3px 0 0;
   color: var(--ui-text-muted);
-  font: 12px/1.5 "v-mono", ui-monospace, monospace;
+  font: var(--ui-font-body-sm)/1.5 "v-mono", ui-monospace, monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.event-command { display: inline-block; margin-top: 7px; color: var(--ui-text-subtle); font: 10px "v-mono", monospace; }
+.event-command { display: inline-block; margin-top: 7px; color: var(--ui-text-subtle); font: var(--ui-font-body-sm) "v-mono", monospace; }
 .tone-sent { color: var(--ui-communication); }
 .tone-running, .tone-waiting { color: var(--ui-warning); }
 .tone-parsed { color: var(--ui-info); }
@@ -306,7 +306,7 @@ function audioAttachments(event: CommandEvent) {
 }
 .empty-icon .el-icon { font-size: 22px; }
 .empty-state strong, .empty-line strong { color: var(--ui-text); font-size: 13px; }
-.empty-state > span:last-child { font-size: 11px; }
+.empty-state > span:last-child { font-size: var(--ui-font-caption); }
 .new-records {
   position: absolute;
   z-index: 10;

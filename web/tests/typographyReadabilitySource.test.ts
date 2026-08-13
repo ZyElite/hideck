@@ -44,6 +44,17 @@ const smsTypographyFiles = [
   '../src/components/sms/SmsMessageTimeline.vue',
   '../src/components/sms/SmsComposer.vue'
 ] as const
+const commandTypographyFiles = [
+  '../src/views/Commands.vue',
+  '../src/components/commands/CommandChat.vue',
+  '../src/components/commands/CommandTimeline.vue',
+  '../src/components/commands/CommandComposer.vue',
+  '../src/components/commands/CommandAudioPlayer.vue',
+  '../src/components/commands/BalanceDrawer.vue',
+  '../src/components/commands/BalancePanel.vue',
+  '../src/components/commands/BalanceMessage.vue',
+  '../src/components/commands/RuleEditorDrawer.vue'
+] as const
 
 const FONT_DECLARATION_PATTERNS = [
   /font-size:\s*([0-9.]+)px/g,
@@ -101,6 +112,13 @@ test('proxy workspace text does not declare font sizes below 12px', async () => 
 
 test('SMS workspace text does not declare font sizes below 12px', async () => {
   for (const path of smsTypographyFiles) {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8')
+    assert.deepEqual(findUnreadableFontSizes(source), [], path)
+  }
+})
+
+test('command workspace text does not declare font sizes below 12px', async () => {
+  for (const path of commandTypographyFiles) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8')
     assert.deepEqual(findUnreadableFontSizes(source), [], path)
   }
