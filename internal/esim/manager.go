@@ -2551,7 +2551,11 @@ func (m *Manager) finalizeEnableProfileResult(targetICCID string, enableErr erro
 			"target", targetICCID)
 		return nil
 	}
-	return fmt.Errorf("启用 profile %s 失败: %w", targetICCID, enableErr)
+	return NewSwitchProfileError(
+		ClassifySwitchProfileError(enableErr),
+		fmt.Sprintf("启用 profile %s 失败: %v", targetICCID, enableErr),
+		enableErr,
+	)
 }
 
 type apduSwitchBarrier interface {
@@ -2614,7 +2618,11 @@ func (m *Manager) SwitchProfileWithResult(ctx context.Context, targetICCID strin
 
 	iccid, err := sgp22.NewICCID(targetICCID)
 	if err != nil {
-		return result, fmt.Errorf("无效的 ICCID %q: %w", targetICCID, err)
+		return result, NewSwitchProfileError(
+			SwitchProfileErrorInvalidICCID,
+			fmt.Sprintf("无效的 ICCID %q: %v", targetICCID, err),
+			err,
+		)
 	}
 	m.drainSwitchSignals()
 
@@ -2624,14 +2632,22 @@ func (m *Manager) SwitchProfileWithResult(ctx context.Context, targetICCID strin
 		// 前端已知 AID，直接 decode
 		targetAID, err = hex.DecodeString(aidHex)
 		if err != nil {
-			return result, fmt.Errorf("无效的 AID hex %q: %w", aidHex, err)
+			return result, NewSwitchProfileError(
+				SwitchProfileErrorInvalidAIDHex,
+				fmt.Sprintf("无效的 AID hex %q: %v", aidHex, err),
+				err,
+			)
 		}
 		logger.Info("使用前端传入的 AID", "device", m.deviceID, "AID", aidHex)
 	} else {
 		// 回退：遍历查找
 		targetAID, err = m.findAIDForICCID(targetICCID)
 		if err != nil {
-			return result, err
+			code := SwitchProfileErrorInternal
+			if IsDeleteProfileNotFound(err) {
+				code = SwitchProfileErrorProfileNotFound
+			}
+			return result, NewSwitchProfileError(code, err.Error(), err)
 		}
 	}
 
@@ -2765,19 +2781,31 @@ func (m *Manager) DisableProfile(ctx context.Context, targetICCID string, aidHex
 
 	iccid, err := sgp22.NewICCID(targetICCID)
 	if err != nil {
-		return fmt.Errorf("无效的 ICCID %q: %w", targetICCID, err)
+		return NewDisableProfileError(
+			DisableProfileErrorInvalidICCID,
+			fmt.Sprintf("无效的 ICCID %q: %v", targetICCID, err),
+			err,
+		)
 	}
 
 	var targetAID []byte
 	if aidHex != "" {
 		targetAID, err = hex.DecodeString(aidHex)
 		if err != nil {
-			return fmt.Errorf("无效的 AID hex %q: %w", aidHex, err)
+			return NewDisableProfileError(
+				DisableProfileErrorInvalidAIDHex,
+				fmt.Sprintf("无效的 AID hex %q: %v", aidHex, err),
+				err,
+			)
 		}
 	} else {
 		targetAID, err = m.findAIDForICCID(targetICCID)
 		if err != nil {
-			return err
+			code := DisableProfileErrorInternal
+			if IsDeleteProfileNotFound(err) {
+				code = DisableProfileErrorProfileNotFound
+			}
+			return NewDisableProfileError(code, err.Error(), err)
 		}
 	}
 
@@ -3922,7 +3950,7 @@ func (m *Manager) DeleteProfile(targetICCID string, aidHex string) (DeleteProfil
 
 	if err := client.DeleteProfile(iccid); err != nil {
 		return DeleteProfileResult{}, NewDeleteProfileError(
-			DeleteProfileErrorInternal,
+			ClassifyDeleteProfileError(err),
 			fmt.Sprintf("删除 profile %s 失败: %v", targetICCID, err),
 			err,
 		)

@@ -8,6 +8,7 @@ import { api } from '../stores/auth'
 import { useSensitiveVisibility } from '../composables/useSensitiveVisibility'
 import EsimCardPolicyInline from './EsimCardPolicyInline.vue'
 import { applyOptimisticActiveState } from './deviceEsimOptimistic'
+import { esimProfileActionForState } from './deviceEsimProfileAction'
 import { pickNextDownloadAid } from './deviceEsimOverviewRefresh'
 import { describeDeleteResultNotice, describeDownloadTerminalNotice, describeSpaceDelta } from './deviceEsimOperationNotice'
 import {
@@ -249,9 +250,10 @@ function applyOptimisticActive(targetICCID: string, aidHex: string) {
   profiles.value = applyOptimisticActiveState(profiles.value, targetICCID, aidHex)
 }
 
-// 切换 profile（启用/禁用）
-async function switchProfile(iccid: string, currentState: number, aidHex: string) {
-  const action = currentState === 1 ? '禁用' : '启用'
+// Profile 启用与停用是两个独立的 LPA 操作。
+async function changeProfileState(iccid: string, currentState: number, aidHex: string) {
+  const operation = esimProfileActionForState(currentState)
+  const action = operation === 'disable' ? '停用' : '启用'
   const confirmed = await ElMessageBox.confirm(
     `确定要${action}此 Profile (${iccid}) 吗？切换后设备会短暂断网。`,
     `${action} Profile`,
@@ -261,13 +263,20 @@ async function switchProfile(iccid: string, currentState: number, aidHex: string
 
   switching.value = iccid
   try {
-    const result = await devicesService.switchEsimProfile(props.deviceId, {
+    const payload = {
       iccid,
       aid_hex: aidHex
-    })
+    }
+    const result = operation === 'disable'
+      ? await devicesService.disableEsimProfile(props.deviceId, payload)
+      : await devicesService.switchEsimProfile(props.deviceId, payload)
     if (!result.ok) throw new Error(result.error.message || `${action}失败`)
     ElMessage.success(`Profile ${action}成功`)
-    applyOptimisticActive(iccid, aidHex)
+    if (operation === 'disable') {
+      await fetchProfiles(true)
+    } else {
+      applyOptimisticActive(iccid, aidHex)
+    }
   } catch (e: unknown) {
     ElMessage.error(errorMessage(e, `${action}失败`))
   } finally {
@@ -635,14 +644,13 @@ onBeforeUnmount(() => {
           <!-- 操作按钮 -->
           <div v-if="renaming !== p.iccid" class="flex items-center gap-2 flex-shrink-0">
             <el-button
-              v-if="p.state !== 1"
               size="small"
-              type="success"
+              :type="p.state === 1 ? 'warning' : 'success'"
               :loading="switching === p.iccid"
-              @click="switchProfile(p.iccid, p.state, group.aid_hex)"
+              @click="changeProfileState(p.iccid, p.state, group.aid_hex)"
               plain
             >
-              切换
+              {{ p.state === 1 ? '停用' : '切换' }}
             </el-button>
             <el-button
               size="small"
@@ -663,6 +671,7 @@ onBeforeUnmount(() => {
             <el-button
               size="small"
               type="danger"
+              :disabled="p.state === 1"
               :loading="deleting === p.iccid"
               @click="deleteProfile(p.iccid, p.name, group.aid_hex)"
               plain

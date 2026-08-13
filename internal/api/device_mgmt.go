@@ -1866,6 +1866,18 @@ type esimSwitchRequest struct {
 	AIDHex string `json:"aid_hex"` // 可选，前端已知时直接传，跳过遍历
 }
 
+type esimDisableOperation struct {
+	Context context.Context
+	ICCID   string
+	AIDHex  string
+}
+
+type esimRetryableConflict struct {
+	Reason string
+	Code   string
+	Err    error
+}
+
 type esimSwitchResponse struct {
 	Message            string `json:"message"`
 	TargetICCID        string `json:"target_iccid"`
@@ -1881,15 +1893,51 @@ type esimSwitchResponse struct {
 	SIMReloadWarning   string `json:"sim_reload_warning,omitempty"`
 }
 
-const esimBusyRetryAfterMs = 1200
+const (
+	esimBusyRetryAfterMs     = 1200
+	esimProfileActionTimeout = 30 * time.Second
+)
 
 func isEsimBusyError(err error) bool {
-	return errors.Is(err, esim.ErrOperationInProgress) || errors.Is(err, apduarbiter.ErrAPDUBusy)
+	return errors.Is(err, esim.ErrOperationInProgress) ||
+		errors.Is(err, apduarbiter.ErrAPDUBusy) ||
+		esim.IsDisableProfileBusy(err)
+}
+
+func esimDisableHTTPStatus(err error) int {
+	switch esim.ClassifyDisableProfileError(err) {
+	case esim.DisableProfileErrorInvalidICCID, esim.DisableProfileErrorInvalidAIDHex:
+		return http.StatusBadRequest
+	case esim.DisableProfileErrorProfileNotFound:
+		return http.StatusNotFound
+	case esim.DisableProfileErrorProfileNotEnabled,
+		esim.DisableProfileErrorDisallowedByPolicy,
+		esim.DisableProfileErrorCATBusy:
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func esimSwitchHTTPStatus(err error) int {
+	switch esim.ClassifySwitchProfileError(err) {
+	case esim.SwitchProfileErrorInvalidICCID, esim.SwitchProfileErrorInvalidAIDHex:
+		return http.StatusBadRequest
+	case esim.SwitchProfileErrorProfileNotFound:
+		return http.StatusNotFound
+	case esim.SwitchProfileErrorProfileNotDisabled,
+		esim.SwitchProfileErrorPolicyRejected,
+		esim.SwitchProfileErrorWrongReenable,
+		esim.SwitchProfileErrorCATBusy:
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 func esimDeleteHTTPStatus(err error) int {
 	switch {
-	case isEsimBusyError(err) || esim.IsDeleteProfileBusy(err):
+	case isEsimBusyError(err) || esim.IsDeleteProfileConflict(err):
 		return http.StatusConflict
 	case esim.IsDeleteProfileInvalidInput(err):
 		return http.StatusBadRequest
@@ -1901,13 +1949,21 @@ func esimDeleteHTTPStatus(err error) int {
 }
 
 func respondEsimBusy(c *gin.Context, reason string, err error) {
+	respondEsimRetryableConflict(c, esimRetryableConflict{
+		Reason: reason,
+		Code:   "ESIM_BUSY",
+		Err:    err,
+	})
+}
+
+func respondEsimRetryableConflict(c *gin.Context, conflict esimRetryableConflict) {
 	retryAfterSec := (esimBusyRetryAfterMs + 999) / 1000
 	c.Header("Retry-After", strconv.Itoa(retryAfterSec))
 	c.JSON(http.StatusConflict, gin.H{
-		"error":        err.Error(),
+		"error":        conflict.Err.Error(),
 		"busy":         true,
-		"code":         "ESIM_BUSY",
-		"reason":       reason,
+		"code":         conflict.Code,
+		"reason":       conflict.Reason,
 		"retryAfterMs": esimBusyRetryAfterMs,
 	})
 }
@@ -2000,6 +2056,10 @@ var esimNotificationRetryExec = func(run func(int64, string) error, sequence int
 	return run(sequence, aidHex)
 }
 
+var esimDisableExec = func(run func(context.Context, string, string) error, operation esimDisableOperation) error {
+	return run(operation.Context, operation.ICCID, operation.AIDHex)
+}
+
 func esimDeleteExec(run func(string, string) (esim.DeleteProfileResult, error), iccid, aidHex string) (esim.DeleteProfileResult, error) {
 	return run(iccid, aidHex)
 }
@@ -2076,7 +2136,7 @@ func (s *Server) handleEsimSwitchProfile(c *gin.Context) {
 	}
 
 	// Profile 切换：EnableProfile 后等待目标 profile 生效；切卡后按 Ready+Delay 门控执行后处理（不等待搜网）
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), esimProfileActionTimeout)
 	defer cancel()
 
 	result, err := worker.EsimMgr.SwitchProfileWithResult(ctx, req.ICCID, req.AIDHex)
@@ -2085,7 +2145,18 @@ func (s *Server) handleEsimSwitchProfile(c *gin.Context) {
 			respondEsimBusy(c, "switch_profile", err)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "esim配置切换失败: " + err.Error()})
+		if esim.ClassifySwitchProfileError(err) == esim.SwitchProfileErrorCATBusy {
+			respondEsimRetryableConflict(c, esimRetryableConflict{
+				Reason: "switch_profile",
+				Code:   string(esim.SwitchProfileErrorCATBusy),
+				Err:    err,
+			})
+			return
+		}
+		c.JSON(esimSwitchHTTPStatus(err), gin.H{
+			"error": "esim配置切换失败: " + err.Error(),
+			"code":  esim.ClassifySwitchProfileError(err),
+		})
 		return
 	}
 
@@ -2104,6 +2175,59 @@ func (s *Server) handleEsimSwitchProfile(c *gin.Context) {
 		SIMReloadWarning:   result.SIMReloadWarning,
 	})
 
+}
+
+// handleEsimDisableProfile 停用当前 eSIM Profile，但不启用其他 Profile。
+func (s *Server) handleEsimDisableProfile(c *gin.Context) {
+	var req esimSwitchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	req.ICCID = strings.TrimSpace(req.ICCID)
+	req.AIDHex = strings.TrimSpace(req.AIDHex)
+	if req.ICCID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "iccid 不能为空"})
+		return
+	}
+
+	worker := s.pool.GetWorker(deviceIDParam(c))
+	if worker == nil || worker.EsimMgr == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "设备或esim管理器未找到"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), esimProfileActionTimeout)
+	defer cancel()
+	err := esimDisableExec(worker.EsimMgr.DisableProfile, esimDisableOperation{
+		Context: ctx,
+		ICCID:   req.ICCID,
+		AIDHex:  req.AIDHex,
+	})
+	if err != nil {
+		if isEsimBusyError(err) {
+			respondEsimBusy(c, "disable_profile", err)
+			return
+		}
+		if esim.ClassifyDisableProfileError(err) == esim.DisableProfileErrorCATBusy {
+			respondEsimRetryableConflict(c, esimRetryableConflict{
+				Reason: "disable_profile",
+				Code:   string(esim.DisableProfileErrorCATBusy),
+				Err:    err,
+			})
+			return
+		}
+		c.JSON(esimDisableHTTPStatus(err), gin.H{
+			"error": "esim profile 停用失败: " + err.Error(),
+			"code":  esim.ClassifyDisableProfileError(err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "ok",
+		"message": "eSIM Profile 停用指令已提交，设备信息将异步刷新",
+	})
 }
 
 // handleEsimGetEID 获取所有 eUICC 的 EID 列表
@@ -2277,6 +2401,16 @@ func (s *Server) handleEsimRenameProfile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name 为必填项"})
 		return
 	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.AIDHex = strings.TrimSpace(req.AIDHex)
+	if req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name 为必填项"})
+		return
+	}
+	if len([]byte(req.Name)) > 64 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "profile 名称不能超过 64 字节"})
+		return
+	}
 
 	if err := worker.EsimMgr.RenameProfile(iccid, req.Name, req.AIDHex); err != nil {
 		if isEsimBusyError(err) {
@@ -2309,13 +2443,14 @@ func (s *Server) handleEsimDeleteProfile(c *gin.Context) {
 
 	result, err := esimDeleteExec(worker.EsimMgr.DeleteProfile, iccid, aidHex)
 	if err != nil {
-		// 删除主路径当前是阻塞等待写锁，通常不会快速返回 busy；
-		// 保留该分支用于底层未来显式返回 busy 的防御处理。
-		if esimDeleteHTTPStatus(err) == http.StatusConflict {
+		if isEsimBusyError(err) || esim.IsDeleteProfileBusy(err) {
 			respondEsimBusy(c, "delete_profile", err)
 			return
 		}
-		c.JSON(esimDeleteHTTPStatus(err), gin.H{"error": "删除 profile 失败: " + err.Error()})
+		c.JSON(esimDeleteHTTPStatus(err), gin.H{
+			"error": "删除 profile 失败: " + err.Error(),
+			"code":  esim.ClassifyDeleteProfileError(err),
+		})
 		return
 	}
 

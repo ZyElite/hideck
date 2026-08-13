@@ -619,6 +619,48 @@ func TestEsimDeleteExecPropagatesWarningResult(t *testing.T) {
 	}
 }
 
+func TestEsimDeleteHTTPStatusMapsCardResult(t *testing.T) {
+	cases := []struct {
+		code esim.DeleteProfileErrorCode
+		want int
+	}{
+		{esim.DeleteProfileErrorInvalidICCID, http.StatusBadRequest},
+		{esim.DeleteProfileErrorProfileNotFound, http.StatusNotFound},
+		{esim.DeleteProfileErrorProfileEnabled, http.StatusConflict},
+		{esim.DeleteProfileErrorPolicyRejected, http.StatusConflict},
+		{esim.DeleteProfileErrorInternal, http.StatusInternalServerError},
+	}
+
+	for _, tc := range cases {
+		err := esim.NewDeleteProfileError(tc.code, string(tc.code), nil)
+		if got := esimDeleteHTTPStatus(err); got != tc.want {
+			t.Fatalf("code=%q status=%d want=%d", tc.code, got, tc.want)
+		}
+	}
+}
+
+func TestEsimSwitchHTTPStatusMapsCardResult(t *testing.T) {
+	cases := []struct {
+		code esim.SwitchProfileErrorCode
+		want int
+	}{
+		{esim.SwitchProfileErrorInvalidICCID, http.StatusBadRequest},
+		{esim.SwitchProfileErrorProfileNotFound, http.StatusNotFound},
+		{esim.SwitchProfileErrorProfileNotDisabled, http.StatusConflict},
+		{esim.SwitchProfileErrorPolicyRejected, http.StatusConflict},
+		{esim.SwitchProfileErrorWrongReenable, http.StatusConflict},
+		{esim.SwitchProfileErrorCATBusy, http.StatusConflict},
+		{esim.SwitchProfileErrorInternal, http.StatusInternalServerError},
+	}
+
+	for _, tc := range cases {
+		err := esim.NewSwitchProfileError(tc.code, string(tc.code), nil)
+		if got := esimSwitchHTTPStatus(err); got != tc.want {
+			t.Fatalf("code=%q status=%d want=%d", tc.code, got, tc.want)
+		}
+	}
+}
+
 func TestEsimNotificationsHTTPStatusMapsStructuredErrors(t *testing.T) {
 	cases := []struct {
 		name string

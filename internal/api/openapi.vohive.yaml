@@ -1411,6 +1411,38 @@ paths:
           $ref: '#/components/responses/ErrorMessage'
         '404':
           $ref: '#/components/responses/ErrorMessage'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /devices/{device_id}/esim/actions/disable:
+    post:
+      tags: [esim]
+      summary: 停用 eSIM Profile
+      parameters:
+        - $ref: '#/components/parameters/DeviceIDPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EsimSwitchRequest'
+      responses:
+        '200':
+          description: 停用已提交
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
         '500':
           $ref: '#/components/responses/ErrorMessage'
 

@@ -364,6 +364,12 @@ export const devicesService = {
       return true
     })
   },
+  disableEsimProfile(id: string, payload: { iccid: string; aid_hex: string }) {
+    return callService(async () => {
+      await withEsimBusyRetry(() => api.post(`/devices/${id}/esim/actions/disable`, payload))
+      return true
+    })
+  },
   renameEsimProfile(id: string, iccid: string, payload: { name: string; aid_hex: string }) {
     return callService(async () => {
       await withEsimBusyRetry(() => api.patch(`/devices/${id}/esim/profiles/${iccid}`, payload))

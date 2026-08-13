@@ -382,6 +382,7 @@ func (s *Server) newRouter() *gin.Engine {
 		api.GET("/devices/:device_id/esim", s.handleEsimGetOverview) // 获取 eSIM 总览
 		api.GET("/devices/:device_id/esim/profiles", s.handleEsimListProfiles)
 		api.GET("/devices/:device_id/esim/notifications", s.handleEsimListNotifications)
+		api.POST("/devices/:device_id/esim/actions/disable", s.handleEsimDisableProfile)                          // 停用 eSIM profile
 		api.POST("/devices/:device_id/esim/notifications/:sequence/actions/retry", s.handleEsimRetryNotification) // 获取 eSIM profile 列表
 		api.POST("/devices/:device_id/esim/actions/switch", s.handleEsimSwitchProfile)                            // 切换 eSIM profile
 		api.GET("/devices/:device_id/esim/eids", s.handleEsimGetEID)                                              // 获取 EID
