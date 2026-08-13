@@ -11,6 +11,7 @@ import type {
 export type SmsThreadVM = {
   key: string
   imsi: string
+  iccid: string
   peer: string
   deviceId?: string
   lastTs: number

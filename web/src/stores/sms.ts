@@ -3,7 +3,13 @@ import { ref } from 'vue'
 import type { AppError } from '../types/domain'
 import type { DeviceMgmtListItem } from '../types/api'
 import type { SMSMessageDTO, SmsThreadVM } from '../types/view-model'
-import { smsService, type SmsDeleteThreadPayload, type SmsSendPayload, type SmsThreadQueryParams } from '../services/sms'
+import {
+  smsService,
+  type SmsDeleteThreadPayload,
+  type SmsMarkThreadReadPayload,
+  type SmsSendPayload,
+  type SmsThreadQueryParams
+} from '../services/sms'
 
 export const useSMSStore = defineStore('sms', () => {
   const devices = ref<DeviceMgmtListItem[]>([])
@@ -46,6 +52,10 @@ export const useSMSStore = defineStore('sms', () => {
     return smsService.deleteMessage(id)
   }
 
+  async function markThreadRead(payload: SmsMarkThreadReadPayload) {
+    return smsService.markThreadRead(payload)
+  }
+
   async function deleteThread(payload: SmsDeleteThreadPayload) {
     return smsService.deleteThread(payload)
   }
@@ -61,6 +71,7 @@ export const useSMSStore = defineStore('sms', () => {
     fetchThreads,
     fetchThread,
     send,
+    markThreadRead,
     deleteMessage,
     deleteThread
   }

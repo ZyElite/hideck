@@ -232,6 +232,7 @@ paths:
     post:
       tags: [sms]
       summary: 发送短信
+      description: device_id、imsi、iccid 三种设备选择器只能指定一个；共享 IMSI 场景应使用 iccid
       requestBody:
         required: true
         content:
@@ -248,6 +249,10 @@ paths:
         '400':
           $ref: '#/components/responses/ErrorMessage'
         '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
+        '503':
           $ref: '#/components/responses/ErrorMessage'
         '500':
           $ref: '#/components/responses/ErrorMessage'
@@ -323,6 +328,11 @@ paths:
       summary: 获取与指定对端的短信会话
       parameters:
         - in: query
+          name: iccid
+          description: 会话 ICCID；不能与 device_id 或 imsi 同时使用
+          schema:
+            type: string
+        - in: query
           name: device_id
           schema:
             type: string
@@ -364,11 +374,64 @@ paths:
           $ref: '#/components/responses/ErrorMessage'
         '500':
           $ref: '#/components/responses/ErrorMessage'
+    patch:
+      tags: [sms]
+      summary: 持久化短信会话已读进度
+      description: 仅将 through_id 及之前的已展示来信标为已读，之后到达的短信保持未读
+      parameters:
+        - in: query
+          name: iccid
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: peer
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [through_id]
+              properties:
+                through_id:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: 会话已读状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  marked:
+                    type: integer
+                  unread_count:
+                    type: integer
+                  through_id:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '401':
+          $ref: '#/components/responses/ErrorMessage'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
     delete:
       tags: [sms]
       summary: 永久删除指定短信会话历史
       description: 仅删除短信中心历史记录，不删除设备侧短信槽位
       parameters:
+        - in: query
+          name: iccid
+          description: 会话 ICCID；不能与 device_id 或 imsi 同时使用
+          schema:
+            type: string
         - in: query
           name: device_id
           schema:
@@ -394,7 +457,7 @@ paths:
                     type: string
                   deleted:
                     type: integer
-                  imsi:
+                  iccid:
                     type: string
                   peer:
                     type: string
@@ -3828,6 +3891,8 @@ components:
           type: string
         imsi:
           type: string
+        iccid:
+          type: string
         phone:
           type: string
         message:
@@ -3891,6 +3956,8 @@ components:
       type: object
       properties:
         imsi:
+          type: string
+        iccid:
           type: string
         peer:
           type: string

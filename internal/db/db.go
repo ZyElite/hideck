@@ -187,6 +187,9 @@ func Init(dbPath string) error {
 	if err := RunICCIDReKeyMigration(DB); err != nil {
 		return err
 	}
+	if err := MigrateSMSCanonicalICCID(DB); err != nil {
+		return err
+	}
 	if err := MigrateCardPolicyCanonicalICCID(DB); err != nil {
 		return err
 	}

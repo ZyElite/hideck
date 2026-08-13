@@ -8,6 +8,7 @@ import { normalizeSmsUnreadCount } from '../utils/smsPresentation'
 export type SmsThreadQueryParams = {
   peer: string
   limit: number
+  iccid?: string
   device_id?: string
   imsi?: string
   before_ts?: string
@@ -17,6 +18,7 @@ export type SmsThreadQueryParams = {
 export type SmsSendPayload = {
   device_id?: string
   imsi?: string
+  iccid?: string
   phone: string
   message: string
 }
@@ -24,7 +26,20 @@ export type SmsSendPayload = {
 export type SmsDeleteThreadPayload = {
   device_id?: string
   imsi?: string
+  iccid?: string
   peer: string
+}
+
+export type SmsMarkThreadReadPayload = {
+  iccid: string
+  peer: string
+  through_id: number
+}
+
+export type SmsMarkThreadReadResult = {
+  marked: number
+  unread_count: number
+  through_id: number
 }
 
 function parseTs(s: string) {
@@ -32,10 +47,12 @@ function parseTs(s: string) {
   return Number.isFinite(ms) ? ms : 0
 }
 
-function normalizeThread(contact: SMSContactDTO): SmsThreadVM {
+export function normalizeThread(contact: SMSContactDTO): SmsThreadVM {
+  const iccid = String(contact.iccid || '')
   return {
-    key: `${contact.imsi}|${contact.peer}`,
+    key: `${iccid || contact.imsi}|${contact.peer}`,
     imsi: contact.imsi,
+    iccid,
     peer: contact.peer,
     deviceId: contact.device_id,
     lastTs: parseTs(contact.last_timestamp),
@@ -47,6 +64,19 @@ function normalizeThread(contact: SMSContactDTO): SmsThreadVM {
     peerLower: String(contact.peer || '').toLowerCase(),
     lastMessageLower: String(contact.last_content || '').toLowerCase()
   }
+}
+
+export function resolveSmsThreadKey(requestedKey: string, threads: readonly SmsThreadVM[]): string {
+  const requested = String(requestedKey || '').trim()
+  if (!requested) return ''
+  if (threads.some(thread => thread.key === requested)) return requested
+
+  const separator = requested.indexOf('|')
+  if (separator <= 0) return ''
+  const imsi = requested.slice(0, separator)
+  const peer = requested.slice(separator + 1)
+  const matches = threads.filter(thread => thread.imsi === imsi && thread.peer === peer)
+  return matches.length === 1 ? matches[0].key : ''
 }
 
 const inflightRequests = new Map<string, Promise<ServiceResult<unknown>>>()
@@ -82,7 +112,7 @@ export const smsService = {
     })
   },
   getThread(params: SmsThreadQueryParams) {
-    const key = `sms:getThread:${params.device_id || ''}:${params.imsi || ''}:${params.peer}:${params.limit}:${params.before_ts || ''}:${params.before_id || 0}`
+    const key = `sms:getThread:${params.iccid || ''}:${params.device_id || ''}:${params.imsi || ''}:${params.peer}:${params.limit}:${params.before_ts || ''}:${params.before_id || 0}`
     return reuseInflight(key, async () => {
       const res = await api.get('/sms/thread', { params })
       const list = (res.data || []) as SMSMessageDTO[]
@@ -103,13 +133,22 @@ export const smsService = {
       return res.data as { thread_empty: boolean; imsi: string; peer: string }
     })
   },
+  markThreadRead(payload: SmsMarkThreadReadPayload) {
+    return callService(async () => {
+      const params = { iccid: payload.iccid, peer: payload.peer }
+      const body = { through_id: payload.through_id }
+      const res = await api.patch<SmsMarkThreadReadResult>('/sms/thread', body, { params })
+      return res.data
+    })
+  },
   deleteThread(payload: SmsDeleteThreadPayload) {
     return callService(async () => {
       const params: Record<string, string> = { peer: payload.peer }
       if (payload.device_id) params.device_id = payload.device_id
       if (payload.imsi) params.imsi = payload.imsi
+      if (payload.iccid) params.iccid = payload.iccid
       const res = await api.delete('/sms/thread', { params })
-      return res.data as { deleted: number; imsi: string; peer: string }
+      return res.data as { deleted: number; iccid: string; peer: string }
     })
   }
 }

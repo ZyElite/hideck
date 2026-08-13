@@ -6,7 +6,7 @@ import { Loading } from '@element-plus/icons-vue'
 import { useSMSStore } from '../stores/sms'
 import { usePollingScheduler } from '../composables/usePollingScheduler'
 import { toAppError } from '../services/http'
-import type { SmsThreadQueryParams } from '../services/sms'
+import { resolveSmsThreadKey, type SmsThreadQueryParams } from '../services/sms'
 import EmptyState from '../components/EmptyState.vue'
 import ErrorState from '../components/ErrorState.vue'
 import SmsDeviceRail from '../components/sms/SmsDeviceRail.vue'
@@ -23,6 +23,7 @@ import { createSmsConversationContext, createSmsDeviceChannels } from '../utils/
 type SmsThread = {
   key: string
   imsi: string
+  iccid: string
   peer: string
   deviceId?: string
   lastTs: number
@@ -51,7 +52,6 @@ const messagesError = ref<{ message: string; status?: number; method?: string; u
 const selectedDevice = ref<string>(typeof route.query.device === 'string' ? route.query.device : 'all')
 const selectedThreadKey = ref<string>(typeof route.query.contact === 'string' ? route.query.contact : '')
 const searchQuery = ref('')
-const unreadPresentationVersion = ref(0)
 
 const smsPageRef = ref<HTMLElement | null>(null)
 const smsPageWidth = ref(0)
@@ -71,18 +71,6 @@ function dateKey(timestamp: string) {
   return formatDeviceDate(timestamp, { fallback: '未知日期' })
 }
 
-function lastSeenKey(threadKey: string) {
-  return `sms_thread_last_seen:${selectedDevice.value}:${threadKey}`
-}
-
-function setLastSeen(threadKey: string, ts: number) {
-  try {
-    localStorage.setItem(lastSeenKey(threadKey), String(ts || Date.now()))
-  } catch {
-    // Ignore storage write failures in private/sandboxed modes.
-  }
-}
-
 const filteredThreads = computed(() => {
   const q = String(searchQuery.value || '').trim().toLowerCase()
   if (!q) return threads.value
@@ -93,11 +81,7 @@ const filteredThreads = computed(() => {
 })
 
 const presentedThreads = computed(() => {
-  void unreadPresentationVersion.value
-  return filteredThreads.value.map(thread => ({
-    ...thread,
-    unreadCount: isThreadUnreadForDisplay(thread) ? Math.max(0, Number(thread.unreadCount) || 0) : 0
-  }))
+  return filteredThreads.value
 })
 
 const selectedThread = computed(() => {
@@ -191,16 +175,6 @@ const conversationContext = computed(() => createSmsConversationContext({
   devices: devices.value
 }))
 
-function isThreadUnreadForDisplay(thread: SmsThread): boolean {
-  try {
-    const key = `sms_thread_last_seen:${selectedDevice.value}:${thread.key}`
-    const lastSeen = Number(localStorage.getItem(key) || 0)
-    return thread.lastTs > lastSeen
-  } catch {
-    return true
-  }
-}
-
 function normalizeQueryDevice(device: string) {
   const v = String(device || '').trim()
   if (!v || v === 'all') return undefined
@@ -216,9 +190,24 @@ function buildSmsQuery(device: string, contact?: string) {
   }
 }
 
-function markThreadSeen(t: SmsThread | null) {
-  if (!t) return
-  setLastSeen(t.key, t.lastTs)
+async function markThreadSeen(t: SmsThread | null) {
+  if (!t || threadMessages.value.length === 0) return true
+  const hasDisplayedUnread = threadMessages.value.some(message => message.type === 1 && message.status === 0)
+  if (t.unreadCount <= 0 && !hasDisplayedUnread) return true
+  const throughID = Math.max(...threadMessages.value.map(message => message.id))
+  if (!t.iccid) {
+    messagesError.value = { message: '短信会话缺少 ICCID，无法保存已读状态' }
+    return false
+  }
+  const result = await smsStore.markThreadRead({ iccid: t.iccid, peer: t.peer, through_id: throughID })
+  if (!result.ok) {
+    messagesError.value = result.error
+    return false
+  }
+  threads.value = threads.value.map(thread => (
+    thread.key === t.key ? { ...thread, unreadCount: result.data.unread_count } : thread
+  ))
+  return true
 }
 
 function scrollThreadToBottom() {
@@ -264,7 +253,9 @@ async function loadMoreHistory() {
       before_ts: oldest.timestamp,
       before_id: oldest.id
     }
-    if (selectedDevice.value && selectedDevice.value !== 'all') {
+    if (selectedThread.value.iccid) {
+      params.iccid = selectedThread.value.iccid
+    } else if (selectedDevice.value && selectedDevice.value !== 'all') {
       params.device_id = selectedDevice.value
     } else {
       params.device_id = 'all'
@@ -393,7 +384,9 @@ async function fetchThreadLatest(silent = false) {
   const seq = ++threadFetchSeq
   if (!silent) threadLoading.value = true
   const params: SmsThreadQueryParams = { peer: t.peer, limit: 80 }
-  if (selectedDevice.value && selectedDevice.value !== 'all') {
+  if (t.iccid) {
+    params.iccid = t.iccid
+  } else if (selectedDevice.value && selectedDevice.value !== 'all') {
     params.device_id = selectedDevice.value
   } else {
     params.device_id = 'all'
@@ -416,7 +409,18 @@ async function ensureThreadSelection(options: { syncRoute?: boolean; silent?: bo
   const silent = options.silent === true
   const scrollToBottom = options.scrollToBottom === true
 
-  const current = selectedThread.value
+  const requestedKey = selectedThreadKey.value
+  let current = selectedThread.value
+  if (!current && requestedKey) {
+    const resolvedKey = resolveSmsThreadKey(requestedKey, threads.value)
+    if (resolvedKey) {
+      selectedThreadKey.value = resolvedKey
+      current = selectedThread.value
+      if (resolvedKey !== requestedKey) {
+        void router.replace({ query: buildSmsQuery(selectedDevice.value, resolvedKey) })
+      }
+    }
+  }
   if (current) {
     const ok = await fetchThreadLatest(silent)
     if (ok) {
@@ -428,11 +432,10 @@ async function ensureThreadSelection(options: { syncRoute?: boolean; silent?: bo
 
   threadMessages.value = []
   threadHasMore.value = false
-  if (selectedThreadKey.value) {
+  if (requestedKey) {
     selectedThreadKey.value = ''
-    if (syncRoute) {
-      void router.replace({ query: buildSmsQuery(selectedDevice.value) })
-    }
+    void router.replace({ query: buildSmsQuery(selectedDevice.value) })
+    return
   }
   if (isNarrowLayout.value || filteredThreads.value.length === 0) return
   await selectThread(filteredThreads.value[0].key, { syncRoute, silent, scrollToBottom })
@@ -471,7 +474,6 @@ async function selectThread(key: string, options: { syncRoute?: boolean; silent?
 
 async function applyThreadSeen(thread: SmsThread) {
   await markThreadSeen(thread)
-  unreadPresentationVersion.value += 1
 }
 
 async function handleSelectDevice(deviceId: string, options: { syncRoute?: boolean; silent?: boolean } = {}) {
@@ -590,20 +592,14 @@ async function sendToCurrentThread() {
   if (!t) return
   const text = String(composer.value || '').trim()
   if (!text) return
-  const resolvedDeviceId = selectedDevice.value !== 'all' ? selectedDevice.value : (t.deviceId || devices.value[0]?.id || '')
-  if (!resolvedDeviceId) {
-    ElMessage.warning('暂无可用设备')
+  if (!t.iccid) {
+    ElMessage.error('短信会话缺少 ICCID，无法确定外呼 SIM 卡')
     return
   }
   sending.value = true
   try {
-    if (selectedDevice.value === 'all') {
-      const result = await smsStore.send({ imsi: t.imsi, phone: t.peer, message: text })
-      if (!result.ok) throw new Error(result.error.message || '发送失败')
-    } else {
-      const result = await smsStore.send({ device_id: resolvedDeviceId, phone: t.peer, message: text })
-      if (!result.ok) throw new Error(result.error.message || '发送失败')
-    }
+    const result = await smsStore.send({ iccid: t.iccid, phone: t.peer, message: text })
+    if (!result.ok) throw new Error(result.error.message || '发送失败')
     composer.value = ''
     scrollThreadToBottom()
     setTimeout(async () => {
@@ -652,6 +648,10 @@ async function confirmDeleteMessage(message: SMSMessage) {
 
 async function confirmDeleteThread(thread: SmsThread) {
   if (deletingThreadKey.value === thread.key) return
+  if (!thread.iccid) {
+    ElMessage.error('短信会话缺少 ICCID，无法确定要删除的会话')
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `将删除与 ${thread.peer} 的全部短信历史，无法恢复。仅删除短信中心历史记录。`,
@@ -668,9 +668,7 @@ async function confirmDeleteThread(thread: SmsThread) {
 
   deletingThreadKey.value = thread.key
   try {
-    const payload = selectedDevice.value !== 'all'
-      ? { device_id: selectedDevice.value, peer: thread.peer }
-      : { device_id: 'all', imsi: thread.imsi, peer: thread.peer }
+    const payload = { iccid: thread.iccid, peer: thread.peer }
     const result = await smsStore.deleteThread(payload)
     if (!result.ok) throw new Error(result.error.message || '删除失败')
     ElMessage.success('已删除对话')

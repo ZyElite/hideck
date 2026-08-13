@@ -331,6 +331,7 @@ func (s *Server) newRouter() *gin.Engine {
 		api.GET("/sms/delivery/:message_id", s.handleSMSDelivery) // 查询发送投递状态
 		api.GET("/sms/contacts", s.handleGetSMSContacts)          // 获取短信联系人列表
 		api.GET("/sms/thread", s.handleGetSMSThread)              // 获取与某联系人的短信会话
+		api.PATCH("/sms/thread", s.handleMarkSMSThreadRead)       // 持久化指定会话已读进度
 		api.DELETE("/sms/messages/:id", s.handleDeleteSMSMessage) // 删除单条历史短信
 		api.DELETE("/sms/thread", s.handleDeleteSMSThread)        // 删除指定历史短信会话
 
@@ -1068,6 +1069,7 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 	type SendSMSRequest struct {
 		DeviceID string `json:"device_id"`
 		IMSI     string `json:"imsi"`
+		ICCID    string `json:"iccid"`
 		Phone    string `json:"phone" binding:"required"`
 		Message  string `json:"message" binding:"required"`
 		Encoding string `json:"encoding"`
@@ -1079,46 +1081,18 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 		return
 	}
 
-	deviceID := strings.TrimSpace(req.DeviceID)
-	imsi := strings.TrimSpace(req.IMSI)
 	encoding, err := smscodec.NormalizeSMSEncoding(req.Encoding)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "短信编码参数错误: " + err.Error()})
 		return
 	}
-	sendOpts := smscodec.SubmitOptions{Encoding: encoding}
-
-	var worker *device.Worker
-	if deviceID != "" {
-		worker = s.pool.GetWorker(deviceID)
-	} else if imsi != "" {
-		for _, w := range s.pool.GetAllWorkers() {
-			if w != nil && w.GetIMSI() == imsi {
-				worker = w
-				deviceID = w.ID
-				break
-			}
-		}
-	} else {
-		workers := s.pool.GetAllWorkers()
-		if len(workers) == 1 {
-			worker = workers[0]
-			if worker != nil {
-				deviceID = worker.ID
-			}
-		}
-	}
-
-	if worker == nil {
-		msg := "存在多个设备时必须指定 device_id 或 imsi"
-		if deviceID != "" {
-			msg = "设备未找到: " + deviceID
-		} else if imsi != "" {
-			msg = "未找到匹配 IMSI 的设备: " + imsi
-		}
-		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": msg})
+	worker, status, msg := s.resolveSMSSendWorker(req.DeviceID, req.IMSI, req.ICCID)
+	if status != 0 {
+		c.JSON(status, gin.H{"status": "error", "message": msg})
 		return
 	}
+	deviceID := worker.ID
+	sendOpts := smscodec.SubmitOptions{Encoding: encoding}
 
 	if rate := s.smsRateLimiter().Allow(); !rate.Allowed {
 		retryAfterSeconds := int64(rate.RetryAfter.Seconds())
@@ -1137,7 +1111,7 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 	}
 
 	// 获取 IMSI 用于入库
-	imsi = worker.GetIMSI()
+	imsi := worker.GetIMSI()
 	messageID := ""
 	partsTotal := 1
 	deliveryState := "acked"
@@ -1424,6 +1398,7 @@ func (s *Server) handleGetSMSContacts(c *gin.Context) {
 func (s *Server) handleGetSMSThread(c *gin.Context) {
 	deviceID := c.Query("device_id")
 	imsi := c.Query("imsi")
+	requestedICCID := db.CanonicalICCID(c.Query("iccid"))
 	peer := strings.TrimSpace(c.Query("peer"))
 	if peer == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "缺少 peer 参数"})
@@ -1448,8 +1423,12 @@ func (s *Server) handleGetSMSThread(c *gin.Context) {
 		}
 	}
 
-	var iccid string
-	if strings.TrimSpace(deviceID) != "" || strings.TrimSpace(imsi) != "" {
+	iccid := requestedICCID
+	if requestedICCID != "" && (strings.TrimSpace(deviceID) != "" || strings.TrimSpace(imsi) != "") {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "iccid 不能与 device_id 或 imsi 同时使用"})
+		return
+	}
+	if requestedICCID == "" && (strings.TrimSpace(deviceID) != "" || strings.TrimSpace(imsi) != "") {
 		resolved, status, msg := s.resolveSMSICCID(deviceID, imsi)
 		if status != 0 {
 			c.JSON(status, gin.H{"status": "error", "message": msg})
@@ -1475,6 +1454,46 @@ func (s *Server) handleGetSMSThread(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, enriched)
+}
+
+type markSMSThreadReadRequest struct {
+	ThroughID uint `json:"through_id" binding:"required"`
+}
+
+func (s *Server) handleMarkSMSThreadRead(c *gin.Context) {
+	iccid := db.CanonicalICCID(c.Query("iccid"))
+	if iccid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "缺少 iccid 参数"})
+		return
+	}
+	peer := strings.TrimSpace(c.Query("peer"))
+	if peer == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "缺少 peer 参数"})
+		return
+	}
+	var request markSMSThreadReadRequest
+	if err := c.ShouldBindJSON(&request); err != nil || request.ThroughID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "through_id 必须是正整数"})
+		return
+	}
+	result, err := db.MarkSMSThreadReadByICCID(iccid, peer, request.ThroughID)
+	if err != nil {
+		if errors.Is(err, db.ErrSMSReadBoundaryInvalid) {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "through_id 不属于当前短信会话"})
+			return
+		}
+		if errors.Is(err, db.ErrSMSNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "短信会话不存在"})
+			return
+		}
+		logger.Error("标记短信已读失败", "iccid", iccid, "peer", peer, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "标记短信已读失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status": "ok", "iccid": iccid, "peer": peer, "through_id": request.ThroughID,
+		"marked": result.Marked, "unread_count": result.UnreadCount,
+	})
 }
 
 func (s *Server) handleDeleteSMSMessage(c *gin.Context) {
@@ -1505,16 +1524,26 @@ func (s *Server) handleDeleteSMSMessage(c *gin.Context) {
 func (s *Server) handleDeleteSMSThread(c *gin.Context) {
 	deviceID := c.Query("device_id")
 	imsi := c.Query("imsi")
+	iccid := db.CanonicalICCID(c.Query("iccid"))
 	peer := strings.TrimSpace(c.Query("peer"))
 	if peer == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "缺少 peer 参数"})
 		return
 	}
 
-	resolved, status, msg := s.resolveSMSICCID(deviceID, imsi)
-	if status != 0 {
-		c.JSON(status, gin.H{"status": "error", "message": msg})
+	resolved := iccid
+	if iccid != "" && (strings.TrimSpace(deviceID) != "" || strings.TrimSpace(imsi) != "") {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "iccid 不能与 device_id 或 imsi 同时使用"})
 		return
+	}
+	if iccid == "" {
+		var status int
+		var msg string
+		resolved, status, msg = s.resolveSMSICCID(deviceID, imsi)
+		if status != 0 {
+			c.JSON(status, gin.H{"status": "error", "message": msg})
+			return
+		}
 	}
 
 	deleted, err := db.DeleteSMSByICCIDAndPeer(resolved, peer)
