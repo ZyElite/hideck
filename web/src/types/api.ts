@@ -433,6 +433,26 @@ export type UpstreamProxy = {
   updated_at?: string
 }
 
+export type UpstreamProxyProbeResult = {
+  proxy_addr: string
+  stage: string
+  reachable: boolean
+  handshake_ok: boolean
+  udp_associate_ok: boolean
+  auth_method?: string
+  relay_addr?: string
+  duration_ms: number
+  diagnosis?: string
+  hint?: string
+  error?: string
+}
+
+export type UpstreamProxyProbeResponse = {
+  status: string
+  message: string
+  result: UpstreamProxyProbeResult
+}
+
 // MCC/MNC 表中的国家分组
 export type UpstreamProxyCountry = {
   country_code: string

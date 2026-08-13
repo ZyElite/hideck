@@ -4,7 +4,8 @@ import type {
   UpstreamProxy,
   UpstreamProxyCountry,
   UpstreamProxyCountryRule,
-  UpstreamProxyCountryRulePayload
+  UpstreamProxyCountryRulePayload,
+  UpstreamProxyProbeResponse
 } from '../types/api'
 
 // 前置代理 API 服务层
@@ -14,6 +15,14 @@ export const upstreamProxyService = {
     return callService(async () => {
       const res = await api.get('/upstream-proxies')
       return (res.data || []) as UpstreamProxy[]
+    })
+  },
+
+  probe(id: string) {
+    return callService(async () => {
+      const proxyId = encodeURIComponent(id)
+      const res = await api.post(`/upstream-proxies/${proxyId}/actions/probe`)
+      return res.data as UpstreamProxyProbeResponse
     })
   },
 

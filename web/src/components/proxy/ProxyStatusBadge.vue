@@ -2,13 +2,19 @@
 import type { ProxyPresentationTone } from '../../utils/proxyPresentation'
 
 defineProps<{
+  detail?: string
   label: string
   tone: ProxyPresentationTone
 }>()
 </script>
 
 <template>
-  <span class="proxy-status-badge" :class="`is-${tone}`">
+  <span
+    class="proxy-status-badge"
+    :class="`is-${tone}`"
+    :aria-label="detail ? `${label}：${detail}` : undefined"
+    :title="detail"
+  >
     <i aria-hidden="true" />
     {{ label }}
   </span>

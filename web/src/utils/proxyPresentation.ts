@@ -4,6 +4,7 @@ import type {
   ProxyInstanceStatus,
   UpstreamProxy
 } from '../types/api'
+import type { UpstreamProxyHealth } from './upstreamProxyHealth'
 
 export type ProxyPresentationTone = 'danger' | 'neutral' | 'success' | 'warning'
 
@@ -16,6 +17,7 @@ export type UpstreamProxyPresentation = Readonly<{
   enabledTone: ProxyPresentationTone
   healthLabel: string
   healthTone: ProxyPresentationTone
+  healthDetail: string
   authenticationLabel: string
   ruleCount: number
 }>
@@ -39,6 +41,7 @@ export type OutboundProxyPresentation = Readonly<{
 type UpstreamPresentationInput = Readonly<{
   proxy: UpstreamProxy
   ruleCount: number
+  health?: UpstreamProxyHealth
 }>
 
 type OutboundPresentationInput = Readonly<{
@@ -49,8 +52,10 @@ type OutboundPresentationInput = Readonly<{
 
 export function createUpstreamProxyPresentation({
   proxy,
-  ruleCount
+  ruleCount,
+  health
 }: UpstreamPresentationInput): UpstreamProxyPresentation {
+  const healthPresentation = presentUpstreamHealth(proxy.enabled, health)
   return Object.freeze({
     id: proxy.id,
     name: normalizedText(proxy.name) || normalizedText(proxy.id) || '未命名代理',
@@ -58,11 +63,30 @@ export function createUpstreamProxyPresentation({
     enabled: proxy.enabled,
     enabledLabel: proxy.enabled ? '已启用' : '已禁用',
     enabledTone: proxy.enabled ? 'success' : 'neutral',
-    healthLabel: '未提供实时状态',
-    healthTone: 'neutral',
+    healthLabel: healthPresentation.label,
+    healthTone: healthPresentation.tone,
+    healthDetail: healthPresentation.detail,
     authenticationLabel: normalizedText(proxy.username) ? '账号认证' : '免认证',
     ruleCount: Math.max(0, Math.trunc(ruleCount))
   })
+}
+
+function presentUpstreamHealth(
+  enabled: boolean,
+  health: UpstreamProxyHealth | undefined
+): Readonly<{ label: string; tone: ProxyPresentationTone; detail: string }> {
+  if (!enabled || health?.state === 'disabled') {
+    return { label: '未启用', tone: 'neutral', detail: health?.detail || '代理未启用' }
+  }
+  if (!health || health.state === 'checking') {
+    return { label: '检测中', tone: 'warning', detail: health?.detail || '正在检测 UDP Associate' }
+  }
+  if (health.state === 'unhealthy') {
+    return { label: '探测失败', tone: 'danger', detail: health.detail }
+  }
+
+  const duration = health.durationMs == null ? '' : ` · ${health.durationMs} ms`
+  return { label: `UDP 可用${duration}`, tone: 'success', detail: health.detail }
 }
 
 export function createOutboundProxyPresentation({

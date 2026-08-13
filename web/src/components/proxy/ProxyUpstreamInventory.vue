@@ -66,7 +66,14 @@ defineEmits<{
               <ProxyStatusBadge :label="row.enabledLabel" :tone="row.enabledTone" />
             </td>
             <td data-label="UDP 健康">
-              <ProxyStatusBadge :label="row.healthLabel" :tone="row.healthTone" />
+              <ProxyStatusBadge
+                :detail="row.healthDetail"
+                :label="row.healthLabel"
+                :tone="row.healthTone"
+              />
+              <small v-if="row.healthTone === 'danger'" class="proxy-health-detail">
+                {{ row.healthDetail }}
+              </small>
             </td>
             <td data-label="认证状态">{{ row.authenticationLabel }}</td>
             <td data-label="国家规则">
@@ -113,6 +120,7 @@ defineEmits<{
 .proxy-inventory-table th:nth-child(7) { width: 96px; }
 .proxy-inventory-table strong { display: block; font-weight: 650; }
 .proxy-row-id { display: block; margin-top: 3px; color: var(--ui-text-muted); font: 10px "v-mono", ui-monospace, monospace; }
+.proxy-health-detail { max-width: 100%; margin-top: 5px; display: -webkit-box; overflow: hidden; color: var(--ui-danger); font-size: 10px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .proxy-inventory-table code { color: var(--ui-text); font: 11px/1.5 "v-mono", ui-monospace, monospace; }
 .proxy-rule-button { min-height: 34px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ui-communication); cursor: pointer; }
 .proxy-rule-button:hover,

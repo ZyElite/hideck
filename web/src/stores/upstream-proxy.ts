@@ -8,15 +8,25 @@ import type {
   UpstreamProxyCountryRulePayload
 } from '../types/api'
 import { upstreamProxyService } from '../services/upstream-proxy'
+import {
+  createUpstreamProbeRunner,
+  type UpstreamProxyHealthMap
+} from '../utils/upstreamProxyHealth'
 
 export const useUpstreamProxyStore = defineStore('upstreamProxy', () => {
   const proxies = ref<UpstreamProxy[]>([])
   const countries = ref<UpstreamProxyCountry[]>([])
   const countryRules = ref<UpstreamProxyCountryRule[]>([])
+  const probeStatusMap = ref<UpstreamProxyHealthMap>(Object.freeze({}))
 
   const loading = ref(false)
   const lastOkAt = ref<number | null>(null)
   const error = ref<AppError | null>(null)
+
+  const probeRunner = createUpstreamProbeRunner({
+    probe: id => upstreamProxyService.probe(id),
+    publish: snapshot => { probeStatusMap.value = snapshot }
+  })
 
   // 同时拉取代理列表、国家列表和国家规则
   async function fetchAll() {
@@ -29,6 +39,7 @@ export const useUpstreamProxyStore = defineStore('upstreamProxy', () => {
     ])
     if (proxiesResult.ok) {
       proxies.value = proxiesResult.data
+      await probeRunner.run(proxiesResult.data)
     } else {
       error.value = proxiesResult.error
     }
@@ -84,6 +95,7 @@ export const useUpstreamProxyStore = defineStore('upstreamProxy', () => {
     proxies,
     countries,
     countryRules,
+    probeStatusMap,
     loading,
     lastOkAt,
     error,

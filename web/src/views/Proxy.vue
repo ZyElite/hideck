@@ -318,6 +318,7 @@ const currentProxyCountryRules = computed(() => {
 const upstreamRows = computed(() => upstreamStore.proxies.map(proxy => (
   createUpstreamProxyPresentation({
     proxy,
+    health: upstreamStore.probeStatusMap[proxy.id],
     ruleCount: upstreamStore.getRulesForProxy(proxy.id).length
   })
 )))
