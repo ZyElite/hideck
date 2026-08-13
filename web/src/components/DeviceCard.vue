@@ -53,6 +53,7 @@ const signalTone = computed(() => {
   if (signalBars.value === 2) return 'is-warning'
   return 'is-good'
 })
+const showCellularSignal = computed(() => props.device.vowifi_active !== true)
 </script>
 
 <template>
@@ -87,7 +88,7 @@ const signalTone = computed(() => {
       </span>
     </span>
 
-    <span class="device-card-footer">
+    <span class="device-card-footer" :class="{ 'is-vowifi': !showCellularSignal }">
       <span class="device-addresses">
         <span class="address-heading">
           <Globe24Regular aria-hidden="true" />
@@ -104,10 +105,10 @@ const signalTone = computed(() => {
           </span>
         </span>
       </span>
-      <span class="device-signal">
+      <span v-if="showCellularSignal" class="device-signal">
         <span class="signal-label">
           <DataUsage24Regular aria-hidden="true" />
-          <span>信号</span>
+          <span>蜂窝信号</span>
         </span>
         <span class="signal-reading" :class="signalTone">
           <span class="signal-bars" aria-hidden="true">
@@ -147,6 +148,7 @@ const signalTone = computed(() => {
 .connection-primary strong { font-size: 14px; }
 .connection-primary small { color: var(--ui-text-muted); font-size: 11px; }
 .device-card-footer { min-height: 100px; padding: 10px 12px 10px 16px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.device-card-footer.is-vowifi { grid-template-columns: minmax(0, 1fr); }
 .device-addresses { min-width: 0; display: grid; }
 .address-heading { display: flex; align-items: flex-start; gap: 7px; color: var(--ui-text-muted); font-size: 11px; }
 .address-heading svg { width: 16px; height: 16px; flex: 0 0 16px; }

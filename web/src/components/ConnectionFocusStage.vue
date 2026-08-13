@@ -34,6 +34,20 @@ const focusDetail = computed(() => {
   if (props.device.vowifi_active) return '通过 Wi-Fi 注册到 IMS'
   return '设备在线，VoWiFi 尚未激活'
 })
+const primaryFact = computed(() => {
+  if (props.device?.vowifi_active) {
+    return {
+      label: '链路状态',
+      value: presentation.value?.connectionState || '等待状态',
+      hint: 'Wi-Fi Calling'
+    }
+  }
+  return {
+    label: '蜂窝信号',
+    value: presentation.value?.signal || '不可用',
+    hint: props.device ? '当前设备' : '暂无设备'
+  }
+})
 
 function stageStatusLabel(ready: boolean | undefined): string {
   if (ready === true) return '已就绪'
@@ -96,9 +110,9 @@ function stageStatusLabel(ready: boolean | undefined): string {
     <aside class="connection-stage-aside" aria-label="当前设备网络事实">
       <dl>
         <div class="focus-fact-primary">
-          <dt>信号</dt>
-          <dd class="is-tabular">{{ presentation?.signal || '不可用' }}</dd>
-          <small>{{ device ? '当前设备' : '暂无设备' }}</small>
+          <dt>{{ primaryFact.label }}</dt>
+          <dd :class="{ 'is-tabular': !device?.vowifi_active }">{{ primaryFact.value }}</dd>
+          <small>{{ primaryFact.hint }}</small>
         </div>
         <div>
           <dt>运营商 / 连接</dt>

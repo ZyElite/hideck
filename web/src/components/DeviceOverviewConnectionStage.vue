@@ -50,17 +50,27 @@ const pathIsFlowing = computed(() => {
     && !hasFailedStage.value
 })
 
+const primaryMetric = computed(() => {
+  if (props.device?.vowifi_enabled) {
+    return {
+      label: '公网 IPv4',
+      value: props.device.public_ip || '未分配',
+      hint: ''
+    }
+  }
+  const signal = props.device?.modem?.signal_dbm
+  return {
+    label: '蜂窝信号',
+    value: formatDashboardSignal(signal),
+    hint: hasDashboardSignal(signal) ? signalQuality(signal) : ''
+  }
+})
+
 const metrics = computed(() => [
-  {
-    label: '信号',
-    value: formatDashboardSignal(props.device?.modem?.signal_dbm),
-    hint: hasDashboardSignal(props.device?.modem?.signal_dbm)
-      ? signalQuality(props.device.modem.signal_dbm)
-      : ''
-  },
-  { label: '公网 IPv6', value: props.device?.public_ipv6 || '未分配' },
-  { label: '协议', value: props.device?.backend_mode?.toUpperCase() || '不可用' },
-  { label: '接口', value: props.device?.interface || '不可用' }
+  primaryMetric.value,
+  { label: '公网 IPv6', value: props.device?.public_ipv6 || '未分配', hint: '' },
+  { label: '协议', value: props.device?.backend_mode?.toUpperCase() || '不可用', hint: '' },
+  { label: '接口', value: props.device?.interface || '不可用', hint: '' }
 ])
 
 function signalQuality(value: number): string {
