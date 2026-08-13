@@ -174,8 +174,8 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 }
 
 .device-rail-header {
-  min-height: 82px;
-  padding: 17px 18px;
+  min-height: 74px;
+  padding: 15px 16px;
   display: flex;
   align-items: end;
   justify-content: space-between;
@@ -189,7 +189,7 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 }
 
 .device-rail-header h2 {
-  margin: 5px 0 0;
+  margin: 4px 0 0;
   color: var(--ui-text);
   font-size: 18px;
   font-weight: 650;
@@ -197,7 +197,7 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 
 .device-rail-header > strong {
   color: var(--ui-text);
-  font: 24px "v-mono", monospace;
+  font: 22px "v-mono", monospace;
 }
 
 .device-rail-header small {
@@ -206,18 +206,18 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 }
 
 .device-rail-search {
-  padding: 14px 14px 9px;
+  padding: 12px 12px 8px;
 }
 
 .device-rail-filters {
-  padding: 0 14px 12px;
+  padding: 0 12px 11px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 78px;
-  gap: 7px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 62px;
+  gap: 6px;
 }
 
 .device-quota {
-  margin: 0 14px 10px;
+  margin: 0 12px 9px;
   padding: 8px 10px;
   display: flex;
   justify-content: space-between;
@@ -244,8 +244,8 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 }
 
 .device-list-button {
-  min-height: 91px;
-  padding: 13px 12px;
+  min-height: 82px;
+  padding: 11px 10px;
   border: 1px solid transparent;
   border-radius: 11px;
   transition: background-color 150ms ease, border-color 150ms ease, transform 120ms ease-out;

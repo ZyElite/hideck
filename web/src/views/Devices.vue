@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import ErrorState from '../components/ErrorState.vue'
 import RefreshButton from '../components/RefreshButton.vue'
 import DeviceListPanel from '../components/DeviceListPanel.vue'
+import DeviceDetailHeader from '../components/DeviceDetailHeader.vue'
 import DeviceDetailLoading from '../components/DeviceDetailLoading.vue'
 import DeviceOverviewTab from '../components/DeviceOverviewTab.vue'
 import DeviceEsimTab from '../components/DeviceEsimTab.vue'
@@ -32,8 +33,7 @@ import { createEmptyTrafficAnalysis, trafficService, type TrafficRange } from '.
 import {
   ArrowSync24Regular,
   Add24Regular,
-  Mail24Regular,
-  Power24Regular
+  Sim24Regular
 } from '@vicons/fluent'
 
 const router = useRouter()
@@ -1215,34 +1215,9 @@ usePollingScheduler(async () => {
 <template>
   <div class="app-page devices-page">
     <div class="device-action-row">
-      <div v-if="selectedDevice" class="device-context-actions">
-        <el-button @click="openSms" class="ui-glass-border !border-0">
-          <el-icon><Mail24Regular /></el-icon>
-          短信
-        </el-button>
-        <el-button
-          v-if="selectedDevice.vowifi_enabled"
-          :loading="reconnectingVoWiFi"
-          @click="reconnectVoWiFi"
-          class="ui-glass-border !border-0"
-        >
-          <el-icon><ArrowSync24Regular /></el-icon>
-          重连 VoWiFi
-        </el-button>
-        <el-button
-          v-else
-          :loading="rotating"
-          :disabled="!selectedDevice.network_connected"
-          @click="rotateIP"
-          class="ui-glass-border !border-0"
-        >
-          <el-icon><ArrowSync24Regular /></el-icon>
-          切换 IP
-        </el-button>
-        <el-button :loading="rebooting" @click="rebootModem" class="ui-glass-border !border-0">
-          <el-icon><Power24Regular /></el-icon>
-          重启模组
-        </el-button>
+      <div class="device-page-heading">
+        <span>DEVICE MANAGEMENT</span>
+        <h1>设备管理</h1>
       </div>
       <div class="device-global-actions">
         <RefreshButton :loading="loading" @click="fetchAll" />
@@ -1289,9 +1264,20 @@ usePollingScheduler(async () => {
       />
 
       <main v-if="selectedDevice" class="device-workspace">
-        <section class="device-workspace-surface ui-card">
-          <el-tabs v-model="activeTab" class="device-detail-tabs">
-            <el-tab-pane label="概览" name="overview">
+        <section class="device-workspace-shell ui-card">
+          <DeviceDetailHeader
+            :device="selectedDevice"
+            :rotating="rotating"
+            :rebooting="rebooting"
+            :reconnecting="reconnectingVoWiFi"
+            @open-sms="openSms"
+            @rotate-ip="rotateIP"
+            @reboot-modem="rebootModem"
+            @reconnect-vowifi="reconnectVoWiFi"
+          />
+          <div class="device-workspace-surface">
+            <el-tabs v-model="activeTab" class="device-detail-tabs">
+              <el-tab-pane label="概览" name="overview">
               <div class="space-y-6">
                 <DeviceOverviewTab
                   :device="selectedDevice"
@@ -1352,17 +1338,23 @@ usePollingScheduler(async () => {
                 @save="saveConfig"
                 @delete="deleteDevice"
               />
-            </el-tab-pane>
-          </el-tabs>
+              </el-tab-pane>
+            </el-tabs>
+          </div>
         </section>
       </main>
 
-      <div v-else>
+      <main v-else class="device-workspace">
         <DeviceDetailLoading v-if="loading" />
-        <div v-else class="ui-card p-8 text-gray-500 dark:text-gray-400">
-          暂无设备
-        </div>
-      </div>
+        <section v-else class="device-workspace-empty ui-card">
+          <div class="device-workspace-empty-icon" aria-hidden="true">
+            <el-icon><Sim24Regular /></el-icon>
+          </div>
+          <span>DEVICE WORKSPACE</span>
+          <h2>{{ loadError ? '设备数据不可用' : '等待设备接入' }}</h2>
+          <p>{{ loadError ? '请根据上方错误信息重试真实请求' : '添加或选择设备后，可在这里管理连接、eSIM 与终端' }}</p>
+        </section>
+      </main>
     </div>
   </div>
 
@@ -1389,23 +1381,36 @@ usePollingScheduler(async () => {
 }
 
 .device-action-row,
-.device-context-actions,
 .device-global-actions {
   display: flex;
   align-items: center;
 }
 
 .device-action-row {
-  min-height: 44px;
-  margin-bottom: 10px;
+  min-height: 58px;
+  margin-bottom: 14px;
   justify-content: space-between;
   gap: 12px;
 }
 
-.device-context-actions,
 .device-global-actions {
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.device-page-heading span,
+.device-workspace-empty > span {
+  color: var(--ui-primary);
+  font: 700 9px "v-mono", ui-monospace, monospace;
+  letter-spacing: .16em;
+}
+
+.device-page-heading h1 {
+  margin: 3px 0 0;
+  color: var(--ui-text);
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -.02em;
 }
 
 .device-global-actions {
@@ -1422,7 +1427,7 @@ usePollingScheduler(async () => {
 
 @container (min-width: 980px) {
   .devices-layout {
-    grid-template-columns: 312px minmax(0, 1fr);
+    grid-template-columns: 276px minmax(0, 1fr);
   }
 }
 
@@ -1439,16 +1444,16 @@ usePollingScheduler(async () => {
 
 .device-workspace {
   min-width: 0;
-  display: grid;
-  gap: 1rem;
 }
 
-.device-workspace > .device-workspace-surface {
+.device-workspace > .device-workspace-shell,
+.device-workspace > .device-workspace-empty {
   animation: device-workspace-enter 240ms var(--ui-ease-out) both;
 }
 
-.device-workspace > .device-workspace-surface {
-  animation-delay: 45ms;
+.device-workspace-shell {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .device-workspace-surface {
@@ -1464,7 +1469,7 @@ usePollingScheduler(async () => {
 .device-detail-tabs :deep(.el-tabs__header) {
   margin: 0 -22px 22px;
   padding: 0 22px;
-  background: var(--ui-surface);
+  background: color-mix(in srgb, var(--ui-surface-strong) 72%, var(--ui-surface));
 }
 
 .device-detail-tabs :deep(.el-tabs__nav-wrap::after) {
@@ -1480,10 +1485,47 @@ usePollingScheduler(async () => {
 
 .device-detail-tabs :deep(.el-tabs__item.is-active) {
   color: var(--ui-primary);
+  font-weight: 650;
 }
 
-.devices-page :deep(.ui-card) {
-  border-radius: 20px;
+.device-workspace-empty {
+  min-height: 440px;
+  padding: 48px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  text-align: center;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--ui-primary) 5%, transparent), transparent 42%),
+    var(--ui-surface);
+}
+
+.device-workspace-empty-icon {
+  width: 50px;
+  height: 50px;
+  margin-bottom: 18px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ui-border);
+  border-radius: 13px;
+  background: var(--ui-surface-strong);
+  color: var(--ui-primary);
+  font-size: 24px;
+}
+
+.device-workspace-empty h2 {
+  margin: 8px 0 0;
+  color: var(--ui-text);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.device-workspace-empty p {
+  max-width: 360px;
+  margin: 6px 0 0;
+  color: var(--ui-text-muted);
+  font-size: 12px;
 }
 
 .device-detail-tabs :deep(.el-tab-pane) {
@@ -1496,7 +1538,8 @@ usePollingScheduler(async () => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .device-workspace > .device-workspace-surface {
+  .device-workspace > .device-workspace-shell,
+  .device-workspace > .device-workspace-empty {
     animation-name: device-workspace-fade;
   }
 
@@ -1509,6 +1552,10 @@ usePollingScheduler(async () => {
 @media (max-width: 760px) {
   .device-workspace-surface {
     padding: 0 14px 14px;
+  }
+
+  .device-workspace-empty {
+    min-height: 300px;
   }
 
   .device-detail-tabs :deep(.el-tabs__header) {
