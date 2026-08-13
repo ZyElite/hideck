@@ -27,6 +27,7 @@ import (
 	"github.com/iniwex5/vohive/internal/device"
 	"github.com/iniwex5/vohive/internal/global"
 	"github.com/iniwex5/vohive/internal/notify"
+	"github.com/iniwex5/vohive/internal/phone"
 	"github.com/iniwex5/vohive/internal/proxy/server"
 	proxytraffic "github.com/iniwex5/vohive/internal/proxy/traffic"
 	vwebsheet "github.com/iniwex5/vohive/internal/websheet"
@@ -80,6 +81,7 @@ type Server struct {
 	proxySyncMu             sync.Mutex
 	voiceGW                 *voicehost.Gateway
 	voiceRecordingDirectory string
+	phone                   *phone.Service
 	notifyMgr               *notify.Manager
 	commandCenter           *commandcenter.Service
 	automaticTasks          automaticTaskService
@@ -175,6 +177,10 @@ func (s *Server) SetRealtimeTraffic(m *proxytraffic.RealtimeManager) {
 // SetVoiceRecordingDirectory injects the directory owned by the voice gateway.
 func (s *Server) SetVoiceRecordingDirectory(directory string) {
 	s.voiceRecordingDirectory = strings.TrimSpace(directory)
+}
+
+func (s *Server) SetPhoneService(service *phone.Service) {
+	s.phone = service
 }
 
 // smsRateLimiter returns the SMS rate limiter, lazily creating it if needed.
@@ -313,6 +319,7 @@ func (s *Server) newRouter() *gin.Engine {
 		api.GET("/devices/:device_id/status", s.handleStatusDetail) // 获取单个设备详细状态
 		api.GET("/health", s.handleHealth)                          // 健康检查（外部监控用）
 		api.GET("/traffic/analysis", s.handleTrafficAnalysis)       // 流量分析统计
+		s.registerPhoneRoutes(api)
 
 		// ===== 短信 =====
 		api.POST("/sms/send", s.handleSendSMS)                    // 发送短信（自动选择 AT 或 VoWiFi）
@@ -445,7 +452,7 @@ func withCommandEventStreamDeadlineDisabled(next http.Handler) http.Handler {
 }
 
 func isCommandEventStreamPath(path string) bool {
-	return path == "/api/command-center/stream" || path == "/api/commands/events/stream"
+	return path == "/api/command-center/stream" || path == "/api/commands/events/stream" || path == "/api/phone/events"
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -455,6 +462,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.backgroundCancel != nil {
 		s.backgroundCancel()
+	}
+	var phoneErr error
+	if s.phone != nil {
+		phoneErr = s.phone.Close(ctx)
 	}
 	// 广播关闭信号给所有内部持有的长连接（如 SSE），让它们主动退出
 	select {
@@ -467,9 +478,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	srv := s.httpSrv
 	s.httpSrvMu.Unlock()
 	if srv == nil {
-		return automaticTaskErr
+		return errors.Join(automaticTaskErr, phoneErr)
 	}
-	return errors.Join(automaticTaskErr, srv.Shutdown(ctx))
+	return errors.Join(automaticTaskErr, phoneErr, srv.Shutdown(ctx))
 }
 
 func (s *Server) requestIDMiddleware() gin.HandlerFunc {

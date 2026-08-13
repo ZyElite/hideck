@@ -122,9 +122,11 @@ type WebConfig struct {
 }
 
 type ServerConfig struct {
-	Port                 string `mapstructure:"port"`
-	Debug                bool   `mapstructure:"debug"`
-	SMSRateLimitDisabled bool   `mapstructure:"sms_rate_limit_disabled"`
+	Port                 string   `mapstructure:"port"`
+	WebRTCUDPAddress     string   `mapstructure:"webrtc_udp_address"`
+	ICEServers           []string `mapstructure:"ice_servers"`
+	Debug                bool     `mapstructure:"debug"`
+	SMSRateLimitDisabled bool     `mapstructure:"sms_rate_limit_disabled"`
 }
 
 type ESIMSwitchConfig struct {
@@ -271,6 +273,7 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("pushplus.enabled", false)
 	viper.SetDefault("web.username", "admin")
 	viper.SetDefault("web.password", "admin")
+	viper.SetDefault("server.webrtc_udp_address", ":7580")
 	viper.SetDefault("vowifi.enabled", false)
 	viper.SetDefault("vowifi.mode", "vowifi")
 	viper.SetDefault("imscore.use_sipgo_udp", false)
@@ -298,6 +301,5 @@ func Load(path string) (*Config, error) {
 	if cfg.Server.Port != "" && !strings.Contains(cfg.Server.Port, ":") {
 		cfg.Server.Port = ":" + cfg.Server.Port
 	}
-
 	return &cfg, nil
 }

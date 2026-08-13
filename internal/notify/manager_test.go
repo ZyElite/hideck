@@ -185,6 +185,41 @@ func TestManagerNotifyIncomingCallUsesPlainTemplate(t *testing.T) {
 	}
 }
 
+func TestManagerNotifyCallResultIsSeparateFromIncomingCall(t *testing.T) {
+	capture := &captureChannel{}
+	m := &Manager{channels: []Channel{capture}}
+	at := time.Date(2026, 8, 13, 13, 0, 0, 0, time.UTC)
+
+	m.NotifyIncomingCall("wwan0", "10086", "10010")
+	m.NotifyCallResult("wwan0", "10086", "incoming", "missed", "remote_cancel", at)
+
+	waitUntil(t, time.Second, func() bool {
+		capture.mu.Lock()
+		defer capture.mu.Unlock()
+		return len(capture.calls) == 2
+	})
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	events := make(map[string]NotificationContext, len(capture.calls))
+	for _, call := range capture.calls {
+		events[call.Event] = call
+	}
+	if _, ok := events["incoming_call"]; !ok {
+		t.Fatal("incoming_call event missing")
+	}
+	result, ok := events["call_missed"]
+	if !ok {
+		t.Fatal("call_missed event missing")
+	}
+	if result.Timestamp != at {
+		t.Fatalf("result timestamp=%s, want %s", result.Timestamp, at)
+	}
+	want := "通话结果 / 未接\n设备    wwan0\n号码    10086\n方向    incoming\n原因    remote_cancel"
+	if result.Text != want {
+		t.Fatalf("result text=%q, want %q", result.Text, want)
+	}
+}
+
 func TestManagerNotifySMSLogsBroadcastSummary(t *testing.T) {
 	logger.Setup(logger.LogConfig{Debug: true, Filename: filepath.Join(t.TempDir(), "app.log")})
 	capture := &captureChannel{}

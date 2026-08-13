@@ -295,6 +295,30 @@ func (m *Manager) NotifyIncomingCall(deviceID, caller, callee string) {
 	})
 }
 
+// NotifyCallResult publishes the terminal result after the call state machine
+// has classified it. It is intentionally separate from the immediate ring.
+func (m *Manager) NotifyCallResult(deviceID, peer, direction, status, reason string, at time.Time) {
+	if len(m.channels) == 0 {
+		return
+	}
+	labels := map[string]string{
+		"completed": "已完成", "missed": "未接", "rejected": "已拒接",
+		"busy": "忙线", "failed": "失败",
+	}
+	label := labels[status]
+	if label == "" {
+		label = status
+	}
+	message := fmt.Sprintf("通话结果 / %s\n设备    %s\n号码    %s\n方向    %s", label, deviceID, peer, direction)
+	if strings.TrimSpace(reason) != "" {
+		message += "\n原因    " + strings.TrimSpace(reason)
+	}
+	m.broadcastWithContext(NotificationContext{
+		Event: "call_" + status, Text: message, DeviceID: deviceID,
+		DeviceName: m.resolveDeviceName(deviceID), Timestamp: at,
+	})
+}
+
 func (m *Manager) resolveDeviceName(deviceID string) string {
 	if strings.TrimSpace(deviceID) == "" || m.pool == nil {
 		return ""

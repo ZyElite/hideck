@@ -20,6 +20,7 @@ import (
 	"github.com/iniwex5/vohive/internal/device"
 	"github.com/iniwex5/vohive/internal/notify"
 	"github.com/iniwex5/vohive/internal/openwrt"
+	"github.com/iniwex5/vohive/internal/phone"
 	proxyserver "github.com/iniwex5/vohive/internal/proxy/server"
 	"github.com/iniwex5/vohive/internal/proxy/traffic"
 	"github.com/iniwex5/vohive/internal/upstreamproxy"
@@ -140,9 +141,10 @@ func main() {
 	// 7. 初始化语音网关
 	// voiceGW 始终创建，用于管理 VoWiFi Agent（SimulateCall 等）。
 	var notifyMgr *notify.Manager
+	audioTranscoder := audiotranscode.New()
 	voiceGW := voicehost.NewGateway()
 	voiceGW.SetPCAPDirectory(voiceRecordingDirectory)
-	voiceGW.SetAudioTranscoder(audiotranscode.New())
+	voiceGW.SetAudioTranscoder(audioTranscoder)
 	pool.SetVoiceGateway(voiceGW)
 
 	if err := voiceGW.Start(context.Background()); err != nil {
@@ -195,9 +197,23 @@ func main() {
 			}
 		}
 	}
+	var callResultNotifier phone.ResultNotifier
+	if notifyMgr != nil {
+		callResultNotifier = notifyMgr
+	}
+	phoneService, err := phone.NewService(phone.ServiceOptions{
+		Gateway: voiceGW, Store: db.NewVoiceCallStore(db.DB), Transcoder: audioTranscoder,
+		Notifier: callResultNotifier, RecordingDir: voiceRecordingDirectory,
+		WebRTCUDPAddress: cfg.Server.WebRTCUDPAddress, ICEServers: cfg.Server.ICEServers,
+		ResolveICCID: pool.CurrentICCIDForDevice,
+	})
+	if err != nil {
+		log.Fatalf("初始化电话媒体服务失败: %v", err)
+	}
 
 	apiServer := api.New(cfg, pool, staticFS, proxyMgr, voiceGW, notifyMgr, configPath)
 	apiServer.SetVoiceRecordingDirectory(voiceRecordingDirectory)
+	apiServer.SetPhoneService(phoneService)
 	apiServer.SetRealtimeTraffic(realtimeTraffic)
 
 	syncProxyConfigs := func(reason, deviceID string) {
