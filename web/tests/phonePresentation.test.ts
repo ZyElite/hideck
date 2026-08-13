@@ -55,6 +55,18 @@ test('phone view exposes explicit listen-only and microphone call actions withou
   assert.match(callBar, /aria-live="polite"/)
 })
 
+test('phone device picker uses the themed select without changing availability rules', () => {
+  assert.doesNotMatch(phoneView, /<select\b/)
+  assert.match(phoneView, /<el-select[\s\S]*v-model="selectedDevice"/)
+  assert.match(phoneView, /<label for="phone-device">语音设备<\/label>/)
+  assert.match(phoneView, /id="phone-device"[\s\S]*aria-label="语音设备"/)
+  assert.match(phoneView, /:disabled="!!call"/)
+  assert.match(phoneView, /<el-option v-if="!phone\.devices\.length" label="无可用设备" value=""/)
+  assert.match(phoneView, /:disabled="!isDeviceReady\(device\) \|\| isDeviceBusy\(device\)"/)
+  assert.doesNotMatch(phoneCSS, /\.device-selector select/)
+  assert.match(phoneCSS, /\.device-selector :deep\(\.el-select__wrapper\) \{ min-height: 44px;/)
+})
+
 test('phone layout has responsive single-column and 44px touch targets', () => {
   assert.match(phoneCSS, /@media \(max-width: 900px\)[\s\S]*grid-template-columns: 1fr/)
   assert.match(phoneCSS, /min-height: 48px/)

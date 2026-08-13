@@ -189,17 +189,23 @@ async function sendDTMF(digit: string) {
           </div>
           <div class="device-selector">
             <label for="phone-device">语音设备</label>
-            <select id="phone-device" v-model="selectedDevice" :disabled="!!call">
-              <option v-if="!phone.devices.length" value="">无可用设备</option>
-              <option
+            <el-select
+              id="phone-device"
+              v-model="selectedDevice"
+              aria-label="语音设备"
+              placeholder="选择语音设备"
+              :disabled="!!call"
+              popper-class="phone-device-dropdown"
+            >
+              <el-option v-if="!phone.devices.length" label="无可用设备" value="" />
+              <el-option
                 v-for="device in phone.devices"
                 :key="device.id"
+                :label="`${device.name || device.id} · ${deviceStatus(device)}`"
                 :value="device.id"
                 :disabled="!isDeviceReady(device) || isDeviceBusy(device)"
-              >
-                {{ device.name || device.id }} · {{ deviceStatus(device) }}
-              </option>
-            </select>
+              />
+            </el-select>
           </div>
         </header>
 
