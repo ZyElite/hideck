@@ -15,13 +15,6 @@ export type BalanceStatePresentation = Readonly<{
 }>
 
 export function presentCommandEvent(event: CommandEvent): CommandEventPresentation {
-  if (event.kind === 'error' || event.execution?.state === 'failed') {
-    return {
-      title: '执行失败',
-      detail: event.text || event.execution?.error || '命令执行失败',
-      tone: 'danger'
-    }
-  }
   if (event.kind === 'accepted') {
     return {
       title: '已发送',
@@ -31,6 +24,13 @@ export function presentCommandEvent(event: CommandEvent): CommandEventPresentati
   }
   if (event.kind === 'progress' || event.execution?.state === 'running') {
     return { title: '执行中', detail: event.text || '命令正在执行', tone: 'running' }
+  }
+  if (event.kind === 'error' || event.execution?.state === 'failed') {
+    return {
+      title: '执行失败',
+      detail: event.text || event.execution?.error || '命令执行失败',
+      tone: 'danger'
+    }
   }
   return { title: '执行成功', detail: event.text || '命令执行完成', tone: 'success' }
 }

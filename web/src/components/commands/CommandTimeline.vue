@@ -130,7 +130,7 @@ function audioAttachments(event: CommandEvent) {
   width: 1px;
   background: color-mix(in srgb, var(--ui-primary) 26%, var(--ui-border));
 }
-.timeline-event { position: relative; min-width: 0; color: var(--ui-primary); }
+.timeline-event { position: relative; min-width: 0; color: var(--ui-primary); animation: event-enter 180ms ease-out both; }
 .event-marker {
   position: absolute;
   top: 8px;
@@ -191,6 +191,10 @@ function audioAttachments(event: CommandEvent) {
 .empty-icon .el-icon { font-size: 22px; }
 .empty-state strong, .empty-line strong { color: var(--ui-text); font-size: 13px; }
 .empty-state > span:last-child { font-size: 11px; }
+@keyframes event-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 @media (max-width: 640px) {
   .timeline-scroll { padding: 14px 10px 18px; }
   .timeline-track { padding-left: 48px; }
@@ -198,5 +202,9 @@ function audioAttachments(event: CommandEvent) {
   .event-marker { left: -48px; width: 36px; height: 36px; }
   .event-card { padding: 10px 12px; }
   .event-card header { align-items: flex-start; flex-direction: column; gap: 2px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .timeline-event { animation-name: event-fade; animation-duration: 120ms; }
+  @keyframes event-fade { from { opacity: .72; } to { opacity: 1; } }
 }
 </style>

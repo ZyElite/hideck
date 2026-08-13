@@ -192,6 +192,7 @@ function submit() {
 .suggestions-pop-leave-active { transition: opacity 100ms ease-in, transform 100ms ease-in; }
 .suggestions-pop-enter-from, .suggestions-pop-leave-to { opacity: 0; transform: translateY(4px); }
 @media (max-width: 1023px) { .composer { position: sticky; bottom: 0; z-index: 4; } }
+@media (max-width: 820px) { .composer { bottom: calc(72px + env(safe-area-inset-bottom)); } }
 @media (max-width: 640px) {
   .composer { padding-inline: 10px; }
   .quick-list button { min-height: 44px; }

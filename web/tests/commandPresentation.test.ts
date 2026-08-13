@@ -38,13 +38,17 @@ function balanceQuery(overrides: Partial<BalanceQuery>): BalanceQuery {
 
 test('maps command events without turning running or failed work into success', () => {
   const accepted = commandEvent({ kind: 'accepted', execution: {
-    id: 'exec-1', input: '/signal wwan0', command: 'signal', state: 'running',
+    id: 'exec-1', input: '/signal wwan0', command: 'signal', state: 'failed',
     created_at: '', updated_at: ''
   } })
   assert.deepEqual(presentCommandEvent(accepted), {
     title: '已发送', detail: '/signal wwan0', tone: 'sent'
   })
-  assert.equal(presentCommandEvent(commandEvent({ kind: 'progress', text: '正在读取信号' })).tone, 'running')
+  assert.equal(presentCommandEvent(commandEvent({
+    kind: 'progress',
+    text: '正在读取信号',
+    execution: { id: 'exec-1', input: '', command: 'signal', state: 'failed', created_at: '', updated_at: '' }
+  })).tone, 'running')
   assert.deepEqual(presentCommandEvent(commandEvent({ kind: 'error', text: '设备离线' })), {
     title: '执行失败', detail: '设备离线', tone: 'danger'
   })

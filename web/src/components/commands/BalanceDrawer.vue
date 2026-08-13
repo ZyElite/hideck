@@ -27,7 +27,8 @@ const rail = ref<HTMLElement | null>(null)
 watch(() => props.modelValue, async (open) => {
   if (!open) return
   await nextTick()
-  rail.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  rail.value?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'nearest' })
   rail.value?.focus({ preventScroll: true })
   emit('update:modelValue', false)
 })
@@ -63,5 +64,4 @@ watch(() => props.modelValue, async (open) => {
 @media (max-width: 1023px) {
   .balance-rail { min-height: 560px; border-top: 1px solid var(--ui-border); border-left: 0; }
 }
-@media (prefers-reduced-motion: reduce) { .balance-rail { scroll-behavior: auto; } }
 </style>

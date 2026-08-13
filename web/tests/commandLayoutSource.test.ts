@@ -46,10 +46,19 @@ test('command conversation uses the Studio event rail instead of chat bubbles', 
 test('command composer source stays visible above the mobile safe area', () => {
   assert.match(commandComposer, /env\(safe-area-inset-bottom\)/)
   assert.match(commandComposer, /@media \(max-width: 1023px\).*position:\s*sticky;\s*bottom:\s*0;/s)
+  assert.match(commandComposer, /@media \(max-width: 820px\).*bottom:\s*calc\(72px \+ env\(safe-area-inset-bottom\)\)/s)
   assert.match(commandComposer, /v-for="definition in definitions"/)
   assert.match(commandComposer, /definition\.dangerous/)
   assert.match(commandComposer, /retargetDeviceCommand/)
   assert.match(commandComposer, /prefers-reduced-motion: reduce/)
+})
+
+test('command workspace stacks cleanly at the application mobile boundary', () => {
+  assert.match(commandsView, /@media \(max-width: 1023px\)[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/)
+  assert.match(commandsView, /height:\s*690px;\s*min-height:\s*690px/)
+  assert.match(balanceDrawer, /@media \(max-width: 1023px\)[\s\S]*border-top:[^;]+;\s*border-left:\s*0;/)
+  assert.match(commandChat, /@media \(max-width: 640px\)[\s\S]*grid-template-areas:\s*"heading" "device" "actions"/)
+  assert.match(commandTimeline, /@media \(prefers-reduced-motion: reduce\)/)
 })
 
 test('command realtime stream starts before secondary page data finishes', () => {
