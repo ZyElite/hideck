@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { DashboardDevice } from '../src/types/api.ts'
 import {
+  canAnimateDashboardConnection,
   createDashboardDevicePresentation,
   formatDashboardNetworkType,
   formatDashboardSignal,
@@ -70,16 +71,30 @@ test('uses explicit missing-value copy without mutating API data', () => {
 })
 
 test('keeps offline state distinct from a failed or unknown VoWiFi stage', () => {
-  const presentation = createDashboardDevicePresentation(createDevice({
+  const device = createDevice({
     healthy: false,
     vowifi_active: true,
     vowifi_runtime: { sim_ready: false }
-  }))
+  })
+  const presentation = createDashboardDevicePresentation(device)
 
   assert.equal(presentation.statusLabel, '离线')
   assert.equal(presentation.connectionTitle, '设备离线')
   assert.equal(presentation.connectionState, '当前设备不可用')
   assert.deepEqual(presentation.stages.map(stage => stage.ready), [false, undefined, undefined, undefined, undefined])
+  assert.equal(canAnimateDashboardConnection(device), false)
+})
+
+test('animates the service path only for active VoWiFi without failed stages', () => {
+  assert.equal(canAnimateDashboardConnection(createDevice({
+    vowifi_active: true,
+    vowifi_runtime: { sim_ready: true, access_ready: true }
+  })), true)
+  assert.equal(canAnimateDashboardConnection(createDevice({
+    vowifi_active: true,
+    vowifi_runtime: { tunnel_ready: false }
+  })), false)
+  assert.equal(canAnimateDashboardConnection(createDevice({ vowifi_active: false })), false)
 })
 
 test('formats cellular connection and validates signal sentinels', () => {

@@ -53,6 +53,11 @@ export function createDashboardStages(
   ])
 }
 
+export function canAnimateDashboardConnection(device: DashboardDevice): boolean {
+  if (!device.healthy || device.vowifi_active !== true) return false
+  return !createDashboardStages(device.vowifi_runtime).some(stage => stage.ready === false)
+}
+
 export function createDashboardDevicePresentation(
   device: DashboardDevice
 ): DashboardDevicePresentation {

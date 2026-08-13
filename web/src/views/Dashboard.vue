@@ -3,6 +3,7 @@ import { onMounted, ref, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import DeviceCard from '../components/DeviceCard.vue'
+import ConnectionFocusStage from '../components/ConnectionFocusStage.vue'
 import PageHeader from '../components/PageHeader.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ListSkeleton from '../components/ListSkeleton.vue'
@@ -57,31 +58,6 @@ const selectedDevice = computed(() => {
   return devices.value.find((device) => device.id === selectedDeviceID.value)
     || devices.value.find((device) => device.healthy)
     || devices.value[0]
-})
-const selectedDeviceIP = computed(() => selectedDevice.value?.public_ipv6 || selectedDevice.value?.public_ip || '')
-const selectedRuntime = computed(() => selectedDevice.value?.vowifi_runtime)
-const selectedConnectionTitle = computed(() => {
-  const device = selectedDevice.value
-  if (!device) return '等待设备'
-  if (!device.healthy) return '设备离线'
-  if (device.vowifi_active) return 'Wi-Fi Calling'
-  return device.operator || '网络检测中'
-})
-const selectedConnectionState = computed(() => {
-  const device = selectedDevice.value
-  if (!device) return '没有可用设备'
-  if (!device.healthy) return '当前设备不可用'
-  return device.vowifi_active ? '已连接' : ([device.network_duplex, device.network_mode].filter(Boolean).join(' ') || '控制面在线')
-})
-const selectedStages = computed(() => {
-  const runtime = selectedRuntime.value
-  return [
-    { key: 'SIM', ready: runtime?.sim_ready },
-    { key: 'Access', ready: runtime?.access_ready },
-    { key: 'Tunnel', ready: runtime?.tunnel_ready },
-    { key: 'IMS', ready: runtime?.ims_ready },
-    { key: 'SMS', ready: runtime?.sms_ready }
-  ]
 })
 
 async function fetchDevices() {
@@ -146,54 +122,12 @@ onMounted(() => {
     </PageHeader>
 
     <Transition name="focus-swap" mode="out-in">
-    <section v-if="selectedDevice" :key="selectedDevice.id" class="connection-stage" aria-label="当前设备连接焦点">
-      <div class="connection-stage-main">
-        <div class="connection-stage-heading">
-          <span class="dashboard-eyebrow">ACTIVE DEVICE</span>
-          <span class="focus-device-status" :class="selectedDevice.healthy ? 'is-online' : 'is-offline'">
-            {{ selectedDevice.healthy ? '在线' : '离线' }}
-          </span>
-        </div>
-        <h2>{{ selectedConnectionTitle }}</h2>
-        <strong>{{ selectedConnectionState }}</strong>
-        <p>{{ selectedDevice.name || selectedDevice.id }} · {{ selectedDevice.id }}</p>
-
-        <div v-if="selectedDevice.vowifi_active" class="connection-path" aria-label="VoWiFi 服务链路">
-          <div class="connection-path-line" aria-hidden="true" />
-          <div
-            v-for="stage in selectedStages"
-            :key="stage.key"
-            class="connection-path-step"
-            :class="{ 'is-ready': stage.ready === true, 'is-failed': stage.ready === false }"
-          >
-            <span>{{ stage.ready === true ? '✓' : stage.ready === false ? '×' : '·' }}</span>
-            <small>{{ stage.key }}</small>
-          </div>
-        </div>
-        <div v-else class="cellular-focus">
-          <span>{{ [selectedDevice.network_duplex, selectedDevice.network_mode].filter(Boolean).join(' ') || '未驻网' }}</span>
-          <strong>{{ selectedDevice.signal_dbm || '--' }}<small v-if="selectedDevice.signal_dbm"> dBm</small></strong>
-        </div>
-      </div>
-
-      <aside class="connection-stage-aside">
-        <div class="focus-stat">
-          <span>连接类型</span>
-          <strong>{{ selectedDevice.vowifi_active ? 'VoWiFi' : (selectedDevice.network_mode || '--') }}</strong>
-        </div>
-        <div class="focus-stat">
-          <span>运营商</span>
-          <strong>{{ selectedDevice.operator || '--' }}</strong>
-        </div>
-        <div class="focus-stat focus-stat-ip">
-          <span>公网 IP</span>
-          <strong :title="selectedDeviceIP">{{ selectedDeviceIP || '--' }}</strong>
-        </div>
-        <button type="button" class="focus-open-button" @click="openDeviceOverview(selectedDevice.id)">
-          打开设备工作区
-        </button>
-      </aside>
-    </section>
+      <ConnectionFocusStage
+        v-if="selectedDevice"
+        :key="selectedDevice.id"
+        :device="selectedDevice"
+        @open="openDeviceOverview"
+      />
     </Transition>
 
     <section class="fleet-summary" aria-label="设备状态摘要">
@@ -299,37 +233,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.dashboard-eyebrow, .section-kicker { color: var(--ui-primary); font: 700 10px "v-mono", monospace; letter-spacing: .14em; }
-.connection-stage { position: relative; min-height: 410px; margin-bottom: 18px; padding: clamp(26px, 4vw, 54px); display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 44px; overflow: hidden; border: 1px solid var(--ui-border); border-radius: 26px; background: radial-gradient(circle at 54% 52%, color-mix(in srgb, var(--ui-primary) 15%, transparent), transparent 30%), linear-gradient(125deg, var(--ui-surface) 0 48%, color-mix(in srgb, var(--ui-surface) 88%, #06120e) 100%); }
-.connection-stage::before, .connection-stage::after { position: absolute; pointer-events: none; content: ""; }
-.connection-stage::before { inset: 0 24% 0 36%; opacity: .42; background-image: radial-gradient(circle, color-mix(in srgb, var(--ui-primary) 48%, transparent) 1px, transparent 1.4px); background-size: 20px 20px; mask-image: radial-gradient(ellipse, #000, transparent 69%); }
-.connection-stage::after { top: 50%; left: 42%; width: 38%; height: 1px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-primary) 48%, transparent), transparent); box-shadow: 0 -38px 0 color-mix(in srgb, var(--ui-primary) 10%, transparent), 0 38px 0 color-mix(in srgb, var(--ui-primary) 10%, transparent); }
-.connection-stage-main, .connection-stage-aside { position: relative; z-index: 1; }
-.connection-stage-heading { display: flex; align-items: center; gap: 12px; }
-.focus-device-status { display: inline-flex; align-items: center; gap: 6px; color: var(--ui-text-muted); font-size: 11px; }
-.focus-device-status::before { width: 6px; height: 6px; border-radius: 50%; background: currentColor; content: ""; }
-.focus-device-status.is-online { color: var(--ui-success); }
-.focus-device-status.is-offline { color: var(--ui-danger); }
-.connection-stage h2 { margin: 26px 0 4px; color: var(--ui-text); font-size: clamp(40px, 5.6vw, 76px); font-weight: 520; letter-spacing: -.045em; line-height: .98; }
-.connection-stage-main > strong { color: var(--ui-primary); font-size: clamp(23px, 3vw, 36px); font-weight: 520; }
-.connection-stage-main > p { margin: 14px 0 0; color: var(--ui-text-muted); font-size: 13px; }
-.connection-path { position: relative; width: min(100%, 620px); margin-top: 62px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.connection-path-line { position: absolute; top: 18px; right: 9%; left: 9%; height: 1px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-primary) 72%, transparent), transparent); }
-.connection-path-line::after { position: absolute; top: -3px; left: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--ui-primary); box-shadow: 0 0 14px var(--ui-primary); content: ""; animation: connection-signal 2.4s linear infinite; }
-.connection-path-step { position: relative; z-index: 1; display: grid; place-items: center; gap: 9px; }
-.connection-path-step span { width: 37px; height: 37px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 50%; background: var(--ui-surface-strong); color: var(--ui-text-muted); }
-.connection-path-step small { color: var(--ui-text-muted); font-size: 10px; }
-.connection-path-step.is-ready span { border-color: var(--ui-primary); color: var(--ui-primary); box-shadow: 0 0 22px color-mix(in srgb, var(--ui-primary) 18%, transparent); }
-.connection-path-step.is-failed span { border-color: var(--ui-danger); color: var(--ui-danger); }
-.cellular-focus { width: min(100%, 520px); margin-top: 64px; padding-top: 24px; display: flex; align-items: end; justify-content: space-between; border-top: 1px solid var(--ui-border); color: var(--ui-text-muted); }
-.cellular-focus > strong { color: var(--ui-text); font: 42px/1 "v-mono", monospace; }
-.cellular-focus small { font-size: 13px; }
-.connection-stage-aside { padding-left: 28px; display: flex; flex-direction: column; border-left: 1px solid var(--ui-border); }
-.focus-stat { padding: 19px 0; display: grid; gap: 6px; border-bottom: 1px solid var(--ui-border); }
-.focus-stat span { color: var(--ui-text-muted); font-size: 11px; }
-.focus-stat strong { color: var(--ui-text); font-size: 20px; font-weight: 520; }
-.focus-stat-ip strong { overflow: hidden; font: 14px "v-mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
-.focus-open-button { min-height: 44px; margin-top: auto; border: 1px solid color-mix(in srgb, var(--ui-primary) 52%, var(--ui-border)); border-radius: 12px; background: color-mix(in srgb, var(--ui-primary) 9%, transparent); color: var(--ui-primary); cursor: pointer; }
+.section-kicker { color: var(--ui-primary); font: 700 10px "v-mono", monospace; letter-spacing: .14em; }
 .fleet-summary { margin-bottom: 28px; padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; gap: 30px; border: 1px solid var(--ui-border); border-radius: 16px; background: var(--ui-surface); }
 .fleet-summary-copy { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
 .fleet-summary-copy > strong { color: var(--ui-text); font: 24px "v-mono", monospace; }
@@ -349,9 +253,8 @@ onMounted(() => {
 .focus-swap-leave-active { transition: opacity 120ms var(--ui-ease-out), transform 120ms var(--ui-ease-out); }
 .focus-swap-enter-from { opacity: 0; transform: translateY(10px) scale(.992); }
 .focus-swap-leave-to { opacity: 0; transform: translateY(-4px) scale(.996); }
-@keyframes connection-signal { from { opacity: 0; transform: translateX(0); } 12% { opacity: 1; } 88% { opacity: 1; } to { opacity: 0; transform: translateX(min(510px, 50vw)); } }
 @keyframes device-card-enter { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@media (prefers-reduced-motion: reduce) { .connection-path-line::after { animation: none; opacity: .7; } .device-status-grid :deep(.device-card) { animation: device-card-fade 160ms ease both; } .focus-swap-enter-from, .focus-swap-leave-to { transform: none; } @keyframes device-card-fade { from { opacity: 0; } to { opacity: 1; } } }
-@media (max-width: 1050px) { .connection-stage { grid-template-columns: minmax(0, 1fr) 240px; } .fleet-summary { align-items: stretch; flex-direction: column; } .fleet-metrics { width: 100%; } .fleet-metric:first-child { border-left: 0; } }
-@media (max-width: 760px) { .connection-stage { min-height: 0; grid-template-columns: minmax(0, 1fr); } .connection-stage-aside { padding: 12px 0 0; border-top: 1px solid var(--ui-border); border-left: 0; } .focus-open-button { margin-top: 18px; } .fleet-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fleet-metric:nth-child(3) { border-left: 0; } .fleet-metric { padding: 10px 12px; } .device-overview-toolbar { align-items: stretch; flex-direction: column; } .device-filter-controls { width: 100%; grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .device-status-grid :deep(.device-card) { animation: device-card-fade 160ms ease both; } .focus-swap-enter-from, .focus-swap-leave-to { transform: none; } @keyframes device-card-fade { from { opacity: 0; } to { opacity: 1; } } }
+@media (max-width: 1050px) { .fleet-summary { align-items: stretch; flex-direction: column; } .fleet-metrics { width: 100%; } .fleet-metric:first-child { border-left: 0; } }
+@media (max-width: 760px) { .fleet-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fleet-metric:nth-child(3) { border-left: 0; } .fleet-metric { padding: 10px 12px; } .device-overview-toolbar { align-items: stretch; flex-direction: column; } .device-filter-controls { width: 100%; grid-template-columns: minmax(0, 1fr); } }
 </style>
