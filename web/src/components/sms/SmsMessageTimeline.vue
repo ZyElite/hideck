@@ -120,15 +120,15 @@ onUnmounted(clearLongPress)
 .sms-timeline-empty { min-height: 240px; display: grid; place-items: center; color: var(--ui-text-muted); font-size: 12px; }
 .sms-load-more { display: flex; justify-content: center; margin-bottom: 12px; }
 .sms-day-group + .sms-day-group { margin-top: 22px; }
-.sms-day-label { width: max-content; margin: 0 auto 18px; padding: 4px 10px; display: block; border: 1px solid var(--ui-border); border-radius: 999px; color: var(--ui-text-muted); font: 10px "v-mono", monospace; }
+.sms-day-label { width: max-content; margin: 0 auto 18px; padding: 4px 10px; display: block; border: 1px solid var(--ui-border); border-radius: 999px; color: var(--ui-text-muted); font: var(--ui-font-caption) "v-mono", monospace; }
 
 .sms-message { width: fit-content; max-width: 64%; margin-top: 16px; }
 .sms-message.is-outgoing { margin-left: auto; }
 .sms-message-meta { min-height: 22px; margin-bottom: 5px; display: flex; align-items: center; gap: 7px; color: var(--ui-text-muted); }
 .sms-message.is-outgoing .sms-message-meta { justify-content: flex-end; }
-.sms-message-meta strong { max-width: 150px; overflow: hidden; color: var(--ui-text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.sms-message-meta time { font: 9px "v-mono", monospace; white-space: nowrap; }
-.sms-message-meta span { font-size: 9px; white-space: nowrap; }
+.sms-message-meta strong { max-width: 150px; overflow: hidden; color: var(--ui-text); font-size: var(--ui-font-body-sm); text-overflow: ellipsis; white-space: nowrap; }
+.sms-message-meta time { font: var(--ui-font-caption) "v-mono", monospace; white-space: nowrap; }
+.sms-message-meta span { font-size: var(--ui-font-caption); white-space: nowrap; }
 .sms-message-meta .is-success { color: var(--ui-success); }
 .sms-message-meta .is-danger { color: var(--ui-danger); }
 

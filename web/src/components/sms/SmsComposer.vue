@@ -70,7 +70,7 @@ function updateMessage(value: unknown) {
 }
 
 .sms-send:disabled { cursor: not-allowed; opacity: .5; }
-.sms-composer-meta { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 12px; color: var(--ui-text-muted); font-size: 9px; }
+.sms-composer-meta { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 12px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 
 @media (max-width: 520px) {
   .sms-composer {

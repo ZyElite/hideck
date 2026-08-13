@@ -71,7 +71,7 @@ const emit = defineEmits<{
 
 .sms-device-rail > header strong {
   color: var(--ui-primary);
-  font-size: 11px;
+  font-size: var(--ui-font-body-sm);
   font-weight: 600;
 }
 
@@ -122,7 +122,7 @@ const emit = defineEmits<{
 }
 
 .sms-device-copy strong { font-size: 13px; }
-.sms-device-copy small { margin-top: 2px; color: var(--ui-text-muted); font-size: 10px; }
+.sms-device-copy small { margin-top: 2px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 
 .sms-device-presence {
   width: 7px;

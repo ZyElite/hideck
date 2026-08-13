@@ -223,7 +223,7 @@ onUnmounted(clearLongPress)
 }
 
 .sms-thread-copy strong { font-size: 13px; }
-.sms-thread-copy small { margin-top: 5px; color: var(--ui-text-muted); font-size: 11px; }
+.sms-thread-copy small { margin-top: 5px; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 
 .sms-thread-meta {
   align-self: stretch;
@@ -235,8 +235,8 @@ onUnmounted(clearLongPress)
   text-align: right;
 }
 
-.sms-thread-meta time { font: 10px "v-mono", monospace; }
-.sms-thread-meta small { max-width: 66px; margin-top: 4px; font-size: 9px; }
+.sms-thread-meta time { font: var(--ui-font-caption) "v-mono", monospace; }
+.sms-thread-meta small { max-width: 66px; margin-top: 4px; font-size: var(--ui-font-caption); }
 
 .sms-thread-meta i {
   position: absolute;
@@ -250,7 +250,7 @@ onUnmounted(clearLongPress)
   border-radius: 6px;
   background: var(--ui-primary);
   color: var(--ui-surface-subtle);
-  font-size: 10px;
+  font-size: var(--ui-font-caption);
   font-style: normal;
   font-weight: 700;
 }

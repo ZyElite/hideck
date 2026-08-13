@@ -81,14 +81,14 @@ const emit = defineEmits<{
 .sms-conversation-copy strong,
 .sms-conversation-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sms-conversation-copy strong { color: var(--ui-text); font-size: 14px; }
-.sms-conversation-copy span { margin-top: 3px; color: var(--ui-text-muted); font-size: 10px; }
+.sms-conversation-copy span { margin-top: 3px; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 
 .sms-runtime-facts span {
   padding: 4px 7px;
   border: 1px solid var(--ui-border);
   border-radius: 999px;
   color: var(--ui-text-muted);
-  font-size: 9px;
+  font-size: var(--ui-font-caption);
   white-space: nowrap;
 }
 

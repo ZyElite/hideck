@@ -36,6 +36,14 @@ const proxyTypographyFiles = [
   '../src/components/proxy/ProxyInstanceEditorDrawer.vue',
   '../src/components/proxy/ProxyUpstreamEditorDrawer.vue'
 ] as const
+const smsTypographyFiles = [
+  '../src/views/Sms.vue',
+  '../src/components/sms/SmsDeviceRail.vue',
+  '../src/components/sms/SmsThreadListPane.vue',
+  '../src/components/sms/SmsConversationHeader.vue',
+  '../src/components/sms/SmsMessageTimeline.vue',
+  '../src/components/sms/SmsComposer.vue'
+] as const
 
 const FONT_DECLARATION_PATTERNS = [
   /font-size:\s*([0-9.]+)px/g,
@@ -86,6 +94,13 @@ test('device workspace text does not declare font sizes below 12px', async () =>
 
 test('proxy workspace text does not declare font sizes below 12px', async () => {
   for (const path of proxyTypographyFiles) {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8')
+    assert.deepEqual(findUnreadableFontSizes(source), [], path)
+  }
+})
+
+test('SMS workspace text does not declare font sizes below 12px', async () => {
+  for (const path of smsTypographyFiles) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8')
     assert.deepEqual(findUnreadableFontSizes(source), [], path)
   }
