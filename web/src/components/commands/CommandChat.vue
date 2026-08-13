@@ -5,6 +5,7 @@ import CommandTimeline from './CommandTimeline.vue'
 import type { DeviceMgmtListItem } from '../../types/api'
 import type { BalanceQuery, CommandDefinition, CommandEvent } from '../../types/commands'
 import { commandTargetDevice } from '../../utils/commandInput'
+import { balanceResultText } from '../../utils/commandPresentation'
 import {
   Bot24Regular,
   Delete24Regular,
@@ -49,11 +50,7 @@ const emit = defineEmits<{
 
 function latestBalanceText(query?: BalanceQuery) {
   if (!query) return ''
-  if (query.amount) return [query.amount, query.currency].filter(Boolean).join(' ')
-  if (query.summary) return query.summary
-  if (query.state === 'completed') return '余额已返回'
-  if (query.state === 'failed' || query.state === 'timed_out') return '余额查询失败'
-  return '余额查询中'
+  return balanceResultText(query)
 }
 </script>
 

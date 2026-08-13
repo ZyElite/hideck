@@ -2,6 +2,7 @@
 import type { BalanceQuery } from '../../types/commands'
 import type { DeviceMgmtListItem } from '../../types/api'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
+import { balanceResultText, presentBalanceState } from '../../utils/commandPresentation'
 import { Edit24Regular, Wallet24Regular } from '@vicons/fluent'
 
 defineProps<{
@@ -18,13 +19,6 @@ const emit = defineEmits<{
   editRules: []
 }>()
 
-function stateLabel(query: BalanceQuery) {
-  if (query.state === 'awaiting_reply') return '等待短信'
-  if (query.state === 'completed') return query.parse_state === 'parsed' ? '已解析' : '已收到'
-  if (query.state === 'timed_out') return '已超时'
-  if (query.state === 'failed') return '失败'
-  return '发送中'
-}
 </script>
 
 <template>
@@ -61,8 +55,10 @@ function stateLabel(query: BalanceQuery) {
       </div>
       <article v-for="query in queries" :key="query.id" class="balance-item">
         <div class="balance-row">
-          <strong>{{ query.summary || query.amount || '等待运营商回复' }}</strong>
-          <span class="query-state" :class="query.state">{{ stateLabel(query) }}</span>
+          <strong>{{ balanceResultText(query) }}</strong>
+          <span class="query-state" :class="presentBalanceState(query).tone">
+            {{ presentBalanceState(query).label }}
+          </span>
         </div>
         <div class="balance-meta">
           <span>{{ query.device_id }}</span>

@@ -1,32 +1,19 @@
 <script setup lang="ts">
 import type { BalanceQuery } from '../../types/commands'
+import { balanceResultText, presentBalanceState } from '../../utils/commandPresentation'
 import { Wallet24Regular } from '@vicons/fluent'
 
 defineProps<{ query: BalanceQuery }>()
 
-function stateLabel(query: BalanceQuery) {
-  if (query.state === 'awaiting_reply') return '等待短信'
-  if (query.state === 'completed') return query.parse_state === 'parsed' ? '已解析' : '已收到'
-  if (query.state === 'timed_out') return '已超时'
-  if (query.state === 'failed') return '失败'
-  return '发送中'
-}
-
-function resultText(query: BalanceQuery) {
-  if (query.summary) return query.summary
-  if (query.amount) return [query.amount, query.currency].filter(Boolean).join(' ')
-  if (query.state === 'completed') return '已收到运营商回复'
-  return '正在等待运营商返回余额'
-}
 </script>
 
 <template>
   <div class="balance-message" :class="query.state">
     <div class="balance-heading">
       <span><el-icon><Wallet24Regular /></el-icon>运营商余额</span>
-      <span class="balance-state">{{ stateLabel(query) }}</span>
+      <span class="balance-state">{{ presentBalanceState(query).label }}</span>
     </div>
-    <strong>{{ resultText(query) }}</strong>
+    <strong>{{ balanceResultText(query) }}</strong>
     <span class="balance-device">{{ query.device_id }}</span>
     <pre v-if="query.raw_response">{{ query.raw_response }}</pre>
     <p v-if="query.error">{{ query.error }}</p>

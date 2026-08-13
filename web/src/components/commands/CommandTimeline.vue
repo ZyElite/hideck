@@ -4,6 +4,7 @@ import BalanceMessage from './BalanceMessage.vue'
 import CommandAudioPlayer from './CommandAudioPlayer.vue'
 import type { BalanceQuery, CommandEvent } from '../../types/commands'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
+import { presentCommandEvent } from '../../utils/commandPresentation'
 import { Bot24Regular } from '@vicons/fluent'
 
 const props = defineProps<{
@@ -26,16 +27,8 @@ const timelineItems = computed<TimelineItem[]>(() => {
   return [...commands, ...balances].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
 })
 
-function eventLabel(event: CommandEvent) {
-  if (event.kind === 'accepted') return '你'
-  if (event.kind === 'progress') return '处理中'
-  if (event.kind === 'error') return '执行失败'
-  return 'VoHive'
-}
-
 function eventText(event: CommandEvent) {
-  if (event.kind === 'accepted' && event.execution?.input) return event.execution.input
-  return event.text
+  return presentCommandEvent(event).detail
 }
 
 function audioAttachments(event: CommandEvent) {
@@ -61,7 +54,7 @@ function audioAttachments(event: CommandEvent) {
         }"
       >
         <div class="message-meta">
-          <span>{{ item.kind === 'command' ? eventLabel(item.event) : 'VoHive' }}</span>
+          <span>{{ item.kind === 'command' ? presentCommandEvent(item.event).title : 'VoHive' }}</span>
           <time>{{ formatDeviceDateTime(item.createdAt) }}</time>
         </div>
         <template v-if="item.kind === 'command'">
