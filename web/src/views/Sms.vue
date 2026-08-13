@@ -254,6 +254,7 @@ async function loadMoreHistory() {
   const wrap = getDetailWrap()
   const prevTop = wrap?.scrollTop || 0
   const prevHeight = wrap?.scrollHeight || 0
+  const requestThreadKey = selectedThreadKey.value
   loadingHistoryMore.value = true
   try {
     const oldest = threadMessages.value[0]
@@ -270,6 +271,7 @@ async function loadMoreHistory() {
       params.imsi = selectedThread.value.imsi
     }
     const result = await smsStore.fetchThread(params)
+    if (selectedThreadKey.value !== requestThreadKey) return
     if (!result.ok) {
       messagesError.value = result.error
       return
@@ -288,6 +290,7 @@ async function loadMoreHistory() {
     })
     messagesError.value = null
   } catch (error: unknown) {
+    if (selectedThreadKey.value !== requestThreadKey) return
     messagesError.value = toAppError(error)
   } finally {
     loadingHistoryMore.value = false
@@ -444,6 +447,11 @@ async function selectThread(key: string, options: { syncRoute?: boolean; silent?
   const scrollToBottom = options.scrollToBottom !== false
 
   selectedThreadKey.value = key
+  threadFetchSeq += 1
+  threadMessages.value = []
+  threadHasMore.value = false
+  threadLoading.value = false
+  messagesError.value = null
   if (syncRoute) {
     void router.replace({ query: buildSmsQuery(selectedDevice.value, key) })
   }

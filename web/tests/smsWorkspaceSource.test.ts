@@ -70,3 +70,18 @@ test('unread presentation and history failures stay explicit', () => {
   assert.doesNotMatch(smsView, /Ignore history load errors/)
   assert.match(messageTimeline, /当前接口未返回此会话的历史短信/)
 })
+
+test('switching conversations clears prior content before requesting the next thread', () => {
+  const selectionStart = smsView.indexOf('async function selectThread')
+  const selectionEnd = smsView.indexOf('async function applyThreadSeen', selectionStart)
+  const selectionSource = smsView.slice(selectionStart, selectionEnd)
+  const keyUpdate = selectionSource.indexOf('selectedThreadKey.value = key')
+  const contentReset = selectionSource.indexOf('threadMessages.value = []')
+  const nextRequest = selectionSource.indexOf('await fetchThreadLatest(silent)')
+
+  assert.ok(keyUpdate >= 0)
+  assert.ok(contentReset > keyUpdate)
+  assert.ok(nextRequest > contentReset)
+  assert.match(smsView, /const requestThreadKey = selectedThreadKey\.value/)
+  assert.match(smsView, /if \(selectedThreadKey\.value !== requestThreadKey\) return/)
+})
