@@ -153,11 +153,25 @@ export const usePhoneStore = defineStore('phone', {
     },
 
     async startCall(deviceId: string, callee: string) {
+      return this.startCallWithMode(deviceId, callee, 'two-way')
+    },
+
+    async startListenOnlyCall(deviceId: string, callee: string) {
+      return this.startCallWithMode(deviceId, callee, 'listen-only')
+    },
+
+    async startCallWithMode(
+      deviceId: string,
+      callee: string,
+      mode: Exclude<PhoneMediaMode, 'none'>
+    ) {
       this.error = ''
       if (this.calls.some((call) => ACTIVE_STATUSES.has(call.status) && !call.read_only)) {
         throw new Error('当前浏览器已有一通活动电话')
       }
-      const media = await this.prepareMedia()
+      const media = mode === 'two-way'
+        ? await this.prepareMedia()
+        : await this.prepareReceiveOnlyMedia()
       try {
         const call = await phoneService.startCall(deviceId, callee, media.mediaId, media.lease)
         this.upsertCall(call)

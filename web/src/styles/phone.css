@@ -28,8 +28,12 @@
 .number-field button { width: 48px; border: 0; background: transparent; color: var(--ui-text-muted); cursor: pointer; font-size: 20px; }
 .number-field button:disabled { opacity: .3; }
 .number-field small { color: var(--ui-danger); font-size: 10px; text-align: center; }
-.enable-media-button, .dial-button, .restore-button, .secondary-button { min-height: 48px; padding: 0 20px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--ui-primary); border-radius: 24px; background: var(--ui-primary-solid); color: #fff; cursor: pointer; font-weight: 650; }
-.enable-media-button:disabled, .dial-button:disabled, .restore-button:disabled, .secondary-button:disabled { cursor: not-allowed; opacity: .45; }
+.dial-button, .restore-button, .secondary-button { min-height: 48px; padding: 0 20px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--ui-primary); border-radius: 24px; background: var(--ui-primary-solid); color: #fff; cursor: pointer; font-weight: 650; }
+.dial-button:disabled, .restore-button:disabled, .secondary-button:disabled { cursor: not-allowed; opacity: .45; }
+.call-mode-actions { width: 320px; max-width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.call-mode-actions .dial-button { width: 100%; padding: 0 14px; }
+.call-mode-actions .dial-button.is-listen { background: var(--ui-surface); color: var(--ui-primary); }
+.call-mode-help { max-width: 320px; margin: -8px 0 0; color: var(--ui-text-muted); font-size: 11px; line-height: 1.5; text-align: center; }
 .active-call { padding: 28px 24px; display: grid; justify-items: center; gap: 22px; }
 .call-identity { width: 100%; text-align: center; }
 .call-identity > span { color: var(--ui-primary); font-family: "v-mono", monospace; font-size: 9px; font-weight: 700; letter-spacing: .16em; }

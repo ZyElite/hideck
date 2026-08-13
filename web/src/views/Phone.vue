@@ -35,11 +35,10 @@ const incoming = computed(() => call.value?.direction === 'inbound'
   && call.value.status === 'ringing'
   && !call.value.media_id)
 const selected = computed(() => phone.devices.find((device) => device.id === selectedDevice.value))
-const canDial = computed(() => CALLEE_PATTERN.test(callee.value)
+const canPlaceCall = computed(() => CALLEE_PATTERN.test(callee.value)
   && !!selected.value
   && isDeviceReady(selected.value)
-  && !isDeviceBusy(selected.value)
-  && phone.mediaReady)
+  && !isDeviceBusy(selected.value))
 const httpsPhoneURL = computed(() => {
   if (typeof window === 'undefined') return '#'
   const target = new URL(window.location.href)
@@ -111,9 +110,14 @@ function enableListenOnlyMedia() {
   return runAction('恢复仅听', () => phone.enableListenOnlyMedia(), '仅听模式已恢复')
 }
 
-function startCall() {
-  if (!canDial.value) return
-  return runAction('呼叫', () => phone.startCall(selectedDevice.value, callee.value))
+function startListenOnlyCall() {
+  if (!canPlaceCall.value) return
+  return runAction('仅听呼叫', () => phone.startListenOnlyCall(selectedDevice.value, callee.value))
+}
+
+function startTwoWayCall() {
+  if (!canPlaceCall.value || !phone.secureContext) return
+  return runAction('双向呼叫', () => phone.startCall(selectedDevice.value, callee.value))
 }
 
 function answerCall(current: PhoneCall) {
@@ -163,7 +167,7 @@ async function sendDTMF(digit: string) {
       <div class="notice-icon"><el-icon><LockClosed24Regular /></el-icon></div>
       <div>
         <strong>麦克风需要受信任的 HTTPS</strong>
-        <p>当前 HTTP 页面仍可“仅听接听”来电，不会申请麦克风，因此对方听不到你。双向通话需要使用受信任的 HTTPS。</p>
+        <p>当前 HTTP 页面可“仅听接听”或“仅听呼叫”，不会申请麦克风，因此对方听不到你。双向通话需要使用受信任的 HTTPS。</p>
       </div>
       <div class="notice-actions">
         <a href="/api/phone/ca.crt" download>下载 CA 证书</a>
@@ -338,7 +342,6 @@ async function sendDTMF(digit: string) {
                 maxlength="32"
                 autocomplete="tel"
                 placeholder="输入号码"
-                @keyup.enter="startCall"
               />
               <button type="button" aria-label="删除末位号码" :disabled="!callee" @click="eraseDigit">
                 <el-icon><Backspace24Regular /></el-icon>
@@ -349,18 +352,31 @@ async function sendDTMF(digit: string) {
 
           <PhoneDialPad @digit="appendDigit" />
 
-          <button
-            v-if="!phone.mediaReady"
-            type="button"
-            class="enable-media-button"
-            :disabled="!!action || !phone.secureContext"
-            @click="enableMedia"
-          >
-            <el-icon><Speaker224Regular /></el-icon>启用听筒和麦克风
-          </button>
-          <button v-else type="button" class="dial-button" :disabled="!canDial || !!action" @click="startCall">
-            <el-icon><Call24Regular /></el-icon>{{ action === '呼叫' ? '正在呼叫…' : '呼叫' }}
-          </button>
+          <div class="call-mode-actions" aria-label="呼叫模式">
+            <button
+              type="button"
+              class="dial-button is-listen"
+              :disabled="!canPlaceCall || !!action"
+              title="只接收对方声音，不申请麦克风"
+              @click="startListenOnlyCall"
+            >
+              <el-icon><Speaker224Regular /></el-icon>{{ action === '仅听呼叫' ? '正在呼叫…' : '仅听呼叫' }}
+            </button>
+            <button
+              type="button"
+              class="dial-button"
+              :disabled="!canPlaceCall || !!action || !phone.secureContext"
+              title="需要受信任的 HTTPS 和麦克风权限"
+              @click="startTwoWayCall"
+            >
+              <el-icon><Call24Regular /></el-icon>{{ action === '双向呼叫' ? '正在呼叫…' : '双向呼叫' }}
+            </button>
+          </div>
+          <p class="call-mode-help">
+            {{ phone.secureContext
+              ? '仅听呼叫不会使用麦克风；双向呼叫会请求麦克风权限。'
+              : '当前页面只能仅听呼叫，对方听不到你。' }}
+          </p>
         </div>
       </section>
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createPinia, setActivePinia } from 'pinia'
-import type { PhoneCall, PhoneEvent } from '../src/services/phone'
+import { phoneService, type PhoneCall, type PhoneEvent } from '../src/services/phone'
 import { usePhoneStore } from '../src/stores/phone'
 import { normalizeCallOwnership, phoneErrorMessage, shouldRefreshCallMedia } from '../src/utils/phone'
 
@@ -64,6 +64,71 @@ test('media reuse requires the requested privacy mode to match', () => {
   store.mediaMode = 'listen-only'
   assert.equal(store.hasReusableMedia('listen-only'), true)
   assert.equal(store.hasReusableMedia('two-way'), false)
+})
+
+test('outbound calls prepare the explicitly selected media mode', async () => {
+  const originalStartCall = phoneService.startCall
+  const mediaRequests: string[] = []
+  phoneService.startCall = async (_deviceId, callee, mediaId) => {
+    mediaRequests.push(mediaId)
+    return call(mediaId, { call_id: `call-${mediaId}`, peer: callee, status: 'calling' })
+  }
+
+  try {
+    setActivePinia(createPinia())
+    const listenStore = usePhoneStore()
+    let listenPreparations = 0
+    let microphonePreparations = 0
+    listenStore.prepareReceiveOnlyMedia = async () => {
+      listenPreparations += 1
+      return { mediaId: 'listen-media', lease: 'listen-lease' }
+    }
+    listenStore.prepareMedia = async () => {
+      microphonePreparations += 1
+      return { mediaId: 'two-way-media', lease: 'two-way-lease' }
+    }
+    await listenStore.startListenOnlyCall('wwan1', '888')
+    assert.equal(listenPreparations, 1)
+    assert.equal(microphonePreparations, 0)
+
+    setActivePinia(createPinia())
+    const twoWayStore = usePhoneStore()
+    twoWayStore.prepareReceiveOnlyMedia = async () => {
+      listenPreparations += 1
+      return { mediaId: 'unexpected-listen', lease: 'unexpected-lease' }
+    }
+    twoWayStore.prepareMedia = async () => {
+      microphonePreparations += 1
+      return { mediaId: 'two-way-media', lease: 'two-way-lease' }
+    }
+    await twoWayStore.startCall('wwan1', '888')
+    assert.equal(listenPreparations, 1)
+    assert.equal(microphonePreparations, 1)
+    assert.deepEqual(mediaRequests, ['listen-media', 'two-way-media'])
+  } finally {
+    phoneService.startCall = originalStartCall
+  }
+})
+
+test('listen-only outbound releases its media when call creation fails', async () => {
+  const originalStartCall = phoneService.startCall
+  phoneService.startCall = async () => {
+    throw new Error('IMS rejected the call')
+  }
+
+  try {
+    setActivePinia(createPinia())
+    const store = usePhoneStore()
+    let releases = 0
+    store.prepareReceiveOnlyMedia = async () => ({ mediaId: 'listen-media', lease: 'listen-lease' })
+    store.releaseMedia = () => { releases += 1 }
+
+    await assert.rejects(store.startListenOnlyCall('wwan1', '888'), /IMS rejected the call/)
+    assert.equal(releases, 1)
+    assert.equal(store.calls.length, 0)
+  } finally {
+    phoneService.startCall = originalStartCall
+  }
 })
 
 test('surfaces API error messages without hiding the underlying failure', () => {
