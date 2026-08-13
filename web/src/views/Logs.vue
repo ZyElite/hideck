@@ -2,7 +2,6 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
-import PageHeader from '../components/PageHeader.vue'
 import { ArrowDownload24Regular, Delete24Regular, Pause24Regular, Play24Regular } from '@vicons/fluent'
 import { useLogsStore } from '../stores/logs'
 import { useEventStream } from '../composables/useEventStream'
@@ -159,40 +158,23 @@ watch(levelFilter, () => {
 
 <template>
   <div class="app-page logs-page">
-    <PageHeader title="实时日志" subtitle="查看系统运行日志，支持过滤和搜索">
-      <template #actions>
-        <div class="flex items-center gap-2">
-          <el-button @click="togglePause" :type="paused ? 'success' : 'warning'" class="!border-0">
-            <el-icon><component :is="paused ? Play24Regular : Pause24Regular" /></el-icon>
-            {{ paused ? '继续' : '暂停' }}
-          </el-button>
-          <el-button @click="clearLogs" class="!border-0">
-            <el-icon><Delete24Regular /></el-icon>
-            清空
-          </el-button>
-          <el-button @click="exportLogs" type="primary" class="!border-0">
-            <el-icon><ArrowDownload24Regular /></el-icon>
-            导出
-          </el-button>
+    <div class="logs-workspace">
+      <aside class="logs-control-rail ui-card">
+        <div class="logs-rail-status">
+          <span class="logs-connection-dot" :class="connected ? 'is-connected' : 'is-disconnected'" />
+          <div>
+            <small>LIVE STREAM</small>
+            <strong>{{ connected ? '实时连接' : '连接中断' }}</strong>
+          </div>
         </div>
-      </template>
-    </PageHeader>
-
-    <!-- 连接状态 -->
-    <div class="logs-statusbar flex items-center gap-4 mb-3">
-      <div class="flex items-center gap-2">
-        <span class="logs-connection-dot" :class="connected ? 'is-connected' : 'is-disconnected'" />
-        <span class="text-sm font-semibold">{{ connected ? '已连接' : '未连接' }}</span>
-      </div>
-      <span class="text-sm text-gray-400">{{ logs.length }} 条日志</span>
-      <span v-if="!connected && lastConnectError" class="text-sm text-red-500 truncate" :title="lastConnectError">{{ lastConnectError }}</span>
-      <div class="flex-1" />
-      <el-checkbox v-model="autoScroll" label="自动追尾" />
-    </div>
-
-    <!-- 过滤器 -->
-    <div class="logs-toolbar ui-card p-3 mb-3">
-      <div class="flex flex-wrap items-center gap-4">
+        <div class="logs-rail-count">
+          <span>已缓存</span>
+          <strong>{{ logs.length }}</strong>
+          <small>条日志</small>
+        </div>
+        <span v-if="!connected && lastConnectError" class="logs-rail-error" :title="lastConnectError">{{ lastConnectError }}</span>
+        <div class="logs-rail-filters">
+          <label>日志级别</label>
         <el-select v-model="levelFilter" placeholder="日志级别" class="w-32">
           <el-option label="全部" value="all" />
           <el-option label="DEBUG" value="debug" />
@@ -204,17 +186,35 @@ watch(levelFilter, () => {
           v-model="searchQuery"
           placeholder="搜索日志内容..."
           clearable
-          class="w-64"
+          class="w-full"
         />
-        <span class="text-sm text-gray-400">显示 {{ filteredLogs.length }} / {{ logs.length }} 条</span>
-      </div>
-    </div>
+          <div class="logs-rail-filter-count">显示 {{ filteredLogs.length }} / {{ logs.length }}</div>
+          <el-checkbox v-model="autoScroll" label="自动追尾" />
+        </div>
+      </aside>
 
-    <!-- 日志列表 -->
-    <div class="log-frame ui-card overflow-hidden">
+      <section class="log-frame ui-card overflow-hidden">
+        <header class="log-console-header">
+          <div><span>SYSTEM OUTPUT</span><strong>运行时输出</strong></div>
+          <div class="log-console-actions">
+            <small>{{ paused ? 'PAUSED' : 'FOLLOWING' }}</small>
+            <el-button size="small" @click="togglePause" :type="paused ? 'success' : 'warning'" class="!border-0">
+              <el-icon><component :is="paused ? Play24Regular : Pause24Regular" /></el-icon>
+              {{ paused ? '继续' : '暂停' }}
+            </el-button>
+            <el-button size="small" @click="exportLogs" type="primary" class="!border-0">
+              <el-icon><ArrowDownload24Regular /></el-icon>
+              导出
+            </el-button>
+            <el-button size="small" @click="clearLogs" class="!border-0">
+              <el-icon><Delete24Regular /></el-icon>
+              清空
+            </el-button>
+          </div>
+        </header>
       <div
         ref="logContainer"
-        class="log-console h-[calc(100dvh-292px)] min-h-[420px] overflow-auto font-mono text-sm text-gray-100 p-4"
+        class="log-console h-[calc(100dvh-150px)] min-h-[470px] overflow-auto font-mono text-sm text-gray-100 p-4"
       >
         <div v-if="filteredLogs.length === 0" class="text-gray-500 text-center py-8">
           {{ connected ? '等待日志...' : '未连接到日志流' }}
@@ -231,15 +231,108 @@ watch(levelFilter, () => {
           <span v-if="log.fields" class="text-amber-300/70 ml-1">{{ log.fields }}</span>
         </div>
       </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.logs-statusbar {
-  min-height: 38px;
-  padding: 0 4px;
+.logs-workspace {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.logs-control-rail {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: logs-workspace-enter 240ms var(--ui-ease-out) both;
+}
+
+.logs-rail-status {
+  min-height: 86px;
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.logs-rail-status div,
+.log-console-header div {
+  display: grid;
+  gap: 3px;
+}
+
+.logs-rail-status small,
+.log-console-header span {
+  color: var(--ui-primary);
+  font: 700 9px "v-mono", monospace;
+  letter-spacing: .13em;
+}
+
+.logs-rail-status strong,
+.log-console-header strong {
+  color: var(--ui-text);
+  font-size: 15px;
+}
+
+.logs-rail-count {
+  padding: 20px 18px;
+  display: grid;
+  gap: 2px;
+  border-bottom: 1px solid var(--ui-border);
   color: var(--ui-text-muted);
+  font-size: 10px;
+}
+
+.logs-rail-count strong {
+  color: var(--ui-text);
+  font: 32px "v-mono", monospace;
+}
+
+.logs-rail-error {
+  margin: 12px;
+  overflow: hidden;
+  color: var(--ui-danger);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.logs-rail-filters {
+  padding: 15px;
+  display: grid;
+  gap: 10px;
+}
+
+.logs-rail-filters label,
+.logs-rail-filter-count {
+  color: var(--ui-text-muted);
+  font-size: 10px;
+}
+
+.log-console-header {
+  height: 60px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #263a40;
+  background: #081014;
+}
+
+.log-console-header small {
+  color: var(--ui-text-muted);
+  font: 10px "v-mono", monospace;
+}
+
+.log-console-actions {
+  display: flex !important;
+  align-items: center;
+  gap: 7px !important;
 }
 
 .logs-connection-dot {
@@ -265,6 +358,7 @@ watch(levelFilter, () => {
 .log-frame {
   border-color: #263a40;
   border-radius: 18px;
+  animation: logs-workspace-enter 260ms var(--ui-ease-out) 45ms both;
 }
 
 .log-console {
@@ -285,7 +379,32 @@ watch(levelFilter, () => {
   background: rgba(255, 255, 255, .045);
 }
 
+@keyframes logs-workspace-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logs-control-rail,
+  .log-frame {
+    animation-name: logs-workspace-fade;
+  }
+
+  @keyframes logs-workspace-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
 @media (max-width: 640px) {
+  .logs-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .logs-control-rail {
+    min-height: 0;
+  }
+
   .log-console {
     height: calc(100dvh - 360px);
     min-height: 360px;

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import PageHeader from '../components/PageHeader.vue'
+import WorkspaceStage from '../components/WorkspaceStage.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ListSkeleton from '../components/ListSkeleton.vue'
 import ErrorState from '../components/ErrorState.vue'
@@ -283,6 +283,8 @@ usePollingScheduler(() => fetchOverview({ silent: true }), 5000, {
 // 前置代理（新增逻辑）
 // ══════════════════════════════════════════════════════
 const upstreamStore = useUpstreamProxyStore()
+const enabledUpstreamCount = computed(() => upstreamStore.proxies.filter((proxy) => proxy.enabled).length)
+const runningOutboundCount = computed(() => instancesWithStatus.value.filter((instance) => instance.status.running).length)
 
 const upstreamLoading = ref(true)
 const upstreamRefreshing = ref(false)
@@ -498,33 +500,37 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
 
 <template>
   <div class="app-page proxy-page">
-    <PageHeader title="代理管理" subtitle="管理本地出站代理和 VoWiFi 漫游前置代理" />
+    <WorkspaceStage
+      class="proxy-workspace-stage"
+      kicker="ROUTE ORCHESTRATION"
+      :title="activeTab === 'upstream' ? '漫游路由' : '本地出口'"
+      :subtitle="activeTab === 'upstream'
+        ? '通过支持 UDP Associate 的 Socks5 节点连接海外运营商 ePDG'
+        : '将本地代理实例绑定到指定物理网络接口与设备出口'"
+      :status="activeTab === 'upstream' ? `${enabledUpstreamCount} 个节点启用` : `${runningOutboundCount} 个实例运行`"
+      :tone="(activeTab === 'upstream' ? enabledUpstreamCount : runningOutboundCount) > 0 ? 'success' : 'neutral'"
+    >
+      <nav class="proxy-mode-switch" aria-label="代理工作区">
+        <button type="button" :class="{ 'is-active': activeTab === 'upstream' }" @click="activeTab = 'upstream'">
+          <el-icon><Earth24Regular /></el-icon>
+          <span><small>ROAMING ROUTES</small><strong>漫游前置代理</strong></span>
+          <b>{{ upstreamStore.proxies.length }}</b>
+        </button>
+        <button type="button" :class="{ 'is-active': activeTab === 'outbound' }" @click="activeTab = 'outbound'">
+          <el-icon><Router24Regular /></el-icon>
+          <span><small>LOCAL EGRESS</small><strong>本地出站代理</strong></span>
+          <b>{{ instances.length }}</b>
+        </button>
+      </nav>
 
-    <!-- Tab 切换 -->
-    <el-tabs v-model="activeTab" class="proxy-tabs mb-4">
-      <el-tab-pane name="upstream">
-        <template #label>
-          <div class="flex items-center gap-1.5">
-            <el-icon size="16"><Earth24Regular /></el-icon>
-            <span class="font-medium">漫游前置代理</span>
-            <span v-if="upstreamStore.proxies.length > 0" class="inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold leading-none text-white bg-blue-500 rounded-full shadow-sm ml-0.5">
-              {{ upstreamStore.proxies.length }}
-            </span>
-          </div>
-        </template>
-      </el-tab-pane>
-      <el-tab-pane name="outbound">
-        <template #label>
-          <div class="flex items-center gap-1.5">
-            <el-icon size="16"><Router24Regular /></el-icon>
-            <span class="font-medium">本地出站代理</span>
-            <span v-if="instances.length > 0" class="inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold leading-none text-white bg-blue-500 rounded-full shadow-sm ml-0.5">
-              {{ instances.length }}
-            </span>
-          </div>
-        </template>
-      </el-tab-pane>
-    </el-tabs>
+      <template #aside>
+        <dl class="workspace-stage-stats">
+          <div><dt>前置节点</dt><dd>{{ enabledUpstreamCount }} / {{ upstreamStore.proxies.length }}</dd></div>
+          <div><dt>国家规则</dt><dd>{{ upstreamStore.countryRules.length }}</dd></div>
+          <div><dt>本地实例</dt><dd>{{ runningOutboundCount }} / {{ instances.length }}</dd></div>
+        </dl>
+      </template>
+    </WorkspaceStage>
 
     <!-- ═══════════ 前置代理 Tab ═══════════ -->
     <div v-show="activeTab === 'upstream'">
@@ -538,8 +544,8 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
         @retry="fetchUpstream"
       />
 
-      <div class="ui-card p-4 sm:p-5">
-        <div class="flex items-center justify-between mb-4">
+      <section class="proxy-board ui-card">
+        <header class="proxy-board-header">
           <div class="flex items-center gap-3">
             <div class="section-icon section-icon-communication">
               <el-icon size="20"><Earth24Regular /></el-icon>
@@ -553,7 +559,7 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
             <el-icon class="mr-1.5"><Add24Regular /></el-icon>
             <span>新增代理</span>
           </el-button>
-        </div>
+        </header>
 
         <ListSkeleton v-if="upstreamLoading && upstreamStore.proxies.length === 0" :rows="2" />
 
@@ -563,11 +569,11 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
           subtitle="点击「新增代理」创建 Socks5 前置代理，再按国家配置 VoWiFi 分流规则；未配置国家默认直连"
         />
 
-        <div v-else class="space-y-3">
+        <div v-else class="proxy-node-grid">
           <div
             v-for="proxy in upstreamProxiesWithRuleCount"
             :key="proxy.id"
-            class="ui-panel-muted p-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3"
+            class="proxy-node-card ui-panel-muted p-4 flex flex-col gap-4"
           >
             <div class="flex items-center gap-3 min-w-0">
               <span class="w-2.5 h-2.5 rounded-full shrink-0" :class="proxy.enabled ? 'bg-green-500' : 'bg-gray-300'" />
@@ -610,7 +616,7 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
             </div>
           </div>
         </div>
-      </div>
+      </section>
     </div>
 
     <!-- ═══════════ 出站代理 Tab ═══════════ -->
@@ -625,8 +631,8 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
         @retry="fetchOverview"
       />
 
-      <div class="ui-card p-4 sm:p-5">
-        <div class="flex items-center justify-between mb-4">
+      <section class="proxy-board ui-card">
+        <header class="proxy-board-header">
           <div class="flex items-center gap-3">
             <div class="section-icon section-icon-primary">
               <el-icon size="20"><Router24Regular /></el-icon>
@@ -640,17 +646,17 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
             <el-icon class="mr-1.5"><Add24Regular /></el-icon>
             <span>新增实例</span>
           </el-button>
-        </div>
+        </header>
 
         <ListSkeleton v-if="initialLoading && instances.length === 0" :rows="3" />
 
         <EmptyState v-else-if="instances.length === 0" title="暂无代理实例" subtitle="点击「新增实例」创建第一个实例" />
 
-        <div v-else class="space-y-3">
+        <div v-else class="proxy-node-grid">
           <div
             v-for="inst in instancesWithStatus"
             :key="inst.id"
-            class="ui-panel-muted p-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3"
+            class="proxy-node-card ui-panel-muted p-4 flex flex-col gap-4"
           >
             <div class="flex items-center gap-3 min-w-0">
               <span class="w-2.5 h-2.5 rounded-full shrink-0" :class="inst.status.running ? 'bg-green-500' : 'bg-gray-300'" />
@@ -700,7 +706,7 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
             </div>
           </div>
         </div>
-      </div>
+      </section>
     </div>
 
     <!-- ═══════════ 出站代理编辑 Drawer ═══════════ -->
@@ -947,17 +953,116 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
 </template>
 
 <style scoped>
-.proxy-tabs :deep(.el-tabs__header) {
-  margin-bottom: 10px;
-}
-.proxy-tabs :deep(.el-tabs__nav-wrap::after) {
-  height: 1px;
+.proxy-mode-switch {
+  width: min(100%, 690px);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.proxy-tabs :deep(.el-tabs__item) {
-  height: 48px;
+.proxy-workspace-stage {
+  min-height: 286px;
+}
+
+.proxy-mode-switch button {
+  min-height: 82px;
+  padding: 15px 17px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 15px;
+  background: var(--ui-surface);
   color: var(--ui-text-muted);
-  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 140ms var(--ui-ease-out);
+}
+
+.proxy-mode-switch button:active {
+  transform: scale(.985);
+}
+
+.proxy-mode-switch button > .el-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  font-size: 19px;
+}
+
+.proxy-mode-switch button > span {
+  display: grid;
+  gap: 4px;
+}
+
+.proxy-mode-switch small {
+  font: 700 9px "v-mono", monospace;
+  letter-spacing: .12em;
+}
+
+.proxy-mode-switch strong {
+  color: var(--ui-text);
+  font-size: 15px;
+}
+
+.proxy-mode-switch b {
+  color: var(--ui-text);
+  font: 22px "v-mono", monospace;
+}
+
+.proxy-mode-switch button.is-active {
+  border-color: color-mix(in srgb, var(--ui-primary) 48%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-primary) 8%, var(--ui-surface));
+  color: var(--ui-primary);
+}
+
+.proxy-mode-switch button.is-active > .el-icon {
+  border-color: color-mix(in srgb, var(--ui-primary) 45%, var(--ui-border));
+  color: var(--ui-primary);
+}
+
+.proxy-board {
+  padding: 0 18px 18px;
+  overflow: hidden;
+  animation: proxy-board-enter 240ms var(--ui-ease-out) both;
+}
+
+.proxy-board-header {
+  min-height: 84px;
+  margin: 0 -18px 18px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.proxy-node-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr));
+  gap: 10px;
+}
+
+.proxy-node-card {
+  min-width: 0;
+  min-height: 132px;
+  justify-content: space-between;
+  animation: proxy-node-enter 220ms var(--ui-ease-out) both;
+}
+
+@keyframes proxy-board-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes proxy-node-enter {
+  from { opacity: 0; transform: scale(.985); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .proxy-page :deep(.ui-card) {
@@ -968,18 +1073,33 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
   border-radius: 14px;
 }
 
-.proxy-tabs :deep(.el-tabs__item.is-active) {
-  color: var(--ui-primary);
-}
-
-.proxy-tabs :deep(.el-tabs__active-bar) {
-  background: var(--ui-primary);
-}
-
 .drawer-section-marker {
   width: 3px;
   height: 16px;
   border-radius: 2px;
   background: var(--ui-primary);
+}
+
+@media (max-width: 720px) {
+  .proxy-mode-switch {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .proxy-board-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proxy-board,
+  .proxy-node-card {
+    animation-name: proxy-board-fade;
+  }
+
+  @keyframes proxy-board-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
 }
 </style>

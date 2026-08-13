@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useSettingsStore } from '../stores/settings'
-import PageHeader from '../components/PageHeader.vue'
+import WorkspaceStage from '../components/WorkspaceStage.vue'
 import FieldRow from '../components/FieldRow.vue'
 import { 
   Key24Regular, 
@@ -22,6 +22,16 @@ const activeNotifyTab = ref('telegram')
 const openWRTDynamicInterfaces = ref(false)
 const loadingSystemSettings = ref(false)
 const savingSystemSettings = ref(false)
+
+const enabledNotificationCount = computed(() => [
+  telegramForm.value.enabled,
+  feishuForm.value.enabled,
+  qqForm.value.enabled,
+  webhookSettings.value.enabled,
+  barkSettings.value.enabled,
+  emailForm.value.enabled,
+  pushplusForm.value.enabled
+].filter(Boolean).length)
 
 
 
@@ -357,11 +367,33 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-page settings-page max-w-[1440px] mx-auto">
-    <PageHeader title="系统设置" subtitle="管理网关参数与运行信息" />
+    <WorkspaceStage
+      class="settings-workspace-stage"
+      compact
+      kicker="GATEWAY CONTROL"
+      title="VoHive Gateway"
+      subtitle="管理访问安全、运行环境、系统集成与消息通知通道"
+      status="系统配置已加载"
+      tone="success"
+    >
+      <div class="workspace-stage-pills">
+        <span class="workspace-stage-pill">通知通道 <strong>{{ enabledNotificationCount }} / 7</strong></span>
+        <span class="workspace-stage-pill">接口映射 <strong>{{ openWRTDynamicInterfaces ? 'OPENWRT' : 'OFF' }}</strong></span>
+        <span class="workspace-stage-pill">配置 <strong>{{ systemInfo.config ? 'LOADED' : 'WAITING' }}</strong></span>
+      </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <template #aside>
+        <dl class="workspace-stage-stats">
+          <div><dt>系统版本</dt><dd>{{ systemInfo.version || '--' }}</dd></div>
+          <div><dt>构建时间</dt><dd>{{ formatDeviceDateTime(systemInfo.build_time, { fallback: '--' }) }}</dd></div>
+          <div><dt>通知服务</dt><dd>{{ enabledNotificationCount }} ENABLED</dd></div>
+        </dl>
+      </template>
+    </WorkspaceStage>
+
+    <div class="settings-workspace">
       <!-- Security Card -->
-      <div class="ui-card p-5 sm:p-6 relative overflow-hidden group">
+      <section class="settings-security-card ui-card p-5 sm:p-6 relative overflow-hidden group">
          
          <div class="flex items-center gap-3 mb-6 relative z-10">
             <div class="section-icon section-icon-primary">
@@ -394,10 +426,10 @@ onBeforeUnmount(() => {
                  </el-button>
              </div>
          </div>
-      </div>
+      </section>
 
       <!-- System Info Card -->
-      <div class="ui-card p-5 sm:p-6 relative overflow-hidden group">
+      <section class="settings-system-card ui-card p-5 sm:p-6 relative overflow-hidden group">
 
          <div class="flex items-center gap-3 mb-6 relative z-10">
             <div class="section-icon section-icon-success">
@@ -483,9 +515,9 @@ onBeforeUnmount(() => {
               />
             </div>
          </div>
-      </div>
+      </section>
 
-      <div class="notify-card ui-card p-8 lg:col-span-2">
+      <section class="notify-card ui-card p-8">
          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
             <div class="flex items-center gap-3">
                <div class="w-12 h-12 rounded-md bg-teal-50 dark:bg-teal-500/10 flex items-center justify-center text-teal-700 dark:text-teal-300">
@@ -887,7 +919,7 @@ onBeforeUnmount(() => {
               </el-tab-pane>
             </el-tabs>
          </div>
-      </div>
+      </section>
     </div>
   </div>
 </template>
@@ -943,14 +975,54 @@ onBeforeUnmount(() => {
   letter-spacing: 0;
 }
 
-.settings-page > .grid > .ui-card {
+.settings-workspace {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.settings-workspace > .ui-card {
   border-radius: 18px;
+  animation: settings-panel-enter 240ms var(--ui-ease-out) both;
+}
+
+.settings-system-card {
+  animation-delay: 40ms !important;
 }
 
 .settings-page .notify-card {
+  grid-column: 1 / -1;
   border-radius: 20px;
   background:
     radial-gradient(circle at 84% 8%, color-mix(in srgb, var(--ui-primary) 7%, transparent), transparent 28%),
     var(--ui-surface);
+  animation-delay: 80ms;
+}
+
+@keyframes settings-panel-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 960px) {
+  .settings-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-page .notify-card {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-workspace > .ui-card {
+    animation-name: settings-panel-fade;
+  }
+
+  @keyframes settings-panel-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
 }
 </style>

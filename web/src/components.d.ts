@@ -86,6 +86,7 @@ declare module 'vue' {
     StatusLight: typeof import('./components/StatusLight.vue')['default']
     SwitchDark: typeof import('./components/SwitchDark.vue')['default']
     TrafficAnalysisPanel: typeof import('./components/TrafficAnalysisPanel.vue')['default']
+    WorkspaceStage: typeof import('./components/WorkspaceStage.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

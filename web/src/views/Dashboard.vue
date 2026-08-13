@@ -12,6 +12,7 @@ import TrafficAnalysisPanel from '../components/TrafficAnalysisPanel.vue'
 import { usePollingScheduler } from '../composables/usePollingScheduler'
 import { useDashboardStore } from '../stores/dashboard'
 import type { TrafficRange } from '../services/traffic'
+import type { DashboardDevice } from '../types/api'
 import { formatDeviceTime } from '../utils/deviceTime'
 import { Search } from '@element-plus/icons-vue'
 import {
@@ -37,6 +38,7 @@ const {
 const analysisRange = ref<TrafficRange>('day')
 const searchQuery = ref('')
 const statusFilter = ref<'all' | 'online' | 'offline'>('all')
+const selectedDeviceID = ref('')
 
 const totalCount = computed(() => devices.value.length)
 const onlineCount = computed(() => devices.value.filter(d => d?.healthy).length)
@@ -50,6 +52,36 @@ const filteredDevices = computed(() => {
     return [device.id, device.name, device.operator, device.public_ip, device.public_ipv6]
       .some((value) => String(value || '').toLocaleLowerCase().includes(query))
   })
+})
+const selectedDevice = computed(() => {
+  return devices.value.find((device) => device.id === selectedDeviceID.value)
+    || devices.value.find((device) => device.healthy)
+    || devices.value[0]
+})
+const selectedDeviceIP = computed(() => selectedDevice.value?.public_ipv6 || selectedDevice.value?.public_ip || '')
+const selectedRuntime = computed(() => selectedDevice.value?.vowifi_runtime)
+const selectedConnectionTitle = computed(() => {
+  const device = selectedDevice.value
+  if (!device) return '等待设备'
+  if (!device.healthy) return '设备离线'
+  if (device.vowifi_active) return 'Wi-Fi Calling'
+  return device.operator || '网络检测中'
+})
+const selectedConnectionState = computed(() => {
+  const device = selectedDevice.value
+  if (!device) return '没有可用设备'
+  if (!device.healthy) return '当前设备不可用'
+  return device.vowifi_active ? '已连接' : ([device.network_duplex, device.network_mode].filter(Boolean).join(' ') || '控制面在线')
+})
+const selectedStages = computed(() => {
+  const runtime = selectedRuntime.value
+  return [
+    { key: 'SIM', ready: runtime?.sim_ready },
+    { key: 'Access', ready: runtime?.access_ready },
+    { key: 'Tunnel', ready: runtime?.tunnel_ready },
+    { key: 'IMS', ready: runtime?.ims_ready },
+    { key: 'SMS', ready: runtime?.sms_ready }
+  ]
 })
 
 async function fetchDevices() {
@@ -76,6 +108,10 @@ function openDeviceOverview(id: string) {
       tab: 'overview'
     }
   })
+}
+
+function selectDevice(device: DashboardDevice) {
+  selectedDeviceID.value = device.id
 }
 
 usePollingScheduler(fetchDevices, 5000, {
@@ -109,51 +145,86 @@ onMounted(() => {
       </template>
     </PageHeader>
 
-    <section class="dashboard-hero" aria-label="设备状态摘要">
-      <div class="dashboard-hero-copy">
-        <span class="dashboard-eyebrow">LIVE CONNECTIVITY</span>
-        <h2>所有通信设备</h2>
-        <p>状态数据来自实时设备探测，不使用静态占位数据。</p>
-      </div>
-      <div class="dashboard-metrics">
-      <div class="metric-tile ui-panel">
-        <div>
-          <div class="metric-label">设备总数</div>
-          <div class="metric-value">{{ totalCount }}</div>
+    <Transition name="focus-swap" mode="out-in">
+    <section v-if="selectedDevice" :key="selectedDevice.id" class="connection-stage" aria-label="当前设备连接焦点">
+      <div class="connection-stage-main">
+        <div class="connection-stage-heading">
+          <span class="dashboard-eyebrow">ACTIVE DEVICE</span>
+          <span class="focus-device-status" :class="selectedDevice.healthy ? 'is-online' : 'is-offline'">
+            {{ selectedDevice.healthy ? '在线' : '离线' }}
+          </span>
         </div>
-        <span class="metric-icon metric-icon-primary" aria-hidden="true">
-          <el-icon><Server24Regular /></el-icon>
-        </span>
-      </div>
-      <div class="metric-tile ui-panel">
-        <div>
-          <div class="metric-label">在线</div>
-          <div class="metric-value metric-value-communication">{{ onlineCount }}</div>
-        </div>
-        <span class="metric-icon metric-icon-communication" aria-hidden="true">
-          <el-icon><CheckmarkCircle24Regular /></el-icon>
-        </span>
-      </div>
-      <div class="metric-tile ui-panel">
-        <div>
-          <div class="metric-label">离线</div>
-          <div class="metric-value metric-value-danger">{{ offlineCount }}</div>
-        </div>
-        <span class="metric-icon metric-icon-danger" aria-hidden="true">
-          <el-icon><DismissCircle24Regular /></el-icon>
-        </span>
-      </div>
-      <div class="metric-tile ui-panel">
-        <div>
-          <div class="metric-label">最近刷新</div>
-          <div class="metric-time">
-            {{ devicesLastOkAt ? formatDeviceTime(devicesLastOkAt, { clientClock: true }) : '--:--:--' }}
+        <h2>{{ selectedConnectionTitle }}</h2>
+        <strong>{{ selectedConnectionState }}</strong>
+        <p>{{ selectedDevice.name || selectedDevice.id }} · {{ selectedDevice.id }}</p>
+
+        <div v-if="selectedDevice.vowifi_active" class="connection-path" aria-label="VoWiFi 服务链路">
+          <div class="connection-path-line" aria-hidden="true" />
+          <div
+            v-for="stage in selectedStages"
+            :key="stage.key"
+            class="connection-path-step"
+            :class="{ 'is-ready': stage.ready === true, 'is-failed': stage.ready === false }"
+          >
+            <span>{{ stage.ready === true ? '✓' : stage.ready === false ? '×' : '·' }}</span>
+            <small>{{ stage.key }}</small>
           </div>
         </div>
-        <span class="metric-icon metric-icon-primary" aria-hidden="true">
-          <el-icon><Clock24Regular /></el-icon>
-        </span>
+        <div v-else class="cellular-focus">
+          <span>{{ [selectedDevice.network_duplex, selectedDevice.network_mode].filter(Boolean).join(' ') || '未驻网' }}</span>
+          <strong>{{ selectedDevice.signal_dbm || '--' }}<small v-if="selectedDevice.signal_dbm"> dBm</small></strong>
+        </div>
       </div>
+
+      <aside class="connection-stage-aside">
+        <div class="focus-stat">
+          <span>连接类型</span>
+          <strong>{{ selectedDevice.vowifi_active ? 'VoWiFi' : (selectedDevice.network_mode || '--') }}</strong>
+        </div>
+        <div class="focus-stat">
+          <span>运营商</span>
+          <strong>{{ selectedDevice.operator || '--' }}</strong>
+        </div>
+        <div class="focus-stat focus-stat-ip">
+          <span>公网 IP</span>
+          <strong :title="selectedDeviceIP">{{ selectedDeviceIP || '--' }}</strong>
+        </div>
+        <button type="button" class="focus-open-button" @click="openDeviceOverview(selectedDevice.id)">
+          打开设备工作区
+        </button>
+      </aside>
+    </section>
+    </Transition>
+
+    <section class="fleet-summary" aria-label="设备状态摘要">
+      <div class="fleet-summary-copy">
+        <span class="section-kicker">FLEET SUMMARY</span>
+        <strong>{{ onlineCount }} / {{ totalCount }}</strong>
+        <span>台设备在线</span>
+      </div>
+      <div class="fleet-metrics">
+        <div class="fleet-metric">
+          <el-icon><Server24Regular /></el-icon>
+          <span>全部</span>
+          <strong>{{ totalCount }}</strong>
+        </div>
+        <div class="fleet-metric">
+          <el-icon><CheckmarkCircle24Regular /></el-icon>
+          <span>在线</span>
+          <strong>{{ onlineCount }}</strong>
+        </div>
+        <div class="fleet-metric">
+          <el-icon><DismissCircle24Regular /></el-icon>
+          <span>离线</span>
+          <strong>{{ offlineCount }}</strong>
+        </div>
+        <div class="fleet-metric fleet-metric-time">
+          <el-icon><Clock24Regular /></el-icon>
+          <span>更新</span>
+          <strong>
+            {{ devicesLastOkAt ? formatDeviceTime(devicesLastOkAt, { clientClock: true }) : '--:--:--' }}
+          </strong>
+        </div>
       </div>
     </section>
 
@@ -201,10 +272,13 @@ onMounted(() => {
       />
       <section v-else class="device-status-grid" aria-label="设备实时状态">
         <DeviceCard
-          v-for="dev in filteredDevices"
+          v-for="(dev, index) in filteredDevices"
           :key="dev.id"
           :device="dev"
-          @open-device="openDeviceOverview"
+          :selected="selectedDevice?.id === dev.id"
+          :style="{ '--device-index': index }"
+          @click="selectDevice(dev)"
+          @dblclick="openDeviceOverview(dev.id)"
         />
       </section>
     </template>
@@ -225,171 +299,59 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.dashboard-hero {
-  position: relative;
-  margin-bottom: 26px;
-  padding: 28px;
-  display: grid;
-  grid-template-columns: minmax(260px, 0.7fr) minmax(0, 1.3fr);
-  gap: 28px;
-  overflow: hidden;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-xl);
-  background:
-    radial-gradient(circle at 38% 50%, color-mix(in srgb, var(--ui-primary) 10%, transparent), transparent 34%),
-    var(--ui-surface);
-}
-
-.dashboard-hero::after {
-  position: absolute;
-  inset: 0 0 0 42%;
-  opacity: 0.42;
-  background-image: radial-gradient(circle, color-mix(in srgb, var(--ui-primary) 36%, transparent) 1px, transparent 1.4px);
-  background-size: 18px 18px;
-  mask-image: radial-gradient(ellipse at center, #000 0%, transparent 70%);
-  pointer-events: none;
-  content: "";
-}
-
-.dashboard-hero-copy,
-.dashboard-metrics { position: relative; z-index: 1; }
-
-.dashboard-eyebrow,
-.section-kicker {
-  color: var(--ui-primary);
-  font-family: "v-mono", ui-monospace, monospace;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-}
-
-.dashboard-hero-copy h2 {
-  margin: 16px 0 8px;
-  color: var(--ui-text);
-  font-size: clamp(30px, 4vw, 48px);
-  font-weight: 580;
-  line-height: 1.02;
-}
-
-.dashboard-hero-copy p,
-.device-overview-toolbar p {
-  margin: 0;
-  color: var(--ui-text-muted);
-  font-size: 13px;
-}
-
-.metric-tile {
-  min-width: 0;
-  min-height: 104px;
-  padding: 16px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.dashboard-metrics,
-.device-status-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.dashboard-metrics {
-  align-self: stretch;
-}
-
-.metric-label {
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.metric-value {
-  margin-top: 8px;
-  color: var(--ui-text);
-  font-family: "v-mono", ui-monospace, monospace;
-  font-size: 30px;
-  font-weight: 700;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.metric-value-communication { color: var(--ui-communication); }
-.metric-value-danger { color: var(--ui-danger); }
-
-.metric-time {
-  margin-top: 10px;
-  color: var(--ui-text);
-  font-family: "v-mono", ui-monospace, monospace;
-  font-size: 18px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-
-.metric-icon {
-  width: 44px;
-  height: 44px;
-  flex: 0 0 44px;
-  display: grid;
-  place-items: center;
-  border: 2px solid currentColor;
-  border-radius: 50%;
-  font-size: 24px;
-}
-
-.device-overview-toolbar {
-  margin: 2px 0 16px;
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.device-overview-toolbar h2 {
-  margin: 4px 0 3px;
-  color: var(--ui-text);
-  font-size: 22px;
-  font-weight: 620;
-}
-
-.device-filter-controls {
-  width: min(100%, 560px);
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
-  gap: 10px;
-}
-
-.device-status-grid {
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 286px), 1fr));
-}
-
-.metric-icon-primary { color: var(--ui-primary); }
-.metric-icon-communication { color: var(--ui-communication); }
-.metric-icon-danger { color: var(--ui-danger); }
-
-@media (max-width: 1199px) {
-  .dashboard-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 899px) {
-  .dashboard-hero { grid-template-columns: minmax(0, 1fr); }
-  .device-overview-toolbar { align-items: stretch; flex-direction: column; }
-  .device-filter-controls { width: 100%; }
-}
-
-@media (max-width: 639px) {
-  .dashboard-hero { padding: 22px 18px; }
-  .dashboard-metrics {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .device-filter-controls { grid-template-columns: minmax(0, 1fr); }
-
-  .metric-tile {
-    min-height: 88px;
-  }
-}
+.dashboard-eyebrow, .section-kicker { color: var(--ui-primary); font: 700 10px "v-mono", monospace; letter-spacing: .14em; }
+.connection-stage { position: relative; min-height: 410px; margin-bottom: 18px; padding: clamp(26px, 4vw, 54px); display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 44px; overflow: hidden; border: 1px solid var(--ui-border); border-radius: 26px; background: radial-gradient(circle at 54% 52%, color-mix(in srgb, var(--ui-primary) 15%, transparent), transparent 30%), linear-gradient(125deg, var(--ui-surface) 0 48%, color-mix(in srgb, var(--ui-surface) 88%, #06120e) 100%); }
+.connection-stage::before, .connection-stage::after { position: absolute; pointer-events: none; content: ""; }
+.connection-stage::before { inset: 0 24% 0 36%; opacity: .42; background-image: radial-gradient(circle, color-mix(in srgb, var(--ui-primary) 48%, transparent) 1px, transparent 1.4px); background-size: 20px 20px; mask-image: radial-gradient(ellipse, #000, transparent 69%); }
+.connection-stage::after { top: 50%; left: 42%; width: 38%; height: 1px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-primary) 48%, transparent), transparent); box-shadow: 0 -38px 0 color-mix(in srgb, var(--ui-primary) 10%, transparent), 0 38px 0 color-mix(in srgb, var(--ui-primary) 10%, transparent); }
+.connection-stage-main, .connection-stage-aside { position: relative; z-index: 1; }
+.connection-stage-heading { display: flex; align-items: center; gap: 12px; }
+.focus-device-status { display: inline-flex; align-items: center; gap: 6px; color: var(--ui-text-muted); font-size: 11px; }
+.focus-device-status::before { width: 6px; height: 6px; border-radius: 50%; background: currentColor; content: ""; }
+.focus-device-status.is-online { color: var(--ui-success); }
+.focus-device-status.is-offline { color: var(--ui-danger); }
+.connection-stage h2 { margin: 26px 0 4px; color: var(--ui-text); font-size: clamp(40px, 5.6vw, 76px); font-weight: 520; letter-spacing: -.045em; line-height: .98; }
+.connection-stage-main > strong { color: var(--ui-primary); font-size: clamp(23px, 3vw, 36px); font-weight: 520; }
+.connection-stage-main > p { margin: 14px 0 0; color: var(--ui-text-muted); font-size: 13px; }
+.connection-path { position: relative; width: min(100%, 620px); margin-top: 62px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.connection-path-line { position: absolute; top: 18px; right: 9%; left: 9%; height: 1px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-primary) 72%, transparent), transparent); }
+.connection-path-line::after { position: absolute; top: -3px; left: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--ui-primary); box-shadow: 0 0 14px var(--ui-primary); content: ""; animation: connection-signal 2.4s linear infinite; }
+.connection-path-step { position: relative; z-index: 1; display: grid; place-items: center; gap: 9px; }
+.connection-path-step span { width: 37px; height: 37px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 50%; background: var(--ui-surface-strong); color: var(--ui-text-muted); }
+.connection-path-step small { color: var(--ui-text-muted); font-size: 10px; }
+.connection-path-step.is-ready span { border-color: var(--ui-primary); color: var(--ui-primary); box-shadow: 0 0 22px color-mix(in srgb, var(--ui-primary) 18%, transparent); }
+.connection-path-step.is-failed span { border-color: var(--ui-danger); color: var(--ui-danger); }
+.cellular-focus { width: min(100%, 520px); margin-top: 64px; padding-top: 24px; display: flex; align-items: end; justify-content: space-between; border-top: 1px solid var(--ui-border); color: var(--ui-text-muted); }
+.cellular-focus > strong { color: var(--ui-text); font: 42px/1 "v-mono", monospace; }
+.cellular-focus small { font-size: 13px; }
+.connection-stage-aside { padding-left: 28px; display: flex; flex-direction: column; border-left: 1px solid var(--ui-border); }
+.focus-stat { padding: 19px 0; display: grid; gap: 6px; border-bottom: 1px solid var(--ui-border); }
+.focus-stat span { color: var(--ui-text-muted); font-size: 11px; }
+.focus-stat strong { color: var(--ui-text); font-size: 20px; font-weight: 520; }
+.focus-stat-ip strong { overflow: hidden; font: 14px "v-mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.focus-open-button { min-height: 44px; margin-top: auto; border: 1px solid color-mix(in srgb, var(--ui-primary) 52%, var(--ui-border)); border-radius: 12px; background: color-mix(in srgb, var(--ui-primary) 9%, transparent); color: var(--ui-primary); cursor: pointer; }
+.fleet-summary { margin-bottom: 28px; padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; gap: 30px; border: 1px solid var(--ui-border); border-radius: 16px; background: var(--ui-surface); }
+.fleet-summary-copy { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+.fleet-summary-copy > strong { color: var(--ui-text); font: 24px "v-mono", monospace; }
+.fleet-summary-copy > span:last-child { color: var(--ui-text-muted); font-size: 11px; }
+.fleet-metrics { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)); }
+.fleet-metric { min-width: 110px; padding: 0 20px; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 9px; border-left: 1px solid var(--ui-border); }
+.fleet-metric .el-icon { grid-row: span 2; color: var(--ui-primary); }
+.fleet-metric span { color: var(--ui-text-muted); font-size: 10px; }
+.fleet-metric strong { color: var(--ui-text); font: 16px "v-mono", monospace; }
+.device-overview-toolbar { margin: 2px 0 16px; display: flex; align-items: end; justify-content: space-between; gap: 24px; }
+.device-overview-toolbar h2 { margin: 4px 0 3px; color: var(--ui-text); font-size: 22px; font-weight: 620; }
+.device-overview-toolbar p { margin: 0; color: var(--ui-text-muted); font-size: 13px; }
+.device-filter-controls { width: min(100%, 560px); display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 10px; }
+.device-status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 286px), 1fr)); gap: 12px; }
+.device-status-grid :deep(.device-card) { animation: device-card-enter 240ms var(--ui-ease-out) both; animation-delay: min(calc(var(--device-index, 0) * 35ms), 210ms); }
+.focus-swap-enter-active { transition: opacity 220ms var(--ui-ease-out), transform 220ms var(--ui-ease-out); }
+.focus-swap-leave-active { transition: opacity 120ms var(--ui-ease-out), transform 120ms var(--ui-ease-out); }
+.focus-swap-enter-from { opacity: 0; transform: translateY(10px) scale(.992); }
+.focus-swap-leave-to { opacity: 0; transform: translateY(-4px) scale(.996); }
+@keyframes connection-signal { from { opacity: 0; transform: translateX(0); } 12% { opacity: 1; } 88% { opacity: 1; } to { opacity: 0; transform: translateX(min(510px, 50vw)); } }
+@keyframes device-card-enter { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .connection-path-line::after { animation: none; opacity: .7; } .device-status-grid :deep(.device-card) { animation: device-card-fade 160ms ease both; } .focus-swap-enter-from, .focus-swap-leave-to { transform: none; } @keyframes device-card-fade { from { opacity: 0; } to { opacity: 1; } } }
+@media (max-width: 1050px) { .connection-stage { grid-template-columns: minmax(0, 1fr) 240px; } .fleet-summary { align-items: stretch; flex-direction: column; } .fleet-metrics { width: 100%; } .fleet-metric:first-child { border-left: 0; } }
+@media (max-width: 760px) { .connection-stage { min-height: 0; grid-template-columns: minmax(0, 1fr); } .connection-stage-aside { padding: 12px 0 0; border-top: 1px solid var(--ui-border); border-left: 0; } .focus-open-button { margin-top: 18px; } .fleet-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fleet-metric:nth-child(3) { border-left: 0; } .fleet-metric { padding: 10px 12px; } .device-overview-toolbar { align-items: stretch; flex-direction: column; } .device-filter-controls { width: 100%; grid-template-columns: minmax(0, 1fr); } }
 </style>

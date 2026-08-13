@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import PageHeader from '../components/PageHeader.vue'
 import CommandChat from '../components/commands/CommandChat.vue'
 import BalanceDrawer from '../components/commands/BalanceDrawer.vue'
 import RuleEditorDrawer from '../components/commands/RuleEditorDrawer.vue'
@@ -232,8 +231,6 @@ async function deleteRule(id: string) {
 
 <template>
   <div class="app-page commands-page">
-    <PageHeader title="命令中心" subtitle="通过设备会话执行查询、短信与 VoWiFi 操作" />
-
     <div class="commands-layout">
       <CommandChat
         v-model:selected-device="selectedDevice"
@@ -306,11 +303,11 @@ async function deleteRule(id: string) {
 
 <style scoped>
 .commands-page { min-width: 0; }
-.commands-layout { height: calc(100dvh - 166px); min-height: 520px; }
+.commands-layout { height: calc(100dvh - 112px); min-height: 520px; }
 @media (max-width: 1023px) {
-  .commands-layout { height: calc(100dvh - 166px); min-height: 520px; }
+  .commands-layout { height: 620px; min-height: 520px; }
 }
 @media (max-width: 640px) {
-  .commands-layout { height: calc(100dvh - 178px); min-height: 480px; margin: 0 -4px; }
+  .commands-layout { height: 620px; min-height: 480px; margin: 0 -4px; }
 }
 </style>

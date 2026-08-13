@@ -11,11 +11,12 @@ import {
   Globe24Regular
 } from '@vicons/fluent'
 
-const props = defineProps<{ device: DashboardDevice }>()
-const emit = defineEmits<{
-  'open-device': [id: string]
-}>()
-
+const props = withDefaults(defineProps<{
+  device: DashboardDevice
+  selected?: boolean
+}>(), {
+  selected: false
+})
 const displayNetworkMode = computed(() => {
   const mode = String(props.device?.network_mode || '').trim()
   const duplex = String(props.device?.network_duplex || '').trim()
@@ -86,7 +87,8 @@ const displayIP = computed(() => props.device.public_ipv6 || props.device.public
   <button
     type="button"
     class="device-card ui-card ui-card-hover"
-    @click="emit('open-device', device.id)"
+    :class="{ 'device-card-selected': selected }"
+    :aria-pressed="selected"
   >
     <header class="device-card-header">
       <div class="device-title-group">
@@ -151,6 +153,11 @@ const displayIP = computed(() => props.device.public_ipv6 || props.device.public
 .device-card:focus-visible {
   outline: 2px solid var(--ui-primary);
   outline-offset: 2px;
+}
+
+.device-card-selected {
+  border-color: color-mix(in srgb, var(--ui-primary) 60%, var(--ui-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-primary) 20%, transparent), var(--ui-shadow-md);
 }
 
 .device-card-header {

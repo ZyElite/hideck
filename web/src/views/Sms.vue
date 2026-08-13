@@ -7,7 +7,6 @@ import { useSMSStore } from '../stores/sms'
 import { usePollingScheduler } from '../composables/usePollingScheduler'
 import { toAppError } from '../services/http'
 import type { SmsThreadQueryParams } from '../services/sms'
-import PageHeader from '../components/PageHeader.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ErrorState from '../components/ErrorState.vue'
 import ListSkeleton from '../components/ListSkeleton.vue'
@@ -718,17 +717,13 @@ async function confirmDeleteThread(thread: SmsThread) {
 
 <template>
   <div ref="smsPageRef" class="app-page sms-page h-[calc(100vh-144px)] flex flex-col">
-    <PageHeader title="短信中心" subtitle="按联系人聚合，点击进入会话明细">
-      <template #actions>
-        <div class="flex items-center gap-2">
-          <RefreshButton :loading="loading" @click="refreshAll" />
-          <el-button type="primary" @click="openSendModal" class="font-bold !border-0">
-            <el-icon><Send24Regular /></el-icon>
-            新建短信
-          </el-button>
-        </div>
-      </template>
-    </PageHeader>
+    <div class="sms-action-row">
+      <RefreshButton :loading="loading" @click="refreshAll" />
+      <el-button type="primary" @click="openSendModal" class="font-bold !border-0">
+        <el-icon><Send24Regular /></el-icon>
+        新建短信
+      </el-button>
+    </div>
 
     <ErrorState
       v-if="devicesError"
@@ -756,15 +751,19 @@ async function confirmDeleteThread(thread: SmsThread) {
       @retry="refreshAll"
     />
 
-    <div class="flex-1 ui-card overflow-hidden relative">
+    <div class="flex-1 sms-workspace overflow-hidden relative">
       <div v-if="loading && threads.length === 0" class="absolute inset-0 z-20 flex items-center justify-center bg-white/70 dark:bg-black/40">
         <el-icon class="is-loading" size="28"><Loading /></el-icon>
       </div>
 
       <div class="sms-main-layout">
-        <div v-if="showDeviceSidebar" class="flex flex-col border-r border-gray-100 dark:border-white/10">
-          <div class="p-4 border-b border-gray-100 dark:border-white/10">
-            <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">设备</div>
+        <aside v-if="showDeviceSidebar" class="sms-device-pane flex flex-col">
+          <div class="sms-pane-header">
+            <div>
+              <span>DEVICE CHANNELS</span>
+              <strong>设备通道</strong>
+            </div>
+            <small>{{ devices.length }}</small>
           </div>
           <div class="p-3 space-y-1 overflow-auto">
             <button
@@ -784,10 +783,10 @@ async function confirmDeleteThread(thread: SmsThread) {
               <span v-if="d.id !== 'all'" class="w-2 h-2 rounded-full" :class="d.healthy ? 'bg-green-500' : 'bg-red-500'" />
             </button>
           </div>
-        </div>
+        </aside>
 
-        <div v-if="showListPane" class="flex flex-col min-h-0 min-w-0" :class="showDeviceSidebar ? 'border-r border-gray-100 dark:border-white/10' : ''">
-          <div class="p-4 border-b border-gray-100 dark:border-white/10">
+        <section v-if="showListPane" class="sms-thread-pane flex flex-col min-h-0 min-w-0">
+          <div class="sms-pane-header sms-thread-search">
             <div class="space-y-3">
               <el-select v-if="isNarrowLayout" :model-value="selectedDevice" placeholder="选择设备" filterable @change="handleNarrowDeviceChange">
                 <el-option v-for="d in deviceSidebarItems" :key="d.id" :label="d.label" :value="d.id" />
@@ -858,10 +857,10 @@ async function confirmDeleteThread(thread: SmsThread) {
               </div>
             </template>
           </RecycleScroller>
-        </div>
+        </section>
 
-        <div v-if="showDetailPane" class="flex flex-col min-w-0 min-h-0">
-          <div class="p-4 border-b border-gray-100 dark:border-white/10 flex items-center justify-between gap-3">
+        <section v-if="showDetailPane" class="sms-conversation-pane flex flex-col min-w-0 min-h-0">
+          <div class="sms-conversation-header flex items-center justify-between gap-3">
             <div class="min-w-0">
               <div class="flex items-center gap-2">
                 <el-button v-if="isNarrowLayout && selectedThreadKey" text @click="backToList">返回</el-button>
@@ -978,7 +977,7 @@ async function confirmDeleteThread(thread: SmsThread) {
               </el-button>
             </div>
           </div>
-        </div>
+        </section>
       </div>
     </div>
 
@@ -1037,18 +1036,94 @@ async function confirmDeleteThread(thread: SmsThread) {
   container-type: inline-size;
 }
 
+.sms-pane-header span {
+  color: var(--ui-primary);
+  font: 700 9px "v-mono", monospace;
+  letter-spacing: .13em;
+}
+
+.sms-workspace {
+  min-height: 0;
+}
+
+.sms-action-row {
+  min-height: 44px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .sms-main-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
   height: 100%;
   min-height: 0;
 }
 
-.sms-page > .ui-card {
-  border-radius: 20px;
-  background:
-    radial-gradient(circle at 82% 12%, color-mix(in srgb, var(--ui-primary) 7%, transparent), transparent 31%),
-    var(--ui-surface);
+.sms-device-pane,
+.sms-thread-pane,
+.sms-conversation-pane {
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: 17px;
+  background: var(--ui-surface);
+  animation: sms-pane-enter 240ms var(--ui-ease-out) both;
+}
+
+.sms-thread-pane { animation-delay: 40ms; }
+.sms-conversation-pane { animation-delay: 80ms; }
+
+.sms-pane-header,
+.sms-conversation-header {
+  min-height: 65px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.sms-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sms-pane-header > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.sms-pane-header strong {
+  color: var(--ui-text);
+  font-size: 14px;
+}
+
+.sms-pane-header small {
+  color: var(--ui-text-muted);
+  font: 13px "v-mono", monospace;
+}
+
+.sms-thread-search {
+  display: block;
+}
+
+@keyframes sms-pane-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sms-device-pane,
+  .sms-thread-pane,
+  .sms-conversation-pane {
+    animation-name: sms-pane-fade;
+  }
+
+  @keyframes sms-pane-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
 }
 
 .sms-msg-wrapper {
@@ -1187,7 +1262,7 @@ async function confirmDeleteThread(thread: SmsThread) {
 
 @container (min-width: 980px) {
   .sms-main-layout {
-    grid-template-columns: 260px 340px minmax(0, 1fr);
+    grid-template-columns: 238px 326px minmax(0, 1fr);
   }
 
   .sms-delete-trigger {

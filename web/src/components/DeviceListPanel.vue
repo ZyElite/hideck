@@ -76,12 +76,20 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 </script>
 
 <template>
-  <aside class="device-list-panel ui-card p-4">
-    <div class="flex items-center gap-3 mb-4">
-      <el-input v-model="modelQuery" placeholder="搜索设备 / ICCID / IMEI / 网卡" />
+  <aside class="device-list-panel ui-card">
+    <header class="device-rail-header">
+      <div>
+        <span>DEVICE RAIL</span>
+        <h2>设备轨道</h2>
+      </div>
+      <strong>{{ filteredDevices.length }}<small> / {{ deviceCount }}</small></strong>
+    </header>
+
+    <div class="device-rail-search">
+      <el-input v-model="modelQuery" placeholder="搜索设备、ICCID 或接口" clearable />
     </div>
 
-    <div class="grid grid-cols-2 gap-2 mb-4">
+    <div class="device-rail-filters">
       <el-select v-model="modelStatusFilter" size="small" placeholder="在线">
         <el-option label="全部状态" value="all" />
         <el-option label="仅在线" value="online" />
@@ -92,37 +100,34 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
         <el-option label="排序：名称" value="name" />
         <el-option label="排序：信号" value="signal" />
       </el-select>
-      <el-select v-model="modelSortDir" size="small" placeholder="方向">
+      <el-select v-model="modelSortDir" size="small" placeholder="方向" class="device-sort-direction">
         <el-option label="升序" value="asc" />
         <el-option label="降序" value="desc" />
       </el-select>
-      <div v-if="deviceLimit > 0" class="flex items-center">
-        <el-tag
-          size="small"
-          :type="deviceCount >= deviceLimit ? 'warning' : 'info'"
-          class="w-full justify-center"
-        >
-          配额 {{ deviceCount }} / {{ deviceLimit }}
-        </el-tag>
-      </div>
     </div>
 
-    <ListSkeleton v-if="loading && filteredDevices.length === 0" :rows="8" />
+    <div v-if="deviceLimit > 0" class="device-quota" :class="{ 'is-full': deviceCount >= deviceLimit }">
+      <span>设备配额</span>
+      <strong>{{ deviceCount }} / {{ deviceLimit }}</strong>
+    </div>
 
-    <EmptyState v-else-if="filteredDevices.length === 0" title="暂无设备" subtitle="点击右上角“添加设备”开始接管" />
+    <div class="device-rail-list">
+      <ListSkeleton v-if="loading && filteredDevices.length === 0" :rows="8" />
 
-    <div v-else class="device-list-scroll max-h-[65vh] overflow-y-auto pr-1">
-      <div class="device-list-grid">
-        <div v-for="d in filteredDevices" :key="d.id" class="device-list-item">
+      <EmptyState v-else-if="filteredDevices.length === 0" title="暂无设备" subtitle="点击右上角“添加设备”开始接管" />
+
+      <div v-else class="device-list-scroll">
+        <div class="device-list-grid">
+          <div v-for="d in filteredDevices" :key="d.id" class="device-list-item">
           <button
             type="button"
-            class="device-list-button w-full h-full text-left p-3 border transition-all"
+            class="device-list-button w-full h-full text-left"
             :class="selectedId === d.id
               ? 'device-list-button-active'
               : 'device-list-button-idle'"
             @click="emit('select-device', d.id)"
           >
-            <div class="flex items-start justify-between gap-2">
+            <div class="device-list-button-main">
               <div class="min-w-0">
                 <div class="font-bold text-gray-800 dark:text-gray-100 truncate">{{ d.name || d.id }}</div>
                 <div class="text-xs text-gray-500 mt-0.5 truncate">
@@ -132,12 +137,13 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
                   {{ secondaryStatus(d) }}
                 </div>
               </div>
-              <div class="flex items-center gap-2">
+              <div class="device-list-status">
                 <StatusLight :tone="primaryStatus(d).tone" size="sm" :animated="primaryStatus(d).animated" />
-                <el-tag size="small" :type="primaryStatus(d).tag">{{ primaryStatus(d).label }}</el-tag>
+                <span>{{ primaryStatus(d).label }}</span>
               </div>
             </div>
           </button>
+          </div>
         </div>
       </div>
     </div>
@@ -145,14 +151,10 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 </template>
 
 <style scoped>
-.device-list-scroll {
-  container-type: inline-size;
-}
-
 .device-list-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 0.5rem;
+  gap: 7px;
 }
 
 .device-list-item {
@@ -160,28 +162,140 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
 }
 
 .device-list-panel {
+  position: sticky;
+  top: 16px;
   align-self: start;
-  padding: 16px;
-  border-radius: 18px;
-  background:
-    radial-gradient(circle at 0 0, color-mix(in srgb, var(--ui-primary) 8%, transparent), transparent 36%),
-    var(--ui-surface);
+  max-height: calc(100dvh - 112px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ui-surface);
+}
+
+.device-rail-header {
+  min-height: 82px;
+  padding: 17px 18px;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.device-rail-header span {
+  color: var(--ui-primary);
+  font: 700 9px "v-mono", monospace;
+  letter-spacing: .14em;
+}
+
+.device-rail-header h2 {
+  margin: 5px 0 0;
+  color: var(--ui-text);
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.device-rail-header > strong {
+  color: var(--ui-text);
+  font: 24px "v-mono", monospace;
+}
+
+.device-rail-header small {
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+
+.device-rail-search {
+  padding: 14px 14px 9px;
+}
+
+.device-rail-filters {
+  padding: 0 14px 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 78px;
+  gap: 7px;
+}
+
+.device-quota {
+  margin: 0 14px 10px;
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  border: 1px solid var(--ui-border-muted);
+  border-radius: 9px;
+  color: var(--ui-text-muted);
+  font-size: 10px;
+}
+
+.device-quota.is-full strong {
+  color: var(--ui-warning);
+}
+
+.device-rail-list {
+  min-height: 180px;
+  padding: 4px 8px 9px;
+  overflow: hidden;
+}
+
+.device-list-scroll {
+  max-height: calc(100dvh - 350px);
+  overflow-y: auto;
+  padding: 0 2px;
 }
 
 .device-list-button {
-  min-height: 86px;
-  border-radius: 12px;
+  min-height: 91px;
+  padding: 13px 12px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  transition: background-color 150ms ease, border-color 150ms ease, transform 120ms ease-out;
+}
+
+.device-list-button:active {
+  transform: scale(.985);
+}
+
+.device-list-button-main {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.device-list-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ui-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .device-list-button-active {
-  border-color: color-mix(in srgb, var(--ui-primary) 38%, var(--ui-border));
-  background: color-mix(in srgb, var(--ui-primary) 9%, var(--ui-surface));
-  box-shadow: inset 3px 0 0 var(--ui-primary), 0 0 28px color-mix(in srgb, var(--ui-primary) 7%, transparent);
+  border-color: color-mix(in srgb, var(--ui-primary) 42%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-primary) 8%, var(--ui-surface));
+  box-shadow: inset 2px 0 0 var(--ui-primary);
+}
+
+.device-list-button-active::after {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ui-primary);
+  box-shadow: 0 0 12px var(--ui-primary);
+  content: "";
+  transform: translateY(-50%);
 }
 
 .device-list-button-idle {
-  border-color: var(--ui-border-muted);
   background: var(--ui-surface);
+}
+
+.device-list-button {
+  position: relative;
 }
 
 .device-list-button-idle:hover {
@@ -189,9 +303,14 @@ const secondaryStatus = (d: DeviceMgmtListItem) => {
   background: var(--ui-surface-muted);
 }
 
-@container (min-width: 700px) {
-  .device-list-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+@media (max-width: 979px) {
+  .device-list-panel {
+    position: static;
+    max-height: none;
+  }
+
+  .device-list-scroll {
+    max-height: 330px;
   }
 }
 </style>

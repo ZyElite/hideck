@@ -34,6 +34,8 @@
   --ui-shadow-lg: 0 18px 44px rgba(4, 20, 24, 0.18);
   --ui-backdrop: none;
   --ui-focus: 0 0 0 3px rgba(8, 127, 123, 0.18);
+  --ui-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ui-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --el-color-primary: #087f7b;
   --el-color-primary-light-3: #4ca6a2;
   --el-color-primary-light-5: #83bfbc;
@@ -201,12 +203,16 @@ html.dark .ui-panel {
 }
 
 .ui-card-hover {
-  transition: border-color 180ms ease, box-shadow 180ms ease;
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 140ms var(--ui-ease-out);
 }
 
 .ui-card-hover:hover {
   border-color: #a9c7c8;
   box-shadow: var(--ui-shadow-md);
+}
+
+.ui-card-hover:active {
+  transform: scale(.985);
 }
 
 .ui-status-value {
@@ -306,7 +312,7 @@ html.dark .el-table td.el-table__cell {
   border-radius: var(--ui-radius-sm);
   box-shadow: none;
   font-weight: 600;
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 140ms var(--ui-ease-out);
 }
 
 .el-button:hover,
@@ -315,7 +321,7 @@ html.dark .el-table td.el-table__cell {
 }
 
 .el-button:active {
-  transform: none;
+  transform: scale(.97);
 }
 
 .el-button--primary:not(.is-plain):not(.is-text):not(.is-link),

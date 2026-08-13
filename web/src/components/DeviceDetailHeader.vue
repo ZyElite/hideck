@@ -19,23 +19,28 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="ui-card p-6">
-    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+  <header class="device-workspace-header ui-card">
+    <div class="device-identity">
+      <div class="device-header-brand-icon">V</div>
       <div class="min-w-0">
-        <div class="flex items-center gap-3">
-          <div class="device-header-brand-icon">V</div>
-          <div class="min-w-0">
-            <div class="text-xl font-extrabold text-gray-900 dark:text-white truncate">{{ device.name || device.id }}</div>
-            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">
-              <span class="font-mono cursor-pointer hover:underline" @click="emit('copy-text', device.id)">{{ device.id }}</span>
-              · 公网 IP:
-              <span class="font-mono cursor-pointer hover:underline" @click="emit('copy-text', device.public_ip || '')">{{ device.public_ip || '---' }}</span>
-            </div>
-          </div>
+        <span class="device-workspace-kicker">DEVICE WORKSPACE</span>
+        <div class="device-workspace-title">{{ device.name || device.id }}</div>
+        <div class="device-workspace-meta">
+          <button type="button" @click="emit('copy-text', device.id)">{{ device.id }}</button>
+          <span>·</span>
+          <button type="button" @click="emit('copy-text', device.public_ip || '')">{{ device.public_ip || '无公网 IP' }}</button>
         </div>
       </div>
+    </div>
 
-      <div class="flex flex-wrap items-center gap-2">
+    <div class="device-workspace-actions">
+      <div class="device-action-primary">
+        <el-button @click="emit('open-sms')" class="ui-glass-border !border-0">
+          <el-icon><Mail24Regular /></el-icon>
+          短信
+        </el-button>
+      </div>
+      <div class="device-action-system">
         <el-button v-if="device?.vowifi_enabled" :loading="reconnectingVoWiFi" @click="emit('reconnect-vowifi')" class="ui-glass-border !border-0">
           <el-icon><ArrowSync24Regular /></el-icon>
           重连 VoWiFi
@@ -48,13 +53,9 @@ const emit = defineEmits<{
           <el-icon><Power24Regular /></el-icon>
           重启模组
         </el-button>
-        <el-button @click="emit('open-sms')" class="ui-glass-border !border-0">
-          <el-icon><Mail24Regular /></el-icon>
-          短信
-        </el-button>
       </div>
     </div>
-  </div>
+  </header>
 </template>
 
 <style scoped>
@@ -72,6 +73,96 @@ const emit = defineEmits<{
   font-size: 1.15rem;
   font-weight: 700;
   box-shadow: 0 10px 22px rgba(6, 182, 212, 0.2);
+}
+
+.device-workspace-header {
+  min-height: 116px;
+  padding: 22px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--ui-primary) 8%, transparent), transparent 32%),
+    var(--ui-surface);
+}
+
+.device-identity,
+.device-workspace-actions,
+.device-action-system {
+  display: flex;
+  align-items: center;
+}
+
+.device-identity {
+  min-width: 0;
+  gap: 14px;
+}
+
+.device-workspace-kicker {
+  color: var(--ui-primary);
+  font: 700 9px "v-mono", monospace;
+  letter-spacing: .14em;
+}
+
+.device-workspace-title {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--ui-text);
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-workspace-meta {
+  margin-top: 5px;
+  display: flex;
+  gap: 7px;
+  color: var(--ui-text-muted);
+  font: 11px "v-mono", monospace;
+}
+
+.device-workspace-meta button {
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-overflow: ellipsis;
+  cursor: copy;
+  white-space: nowrap;
+}
+
+.device-workspace-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.device-action-system {
+  gap: 8px;
+  padding-left: 12px;
+  border-left: 1px solid var(--ui-border);
+}
+
+@media (max-width: 760px) {
+  .device-workspace-header,
+  .device-workspace-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .device-workspace-actions {
+    width: 100%;
+  }
+
+  .device-action-system {
+    padding: 10px 0 0;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--ui-border);
+    border-left: 0;
+  }
 }
 
 </style>

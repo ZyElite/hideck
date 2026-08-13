@@ -3,12 +3,10 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import PageHeader from '../components/PageHeader.vue'
 import ErrorState from '../components/ErrorState.vue'
 import RefreshButton from '../components/RefreshButton.vue'
 import DeviceListPanel from '../components/DeviceListPanel.vue'
 import DeviceDetailLoading from '../components/DeviceDetailLoading.vue'
-import DeviceDetailHeader from '../components/DeviceDetailHeader.vue'
 import DeviceOverviewTab from '../components/DeviceOverviewTab.vue'
 import DeviceEsimTab from '../components/DeviceEsimTab.vue'
 import DeviceAtTab from '../components/DeviceAtTab.vue'
@@ -22,7 +20,6 @@ import { usePollingScheduler } from '../composables/usePollingScheduler'
 import { useEventStream } from '../composables/useEventStream'
 import { useDevicesStore } from '../stores/devices'
 import { debugCollector } from '../debug/collector'
-import { copyToClipboard } from '../utils/clipboard'
 import { isManagedDeviceBackendSwitch, isWwanQmiControlPath } from '../utils/deviceBackend'
 import { isControlOnline, isRecoveryPhase } from '../utils/deviceLifecycle'
 import { getMccMncIndex, lookupMccMncRow, mccMncCountryCode, type MccMncRow } from '../utils/mcc-mnc'
@@ -34,7 +31,9 @@ import { cardsService } from '../services/cards'
 import { createEmptyTrafficAnalysis, trafficService, type TrafficRange } from '../services/traffic'
 import {
   ArrowSync24Regular,
-  Add24Regular
+  Add24Regular,
+  Mail24Regular,
+  Power24Regular
 } from '@vicons/fluent'
 
 const router = useRouter()
@@ -609,12 +608,6 @@ watch(
   (iccid) => { void fetchCardPolicy(iccid) },
   { immediate: true }
 )
-
-async function copyText(text: unknown) {
-  const val = String(text ?? '').trim()
-  if (!val || val === '--' || val === '---') return
-  await copyToClipboard(val, '已复制')
-}
 
 async function fetchAll() {
   loading.value = true
@@ -1221,21 +1214,48 @@ usePollingScheduler(async () => {
 
 <template>
   <div class="app-page devices-page">
-    <PageHeader title="设备管理" subtitle="查看设备信息、编辑配置、执行 AT 指令">
-      <template #actions>
-        <div class="flex items-center gap-2">
-          <RefreshButton :loading="loading" @click="fetchAll" />
-          <el-button @click="rescanDevices" :loading="rescanning" class="ui-glass-border !border-0">
-            <el-icon><ArrowSync24Regular /></el-icon>
-            重新扫描
-          </el-button>
-          <el-button type="primary" @click="openAddDialog" class="!border-0">
-            <el-icon><Add24Regular /></el-icon>
-            添加设备
-          </el-button>
-        </div>
-      </template>
-    </PageHeader>
+    <div class="device-action-row">
+      <div v-if="selectedDevice" class="device-context-actions">
+        <el-button @click="openSms" class="ui-glass-border !border-0">
+          <el-icon><Mail24Regular /></el-icon>
+          短信
+        </el-button>
+        <el-button
+          v-if="selectedDevice.vowifi_enabled"
+          :loading="reconnectingVoWiFi"
+          @click="reconnectVoWiFi"
+          class="ui-glass-border !border-0"
+        >
+          <el-icon><ArrowSync24Regular /></el-icon>
+          重连 VoWiFi
+        </el-button>
+        <el-button
+          v-else
+          :loading="rotating"
+          :disabled="!selectedDevice.network_connected"
+          @click="rotateIP"
+          class="ui-glass-border !border-0"
+        >
+          <el-icon><ArrowSync24Regular /></el-icon>
+          切换 IP
+        </el-button>
+        <el-button :loading="rebooting" @click="rebootModem" class="ui-glass-border !border-0">
+          <el-icon><Power24Regular /></el-icon>
+          重启模组
+        </el-button>
+      </div>
+      <div class="device-global-actions">
+        <RefreshButton :loading="loading" @click="fetchAll" />
+        <el-button @click="rescanDevices" :loading="rescanning" class="ui-glass-border !border-0">
+          <el-icon><ArrowSync24Regular /></el-icon>
+          重新扫描
+        </el-button>
+        <el-button type="primary" @click="openAddDialog" class="!border-0">
+          <el-icon><Add24Regular /></el-icon>
+          添加设备
+        </el-button>
+      </div>
+    </div>
 
     <ErrorState
       v-if="loadError"
@@ -1268,20 +1288,8 @@ usePollingScheduler(async () => {
         @select-device="selectDevice"
       />
 
-      <div v-if="selectedDevice" class="space-y-6">
-        <DeviceDetailHeader
-          :device="selectedDevice"
-          :rotating="rotating"
-          :rebooting="rebooting"
-          :reconnectingVoWiFi="reconnectingVoWiFi"
-          @copy-text="copyText"
-          @rotate-ip="rotateIP"
-          @reconnect-vowifi="reconnectVoWiFi"
-          @reboot-modem="rebootModem"
-          @open-sms="openSms"
-        />
-
-        <div class="ui-card p-4 sm:p-5">
+      <main v-if="selectedDevice" class="device-workspace">
+        <section class="device-workspace-surface ui-card">
           <el-tabs v-model="activeTab" class="device-detail-tabs">
             <el-tab-pane label="概览" name="overview">
               <div class="space-y-6">
@@ -1346,8 +1354,8 @@ usePollingScheduler(async () => {
               />
             </el-tab-pane>
           </el-tabs>
-        </div>
-      </div>
+        </section>
+      </main>
 
       <div v-else>
         <DeviceDetailLoading v-if="loading" />
@@ -1380,16 +1388,73 @@ usePollingScheduler(async () => {
   container-type: inline-size;
 }
 
+.device-action-row,
+.device-context-actions,
+.device-global-actions {
+  display: flex;
+  align-items: center;
+}
+
+.device-action-row {
+  min-height: 44px;
+  margin-bottom: 10px;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.device-context-actions,
+.device-global-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.device-global-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
 .devices-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 1.25rem;
+  align-items: start;
+  gap: 1rem;
 }
 
 @container (min-width: 980px) {
   .devices-layout {
-    grid-template-columns: 284px minmax(0, 1fr);
+    grid-template-columns: 312px minmax(0, 1fr);
   }
+}
+
+@container (max-width: 760px) {
+  .device-action-row {
+    align-items: flex-start;
+    flex-direction: column-reverse;
+  }
+
+  .device-global-actions {
+    width: 100%;
+  }
+}
+
+.device-workspace {
+  min-width: 0;
+  display: grid;
+  gap: 1rem;
+}
+
+.device-workspace > .device-workspace-surface {
+  animation: device-workspace-enter 240ms var(--ui-ease-out) both;
+}
+
+.device-workspace > .device-workspace-surface {
+  animation-delay: 45ms;
+}
+
+.device-workspace-surface {
+  min-width: 0;
+  padding: 0 22px 22px;
+  overflow: hidden;
 }
 
 .device-detail-tabs :deep(.el-tabs__content) {
@@ -1397,7 +1462,9 @@ usePollingScheduler(async () => {
 }
 
 .device-detail-tabs :deep(.el-tabs__header) {
-  margin-bottom: 22px;
+  margin: 0 -22px 22px;
+  padding: 0 22px;
+  background: var(--ui-surface);
 }
 
 .device-detail-tabs :deep(.el-tabs__nav-wrap::after) {
@@ -1406,8 +1473,9 @@ usePollingScheduler(async () => {
 }
 
 .device-detail-tabs :deep(.el-tabs__item) {
-  height: 46px;
+  height: 58px;
   color: var(--ui-text-muted);
+  font-size: 13px;
 }
 
 .device-detail-tabs :deep(.el-tabs__item.is-active) {
@@ -1415,10 +1483,38 @@ usePollingScheduler(async () => {
 }
 
 .devices-page :deep(.ui-card) {
-  border-radius: 18px;
+  border-radius: 20px;
 }
 
 .device-detail-tabs :deep(.el-tab-pane) {
   padding-bottom: 0.25rem;
+}
+
+@keyframes device-workspace-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .device-workspace > .device-workspace-surface {
+    animation-name: device-workspace-fade;
+  }
+
+  @keyframes device-workspace-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 760px) {
+  .device-workspace-surface {
+    padding: 0 14px 14px;
+  }
+
+  .device-detail-tabs :deep(.el-tabs__header) {
+    margin-right: -14px;
+    margin-left: -14px;
+    padding: 0 14px;
+  }
 }
 </style>
