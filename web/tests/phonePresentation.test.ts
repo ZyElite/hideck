@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 
 const phoneView = await readFile(new URL('../src/views/Phone.vue', import.meta.url), 'utf8')
 const phoneCSS = await readFile(new URL('../src/styles/phone.css', import.meta.url), 'utf8')
+const phoneStore = await readFile(new URL('../src/stores/phone.ts', import.meta.url), 'utf8')
 const dialPad = await readFile(new URL('../src/components/PhoneDialPad.vue', import.meta.url), 'utf8')
 const callBar = await readFile(new URL('../src/components/PhoneCallBar.vue', import.meta.url), 'utf8')
 const shell = await readFile(new URL('../src/layouts/AuthenticatedShell.vue', import.meta.url), 'utf8')
@@ -26,11 +27,19 @@ test('dial pad is an explicit fixed 3 by 4 control with accessible buttons', () 
   }
 })
 
-test('phone view exposes secure context, call actions, DTMF, and recording history', () => {
+test('phone view exposes listen-only and microphone call actions without hiding the limitation', () => {
   assert.match(phoneView, /下载 CA 证书/)
-  assert.match(phoneView, /受信任的 HTTPS/)
+  assert.match(phoneView, /麦克风需要受信任的 HTTPS/)
+  assert.match(phoneView, /当前 HTTP 页面仍可“仅听接听”来电/)
   assert.match(phoneView, />拒接</)
-  assert.match(phoneView, />接听</)
+  assert.match(phoneView, />仅听接听</)
+  assert.match(phoneView, />麦克风接听</)
+  assert.match(phoneView, /对方听不到你/)
+  assert.match(phoneView, /@click="answerListenOnly\(call\)"/)
+  assert.match(phoneView, /@click="enableListenOnlyMedia"/)
+  assert.match(phoneStore, /answerListenOnly\(call: PhoneCall\)/)
+  assert.match(phoneStore, /prepare\(\{ microphone: false \}\)/)
+  assert.match(phoneStore, /mediaMode = 'listen-only'/)
   assert.match(phoneView, /取消静音/)
   assert.match(phoneView, />键盘</)
   assert.match(phoneView, />挂断</)

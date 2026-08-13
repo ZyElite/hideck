@@ -25,6 +25,7 @@ require (
 	github.com/miekg/dns v1.1.67
 	github.com/pion/ice/v4 v4.4.0
 	github.com/pion/rtp v1.10.5
+	github.com/pion/sdp/v3 v3.0.19
 	github.com/pion/webrtc/v4 v4.2.18
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
@@ -88,7 +89,6 @@ require (
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/rtcp v1.2.17 // indirect
 	github.com/pion/sctp v1.11.1 // indirect
-	github.com/pion/sdp/v3 v3.0.19 // indirect
 	github.com/pion/srtp/v3 v3.0.12 // indirect
 	github.com/pion/stun/v3 v3.1.6 // indirect
 	github.com/pion/transport/v4 v4.0.2 // indirect

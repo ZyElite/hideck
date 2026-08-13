@@ -35,12 +35,18 @@ type MediaSession struct {
 	attached         bool
 	closed           chan struct{}
 	closeOnce        sync.Once
+	keepaliveOnce    sync.Once
+	receiveOnly      bool
 	fromIMS          atomic.Uint64
 	toIMS            atomic.Uint64
 	lost             atomic.Uint64
 }
 
 func newMediaSession(ctx context.Context, options mediaSessionOptions) (*MediaSession, string, error) {
+	receiveOnly, err := browserOfferReceivesOnlyAudio(options.Offer)
+	if err != nil {
+		return nil, "", err
+	}
 	connection, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		return nil, "", fmt.Errorf("phone: listen RTP bridge: %w", err)
@@ -54,7 +60,8 @@ func newMediaSession(ctx context.Context, options mediaSessionOptions) (*MediaSe
 		ID: options.ID, Lease: options.Lease, Owner: options.Owner,
 		peer: peer, rtpConn: connection, onState: options.OnState,
 		realtimeCodecs:   append([]string(nil), options.RealtimeCodecs...),
-		newRealtimeCodec: options.NewRealtimeCodec, closed: make(chan struct{}),
+		newRealtimeCodec: options.NewRealtimeCodec, receiveOnly: receiveOnly,
+		closed: make(chan struct{}),
 	}
 	answer, err := session.negotiate(ctx, options.Offer)
 	if err != nil {
@@ -133,7 +140,11 @@ func (s *MediaSession) Attach(remoteSDP string) error {
 	if previous != nil {
 		closeErr = previous.Close()
 	}
-	return errors.Join(closeErr, s.primeRelay())
+	primeErr := s.primeRelay()
+	if primeErr == nil && s.receiveOnly {
+		s.keepaliveOnce.Do(func() { go s.forwardSilentRTP() })
+	}
+	return errors.Join(closeErr, primeErr)
 }
 
 func (s *MediaSession) createRealtimeCodec(endpoint rtpEndpoint) (RealtimeCodec, error) {

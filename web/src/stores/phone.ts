@@ -10,6 +10,7 @@ import {
 import { normalizeCallOwnership, phoneErrorMessage, shouldRefreshCallMedia } from '../utils/phone'
 
 const ACTIVE_STATUSES = new Set(['calling', 'ringing', 'connected'])
+export type PhoneMediaMode = 'none' | 'listen-only' | 'two-way'
 
 type PhoneState = {
   initialized: boolean
@@ -20,6 +21,7 @@ type PhoneState = {
   mediaId: string
   lease: string
   mediaState: PhoneMediaState
+  mediaMode: PhoneMediaMode
   muted: boolean
   error: string
   eventError: string
@@ -42,6 +44,7 @@ export const usePhoneStore = defineStore('phone', {
     mediaId: '',
     lease: '',
     mediaState: 'idle',
+    mediaMode: 'none',
     muted: false,
     error: '',
     eventError: '',
@@ -97,6 +100,7 @@ export const usePhoneStore = defineStore('phone', {
       mediaController?.close()
       mediaController = null
       this.mediaState = 'idle'
+      this.mediaMode = 'none'
       this.initialized = false
     },
 
@@ -110,9 +114,19 @@ export const usePhoneStore = defineStore('phone', {
     },
 
     async enableMedia() {
+      return this.refreshCurrentMedia('two-way')
+    },
+
+    async enableListenOnlyMedia() {
+      return this.refreshCurrentMedia('listen-only')
+    },
+
+    async refreshCurrentMedia(mode: Exclude<PhoneMediaMode, 'none'>) {
       const current = this.currentCall
       const previous: SavedPhoneControl = { mediaId: this.mediaId, lease: this.lease }
-      const prepared = await this.prepareMedia()
+      const prepared = mode === 'two-way'
+        ? await this.prepareMedia()
+        : await this.prepareReceiveOnlyMedia()
       if (!current || !shouldRefreshCallMedia(current, prepared.mediaId)) return
       try {
         const result = await phoneService.refreshMedia(current.call_id, prepared.mediaId, previous.lease)
@@ -165,6 +179,17 @@ export const usePhoneStore = defineStore('phone', {
       }
     },
 
+    async answerListenOnly(call: PhoneCall) {
+      const media = await this.prepareReceiveOnlyMedia()
+      try {
+        const answered = await phoneService.answer(call.call_id, media.mediaId, media.lease)
+        this.upsertCall(answered)
+      } catch (error) {
+        this.releaseMedia()
+        throw error
+      }
+    },
+
     async reject(call: PhoneCall) {
       const media = await this.prepareControlMedia()
       await phoneService.reject(call.call_id, media.mediaId, media.lease)
@@ -184,6 +209,7 @@ export const usePhoneStore = defineStore('phone', {
     },
 
     toggleMute() {
+      if (this.mediaMode !== 'two-way') return
       this.muted = !this.muted
       mediaController?.setMuted(this.muted)
     },
@@ -206,7 +232,7 @@ export const usePhoneStore = defineStore('phone', {
     },
 
     async prepareMedia() {
-      if (this.mediaReady && this.mediaId && this.lease) {
+      if (this.mediaReady && this.mediaId && this.lease && this.mediaMode === 'two-way') {
         return { mediaId: this.mediaId, lease: this.lease }
       }
       this.ensureMediaController()
@@ -215,6 +241,7 @@ export const usePhoneStore = defineStore('phone', {
         const prepared = await mediaController!.prepare()
         this.mediaId = prepared.mediaId
         this.lease = prepared.lease
+        this.mediaMode = 'two-way'
         this.muted = false
         this.saveControl()
         return prepared
@@ -225,6 +252,10 @@ export const usePhoneStore = defineStore('phone', {
     },
 
     async prepareControlMedia() {
+      return this.prepareReceiveOnlyMedia()
+    },
+
+    async prepareReceiveOnlyMedia() {
       if (this.mediaReady && this.mediaId && this.lease) {
         return { mediaId: this.mediaId, lease: this.lease }
       }
@@ -232,6 +263,7 @@ export const usePhoneStore = defineStore('phone', {
       const prepared = await mediaController!.prepare({ microphone: false })
       this.mediaId = prepared.mediaId
       this.lease = prepared.lease
+      this.mediaMode = 'listen-only'
       this.saveControl()
       return prepared
     },
@@ -299,6 +331,7 @@ export const usePhoneStore = defineStore('phone', {
       this.mediaId = control.mediaId
       this.lease = control.lease
       this.mediaState = 'idle'
+      this.mediaMode = 'none'
       this.muted = false
       this.saveControl()
     },
@@ -309,6 +342,7 @@ export const usePhoneStore = defineStore('phone', {
       this.mediaId = ''
       this.lease = ''
       this.mediaState = 'idle'
+      this.mediaMode = 'none'
       this.muted = false
       savePhoneControl({ mediaId: '', lease: '' })
     }

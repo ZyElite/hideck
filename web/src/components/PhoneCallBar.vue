@@ -2,7 +2,13 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { CallEnd24Regular, Dialpad24Regular, Mic24Regular, MicOff24Regular } from '@vicons/fluent'
+import {
+  CallEnd24Regular,
+  Dialpad24Regular,
+  Mic24Regular,
+  MicOff24Regular,
+  Speaker224Regular
+} from '@vicons/fluent'
 import { usePhoneStore } from '../stores/phone'
 import { formatCallDuration, phoneErrorMessage, phoneStatusLabel } from '../utils/phone'
 
@@ -34,7 +40,7 @@ async function hangup() {
       <span class="call-pulse" aria-hidden="true" />
       <span class="call-copy">
         <strong>{{ call.peer || '未知号码' }}</strong>
-        <small>{{ phoneStatusLabel(call.status) }} · {{ formatCallDuration(call, phone.now) }}</small>
+        <small>{{ phone.mediaMode === 'listen-only' ? '仅听 · ' : '' }}{{ phoneStatusLabel(call.status) }} · {{ formatCallDuration(call, phone.now) }}</small>
       </span>
       <span v-if="call.read_only" class="read-only-tag">只读</span>
     </button>
@@ -43,11 +49,16 @@ async function hangup() {
         v-if="phone.mediaReady && !call.read_only"
         type="button"
         class="call-action"
-        :aria-label="phone.muted ? '取消静音' : '静音'"
+        :disabled="phone.mediaMode !== 'two-way'"
+        :aria-label="phone.mediaMode === 'listen-only' ? '仅听模式，对方听不到你' : phone.muted ? '取消静音' : '静音'"
         :aria-pressed="phone.muted"
         @click="phone.toggleMute"
       >
-        <el-icon><MicOff24Regular v-if="phone.muted" /><Mic24Regular v-else /></el-icon>
+        <el-icon>
+          <Speaker224Regular v-if="phone.mediaMode === 'listen-only'" />
+          <MicOff24Regular v-else-if="phone.muted" />
+          <Mic24Regular v-else />
+        </el-icon>
       </button>
       <button type="button" class="call-action" aria-label="返回电话页" @click="router.push('/phone')">
         <el-icon><Dialpad24Regular /></el-icon>
@@ -107,10 +118,11 @@ async function hangup() {
 .call-copy strong { overflow: hidden; text-overflow: ellipsis; font-family: "v-mono", monospace; font-size: 13px; white-space: nowrap; }
 .call-copy small { color: var(--ui-text-muted); font-size: 11px; }
 .read-only-tag { padding: 2px 7px; border-radius: 12px; background: var(--ui-surface-muted); color: var(--ui-text-muted); font-size: 10px; }
-.call-actions { display: flex; gap: 7px; }
+.call-actions { display: flex; gap: 8px; }
 .call-action { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 50%; background: var(--ui-surface); color: var(--ui-text); cursor: pointer; }
 .call-action.is-danger { border-color: color-mix(in srgb, var(--ui-danger) 40%, var(--ui-border)); background: var(--ui-danger); color: #fff; }
-.call-action:disabled { cursor: wait; opacity: .5; }
+.call-action:disabled { cursor: not-allowed; opacity: .5; }
+.call-summary:focus-visible, .call-action:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
 
 @media (max-width: 820px) {
   .call-bar { min-height: 58px; margin: 8px 10px 0; }

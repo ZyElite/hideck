@@ -137,6 +137,41 @@ func (s *MediaSession) endpoint() (rtpEndpoint, RealtimeCodec, bool) {
 }
 
 func (s *MediaSession) primeRelay() error {
+	endpoint, _, ok := s.endpoint()
+	if !ok {
+		return errors.New("phone: media is not attached")
+	}
+	return s.writeSilentRTP(1, uint32(endpoint.ClockRate/audioFramesPerSecond))
+}
+
+func (s *MediaSession) forwardSilentRTP() {
+	ticker := time.NewTicker(jitterTick)
+	defer ticker.Stop()
+	sequence := uint16(1)
+	endpoint, _, ok := s.endpoint()
+	if !ok {
+		return
+	}
+	timestamp := uint32(endpoint.ClockRate / audioFramesPerSecond)
+	for {
+		select {
+		case <-ticker.C:
+			endpoint, _, ok = s.endpoint()
+			if !ok {
+				continue
+			}
+			sequence++
+			timestamp += uint32(endpoint.ClockRate / audioFramesPerSecond)
+			if err := s.writeSilentRTP(sequence, timestamp); err != nil {
+				s.lost.Add(1)
+			}
+		case <-s.closed:
+			return
+		}
+	}
+}
+
+func (s *MediaSession) writeSilentRTP(sequence uint16, timestamp uint32) error {
 	endpoint, codec, ok := s.endpoint()
 	if !ok {
 		return errors.New("phone: media is not attached")
@@ -145,19 +180,23 @@ func (s *MediaSession) primeRelay() error {
 	for index := range payload {
 		payload[index] = 0xff
 	}
+	s.recordMixedFrame(mixToIMS, payload)
 	payload, err := browserPayloadForIMS(payload, endpoint, codec)
 	if err != nil {
 		return err
 	}
 	packet := &rtp.Packet{Header: rtp.Header{
-		Version: 2, PayloadType: endpoint.PayloadType, SequenceNumber: 1,
-		Timestamp: uint32(endpoint.ClockRate / 50), SSRC: 0x564f4849,
+		Version: 2, PayloadType: endpoint.PayloadType, SequenceNumber: sequence,
+		Timestamp: timestamp, SSRC: 0x564f4849,
 	}, Payload: payload}
 	raw, err := packet.Marshal()
 	if err != nil {
 		return err
 	}
 	_, err = s.rtpConn.WriteToUDP(raw, endpoint.Address)
+	if err == nil {
+		s.toIMS.Add(1)
+	}
 	return err
 }
 

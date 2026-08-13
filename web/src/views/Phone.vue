@@ -107,13 +107,21 @@ function enableMedia() {
   return runAction('启用听筒', () => phone.enableMedia(), '听筒和麦克风已启用')
 }
 
+function enableListenOnlyMedia() {
+  return runAction('恢复仅听', () => phone.enableListenOnlyMedia(), '仅听模式已恢复')
+}
+
 function startCall() {
   if (!canDial.value) return
   return runAction('呼叫', () => phone.startCall(selectedDevice.value, callee.value))
 }
 
 function answerCall(current: PhoneCall) {
-  return runAction('接听', () => phone.answer(current))
+  return runAction('麦克风接听', () => phone.answer(current))
+}
+
+function answerListenOnly(current: PhoneCall) {
+  return runAction('仅听接听', () => phone.answerListenOnly(current))
 }
 
 function rejectCall(current: PhoneCall) {
@@ -144,7 +152,9 @@ async function sendDTMF(digit: string) {
     <PageHeader title="电话" subtitle="通过 VoWiFi 设备进行浏览器实时语音与 DTMF 通话">
       <template #actions>
         <span class="media-state" :class="`is-${phone.mediaState}`">
-          <span aria-hidden="true" />{{ phone.mediaReady ? '听筒已连接' : '听筒未连接' }}
+          <span aria-hidden="true" />{{ phone.mediaReady
+            ? phone.mediaMode === 'listen-only' ? '仅听已连接' : '双向语音已连接'
+            : '听筒未连接' }}
         </span>
       </template>
     </PageHeader>
@@ -152,8 +162,8 @@ async function sendDTMF(digit: string) {
     <section v-if="!phone.secureContext" class="security-notice" role="alert">
       <div class="notice-icon"><el-icon><LockClosed24Regular /></el-icon></div>
       <div>
-        <strong>实时语音需要受信任的 HTTPS</strong>
-        <p>当前页面只能管理设备，浏览器不会开放麦克风。请先安装本地 CA，再从 HTTPS 地址重新打开电话页。</p>
+        <strong>麦克风需要受信任的 HTTPS</strong>
+        <p>当前 HTTP 页面仍可“仅听接听”来电，不会申请麦克风，因此对方听不到你。双向通话需要使用受信任的 HTTPS。</p>
       </div>
       <div class="notice-actions">
         <a href="/api/phone/ca.crt" download>下载 CA 证书</a>
@@ -201,15 +211,35 @@ async function sendDTMF(digit: string) {
           <dl class="call-meta">
             <div><dt>设备</dt><dd>{{ call.device_id }}</dd></div>
             <div><dt>Codec</dt><dd>{{ call.codec || '协商中' }}</dd></div>
-            <div><dt>媒体</dt><dd>{{ phone.mediaReady ? '已连接' : call.read_only ? '其他浏览器控制' : '等待恢复' }}</dd></div>
+            <div>
+              <dt>媒体</dt>
+              <dd>{{ phone.mediaReady
+                ? phone.mediaMode === 'listen-only' ? '仅听' : '双向'
+                : call.read_only ? '其他浏览器控制' : '等待恢复' }}</dd>
+            </div>
           </dl>
 
           <div v-if="incoming" class="incoming-actions">
             <button type="button" class="round-action is-reject" :disabled="!!action" @click="rejectCall(call)">
               <el-icon><CallDismiss24Regular /></el-icon><span>拒接</span>
             </button>
-            <button type="button" class="round-action is-answer" :disabled="!!action || !phone.secureContext" @click="answerCall(call)">
-              <el-icon><Call24Regular /></el-icon><span>接听</span>
+            <button
+              type="button"
+              class="round-action is-listen"
+              :disabled="!!action"
+              title="只接收对方声音，不申请麦克风"
+              @click="answerListenOnly(call)"
+            >
+              <el-icon><Speaker224Regular /></el-icon><span>仅听接听</span><small>对方听不到你</small>
+            </button>
+            <button
+              type="button"
+              class="round-action is-answer"
+              :disabled="!!action || !phone.secureContext"
+              title="需要受信任的 HTTPS 和麦克风权限"
+              @click="answerCall(call)"
+            >
+              <el-icon><Call24Regular /></el-icon><span>麦克风接听</span>
             </button>
           </div>
 
@@ -222,15 +252,39 @@ async function sendDTMF(digit: string) {
           </div>
 
           <template v-else>
-            <button
-              v-if="!phone.mediaReady"
-              type="button"
-              class="restore-button"
-              :disabled="!!action || !phone.secureContext"
-              @click="enableMedia"
-            >
-              <el-icon><Speaker224Regular /></el-icon>在 15 秒内恢复听筒
-            </button>
+            <div v-if="!phone.mediaReady" class="restore-actions">
+              <button
+                type="button"
+                class="restore-button"
+                :disabled="!!action"
+                @click="enableListenOnlyMedia"
+              >
+                <el-icon><Speaker224Regular /></el-icon>在 15 秒内恢复仅听
+              </button>
+              <button
+                type="button"
+                class="restore-button"
+                :disabled="!!action || !phone.secureContext"
+                @click="enableMedia"
+              >
+                <el-icon><Mic24Regular /></el-icon>恢复双向语音
+              </button>
+            </div>
+
+            <div v-else-if="phone.mediaMode === 'listen-only'" class="listen-only-panel" role="status">
+              <div>
+                <strong>仅听模式</strong>
+                <p>你能听到对方，对方听不到你；浏览器没有申请麦克风。</p>
+              </div>
+              <button
+                type="button"
+                class="secondary-button"
+                :disabled="!!action || !phone.secureContext"
+                @click="enableMedia"
+              >
+                <el-icon><Mic24Regular /></el-icon>{{ phone.secureContext ? '启用麦克风' : 'HTTPS 下可启用麦克风' }}
+              </button>
+            </div>
 
             <div v-if="connected && keypadVisible" class="active-keypad">
               <p aria-live="polite">发送 DTMF{{ lastDTMF ? `：${lastDTMF}` : '' }}</p>
@@ -241,12 +295,16 @@ async function sendDTMF(digit: string) {
               <button
                 type="button"
                 class="control-button"
-                :disabled="!phone.mediaReady"
+                :disabled="!phone.mediaReady || phone.mediaMode !== 'two-way'"
                 :aria-pressed="phone.muted"
                 @click="phone.toggleMute"
               >
-                <el-icon><MicOff24Regular v-if="phone.muted" /><Mic24Regular v-else /></el-icon>
-                <span>{{ phone.muted ? '取消静音' : '静音' }}</span>
+                <el-icon>
+                  <Speaker224Regular v-if="phone.mediaMode === 'listen-only'" />
+                  <MicOff24Regular v-else-if="phone.muted" />
+                  <Mic24Regular v-else />
+                </el-icon>
+                <span>{{ phone.mediaMode === 'listen-only' ? '仅听模式' : phone.muted ? '取消静音' : '静音' }}</span>
               </button>
               <button
                 type="button"

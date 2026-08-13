@@ -41,6 +41,17 @@ test('store ignores replayed events and never grants another media session contr
   assert.equal(store.calls[0].read_only, false)
 })
 
+test('listen-only mode cannot be presented as a muteable microphone', () => {
+  setActivePinia(createPinia())
+  const store = usePhoneStore()
+  store.mediaMode = 'listen-only'
+  store.toggleMute()
+  assert.equal(store.muted, false)
+  store.mediaMode = 'two-way'
+  store.toggleMute()
+  assert.equal(store.muted, true)
+})
+
 test('surfaces API error messages without hiding the underlying failure', () => {
   const error = { response: { data: { message: 'phone: media session is unavailable' } } }
   assert.equal(phoneErrorMessage(error, 'fallback'), 'phone: media session is unavailable')
