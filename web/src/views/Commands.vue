@@ -1,21 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import CommandChat from '../components/commands/CommandChat.vue'
 import BalanceDrawer from '../components/commands/BalanceDrawer.vue'
 import RuleEditorDrawer from '../components/commands/RuleEditorDrawer.vue'
 import { useEventStream } from '../composables/useEventStream'
+import { useCommandRuntimeStatus } from '../composables/useCommandRuntimeStatus'
 import { commandService } from '../services/commands'
 import { devicesService } from '../services/devices'
-import type { DeviceMgmtListItem } from '../types/api'
-import type { BalanceQuery, CarrierQueryRule, CommandDefinition, CommandEvent } from '../types/commands'
+import type { CarrierQueryRule, CommandDefinition, CommandEvent } from '../types/commands'
 import { buildDangerousCommand } from '../utils/commandInput'
 
 const pageSize = 100
 const definitions = ref<CommandDefinition[]>([])
 const events = ref<CommandEvent[]>([])
-const balances = ref<BalanceQuery[]>([])
-const devices = ref<DeviceMgmtListItem[]>([])
 const builtInRules = ref<CarrierQueryRule[]>([])
 const customRules = ref<CarrierQueryRule[]>([])
 const selectedDevice = ref('')
@@ -23,6 +21,8 @@ const loading = ref(true)
 const loadingOlder = ref(false)
 const hasOlder = ref(false)
 const historyVersion = ref(0)
+const refreshVersion = ref(0)
+const manualRefreshing = ref(false)
 const executing = ref(false)
 const querying = ref(false)
 const rulesOpen = ref(false)
@@ -30,8 +30,15 @@ const balanceOpen = ref(false)
 const savingRule = ref(false)
 const dangerousDefinition = ref<CommandDefinition | null>(null)
 const dangerForm = reactive({ device: '', target: '', phone: '', duration: 15 })
-let balanceTimer: number | null = null
 let disposed = false
+
+const runtimeStatus = useCommandRuntimeStatus({
+  fetchDevices: () => devicesService.listManaged(),
+  fetchBalances: () => commandService.balances({ limit: 50 }),
+  onForegroundError: (message) => ElMessage.error(message)
+})
+const devices = runtimeStatus.devices
+const balances = runtimeStatus.balances
 
 const stream = useEventStream<CommandEvent>({
   path: '/command-center/stream',
@@ -41,6 +48,15 @@ const stream = useEventStream<CommandEvent>({
   reconnectDelayMs: 2500
 })
 const streamConnected = stream.connected
+const syncWarning = computed(() => [
+  stream.lastError.value ? `实时事件：${stream.lastError.value}` : '',
+  runtimeStatus.syncWarning.value
+].filter(Boolean).join('；'))
+
+watch(devices, (nextDevices) => {
+  if (nextDevices.some((device) => device.id === selectedDevice.value)) return
+  selectedDevice.value = nextDevices[0]?.id || ''
+}, { flush: 'sync' })
 
 const dangerousTitle = computed(() => {
   if (dangerousDefinition.value?.name === 'switch') return '切换 eSIM'
@@ -49,7 +65,7 @@ const dangerousTitle = computed(() => {
 })
 
 onMounted(async () => {
-  const pageData = Promise.all([loadCatalog(), loadDevices(), refreshBalances(), loadRules()])
+  const pageData = Promise.all([loadCatalog(), runtimeStatus.refresh(), loadRules()])
   await loadEvents()
   if (disposed) return
   const latest = events.value.at(-1)?.id
@@ -57,18 +73,14 @@ onMounted(async () => {
   void stream.connect()
   await pageData
   if (disposed) return
-  balanceTimer = window.setInterval(() => {
-    if (balances.value.some((query) => query.state === 'sending' || query.state === 'awaiting_reply')) {
-      void refreshBalances(true)
-    }
-  }, 5000)
+  runtimeStatus.startPolling()
   loading.value = false
 })
 
 onUnmounted(() => {
   disposed = true
   stream.disconnect()
-  if (balanceTimer !== null) window.clearInterval(balanceTimer)
+  runtimeStatus.dispose()
 })
 
 async function loadCatalog() {
@@ -78,13 +90,16 @@ async function loadCatalog() {
 }
 
 async function loadEvents() {
+  const latestBeforeRequest = events.value.at(-1)?.id || 0
   const result = await commandService.events({ beforeId: 0, limit: pageSize })
   if (!result.ok) {
     ElMessage.error(result.error.message || '命令历史加载失败')
-    return
+    return false
   }
-  events.value = result.data
+  const liveEvents = events.value.filter((event) => event.id > latestBeforeRequest)
+  events.value = mergeEventLists(result.data, liveEvents)
   hasOlder.value = result.data.length === pageSize
+  return true
 }
 
 async function loadOlder() {
@@ -100,22 +115,6 @@ async function loadOlder() {
   mergeEvents(result.data)
   historyVersion.value += 1
   hasOlder.value = result.data.length === pageSize
-}
-
-async function loadDevices() {
-  const result = await devicesService.listManaged()
-  if (!result.ok) {
-    ElMessage.error(result.error.message || '设备列表加载失败')
-    return
-  }
-  devices.value = result.data.devices
-  if (!selectedDevice.value && devices.value.length) selectedDevice.value = devices.value[0].id
-}
-
-async function refreshBalances(silent = false) {
-  const result = await commandService.balances({ limit: 50 })
-  if (result.ok) balances.value = result.data
-  else if (!silent) ElMessage.error(result.error.message || '余额记录加载失败')
 }
 
 async function loadRules() {
@@ -140,13 +139,37 @@ async function execute(input: string) {
   const latest = events.value.at(-1)?.id || 0
   const catchup = await commandService.events({ afterId: latest, limit: 20 })
   if (catchup.ok) mergeEvents(catchup.data)
-  if (input.trim().split(/\s+/, 1)[0]?.toLowerCase() === '/balance') await refreshBalances(true)
+  if (input.trim().split(/\s+/, 1)[0]?.toLowerCase() === '/balance') {
+    await runtimeStatus.refresh({ background: true })
+  }
 }
 
 function mergeEvents(incoming: CommandEvent[]) {
-  const merged = new Map(events.value.map((event) => [event.id, event]))
-  for (const event of incoming) merged.set(event.id, event)
-  events.value = [...merged.values()].sort((left, right) => left.id - right.id)
+  events.value = mergeEventLists(events.value, incoming)
+}
+
+function mergeEventLists(...lists: CommandEvent[][]) {
+  const merged = new Map<number, CommandEvent>()
+  for (const list of lists) {
+    for (const event of list) merged.set(event.id, event)
+  }
+  return [...merged.values()].sort((left, right) => left.id - right.id)
+}
+
+async function refreshAll() {
+  if (manualRefreshing.value) return
+  manualRefreshing.value = true
+  try {
+    const [eventsLoaded] = await Promise.all([
+      loadEvents(),
+      runtimeStatus.refresh(),
+      loadCatalog(),
+      loadRules()
+    ])
+    if (eventsLoaded) refreshVersion.value += 1
+  } finally {
+    manualRefreshing.value = false
+  }
 }
 
 async function clearHistory() {
@@ -243,8 +266,13 @@ async function deleteRule(id: string) {
         :loading-older="loadingOlder"
         :has-older="hasOlder"
         :history-version="historyVersion"
+        :refresh-version="refreshVersion"
         :busy="executing"
         :stream-connected="streamConnected"
+        :refreshing="manualRefreshing || runtimeStatus.refreshing.value"
+        :sync-warning="syncWarning"
+        :last-synced-at="runtimeStatus.lastSyncedAt.value"
+        @refresh="refreshAll"
         @load-older="loadOlder"
         @clear-history="clearHistory"
         @open-balance="balanceOpen = true"

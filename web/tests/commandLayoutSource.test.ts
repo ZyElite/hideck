@@ -86,3 +86,14 @@ test('command timeline opens at the latest record without stealing historical re
   assert.match(commandChat, /:history-version="historyVersion"/)
   assert.match(commandsView, /historyVersion\.value \+= 1/)
 })
+
+test('command runtime state refreshes periodically and exposes a unified manual refresh', () => {
+  assert.match(commandsView, /runtimeStatus\.startPolling\(\)/)
+  assert.match(commandsView, /runtimeStatus\.refresh\(\{ background: true \}\)/)
+  assert.match(commandsView, /@refresh="refreshAll"/)
+  assert.match(commandsView, /stream\.lastError\.value/)
+  assert.match(commandChat, /aria-label="刷新命令与状态"/)
+  assert.match(commandChat, /:loading="refreshing"/)
+  assert.match(commandChat, /class="sync-warning" role="status"/)
+  assert.match(commandChat, /:context-key="`\$\{selectedDevice\}:\$\{refreshVersion\}`"/)
+})

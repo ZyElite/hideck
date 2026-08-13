@@ -11,8 +11,11 @@ import {
   History24Regular,
   Phone24Regular,
   PlugConnected24Regular,
+  ArrowSync24Regular,
+  ErrorCircle24Regular,
   Wallet24Regular
 } from '@vicons/fluent'
+import { formatDeviceTime } from '../../utils/deviceTime'
 
 const props = defineProps<{
   events: CommandEvent[]
@@ -24,8 +27,12 @@ const props = defineProps<{
   loadingOlder: boolean
   hasOlder: boolean
   historyVersion: number
+  refreshVersion: number
   busy: boolean
   streamConnected: boolean
+  refreshing: boolean
+  syncWarning: string
+  lastSyncedAt: number | null
 }>()
 
 const visibleEvents = computed(() => props.events.filter((event) => {
@@ -39,12 +46,17 @@ const visibleBalanceQueries = computed(() => props.balanceQueries.filter((query)
 )))
 const deviceIds = computed(() => props.devices.map((device) => device.id))
 const visibleRecordCount = computed(() => visibleEvents.value.length + visibleBalanceQueries.value.length)
+const syncLabel = computed(() => props.lastSyncedAt
+  ? `更新 ${formatDeviceTime(props.lastSyncedAt, { clientClock: true, fallback: '--:--:--' })}`
+  : '等待状态同步'
+)
 
 const emit = defineEmits<{
   'update:selectedDevice': [value: string]
   loadOlder: []
   clearHistory: []
   openBalance: []
+  refresh: []
   submit: [input: string]
   dangerous: [command: CommandDefinition]
 }>()
@@ -63,11 +75,21 @@ const emit = defineEmits<{
               {{ streamConnected ? '实时连接' : '正在重连' }}
             </span>
           </div>
-          <span class="record-count">当前设备 · {{ visibleRecordCount }} 条记录</span>
+          <span class="record-count">当前设备 · {{ visibleRecordCount }} 条记录 · {{ syncLabel }}</span>
         </div>
       </div>
 
       <div class="chat-actions">
+        <el-tooltip content="刷新命令与状态" placement="bottom">
+          <el-button
+            :loading="refreshing"
+            :disabled="refreshing"
+            aria-label="刷新命令与状态"
+            @click="emit('refresh')"
+          >
+            <el-icon><ArrowSync24Regular /></el-icon><span>刷新</span>
+          </el-button>
+        </el-tooltip>
         <el-tooltip content="余额查询与历史" placement="bottom">
           <el-button aria-label="余额查询与历史" @click="emit('openBalance')">
             <el-icon><Wallet24Regular /></el-icon><span>余额历史</span>
@@ -97,6 +119,11 @@ const emit = defineEmits<{
           <el-option v-for="device in devices" :key="device.id" :label="device.name || device.id" :value="device.id" />
         </el-select>
       </label>
+
+      <p v-if="syncWarning" class="sync-warning" role="status">
+        <el-icon aria-hidden="true"><ErrorCircle24Regular /></el-icon>
+        <span>{{ syncWarning }}</span>
+      </p>
     </header>
 
     <main class="chat-conversation">
@@ -104,7 +131,7 @@ const emit = defineEmits<{
         :events="visibleEvents"
         :balance-queries="visibleBalanceQueries"
         :loading="loading"
-        :context-key="selectedDevice"
+        :context-key="`${selectedDevice}:${refreshVersion}`"
         :history-version="historyVersion"
       />
       <CommandComposer
@@ -136,7 +163,7 @@ const emit = defineEmits<{
   border-bottom: 1px solid var(--ui-border);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: "heading actions" "device actions";
+  grid-template-areas: "heading actions" "device actions" "warning warning";
   align-items: start;
   gap: 12px 18px;
 }
@@ -167,6 +194,18 @@ const emit = defineEmits<{
 .device-target { width: 220px; min-width: 0; grid-area: device; display: grid; gap: 5px; }
 .device-label { color: var(--ui-text-subtle); font-size: 10px; }
 .device-target :deep(.el-input__wrapper) { min-height: 36px; border-radius: 4px; }
+.sync-warning {
+  min-width: 0;
+  margin: 0;
+  grid-area: warning;
+  color: var(--ui-danger);
+  font-size: 11px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.sync-warning .el-icon { flex: 0 0 auto; margin-top: 1px; }
+.sync-warning span { overflow-wrap: anywhere; }
 .chat-conversation { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
 @media (max-width: 900px) {
   .chat-header { grid-template-columns: minmax(0, 1fr) auto; }
@@ -177,7 +216,7 @@ const emit = defineEmits<{
   .chat-header {
     padding: 14px 12px 12px;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "heading" "device" "actions";
+    grid-template-areas: "heading" "device" "actions" "warning";
     gap: 11px;
   }
   .chat-title-row h2 { font-size: 17px; }
