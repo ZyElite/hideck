@@ -49,7 +49,7 @@ h1 {
 .page-heading-kicker {
   color: var(--ui-primary);
   font-family: "v-mono", ui-monospace, monospace;
-  font-size: 9px;
+  font-size: var(--ui-font-caption);
   font-weight: 700;
   letter-spacing: 0.14em;
 }

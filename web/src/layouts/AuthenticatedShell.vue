@@ -471,7 +471,7 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
   margin-top: 3px;
   color: #7fa4a8;
   font-family: "v-mono", ui-monospace, monospace;
-  font-size: 9px;
+  font-size: var(--ui-font-caption);
   font-weight: 600;
   letter-spacing: 0;
 }
@@ -595,7 +595,7 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
 .topbar-product {
   color: var(--ui-text-muted);
   font-family: "v-mono", ui-monospace, monospace;
-  font-size: 11px;
+  font-size: var(--ui-font-caption);
   letter-spacing: 0.16em;
 }
 

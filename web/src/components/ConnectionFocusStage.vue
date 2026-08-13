@@ -168,8 +168,8 @@ function stageStatusLabel(ready: boolean | undefined): string {
 .connection-stage-main,
 .connection-stage-aside { position: relative; z-index: 1; min-width: 0; }
 .connection-stage-heading { display: flex; align-items: center; gap: 12px; }
-.dashboard-eyebrow { color: var(--ui-primary); font: 700 10px "v-mono", monospace; letter-spacing: .14em; }
-.focus-device-status { display: inline-flex; align-items: center; gap: 7px; color: var(--ui-text-muted); font-size: 11px; }
+.dashboard-eyebrow { color: var(--ui-primary); font: 700 var(--ui-font-caption) "v-mono", monospace; letter-spacing: .14em; }
+.focus-device-status { display: inline-flex; align-items: center; gap: 7px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .focus-device-status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .focus-device-status.is-online { color: var(--ui-success); }
 .focus-device-status.is-offline { color: var(--ui-danger); }
@@ -196,7 +196,7 @@ function stageStatusLabel(ready: boolean | undefined): string {
 .connection-path-step { position: relative; z-index: 1; min-width: 0; display: grid; place-items: center; gap: 9px; color: var(--ui-text-muted); }
 .connection-path-step > span { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid var(--ui-border); border-radius: 50%; background: var(--ui-surface); color: inherit; }
 .connection-path-step svg { width: 15px; height: 15px; }
-.connection-path-step small { font-size: 11px; }
+.connection-path-step small { font-size: var(--ui-font-caption); }
 .connection-path-step.is-ready { color: var(--ui-primary); }
 .connection-path-step.is-ready > span { border-color: var(--ui-primary); box-shadow: 0 0 22px color-mix(in srgb, var(--ui-primary) 18%, transparent); }
 .connection-path-step.is-failed { color: var(--ui-danger); }
@@ -213,13 +213,13 @@ function stageStatusLabel(ready: boolean | undefined): string {
 .connection-stage-aside { padding: 22px 24px; display: flex; flex-direction: column; border: 1px solid var(--ui-border); border-radius: 17px; background: color-mix(in srgb, var(--ui-surface-strong) 82%, transparent); }
 .connection-stage-aside dl { margin: 0; }
 .connection-stage-aside dl > div { padding: 13px 0; display: grid; gap: 5px; border-bottom: 1px solid var(--ui-border); }
-.connection-stage-aside dt { color: var(--ui-text-muted); font-size: 11px; }
+.connection-stage-aside dt { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .connection-stage-aside dd { min-width: 0; margin: 0; color: var(--ui-text); font-size: 14px; font-weight: 560; overflow-wrap: anywhere; }
 .connection-stage-aside .focus-fact-primary dd { color: var(--ui-primary); font-size: 30px; font-weight: 500; }
-.connection-stage-aside .focus-fact-primary small { color: var(--ui-text-muted); font-size: 11px; }
+.connection-stage-aside .focus-fact-primary small { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .connection-stage-aside .is-tabular,
 .connection-stage-aside .is-address { font-family: "v-mono", monospace; font-variant-numeric: tabular-nums; }
-.connection-stage-aside .is-address { font-size: 11px; line-height: 1.45; }
+.connection-stage-aside .is-address { font-size: var(--ui-font-body-sm); line-height: 1.45; }
 .focus-open-button { min-height: 38px; margin-top: auto; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid color-mix(in srgb, var(--ui-primary) 48%, var(--ui-border)); border-radius: 11px; background: color-mix(in srgb, var(--ui-primary) 8%, transparent); color: var(--ui-primary); cursor: pointer; transition: border-color 160ms var(--ui-ease-out), background-color 160ms var(--ui-ease-out), transform 140ms var(--ui-ease-out); }
 .focus-open-button svg { width: 18px; height: 18px; }
 .focus-open-button:active { transform: scale(.97); }

@@ -243,14 +243,14 @@ onMounted(() => {
 
 <style scoped>
 .dashboard-page :deep(.page-header) { margin-bottom: 26px; }
-.section-kicker { color: var(--ui-primary); font: 700 10px "v-mono", monospace; letter-spacing: .14em; }
+.section-kicker { color: var(--ui-primary); font: 700 var(--ui-font-caption) "v-mono", monospace; letter-spacing: .14em; }
 .fleet-summary { min-height: 79px; margin-bottom: 30px; padding: 15px 22px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 18px; border: 1px solid var(--ui-border); border-radius: 22px; background: var(--ui-surface); }
 .fleet-summary-copy { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
 .fleet-summary-copy > strong { color: var(--ui-text); font-size: 26px; }
-.fleet-summary-copy > span:last-child { color: var(--ui-text-muted); font-size: 11px; }
+.fleet-summary-copy > span:last-child { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .fleet-metrics { justify-self: end; display: grid; grid-template-columns: repeat(4, minmax(92px, 120px)); }
 .fleet-metric { min-width: 0; padding-left: 18px; display: grid; gap: 2px; border-left: 1px solid var(--ui-border); }
-.fleet-metric span { color: var(--ui-text-muted); font-size: 10px; }
+.fleet-metric span { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .fleet-metric strong { color: var(--ui-text); font: 17px "v-mono", monospace; }
 .device-overview-toolbar { margin: 0 0 16px; display: flex; align-items: end; justify-content: space-between; gap: 24px; }
 .device-overview-toolbar h2 { margin: 5px 0 2px; color: var(--ui-text); font-size: 24px; font-weight: 620; }

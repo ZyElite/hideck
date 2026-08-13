@@ -4,6 +4,14 @@ import test from 'node:test'
 
 const MIN_READABLE_FONT_SIZE = 12
 const globalStyles = await readFile(new URL('../src/style.css', import.meta.url), 'utf8')
+const dashboardTypographyFiles = [
+  '../src/views/Dashboard.vue',
+  '../src/components/DeviceCard.vue',
+  '../src/components/ConnectionFocusStage.vue',
+  '../src/components/TrafficAnalysisPanel.vue',
+  '../src/components/PageHeader.vue',
+  '../src/layouts/AuthenticatedShell.vue'
+] as const
 
 const FONT_DECLARATION_PATTERNS = [
   /font-size:\s*([0-9.]+)px/g,
@@ -36,4 +44,11 @@ test('typography audit detects declarations below the readable minimum', () => {
   assert.deepEqual(findUnreadableFontSizes('.metadata { font-size: 11px; }'), [11])
   assert.deepEqual(findUnreadableFontSizes('.code { font: 10px/1.4 monospace; }'), [10])
   assert.deepEqual(findUnreadableFontSizes('.body { font-size: 12px; }'), [])
+})
+
+test('dashboard text does not declare font sizes below 12px', async () => {
+  for (const path of dashboardTypographyFiles) {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8')
+    assert.deepEqual(findUnreadableFontSizes(source), [], path)
+  }
 })

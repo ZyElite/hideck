@@ -630,7 +630,7 @@ function handleRangeChange(value: string | number | boolean | undefined) {
 }
 
 .traffic-panel-heading { min-width: 0; }
-.traffic-panel-kicker { display: block; margin-bottom: 6px; color: var(--ui-primary); font: 700 10px "v-mono", monospace; letter-spacing: .14em; }
+.traffic-panel-kicker { display: block; margin-bottom: 6px; color: var(--ui-primary); font: 700 var(--ui-font-caption) "v-mono", monospace; letter-spacing: .14em; }
 .traffic-panel-heading h2 { margin: 0; color: var(--ui-text); font-size: 22px; font-weight: 650; line-height: 1.25; }
 .traffic-panel-heading p { margin: 4px 0 0; color: var(--ui-text-muted); font-size: 13px; }
 

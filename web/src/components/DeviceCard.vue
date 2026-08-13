@@ -133,7 +133,7 @@ const showCellularFacts = computed(() => presentation.value.showsCellularFacts)
 .device-identity strong,
 .device-identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .device-identity strong { font-size: 15px; font-weight: 700; }
-.device-identity small { max-width: 190px; margin-top: 3px; color: var(--ui-text-muted); font-size: 11px; }
+.device-identity small { max-width: 190px; margin-top: 3px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .device-state { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; }
 .device-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .device-state.is-online { color: var(--ui-success); }
@@ -147,25 +147,25 @@ const showCellularFacts = computed(() => presentation.value.showsCellularFacts)
 .connection-primary strong,
 .connection-primary small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connection-primary strong { font-size: 14px; }
-.connection-primary small { color: var(--ui-text-muted); font-size: 11px; }
+.connection-primary small { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .device-card-footer { min-height: 76px; padding: 8px 12px 8px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .device-addresses { min-width: 0; display: grid; }
-.address-heading { display: flex; align-items: flex-start; gap: 7px; color: var(--ui-text-muted); font-size: 11px; }
+.address-heading { display: flex; align-items: flex-start; gap: 7px; color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .address-heading svg { width: 16px; height: 16px; flex: 0 0 16px; }
 .address-list { min-width: 0; margin-top: 4px; display: grid; gap: 2px; }
 .address-list > span { min-width: 0; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 6px; }
-.address-list small { color: var(--ui-text-muted); font: 9px/1.45 "v-mono", monospace; }
-.address-list code { min-width: 0; color: color-mix(in srgb, var(--ui-text) 82%, transparent); font: 10px/1.35 "v-mono", monospace; overflow-wrap: anywhere; }
+.address-list small { color: var(--ui-text-muted); font: var(--ui-font-caption)/1.45 "v-mono", monospace; }
+.address-list code { min-width: 0; color: color-mix(in srgb, var(--ui-text) 82%, transparent); font: var(--ui-font-body-sm)/1.35 "v-mono", monospace; overflow-wrap: anywhere; }
 .device-signal { align-self: center; display: grid; gap: 7px; }
 .signal-label,
 .signal-reading { display: flex; align-items: center; gap: 6px; }
-.signal-label { color: var(--ui-text-muted); font-size: 11px; }
+.signal-label { color: var(--ui-text-muted); font-size: var(--ui-font-caption); }
 .signal-label svg { width: 16px; height: 16px; }
 .signal-reading { color: var(--ui-text-muted); }
 .signal-reading.is-good { color: var(--ui-success); }
 .signal-reading.is-warning { color: var(--ui-warning); }
 .signal-reading.is-danger { color: var(--ui-danger); }
-.signal-reading strong { font: 11px "v-mono", monospace; }
+.signal-reading strong { font: var(--ui-font-body-sm) "v-mono", monospace; }
 .signal-bars { width: 20px; height: 14px; display: flex; align-items: flex-end; gap: 2px; }
 .signal-bars i { width: 3px; height: calc(var(--bar-index, 1) * 25%); min-height: 3px; border-radius: 1px; background: color-mix(in srgb, currentColor 24%, transparent); }
 .signal-bars i:nth-child(1) { height: 25%; }
