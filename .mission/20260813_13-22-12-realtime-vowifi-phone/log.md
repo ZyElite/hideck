@@ -114,3 +114,12 @@
 - **状态**: BLOCKED
 - **阻塞**: 新版本尚未部署、Browser 不可用，且没有可协调的授权外部来电源；不能擅自对真实号码发起来电。
 - **替代证据边界**: 自动测试覆盖已接不报未接、远端取消 missed、用户 rejected、设备 busy，以及 notifier/页面订阅共存与慢渠道不阻塞；这些结果没有被表述为实机三方对账。
+
+## DOCKER-01: 打包电话原生音频运行库与媒体端口
+
+- **状态**: DONE
+- **运行库**: Alpine 运行层安装 `opencore-amr`、`vo-amrwbenc` 和 `lame-libs`，构建时直接检查 AMR-NB、AMR-WB 和 MP3 的四个 `.so.0`。
+- **端口**: 镜像声明管理 HTTP `7575/tcp`、电话 HTTPS `7576/tcp` 与 WebRTC mux `7580/udp`。
+- **构建修复**: 生产构建不再执行会拉取无关测试依赖并修改模块清单的 `go mod tidy`，改为 `go build -mod=readonly`。
+- **验证**: 两份 Dockerfile 的 `linux/amd64` 完整镜像均实际构建成功；容器内四个关键编码/解码符号、二进制可执行性和 ExposedPorts 均通过，最终镜像约 26.6 MB。
+- **受限项**: Docker Hub 代理持续 EOF/TLS 超时，无法拉取 arm64 基础镜像，因此未声称 arm64 本地镜像构建通过；目标服务器 `x86_64` 已覆盖。

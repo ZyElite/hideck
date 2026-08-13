@@ -53,13 +53,12 @@ RUN ls -la internal/web/dist/ && echo "Frontend assets copied successfully"
 # 挂载 Go 构建缓存和模块缓存，加速重复构建
 RUN --mount=type=cache,target=/root/.cache/go-build,id=gobuild-${TARGETOS}-${TARGETARCH},sharing=locked \
     --mount=type=cache,target=/go/pkg/mod,id=gomod-${TARGETOS}-${TARGETARCH},sharing=locked \
-    go mod tidy && \
     BUILD_TIME="${BUILDTIME}" && \
     if [ -z "${BUILD_TIME}" ] || [ "${BUILD_TIME}" = "unknown" ]; then \
       BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"; \
     fi && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -buildvcs=false -tags "with_utls nomsgpack" -ldflags "-s -w -X 'github.com/iniwex5/vohive/internal/global.Version=${VERSION}' -X 'github.com/iniwex5/vohive/internal/global.BuildTime=${BUILD_TIME}'" -o vo-hive ./cmd/vohive && \
+    go build -mod=readonly -trimpath -buildvcs=false -tags "with_utls nomsgpack" -ldflags "-s -w -X 'github.com/iniwex5/vohive/internal/global.Version=${VERSION}' -X 'github.com/iniwex5/vohive/internal/global.BuildTime=${BUILD_TIME}'" -o vo-hive ./cmd/vohive && \
     if [ "${ENABLE_UPX}" = "1" ] || [ "${ENABLE_UPX}" = "true" ]; then \
       echo "UPX enabled, compressing binary..."; \
       (apk add --no-cache upx >/dev/null 2>&1 || apk add --no-cache upx-ucl >/dev/null 2>&1 || true); \
@@ -73,24 +72,37 @@ RUN --mount=type=cache,target=/root/.cache/go-build,id=gobuild-${TARGETOS}-${TAR
     fi && \
     ls -lh /app/vo-hive
 
-# 运行阶段 (Runtime)
-FROM alpine:latest
+# 运行时基础层
+FROM alpine:latest AS runtime-base
 ARG REVISION=unknown
 WORKDIR /app
 LABEL org.opencontainers.image.revision=${REVISION}
 
-# 运行时依赖
 # - ca-certificates / tzdata: 基础 HTTPS 与时区支持
-RUN apk add --no-cache ca-certificates tzdata
+# - opencore-amr / vo-amrwbenc: AMR 与 AMR-WB 实时编解码
+# - lame-libs: 双向混音录音的 MP3 编码
+RUN apk add --no-cache \
+      ca-certificates \
+      lame-libs \
+      opencore-amr \
+      tzdata \
+      vo-amrwbenc && \
+    test -e /usr/lib/libopencore-amrnb.so.0 && \
+    test -e /usr/lib/libopencore-amrwb.so.0 && \
+    test -e /usr/lib/libvo-amrwbenc.so.0 && \
+    test -e /usr/lib/libmp3lame.so.0
+
+# 管理 HTTP、电话 HTTPS、WebRTC UDP mux
+EXPOSE 7575/tcp 7576/tcp 7580/udp
+
+# 运行阶段 (Runtime)
+FROM runtime-base AS runtime
 
 # 复制二进制文件
 COPY --from=backend-builder /app/vo-hive .
 
 # 创建配置和数据目录
 RUN mkdir -p config data logs
-
-# 暴露端口
-EXPOSE 7575
 
 # 默认配置路径环境变量
 ENV CONFIG_PATH=/app/config/config.yaml
