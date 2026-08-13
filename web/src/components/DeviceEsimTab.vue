@@ -474,7 +474,25 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
+  <div class="esim-workspace space-y-5">
+    <header class="esim-workspace-header">
+      <div>
+        <span>ESIM PROFILES</span>
+        <h2>eSIM 档案管理</h2>
+        <p>查看真实 eUICC 状态、管理档案并安装运营商提供的激活码</p>
+      </div>
+      <div class="esim-workspace-actions">
+        <el-button :loading="profilesRefreshing" @click="fetchOverview(true)" class="ui-glass-border !border-0">
+          <el-icon v-if="shouldShowEsimRefreshIcon(profilesRefreshing)"><ArrowSync24Regular /></el-icon>
+          刷新
+        </el-button>
+        <el-button :loading="notificationsLoading" @click="openNotificationsDialog" class="ui-glass-border !border-0">
+          <el-icon v-if="shouldShowEsimNotificationIcon(notificationsLoading)"><Alert24Regular /></el-icon>
+          当前通知
+        </el-button>
+      </div>
+    </header>
+
     <div v-if="loading" class="space-y-4">
       <div class="ui-panel-muted p-4 relative overflow-hidden esim-loading-hero">
         <div class="flex items-center gap-3">
@@ -506,8 +524,8 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <!-- 芯片信息 -->
-      <div v-if="chipInfo" class="ui-panel-muted p-4 relative">
-      <div class="flex items-center justify-between gap-3 mb-3">
+      <section v-if="chipInfo" class="esim-chip-strip ui-panel-muted p-4 relative">
+      <div class="flex items-center justify-between gap-3">
         <div class="flex items-center gap-3 min-w-0">
           <div class="section-icon section-icon-success text-xs font-bold">
             ESIM
@@ -525,16 +543,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <el-tooltip content="手动刷新" placement="top">
-            <el-button circle text :loading="profilesRefreshing" @click="fetchOverview(true)">
-              <el-icon v-if="shouldShowEsimRefreshIcon(profilesRefreshing)" size="18"><ArrowSync24Regular /></el-icon>
-            </el-button>
-          </el-tooltip>
-          <el-tooltip content="当前通知" placement="top">
-            <el-button circle text :loading="notificationsLoading" @click="openNotificationsDialog">
-              <el-icon v-if="shouldShowEsimNotificationIcon(notificationsLoading)" size="18"><Alert24Regular /></el-icon>
-            </el-button>
-          </el-tooltip>
+          <span class="esim-ready-status"><i aria-hidden="true" />eUICC 就绪</span>
           <el-tooltip :content="showSensitive ? '隐藏敏感信息' : '显示敏感信息'" placement="top">
             <el-button circle text @click="showSensitive = !showSensitive">
               <el-icon size="18">
@@ -545,10 +554,10 @@ onBeforeUnmount(() => {
           </el-tooltip>
         </div>
       </div>
-    </div>
+      </section>
 
       <!-- 按 eUICC 分组的 Profiles -->
-      <div v-for="(group, gi) in profiles" :key="group.aid_hex || group.eid || ('group-' + gi)" class="ui-panel-muted overflow-hidden">
+      <section v-for="(group, gi) in profiles" :key="group.aid_hex || group.eid || ('group-' + gi)" class="esim-profile-group ui-panel-muted overflow-hidden">
       <!-- eUICC 头部 -->
       <div class="px-4 py-3 border-b border-gray-100 dark:border-white/10">
         <div class="flex items-center justify-between">
@@ -605,9 +614,7 @@ onBeforeUnmount(() => {
       </div>
       <div v-else class="divide-y divide-gray-100 dark:divide-white/10">
         <template v-for="p in group.profiles" :key="p.iccid">
-        <div
-          class="px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50 dark:hover:bg-white/5 transition-colors"
-        >
+        <div class="esim-profile-row px-4 py-3 hover:bg-gray-50/50 dark:hover:bg-white/5 transition-colors">
           <div class="min-w-0 flex-1">
             <!-- 正常显示模式 -->
             <template v-if="renaming !== p.iccid">
@@ -642,7 +649,7 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- 操作按钮 -->
-          <div v-if="renaming !== p.iccid" class="flex items-center gap-2 flex-shrink-0">
+          <div v-if="renaming !== p.iccid" class="esim-profile-actions">
             <el-button
               size="small"
               :type="p.state === 1 ? 'warning' : 'success'"
@@ -691,7 +698,7 @@ onBeforeUnmount(() => {
           </div>
         </template>
       </div>
-    </div>
+      </section>
 
       <el-dialog
         v-model="notificationsDialogOpen"
@@ -742,12 +749,15 @@ onBeforeUnmount(() => {
       </el-dialog>
 
       <!-- 下载新 Profile -->
-      <div v-if="chipInfo" class="ui-panel-muted p-4">
+      <section v-if="chipInfo" class="esim-install-panel ui-panel-muted p-4">
       <div class="flex items-center gap-2 mb-3">
         <div class="w-7 h-7 rounded-lg bg-indigo-50 dark:bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
           <el-icon size="16"><Add24Regular /></el-icon>
         </div>
-        <div class="text-sm font-bold text-gray-900 dark:text-white">下载新 Profile</div>
+        <div>
+          <span class="esim-panel-eyebrow">INSTALL PROFILE</span>
+          <div class="text-sm font-bold text-gray-900 dark:text-white">安装新档案</div>
+        </div>
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div class="space-y-1">
@@ -800,7 +810,7 @@ onBeforeUnmount(() => {
           开始下载
         </el-button>
       </div>
-    </div>
+      </section>
 
       <!-- 空状态 -->
       <EmptyState v-if="profiles.length === 0 && !chipInfo" title="未检测到 eUICC" subtitle="此SIM卡可能不支持 eUICC 功能" />
@@ -809,6 +819,94 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.esim-workspace-header {
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.esim-workspace-header > div:first-child > span,
+.esim-panel-eyebrow {
+  color: var(--ui-primary);
+  font: 700 9px "v-mono", ui-monospace, monospace;
+  letter-spacing: .15em;
+}
+
+.esim-workspace-header h2 {
+  margin: 4px 0 0;
+  color: var(--ui-text);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.esim-workspace-header p {
+  margin: 3px 0 0;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+
+.esim-workspace-actions,
+.esim-profile-actions,
+.esim-ready-status {
+  display: flex;
+  align-items: center;
+}
+
+.esim-workspace-actions,
+.esim-profile-actions {
+  gap: 8px;
+}
+
+.esim-workspace-actions :deep(.el-button + .el-button),
+.esim-profile-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.esim-chip-strip {
+  border-color: color-mix(in srgb, var(--ui-primary) 28%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-primary) 6%, var(--ui-surface-muted));
+}
+
+.esim-ready-status {
+  gap: 6px;
+  color: var(--ui-success);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.esim-ready-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.esim-profile-group,
+.esim-install-panel {
+  border-radius: 12px;
+}
+
+.esim-profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.esim-profile-actions {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.esim-install-panel {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--ui-primary) 4%, transparent), transparent 48%),
+    var(--ui-surface-muted);
+}
+
 .esim-loading-hero {
   min-height: 88px;
 }
@@ -873,5 +971,32 @@ onBeforeUnmount(() => {
 @keyframes esim-orbit {
   0%, 100% { transform: scale(1); box-shadow: 0 8px 18px rgba(16, 185, 129, 0.25); }
   50% { transform: scale(1.04); box-shadow: 0 10px 22px rgba(20, 184, 166, 0.35); }
+}
+
+@media (max-width: 720px) {
+  .esim-workspace-header,
+  .esim-profile-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .esim-workspace-actions,
+  .esim-profile-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .esim-profile-actions :deep(.el-button) {
+    flex: 1 1 calc(50% - 4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .esim-orbit,
+  .esim-skeleton-line,
+  .esim-skeleton-shimmer,
+  .esim-dot {
+    animation: none;
+  }
 }
 </style>
