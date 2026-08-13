@@ -4,6 +4,7 @@ import { ArrowDownload24Regular, Code24Regular, Send24Regular, Warning24Regular 
 import { AT_TEMPLATES } from '../constants/atTemplates'
 import { devicesService } from '../services/devices'
 import { formatDeviceTime } from '../utils/deviceTime'
+import { createDeviceRequestScope } from '../utils/deviceRequestScope'
 import StatusLight from './StatusLight.vue'
 
 const props = defineProps<{
@@ -18,6 +19,7 @@ const atTemplate = ref('')
 const atTimeoutMs = ref(10000)
 const atSending = ref(false)
 const atHistory = ref<Array<{ ts: number; cmd: string; ok: boolean; response: string }>>([])
+const requestScope = createDeviceRequestScope(props.deviceId)
 
 const atTemplates = AT_TEMPLATES
 const quickCommands = computed(() => AT_TEMPLATES[0]?.items.slice(0, 4) || [])
@@ -49,16 +51,27 @@ watch(
   }
 )
 
+watch(() => props.deviceId, (deviceId) => {
+  requestScope.invalidate(deviceId)
+  atCmd.value = ''
+  atTemplate.value = ''
+  atSending.value = false
+  atHistory.value = []
+})
+
 async function sendAT() {
   const cmd = String(atCmd.value || '').trim()
   if (!cmd) return
+  const deviceId = props.deviceId
+  const requestToken = requestScope.begin(deviceId)
   atSending.value = true
   atCmd.value = '' // 清空输入框
   try {
-    const result = await devicesService.sendAT(props.deviceId, {
+    const result = await devicesService.sendAT(deviceId, {
       cmd: cmd,
       timeout_ms: atTimeoutMs.value || 10000
     })
+    if (!requestScope.isCurrent(requestToken, props.deviceId)) return
     if (!result.ok) throw new Error(result.error.message || '请求异常')
     atHistory.value.push({
       ts: Date.now(),
@@ -67,6 +80,7 @@ async function sendAT() {
       response: result.data.response
     })
   } catch (e: unknown) {
+    if (!requestScope.isCurrent(requestToken, props.deviceId)) return
     atHistory.value.push({
       ts: Date.now(),
       cmd,
@@ -74,7 +88,9 @@ async function sendAT() {
       response: e instanceof Error ? e.message : '请求异常'
     })
   } finally {
-    atSending.value = false
+    if (requestScope.isCurrent(requestToken, props.deviceId)) {
+      atSending.value = false
+    }
   }
 }
 

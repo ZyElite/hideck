@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ArrowDown24Regular, ArrowUp24Regular, Phone24Regular, Send24Regular } from '@vicons/fluent'
 import { devicesService } from '../services/devices'
 import { formatDeviceTime } from '../utils/deviceTime'
+import { createDeviceRequestScope } from '../utils/deviceRequestScope'
 import StatusLight from './StatusLight.vue'
 
 const props = defineProps<{
@@ -16,6 +17,7 @@ const sending = ref(false)
 const sessionId = ref('')
 const sessionChannel = ref('')
 const history = ref<Array<{ ts: number; type: 'req' | 'res' | 'err' | 'sys'; content: string; dcs?: number; channel?: string }>>([])
+const requestScope = createDeviceRequestScope(props.deviceId)
 
 const isMultiRound = computed(() => !!sessionId.value)
 const inputPlaceholder = computed(() => isMultiRound.value ? '输入菜单选项数字' : '例如 *100# 或菜单回复数字')
@@ -25,9 +27,19 @@ const requestHistory = computed(() => history.value
   .reverse()
   .slice(0, 8))
 
+watch(() => props.deviceId, (deviceId) => {
+  requestScope.invalidate(deviceId)
+  ussdCmd.value = ''
+  sending.value = false
+  history.value = []
+  endSession()
+})
+
 async function sendUSSD() {
   const cmd = String(ussdCmd.value || '').trim()
   if (!cmd) return
+  const deviceId = props.deviceId
+  const requestToken = requestScope.begin(deviceId)
   
   history.value.push({ ts: Date.now(), type: 'req', content: cmd })
   sending.value = true
@@ -38,7 +50,7 @@ async function sendUSSD() {
 
     if (isMultiRound.value) {
       // 多轮模式：通过 continue 接口发送后续输入
-      const result = await devicesService.continueUSSD(props.deviceId, {
+      const result = await devicesService.continueUSSD(deviceId, {
         session_id: sessionId.value,
         input: cmd,
         timeout_ms: ussdTimeoutMs.value || 45000
@@ -47,13 +59,15 @@ async function sendUSSD() {
       d = result.data
     } else {
       // 首轮模式：发起新 USSD 请求
-      const result = await devicesService.sendUSSD(props.deviceId, {
+      const result = await devicesService.sendUSSD(deviceId, {
         command: cmd,
         timeout_ms: ussdTimeoutMs.value || 45000
       }, (ussdTimeoutMs.value || 45000) + 2000)
       if (!result.ok) throw new Error(result.error.message || '请求异常')
       d = result.data
     }
+
+    if (!requestScope.isCurrent(requestToken, props.deviceId)) return
 
     // 更新通道和会话信息
     if (d.channel) sessionChannel.value = d.channel
@@ -92,6 +106,7 @@ async function sendUSSD() {
       }
     }
   } catch (e: unknown) {
+    if (!requestScope.isCurrent(requestToken, props.deviceId)) return
     history.value.push({
       ts: Date.now(),
       type: 'err',
@@ -99,14 +114,20 @@ async function sendUSSD() {
     })
     endSession()
   } finally {
-    sending.value = false
+    if (requestScope.isCurrent(requestToken, props.deviceId)) {
+      sending.value = false
+    }
   }
 }
 
 async function cancelSession() {
   if (!sessionId.value) return
+  const deviceId = props.deviceId
+  const activeSessionId = sessionId.value
+  const requestToken = requestScope.begin(deviceId)
   try {
-    const result = await devicesService.cancelUSSD(props.deviceId, sessionId.value)
+    const result = await devicesService.cancelUSSD(deviceId, activeSessionId)
+    if (!requestScope.isCurrent(requestToken, props.deviceId)) return
     if (!result.ok) throw new Error(result.error.message || '取消会话失败')
     history.value.push({
       ts: Date.now(),
@@ -115,6 +136,7 @@ async function cancelSession() {
     })
     endSession()
   } catch (error: unknown) {
+    if (!requestScope.isCurrent(requestToken, props.deviceId)) return
     history.value.push({
       ts: Date.now(),
       type: 'err',
