@@ -1,7 +1,7 @@
 # HiDeck
 
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm--Noncommercial--1.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0)
-[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](go.mod)
+[![Go](https://img.shields.io/badge/Go-1.26.4%2B-00ADD8?logo=go)](go.mod)
 [![Vue 3](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js)](web/package.json)
 
 HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插拔、移动网络代理、短信、VoWiFi/IMS 通话、eSIM 和自动任务整合在一个响应式 Web 控制台中。
@@ -11,7 +11,17 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 - 默认账号：`admin` / `admin`
 - 数据库：SQLite，默认路径 `data/hideck.db`
 
-> 首次使用默认、明文或弱密码登录后，HiDeck 会提醒立即修改。通过网页修改的密码会以 bcrypt 哈希写回 `config.yaml`。HiDeck 会把免责声明同意状态写入数据库；只要持久化 `data/` 目录，同一实例换浏览器后不会重复提示。
+> 首次使用默认或弱密码登录后，HiDeck 会提示立即修改，可直接在提示页面完成。HiDeck 会把免责声明同意状态写入数据库；只要持久化 `data/` 目录，同一实例换浏览器后不会重复提示。
+
+## 快速导航
+
+- [核心能力](#核心能力)
+- [Docker 快速部署](#docker-快速部署)
+- [配置](#配置)
+- [源码构建](#源码构建)
+- [开发与验证](#开发与验证)
+- [模组硬件](#模组硬件)
+- [使用与许可](#使用与许可)
 
 ## 核心能力
 
@@ -28,7 +38,7 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 
 ## Docker 快速部署
 
-运行环境需要 Linux、Docker Compose、host 网络和 USB 设备访问权限。
+运行环境需要 Linux、curl、Docker Engine、Docker Compose、host 网络和 USB 设备访问权限。
 服务器使用 `docker-compose.yml` 拉取发布镜像；维护者本机的多架构构建使用独立的 `docker-compose.build.yml`。
 
 服务器可直接通过 curl 安装到当前目录下的 `hideck/`：
@@ -43,7 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | sh
 curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | HIDECK_DIR=/opt/hideck sh
 ```
 
-使用公网域名，默认让 HTTPS 和 WebRTC 共用 `443` 端口：
+使用公网域名前，先将域名的 `A` 或 `AAAA` 记录指向服务器，并在防火墙或 NAT 中同时放行 `443/TCP` 和 `443/UDP`。默认让 HTTPS 和 WebRTC 共用 `443` 端口：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
@@ -51,7 +61,7 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
   HIDECK_DIR=/opt/hideck sh
 ```
 
-`HIDECK_DOMAIN` 启用 `docker-compose.caddy.yml`。Caddy 使用 `443/TCP`，WebRTC 使用 `443/UDP`；Caddy 会关闭 HTTP/3，避免占用同一个 UDP 端口。部署脚本会把域名保存到权限为 `0600` 的 `caddy.env`，并让 WebRTC 从同一域名解析公网 ICE 地址；后续直接运行 `deploy.sh` 仍会更新两个容器。
+`HIDECK_DOMAIN` 启用 `docker-compose.caddy.yml`。Caddy 使用 `443/TCP`，WebRTC 使用 `443/UDP`；Caddy 会关闭 HTTP/3，避免占用同一个 UDP 端口。部署脚本会生成权限为 `0600` 的 `caddy.env` 和 `hideck-caddy.env`，并让 WebRTC 从同一域名解析公网 ICE 地址。使用 DNS-01 时，`caddy.env` 还会保存 DNS 服务商凭证。再次传入 `HIDECK_DOMAIN` 会重新生成这两个环境文件。
 
 公网不能使用 `80/443` 时，可以改用自定义端口和 DNS-01。以下示例使用 Cloudflare，在 `8443/TCP` 提供 HTTPS，并在 `8443/UDP` 提供 WebRTC：
 
@@ -66,7 +76,7 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
 
 部署完成后通过 `https://hideck.example.com:8443` 访问。
 
-`deploy.sh` 会下载部署所需的 Compose 和配置模板，在首次运行时生成 `config/config.yaml`，创建持久化目录，拉取 `latest` 并启动容器。已有文件和配置不会被覆盖。在源码项目目录内也可以直接执行 `./deploy.sh`。
+`deploy.sh` 会下载部署所需的 Compose 和配置模板，在首次运行时生成 `config/config.yaml`，创建持久化目录，拉取 `latest` 并启动容器。已有 Compose、Caddy 模板和 `config/config.yaml` 会保留；上文所述的 Caddy 环境文件属于自动生成文件。在源码项目目录内也可以直接执行 `./deploy.sh`。
 
 浏览器打开：
 
@@ -104,6 +114,7 @@ docker compose logs -f hideck
 | `web.password` | `admin` | Web 登录密码，登录后应立即修改 |
 | `system.openwrt_dynamic_interfaces` | `false` | 仅在 OpenWrt 上启用动态接口映射 |
 | `vowifi.enabled` | `false` | 全局 VoWiFi 开关 |
+| `telegram.recording_mode` | `voice` | Telegram 录音展示方式；`voice` 为语音气泡，`audio` 为音频卡片，也可在设置页修改 |
 
 新配置默认关闭内置 HTTPS。使用 Nginx、Caddy 等反向代理时，让代理监听 `443` 并转发到 `server.port` 即可。如需直接使用 HiDeck 的本地证书，将 `server.https_enabled` 改为 `true`，重启后通过 `https://YOUR_IP:7576` 访问。旧配置未包含该字段时会继续启用 HTTPS，以保持升级前的访问方式。
 
@@ -121,7 +132,7 @@ Nginx、Caddy、Lucky 的 IPv4/IPv6 部署、UDP 转发、自动证书、自定�
 
 设置页的“通知”区域把 Telegram Bot、个人微信、企业微信长连接机器人、企业微信 Webhook 和 QQ Bot 分开管理：
 
-- Telegram：通过 `@BotFather` 的 `/newbot` 创建机器人并取得 Bot Token。填写管理员的 Telegram 数字用户 ID；通知 Chat ID 可留空，第一个已授权管理员私聊命令会自动绑定为默认通知目标。Telegram Bot API 使用 Token 接入，不提供机器人扫码注册。
+- Telegram：通过 `@BotFather` 的 `/newbot` 创建机器人并取得 Bot Token。填写管理员的 Telegram 数字用户 ID；通知 Chat ID 可留空，第一个已授权管理员私聊命令会自动绑定为默认通知目标。录音默认显示为语音气泡，也可以在设置页切换为音频卡片。Telegram Bot API 使用 Token 接入，不提供机器人扫码注册。
 - 个人微信：在“个人微信”页签点击“扫码连接”。扫码确认后启用 iLink 通道；第一个合法私聊会成为默认通知目标。
 - 企业微信长连接：在“企微机器人”页签扫码创建机器人，也可以手工填写 Bot ID 和 Secret。第一个合法私聊会自动绑定，群聊不能抢占首次绑定。
 - QQ Bot：在“QQ Bot”页签扫码注册，也可以手工填写 App ID、App Secret 和目标 OpenID。扫码用户会自动成为管理员、私聊白名单和默认通知目标。
@@ -131,9 +142,9 @@ Nginx、Caddy、Lucky 的 IPv4/IPv6 部署、UDP 转发、自动证书、自定�
 
 连接后的人工验证步骤：
 
-1. Telegram 先从管理员私聊发送 `/start`，其他双向渠道发送 `/help`；回复顶部应列出实时设备 ID，后续命令必须使用这里显示的 ID。Telegram 未显式配置 Chat ID 时，设置页刷新后应显示这个私聊的数字 ID。
+1. QQ 扫码确认后应主动收到完整帮助；Telegram、个人微信和企业微信长连接首次收到合法私聊命令时，应先自动返回帮助。帮助顶部应列出实时设备 ID，后续命令必须使用这里显示的 ID。未自动收到时可手动发送 `/help`；Telegram 也支持 `/start`。Telegram 未显式配置 Chat ID 时，设置页刷新后应显示这个私聊的数字 ID。
 2. 发送 `/status <设备ID>`，确认普通文本命令可以双向收发。
-3. 发送 `/vocall <设备ID> <号码> [保持秒数]`。Telegram、个人微信和 QQ 应收到真实 MP3 录音；企业微信对不超过 2 MiB 的 AMR-NB 发送语音，AMR-WB、MP3 或超限录音会按文件发送并说明原因。
+3. 发送 `/vocall <设备ID> <号码> [保持秒数]`。Telegram 应按设置显示语音气泡或音频卡片，个人微信应收到 MP3 文件，QQ 应收到语音消息；企业微信对不超过 2 MiB 的 AMR-NB 发送语音，AMR-WB、MP3 或超限录音会按文件发送并说明原因。
 4. 触发一条短信或来电通知，确认已绑定的默认私聊能够收到通知。
 5. 从不在白名单中的私聊或群聊发送命令，确认请求被拒绝；Telegram、个人微信和企业微信群聊不能用于首次绑定。
 
@@ -143,7 +154,7 @@ Nginx、Caddy、Lucky 的 IPv4/IPv6 部署、UDP 转发、自动证书、自定�
 
 ### 依赖
 
-- Go `1.26.4` 或兼容的 `1.26+` 版本
+- Go `1.26.4+`
 - Node.js 与 npm
 - UPX（使用 Makefile 构建压缩发布包时需要）
 
@@ -157,7 +168,7 @@ make build-armv7
 make build-all
 ```
 
-Makefile 会先安装前端依赖、构建 Vue 应用并同步到 Go 嵌入目录，然后在 `dist/` 中生成 `hideck_*` 二进制。
+Makefile 会先安装前端依赖、构建 Vue 应用并同步到 Go 嵌入目录，然后在 `dist/` 中生成 `hideck_<版本>_linux_<架构>` 二进制。
 
 ### 不使用 UPX 的直接构建
 
@@ -214,65 +225,9 @@ VITE_API_PROXY_TARGET=http://127.0.0.1:7575
 
 生产入口位于 `cmd/hideck`，前端源码位于 `web/`，主要业务模块位于 `internal/`，本地整合的上游源码位于 `third_party/`。
 
-## EC25 与 SIM 检测
+## 模组硬件
 
-EC25 的 USB/QMI 热插拔和实体 SIM 检测是两个独立功能。大疆定制模块实测应关闭实体 SIM 热插拔检测：
-
-```text
-AT+QSIMDET=0,0
-AT+CFUN=1,1
-```
-
-`QSIMDET=0,0` 会关闭基于 `SIM_DET` 引脚的检测。请在模组断电时插好 SIM 后重新上电，也可以在插卡后执行 `AT+CFUN=1,1` 软重启。
-
-重启后通过 AT 端口验证：
-
-```text
-AT+QSIMDET?
-AT+CPIN?
-AT+QCCID
-```
-
-预期 `AT+QSIMDET?` 返回 `+QSIMDET: 0,0`，`AT+CPIN?` 返回 `+CPIN: READY`，并且 `AT+QCCID` 能读取 ICCID。参数说明参见 [Quectel EC25 & EC21 AT Commands Manual](https://quectel.com/content/uploads/2021/03/Quectel_EC25EC21_AT_Commands_Manual_V1.3.pdf)。
-
-### 大疆定制模块恢复为移远 USB 身份
-
-以下步骤仅适用于 USB 当前识别为 `2ca3:4006`、且已经确认底层为移远 EC25 的大疆定制模块。该操作会持久化 USB VID/PID 和接口组合；错误参数可能导致 AT 口或网络接口消失，不要用于其他型号。
-
-```bash
-sudo apt-get update && sudo apt-get install socat -y
-sudo modprobe option
-
-echo 2ca3 4006 | sudo tee /sys/bus/usb-serial/drivers/option1/new_id
-echo 'AT+QCFG="usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,0' | socat - /dev/ttyUSB2,crnl
-echo 'AT+CFUN=1,1' | socat - /dev/ttyUSB2,crnl
-```
-
-等待重新枚举后运行 `lsusb`，预期包含：
-
-```text
-2c7c:0125 Quectel Wireless Solutions Co., Ltd. EC25 LTE modem
-```
-
-如果 `/dev/ttyUSB2` 不存在或不是 AT 口，必须先确认实际端口，不能直接发送持久化配置。当前用户也必须拥有串口读写权限。参数说明参见 [Quectel EC2x/EG2x/EG9x/EM05 QCFG AT Commands Manual](https://quectel.com/content/uploads/2024/02/Quectel_EC2xEG2xEG9xEM05_Series_QCFG_AT_Commands_Manual_V1.0.pdf)。
-
-## AT、QMI 与 MBIM
-
-| 通道 | Linux 常见节点/驱动 | 用途 |
-| --- | --- | --- |
-| AT | `/dev/ttyUSB*`、`/dev/ttyACM*` | 模组配置、诊断、短信和人工命令 |
-| QMI | `/dev/cdc-wdm*` + `qmi_wwan` | 高通模组控制面、SIM、短信和蜂窝数据拨号 |
-| MBIM | `/dev/cdc-wdm*` + `cdc_mbim` | USB-IF 标准化控制面和蜂窝数据拨号 |
-
-同一块模组可以保留 AT 串口，同时把网络控制组合配置为 QMI 或 MBIM。HiDeck 在 QMI 模式管理控制面和数据面；在 MBIM 模式管理网络，短信和人工 AT 命令仍由同一个 AT 调度器串行执行。
-
-MBIM 支持取决于具体硬件和固件的 USB 组合，不能只看产品系列或 `AT+QCFG="usbnet"` 是否接受参数。切换后至少确认：
-
-1. 网卡由 `cdc_mbim` 驱动并出现 `/dev/cdc-wdm*`；
-2. 标准 MBIM `OPEN` 能收到 `OPEN_DONE`；
-3. `DeviceCaps` 能返回当前模组 IMEI。
-
-只出现 `cdc_mbim` 接口不足以证明协议可用。当前测试的大疆定制 EC25 在 `usbnet=2` 时可以枚举 `cdc_mbim`，但标准 `OPEN` 无响应，因此 HiDeck 会拒绝持久化 MBIM 并保留或恢复 QMI 配置。其他型号必须逐台验证。
+EC25 实体 SIM 检测、大疆定制模块 USB 身份恢复，以及 AT、QMI、MBIM 的使用和排查说明见 [模组硬件与协议说明](docs/modem-hardware.md)。
 
 ## 使用与许可
 
