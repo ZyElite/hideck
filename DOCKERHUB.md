@@ -42,6 +42,8 @@ services:
     image: yibaiba/hideck:${HIDECK_TAG:-2.0.0}
     container_name: hideck
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
     network_mode: host
     privileged: true
     volumes:
@@ -52,6 +54,11 @@ services:
     environment:
       TZ: Asia/Shanghai
       CONFIG_PATH: /app/config/config.yaml
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 ```
 
 启动：
