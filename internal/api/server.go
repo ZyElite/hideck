@@ -88,6 +88,7 @@ type Server struct {
 	notifyMgr               *notify.Manager
 	weixinQR                *notify.WeixinQRService
 	wecomQR                 *notify.WeComQRService
+	qqQR                    *notify.QQQRService
 	commandCenter           *commandcenter.Service
 	automaticTasks          automaticTaskService
 	balance                 *balance.Service
@@ -136,6 +137,7 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 		notifyMgr:     notifyMgr,
 		weixinQR:      notify.NewWeixinQRService(notify.WeixinQROptions{}),
 		wecomQR:       notify.NewWeComQRService(notify.WeComQROptions{}),
+		qqQR:          notify.NewQQQRService(notify.QQQROptions{}),
 		proxyRepo:     repo.NewDBRepo(),
 		cardPolicies:  databaseCardPolicyStore{},
 		systemTime:    newOSSystemTimeProvider(),
@@ -354,6 +356,9 @@ func (s *Server) newRouter() *gin.Engine {
 		api.POST("/settings/notifications/wecom-bot/qr/start", s.handleStartWeComQR)
 		api.GET("/settings/notifications/wecom-bot/qr/status", s.handleWeComQRStatus)
 		api.POST("/settings/notifications/wecom-bot/qr/cancel", s.handleCancelWeComQR)
+		api.POST("/settings/notifications/qq/qr/start", s.handleStartQQQR)
+		api.GET("/settings/notifications/qq/qr/status", s.handleQQQRStatus)
+		api.POST("/settings/notifications/qq/qr/cancel", s.handleCancelQQQR)
 		api.POST("/settings/password", s.handleChangePassword) // 修改登录密码
 		api.GET("/system/info", s.handleSystemInfo)            // 获取系统运行与版本信息
 		api.GET("/system/time", s.handleSystemTime)            // 获取设备时间和时区
