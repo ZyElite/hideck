@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,27 @@ type captureChannel struct {
 	mu    sync.Mutex
 	msgs  []string
 	calls []NotificationContext
+}
+
+type blockingChannel struct {
+	started   chan struct{}
+	release   chan struct{}
+	closed    chan struct{}
+	startOnce sync.Once
+	closeOnce sync.Once
+}
+
+func (c *blockingChannel) Name() string { return "blocking" }
+func (c *blockingChannel) Send(string) error {
+	c.startOnce.Do(func() { close(c.started) })
+	<-c.release
+	return nil
+}
+func (c *blockingChannel) RegisterCommand(string, CommandHandler) {}
+func (c *blockingChannel) Start() error                           { return nil }
+func (c *blockingChannel) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
 }
 
 func (c *captureChannel) Name() string { return "capture" }
@@ -159,6 +181,81 @@ func TestManagerNotifyRawKeepsPlainChannelText(t *testing.T) {
 	if got := capture.Last(); got != "plain channel text" {
 		t.Fatalf("plain channel text=%q", got)
 	}
+}
+
+func TestManagerCloseWaitsForInFlightChannelSend(t *testing.T) {
+	channel := &blockingChannel{
+		started: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{}),
+	}
+	manager := &Manager{channels: []Channel{channel}}
+	manager.NotifyRaw("wait for delivery")
+	select {
+	case <-channel.started:
+	case <-time.After(time.Second):
+		t.Fatal("channel send did not start")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		manager.Close()
+		close(closed)
+	}()
+	select {
+	case <-channel.closed:
+		t.Fatal("channel closed before in-flight send completed")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(channel.release)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("manager close did not finish")
+	}
+}
+
+func TestManagerChannelLifecycleConcurrentAccess(t *testing.T) {
+	manager := &Manager{channels: []Channel{&captureChannel{}}}
+	cfg := &config.Config{}
+	var wait sync.WaitGroup
+	wait.Add(3)
+	go func() {
+		defer wait.Done()
+		for i := 0; i < 100; i++ {
+			if err := manager.UpdateConfig(cfg); err != nil {
+				t.Errorf("UpdateConfig() error = %v", err)
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wait.Done()
+		for i := 0; i < 100; i++ {
+			manager.NotifyRaw("concurrent")
+		}
+	}()
+	go func() {
+		defer wait.Done()
+		for i := 0; i < 100; i++ {
+			_ = manager.GetChannelNames()
+		}
+	}()
+	wait.Wait()
+	manager.Close()
+}
+
+func TestManagerUpdateConfigFailureKeepsCurrentChannels(t *testing.T) {
+	capture := &captureChannel{}
+	manager := &Manager{channels: []Channel{capture}}
+	err := manager.UpdateConfig(&config.Config{Weixin: config.WeixinConfig{Enabled: true}})
+	if !errors.Is(err, ErrRuntimeStateStoreUnavailable) {
+		t.Fatalf("UpdateConfig() error = %v", err)
+	}
+	if names := manager.GetChannelNames(); len(names) != 1 || names[0] != "capture" {
+		t.Fatalf("GetChannelNames() = %v", names)
+	}
+	manager.NotifyRaw("still active")
+	waitUntil(t, time.Second, func() bool { return capture.Last() == "still active" })
+	manager.Close()
 }
 
 func TestManagerNotifyIPRotatedUsesPlainTemplate(t *testing.T) {

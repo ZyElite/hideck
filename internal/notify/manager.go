@@ -14,11 +14,14 @@ import (
 // Manager 统一通知管理器
 // 持有多个 Channel 实例，向所有已启用渠道广播通知和命令
 type Manager struct {
-	pool           *device.Pool
-	channels       []Channel // 所有已启用的通知渠道
-	stateStore     RuntimeStateStore
-	commandMu      sync.Mutex
-	commandService *CommandService
+	pool            *device.Pool
+	updateMu        sync.Mutex
+	channelsMu      sync.Mutex
+	channels        []Channel // 所有已启用的通知渠道
+	channelActivity *channelActivity
+	stateStore      RuntimeStateStore
+	commandMu       sync.Mutex
+	commandService  *CommandService
 }
 
 type ManagerOptions struct {
@@ -95,157 +98,6 @@ func (m *Manager) UpdateRuntimeState(update func(*RuntimeState) error) error {
 	return m.stateStore.Update(update)
 }
 
-// initChannels 根据配置创建并启动所有通知渠道
-func (m *Manager) initChannels(cfg *config.Config) error {
-	m.channels = nil
-
-	// Telegram 渠道
-	if cfg.Telegram.Enabled {
-		tg, err := NewTelegramChannel(cfg.Telegram)
-		if err != nil {
-			logger.Error("初始化 Telegram 渠道失败", "err", err)
-			return err
-		}
-		if tg != nil {
-			m.channels = append(m.channels, tg)
-		}
-	}
-
-	// 飞书渠道
-	if cfg.Feishu.Enabled {
-		fs, err := NewFeishuChannel(cfg.Feishu)
-		if err != nil {
-			logger.Error("初始化飞书渠道失败", "err", err)
-			return err
-		}
-		if fs != nil {
-			m.channels = append(m.channels, fs)
-		}
-	}
-
-	// QQ 渠道
-	if cfg.QQ.Enabled {
-		qq, err := NewQQChannel(cfg.QQ)
-		if err != nil {
-			logger.Error("初始化 QQ 渠道失败", "err", err)
-			return err
-		}
-		if qq != nil {
-			m.channels = append(m.channels, qq)
-		}
-	}
-
-	// 个人微信 iLink 渠道
-	if cfg.Weixin.Enabled {
-		weixin, err := NewWeixinChannel(WeixinChannelOptions{Config: cfg.Weixin, StateStore: m.stateStore})
-		if err != nil {
-			logger.Error("初始化个人微信通知渠道失败", "err", err)
-			return err
-		}
-		if weixin != nil {
-			m.channels = append(m.channels, weixin)
-		}
-	}
-
-	// 企业微信智能机器人长连接渠道，与 Webhook 渠道独立并存。
-	if cfg.WeComBot.Enabled {
-		wecomBot, err := NewWeComBotChannel(WeComBotOptions{Config: cfg.WeComBot, StateStore: m.stateStore})
-		if err != nil {
-			logger.Error("初始化企业微信长连接渠道失败", "err", err)
-			return err
-		}
-		if wecomBot != nil {
-			m.channels = append(m.channels, wecomBot)
-		}
-	}
-
-	// Webhook 渠道
-	if cfg.Webhook.Enabled {
-		wh, err := NewWebhookChannel(cfg.Webhook)
-		if err != nil {
-			logger.Error("初始化 Webhook 渠道失败", "err", err)
-			return err
-		}
-		if wh != nil {
-			m.channels = append(m.channels, wh)
-		}
-	}
-
-	// Bark 渠道
-	if cfg.Bark.Enabled {
-		bk, err := NewBarkChannel(cfg.Bark)
-		if err != nil {
-			logger.Error("初始化 Bark 渠道失败", "err", err)
-			return err
-		}
-		if bk != nil {
-			m.channels = append(m.channels, bk)
-		}
-	}
-
-	// Email 渠道
-	if cfg.Email.Enabled {
-		em, err := NewEmailChannel(cfg.Email)
-		if err != nil {
-			logger.Error("初始化 Email 渠道失败", "err", err)
-			return err
-		}
-		if em != nil {
-			m.channels = append(m.channels, em)
-		}
-	}
-
-	// Pushplus 渠道
-	if cfg.Pushplus.Enabled {
-		pp, err := NewPushplusChannel(cfg.Pushplus)
-		if err != nil {
-			logger.Error("初始化 Pushplus 渠道失败", "err", err)
-			return err
-		}
-		if pp != nil {
-			m.channels = append(m.channels, pp)
-		}
-	}
-
-	// 企业微信消息推送渠道
-	if cfg.WeCom.Enabled {
-		wecom, err := NewWeComChannel(cfg.WeCom)
-		if err != nil {
-			logger.Error("初始化企业微信通知渠道失败", "err", err)
-			return err
-		}
-		if wecom != nil {
-			m.channels = append(m.channels, wecom)
-		}
-	}
-
-	// 向所有渠道注册命令
-	m.registerCommands()
-
-	// 启动所有渠道的命令监听
-	for _, ch := range m.channels {
-		ch := ch
-		go func() {
-			if err := ch.Start(); err != nil {
-				logger.Error("通知渠道命令监听失败", "channel", ch.Name(), "err", err)
-			}
-		}()
-	}
-
-	return nil
-}
-
-// registerCommands 向所有已启用渠道注册同一组命令处理器
-func (m *Manager) registerCommands() {
-	commands := m.CommandService().Handlers()
-
-	for _, ch := range m.channels {
-		for cmd, handler := range commands {
-			ch.RegisterCommand(cmd, handler)
-		}
-	}
-}
-
 func (m *Manager) baseCommandHandlers() map[string]CommandHandler {
 	return map[string]CommandHandler{
 		"send":   m.handleCmdSendSMS,
@@ -278,36 +130,19 @@ func (m *Manager) helpDevices() []HelpDevice {
 	if m.pool == nil {
 		return nil
 	}
-	workers := m.pool.GetAllWorkers()
-	devices := make([]HelpDevice, 0, len(workers))
-	for _, worker := range workers {
-		if worker == nil || strings.TrimSpace(worker.ID) == "" {
+	labels := m.pool.WorkerLabels()
+	devices := make([]HelpDevice, 0, len(labels))
+	for _, label := range labels {
+		if strings.TrimSpace(label.ID) == "" {
 			continue
 		}
-		devices = append(devices, HelpDevice{ID: worker.ID, Name: worker.Config.Name})
+		devices = append(devices, HelpDevice{ID: label.ID, Name: label.Name})
 	}
 	return devices
 }
 
 func (m *Manager) SetBalanceCommandHandler(handler CommandHandler) error {
 	return m.CommandService().SetHandler("balance", handler)
-}
-
-// Close 关闭所有通知渠道
-func (m *Manager) Close() {
-	for _, ch := range m.channels {
-		_ = ch.Close()
-	}
-}
-
-// UpdateConfig 重新加载通知配置（热更新）
-func (m *Manager) UpdateConfig(cfg *config.Config) error {
-	// 关闭现有渠道
-	m.Close()
-	m.channels = nil
-
-	// 重新初始化所有渠道
-	return m.initChannels(cfg)
 }
 
 // NotifySMS 实现 device.Notifier 接口 — 收到短信通知
@@ -327,7 +162,7 @@ func (m *Manager) NotifySMSWithSource(deviceID, sender, content, source string, 
 		"event", "sms_received",
 		"sms_device", deviceID,
 		"source", source,
-		"channel_count", len(m.channels))
+		"channel_count", m.channelCount())
 
 	m.broadcastWithContext(NotificationContext{
 		Event:      "sms_received",
@@ -352,10 +187,8 @@ func (m *Manager) NotifyRaw(msg string) {
 // NotifyIPRotated 实现 device.Notifier 接口 — IP 切换通知
 func (m *Manager) NotifyIPRotated(deviceID, oldIP, newIP string, duration time.Duration) {
 	displayName := deviceID
-	if m.pool != nil {
-		if worker := m.pool.GetWorker(deviceID); worker != nil && worker.Config.Name != "" {
-			displayName = fmt.Sprintf("%s (%s)", worker.Config.Name, deviceID)
-		}
+	if name := m.resolveDeviceName(deviceID); name != "" {
+		displayName = fmt.Sprintf("%s (%s)", name, deviceID)
 	}
 	msg := fmt.Sprintf("公网切换 / 完成\n设备    %s\n旧 IP   %s\n新 IP   %s\n耗时    %s", displayName, oldIP, newIP, duration.String())
 	m.broadcastWithContext(NotificationContext{
@@ -369,14 +202,15 @@ func (m *Manager) NotifyIPRotated(deviceID, oldIP, newIP string, duration time.D
 
 // NotifyIncomingCall 实现 voice.CallNotifier 接口 — 来电通知
 func (m *Manager) NotifyIncomingCall(deviceID, caller, callee string) {
-	if len(m.channels) == 0 {
+	channelCount := m.channelCount()
+	if channelCount == 0 {
 		return
 	}
 
 	msg := fmt.Sprintf("来电通知\n设备    %s\n主叫    %s\n被叫    %s",
 		deviceID, caller, callee)
 
-	logger.Info("开始发送来电通知", "device", deviceID, "caller", caller, "channel_count", len(m.channels))
+	logger.Info("开始发送来电通知", "device", deviceID, "caller", caller, "channel_count", channelCount)
 
 	m.broadcastWithContext(NotificationContext{
 		Event:      "incoming_call",
@@ -390,7 +224,7 @@ func (m *Manager) NotifyIncomingCall(deviceID, caller, callee string) {
 // NotifyCallResult publishes the terminal result after the call state machine
 // has classified it. It is intentionally separate from the immediate ring.
 func (m *Manager) NotifyCallResult(deviceID, peer, direction, status, reason string, at time.Time) {
-	if len(m.channels) == 0 {
+	if m.channelCount() == 0 {
 		return
 	}
 	labels := map[string]string{
@@ -415,11 +249,7 @@ func (m *Manager) resolveDeviceName(deviceID string) string {
 	if strings.TrimSpace(deviceID) == "" || m.pool == nil {
 		return ""
 	}
-	worker := m.pool.GetWorker(deviceID)
-	if worker == nil {
-		return ""
-	}
-	return strings.TrimSpace(worker.Config.Name)
+	return strings.TrimSpace(m.pool.WorkerName(deviceID))
 }
 
 func (m *Manager) broadcastWithContext(ctx NotificationContext) {
@@ -434,9 +264,11 @@ func (m *Manager) broadcastWithContext(ctx NotificationContext) {
 		ctx.Event = "notification"
 	}
 
-	for _, ch := range m.channels {
+	channels, activity := m.beginChannelSends()
+	for _, ch := range channels {
 		ch := ch // capture variable
 		go func() {
+			defer activity.sends.Done()
 			if withCtx, ok := ch.(contextualChannel); ok {
 				if err := withCtx.SendWithContext(ctx); err != nil {
 					logger.Warn("通知渠道发送失败", "channel", ch.Name(), "event", ctx.Event, "err", err)
@@ -448,13 +280,4 @@ func (m *Manager) broadcastWithContext(ctx NotificationContext) {
 			}
 		}()
 	}
-}
-
-// GetChannelNames 返回所有已启用渠道的名称列表
-func (m *Manager) GetChannelNames() []string {
-	names := make([]string, 0, len(m.channels))
-	for _, ch := range m.channels {
-		names = append(names, ch.Name())
-	}
-	return names
 }
