@@ -147,6 +147,18 @@ func (m *Manager) initChannels(cfg *config.Config) error {
 		}
 	}
 
+	// 企业微信智能机器人长连接渠道，与 Webhook 渠道独立并存。
+	if cfg.WeComBot.Enabled {
+		wecomBot, err := NewWeComBotChannel(WeComBotOptions{Config: cfg.WeComBot, StateStore: m.stateStore})
+		if err != nil {
+			logger.Error("初始化企业微信长连接渠道失败", "err", err)
+			return err
+		}
+		if wecomBot != nil {
+			m.channels = append(m.channels, wecomBot)
+		}
+	}
+
 	// Webhook 渠道
 	if cfg.Webhook.Enabled {
 		wh, err := NewWebhookChannel(cfg.Webhook)
