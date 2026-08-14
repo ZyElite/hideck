@@ -110,6 +110,67 @@ func TestWeixinChannelRejectsMissingRecordingFile(t *testing.T) {
 	}
 }
 
+func TestWeixinCommandAttachmentFailureDoesNotSendCompletionText(t *testing.T) {
+	var requests []string
+	var provider *httptest.Server
+	provider = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ilink/bot/getuploadurl":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ret": 0, "upload_full_url": provider.URL + "/upload"})
+		case "/upload":
+			w.Header().Set("x-encrypted-param", "encrypted-query")
+		case "/ilink/bot/sendmessage":
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			item := payload["msg"].(map[string]any)["item_list"].([]any)[0].(map[string]any)
+			if item["type"] == float64(weixinItemFile) {
+				requests = append(requests, "file")
+				_, _ = w.Write([]byte(`{"ret":1,"errmsg":"file rejected"}`))
+				return
+			}
+			text := item["text_item"].(map[string]any)["text"].(string)
+			requests = append(requests, text)
+			_, _ = w.Write([]byte(`{"ret":0,"errcode":0}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer provider.Close()
+	channel := newWeixinMediaTestChannel(t, provider)
+	path := filepath.Join(t.TempDir(), "call.mp3")
+	if err := os.WriteFile(path, []byte("ID3-audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commandContext := &weixinCommandContext{channel: channel, target: "user-1", released: true}
+	commandContext.respondAndReport(weixinCommandReply{
+		text: "呼叫完成", attachments: []CommandAttachment{{Path: path, Codec: "MP3"}},
+	})
+	if len(requests) != 2 || requests[0] != "file" || !strings.Contains(requests[1], "录音发送失败") ||
+		strings.Contains(requests[1], "呼叫完成") {
+		t.Fatalf("send requests = %#v", requests)
+	}
+}
+
+func newWeixinMediaTestChannel(t *testing.T, provider *httptest.Server) *WeixinChannel {
+	t.Helper()
+	store := NewFileRuntimeStateStore(filepath.Join(t.TempDir(), "state.json"))
+	state := newRuntimeState()
+	state.Weixin = WeixinRuntimeState{
+		AccountID: "bot-1", Token: "token-1", BaseURL: provider.URL,
+		ContextTokens: map[string]string{"user-1": "context-1"}, DefaultTarget: "user-1",
+	}
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	channel, err := NewWeixinChannel(WeixinChannelOptions{
+		Config: config.WeixinConfig{Enabled: true, CDNBaseURL: provider.URL}, StateStore: store, HTTPClient: provider.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return channel
+}
+
 func TestVoiceRecordingAttachmentCarriesPrivatePathAndMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "call_test.mp3")
 	if err := os.WriteFile(path, []byte("audio"), 0o600); err != nil {

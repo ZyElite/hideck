@@ -100,13 +100,13 @@ func (c *weComCommandContext) respond(ctx context.Context, reply weComCommandRep
 			text += "\n说明    " + plan.note
 		}
 	}
-	if err := c.channel.sendText(ctx, c.target, c.requestID, text); err != nil {
-		return err
-	}
 	for _, media := range uploaded {
 		if err := c.channel.sendUploadedMedia(ctx, c.target, c.requestID, media); err != nil {
 			return fmt.Errorf("发送录音附件失败: %w", err)
 		}
+	}
+	if err := c.channel.sendText(ctx, c.target, c.requestID, text); err != nil {
+		return err
 	}
 	return nil
 }
@@ -114,11 +114,7 @@ func (c *weComCommandContext) respond(ctx context.Context, reply weComCommandRep
 func (c *weComCommandContext) respondAndReport(reply weComCommandReply) {
 	if err := c.respond(context.Background(), reply); err != nil {
 		logger.Warn("回复企业微信长连接录音失败", "err", err)
-		failure := strings.TrimSpace(reply.text)
-		if failure != "" {
-			failure += "\n"
-		}
-		failure += "录音发送失败\n原因    " + err.Error()
+		failure := "录音发送失败\n原因    " + err.Error()
 		if sendErr := c.channel.sendText(context.Background(), c.target, c.requestID, failure); sendErr != nil {
 			logger.Warn("发送企业微信长连接录音失败说明失败", "err", sendErr)
 		}

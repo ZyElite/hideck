@@ -67,6 +67,10 @@ func (c *weixinCommandContext) release() {
 	c.pending = nil
 	c.stateMu.Unlock()
 	for _, reply := range pending {
+		if len(reply.attachments) > 0 {
+			c.respondAndReport(reply)
+			continue
+		}
 		if err := c.respond(context.Background(), reply); err != nil {
 			logger.Warn("回复个人微信命令消息失败", "err", err)
 		}
@@ -76,14 +80,14 @@ func (c *weixinCommandContext) release() {
 func (c *weixinCommandContext) respond(ctx context.Context, reply weixinCommandReply) error {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
-	if strings.TrimSpace(reply.text) != "" {
-		if err := c.channel.sendTo(ctx, c.target, reply.text); err != nil {
-			return err
-		}
-	}
 	for _, attachment := range reply.attachments {
 		if err := c.channel.sendAttachment(ctx, c.target, attachment); err != nil {
 			return fmt.Errorf("发送录音附件失败: %w", err)
+		}
+	}
+	if strings.TrimSpace(reply.text) != "" {
+		if err := c.channel.sendTo(ctx, c.target, reply.text); err != nil {
+			return err
 		}
 	}
 	return nil

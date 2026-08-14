@@ -131,8 +131,8 @@ func TestWeComBotCommandAttachmentUploadsExactChunksAndRepliesWithFile(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	textFrame := receiveWeComTestFrame(t, replies)
 	mediaFrame := receiveWeComTestFrame(t, replies)
+	textFrame := receiveWeComTestFrame(t, replies)
 	closeWeComBotTestChannel(t, channel, startDone)
 
 	digest := fmt.Sprintf("%x", md5.Sum(data))
@@ -147,6 +147,53 @@ func TestWeComBotCommandAttachmentUploadsExactChunksAndRepliesWithFile(t *testin
 	}
 	if frameRequestID(mediaFrame) != "callback-1" || frameBody(mediaFrame)["msgtype"] != "file" {
 		t.Fatalf("media reply = %#v", mediaFrame)
+	}
+}
+
+func TestWeComBotCommandMediaRejectionDoesNotSendCompletionText(t *testing.T) {
+	replies := make(chan map[string]any, 2)
+	provider := newWeComWebSocketServer(t, func(conn *websocket.Conn, _ int) {
+		authenticateWeComTestConnection(t, conn)
+		for {
+			frame, err := readWeComTestFrame(conn)
+			if err != nil {
+				return
+			}
+			switch frameCommand(frame) {
+			case weComCommandUploadInit:
+				respondWeComTestFrame(t, conn, frame, map[string]any{"upload_id": "upload-1"}, 0, "")
+			case weComCommandUploadChunk:
+				ackWeComTestFrame(t, conn, frame)
+			case weComCommandUploadFinish:
+				respondWeComTestFrame(t, conn, frame, map[string]any{"media_id": "media-1", "type": "file"}, 0, "")
+			case weComCommandRespond:
+				replies <- frame
+				if frameBody(frame)["msgtype"] == "file" {
+					respondWeComTestFrame(t, conn, frame, nil, 40058, "media rejected")
+					continue
+				}
+				ackWeComTestFrame(t, conn, frame)
+			}
+		}
+	})
+	defer provider.Close()
+	path := writeWeComMediaTestFile(t, t.TempDir(), "recording.mp3", []byte("ID3-audio"))
+	channel := newWeComBotTestChannel(t, provider, NewFileRuntimeStateStore(filepath.Join(t.TempDir(), "state.json")), nil)
+	startDone := startWeComBotTestChannel(channel)
+	waitUntil(t, time.Second, func() bool { return channel.currentConnection() != nil })
+	commandContext := &weComCommandContext{channel: channel, target: "direct-1", requestID: "callback-1"}
+	commandContext.respondAndReport(weComCommandReply{
+		text: "呼叫完成", attachments: []CommandAttachment{{Path: path, Codec: "MP3"}},
+	})
+	mediaFrame := receiveWeComTestFrame(t, replies)
+	failureFrame := receiveWeComTestFrame(t, replies)
+	closeWeComBotTestChannel(t, channel, startDone)
+	if frameBody(mediaFrame)["msgtype"] != "file" {
+		t.Fatalf("first reply = %#v", mediaFrame)
+	}
+	failure := frameMarkdown(failureFrame)
+	if !strings.Contains(failure, "录音发送失败") || strings.Contains(failure, "呼叫完成") {
+		t.Fatalf("failure reply = %q", failure)
 	}
 }
 
