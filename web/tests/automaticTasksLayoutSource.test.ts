@@ -89,6 +89,18 @@ test('automatic task editor is a guarded right-side management tray', () => {
   assert.match(taskEditor, /min-height: 44px/)
 })
 
+test('automatic task editor exposes device capability loading and failures', () => {
+  assert.match(taskEditor, /const configLoading = ref\(false\)/)
+  assert.match(taskEditor, /const configError = ref\(''\)/)
+  assert.match(taskEditor, /if \(!config\.ok\) \{[\s\S]*configError\.value = config\.error\.message/)
+  assert.match(taskEditor, /设备配置未返回后端类型/)
+  assert.match(taskEditor, /requestID !== configRequest/)
+  assert.match(taskEditor, /class="config-state config-error" role="alert"/)
+  assert.match(taskEditor, /正在读取设备能力/)
+  assert.match(taskEditor, /重新读取/)
+  assert.match(taskEditor, /:disabled="saving \|\| deviceConfigUnavailable"/)
+})
+
 test('automatic task runs use the real paginated polling contract in a timeline tray', () => {
   assert.match(taskRuns, /<el-drawer/)
   assert.match(taskRuns, /direction="rtl"/)

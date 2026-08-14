@@ -39,6 +39,8 @@ const emit = defineEmits<{
 const profileOptions = ref<AutomaticTaskProfileOption[]>([])
 const profilesLoading = ref(false)
 const deviceBackend = ref('')
+const configLoading = ref(false)
+const configError = ref('')
 const formError = ref('')
 const nameInput = ref<{ focus: () => void } | null>(null)
 let profileRequest = 0
@@ -47,9 +49,18 @@ let configRequest = 0
 const form = reactive<AutomaticTaskInput>(defaultAutomaticTaskInput())
 const selectedProfile = ref('')
 const isPCSC = computed(() => deviceBackend.value === 'pcsc')
+const deviceConfigUnavailable = computed(() => Boolean(form.device_id)
+  && (configLoading.value || Boolean(configError.value)))
+const taskControlsDisabled = computed(() => props.saving || deviceConfigUnavailable.value)
 
 watch(() => props.modelValue, (open) => {
-  if (!open) return
+  if (!open) {
+    configRequest++
+    configLoading.value = false
+    configError.value = ''
+    deviceBackend.value = ''
+    return
+  }
   formError.value = ''
   Object.assign(form, props.task ? automaticTaskToInput(props.task) : defaultAutomaticTaskInput())
   if (!form.device_id && props.devices.length) form.device_id = props.devices[0].id
@@ -82,10 +93,22 @@ watch(isPCSC, (pcsc) => {
 async function loadDeviceConfig(deviceID: string) {
   const requestID = ++configRequest
   deviceBackend.value = ''
+  configError.value = ''
+  configLoading.value = Boolean(deviceID)
   if (!deviceID) return
   const config = await devicesService.getConfig(deviceID)
   if (requestID !== configRequest) return
-  if (config.ok) deviceBackend.value = config.data?.device_backend || ''
+  configLoading.value = false
+  if (!config.ok) {
+    configError.value = config.error.message || '设备配置读取失败'
+    return
+  }
+  const backend = config.data?.device_backend
+  if (!backend) {
+    configError.value = '设备配置未返回后端类型'
+    return
+  }
+  deviceBackend.value = backend
 }
 
 async function loadESIMProfiles() {
@@ -138,6 +161,10 @@ function setTaskType(value: string | number | boolean | undefined) {
 
 function submit() {
   if (props.saving) return
+  if (deviceConfigUnavailable.value) {
+    formError.value = configError.value || '正在读取设备配置'
+    return
+  }
   const error = validateAutomaticTaskInput(form)
   if (error) {
     formError.value = error
@@ -228,8 +255,13 @@ function focusNameInput() {
 
       <section class="form-section">
         <header><el-icon><Sim24Regular /></el-icon><div><h3>执行内容</h3><span>任务能力由当前设备后端和任务类型共同决定</span></div></header>
+        <div v-if="configError" class="config-state config-error" role="alert">
+          <span>{{ configError }}</span>
+          <el-button text :disabled="configLoading || saving" @click="loadDeviceConfig(form.device_id)">重新读取</el-button>
+        </div>
+        <div v-else-if="configLoading" class="config-state" role="status">正在读取设备能力</div>
         <el-form-item label="任务类型">
-          <el-radio-group :model-value="form.task_type" :disabled="saving" @update:model-value="setTaskType">
+          <el-radio-group :model-value="form.task_type" :disabled="taskControlsDisabled" @update:model-value="setTaskType">
             <el-radio-button value="sms">短信</el-radio-button>
             <el-radio-button value="call">通话</el-radio-button>
             <el-radio-button value="public_ip" :disabled="isPCSC">公网 IP</el-radio-button>
@@ -237,19 +269,19 @@ function focusNameInput() {
         </el-form-item>
 
         <el-form-item v-if="form.task_type !== 'public_ip'" label="运行环境">
-          <el-radio-group v-model="form.environment" :disabled="saving">
+          <el-radio-group v-model="form.environment" :disabled="taskControlsDisabled">
             <el-radio-button value="vowifi">VoWiFi</el-radio-button>
             <el-radio-button value="cellular" :disabled="isPCSC">蜂窝</el-radio-button>
           </el-radio-group>
         </el-form-item>
 
         <div v-if="form.task_type === 'sms'" class="form-grid">
-          <el-form-item label="接收号码"><el-input v-model="form.payload.phone" maxlength="32" :disabled="saving" /></el-form-item>
-          <el-form-item label="短信内容"><el-input v-model="form.payload.message" maxlength="1000" :disabled="saving" /></el-form-item>
+          <el-form-item label="接收号码"><el-input v-model="form.payload.phone" maxlength="32" :disabled="taskControlsDisabled" /></el-form-item>
+          <el-form-item label="短信内容"><el-input v-model="form.payload.message" maxlength="1000" :disabled="taskControlsDisabled" /></el-form-item>
         </div>
         <div v-if="form.task_type === 'call'" class="form-grid">
-          <el-form-item label="呼叫号码"><el-input v-model="form.payload.phone" maxlength="32" :disabled="saving" /></el-form-item>
-          <el-form-item label="保持时长（秒）"><el-input-number v-model="form.payload.hold_seconds" :min="1" :max="60" :disabled="saving" class="w-full" /></el-form-item>
+          <el-form-item label="呼叫号码"><el-input v-model="form.payload.phone" maxlength="32" :disabled="taskControlsDisabled" /></el-form-item>
+          <el-form-item label="保持时长（秒）"><el-input-number v-model="form.payload.hold_seconds" :min="1" :max="60" :disabled="taskControlsDisabled" class="w-full" /></el-form-item>
         </div>
       </section>
 
@@ -274,7 +306,7 @@ function focusNameInput() {
         <span>{{ task ? '保存后更新现有计划' : '保存后创建新的自动任务' }}</span>
         <div>
           <el-button :disabled="saving" @click="handleOpenChange(false)">取消</el-button>
-          <el-button type="primary" :loading="saving" :disabled="saving" @click="submit"><el-icon v-if="!saving"><Save24Regular /></el-icon>保存任务</el-button>
+          <el-button type="primary" :loading="saving" :disabled="saving || deviceConfigUnavailable" @click="submit"><el-icon v-if="!saving"><Save24Regular /></el-icon>保存任务</el-button>
         </div>
       </div>
     </template>
@@ -293,6 +325,9 @@ function focusNameInput() {
 .editor-header h2 { margin: 4px 0 0; color: var(--ui-text); font-size: 18px; }
 .editor-header :deep(.el-button) { width: 44px; height: 44px; }
 .form-error { margin-bottom: 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--ui-danger) 40%, var(--ui-border)); border-radius: 4px; background: color-mix(in srgb, var(--ui-danger) 7%, transparent); color: var(--ui-danger); font-size: var(--ui-font-body-sm); }
+.config-state { min-height: 44px; margin-bottom: 14px; padding: 8px 10px; border: 1px solid var(--ui-border); border-radius: 4px; background: color-mix(in srgb, var(--ui-primary) 5%, transparent); color: var(--ui-text-muted); display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: var(--ui-font-body-sm); }
+.config-error { border-color: color-mix(in srgb, var(--ui-danger) 40%, var(--ui-border)); background: color-mix(in srgb, var(--ui-danger) 7%, transparent); color: var(--ui-danger); }
+.config-state :deep(.el-button) { flex: 0 0 auto; }
 .form-section { padding: 14px 0 2px; border-bottom: 1px solid var(--ui-border); }
 .form-section:last-child { border-bottom: 0; }
 .form-section > header { margin-bottom: 14px; display: flex; align-items: flex-start; gap: 9px; }
