@@ -91,7 +91,8 @@ const emit = defineEmits<{
 @media (max-width: 640px) {
   .task-detail { padding: 14px 10px calc(92px + env(safe-area-inset-bottom)); display: block; }
   .detail-panel + .detail-panel { margin-top: 10px; }
-  .task-detail > header :deep(.el-button), .task-detail > footer :deep(.el-button) { min-height: 44px; }
+  .task-detail > header :deep(.el-button) { width: 44px; height: 44px; flex: 0 0 44px; }
+  .task-detail > footer :deep(.el-button) { min-height: 44px; }
   .task-detail > footer { grid-template-columns: 1fr; }
 }
 </style>

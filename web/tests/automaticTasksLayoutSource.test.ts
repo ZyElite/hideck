@@ -60,6 +60,8 @@ test('task detail consumes selected API facts and keeps history and editing reac
 test('automatic task workspace uses touch-safe cards and reduced motion', () => {
   assert.match(taskList, /@media \(max-width: 640px\)[\s\S]*\.task-item \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto/)
   assert.match(taskList, /\.task-actions :deep\(\.el-button\) \{ width: 44px; height: 44px; \}/)
+  assert.match(taskList, /\.task-toggle :deep\(\.el-switch\) \{ min-width: 44px; min-height: 44px;/)
+  assert.match(taskDetail, /\.task-detail > header :deep\(\.el-button\) \{ width: 44px; height: 44px; flex: 0 0 44px; \}/)
   assert.match(taskList, /@media \(prefers-reduced-motion: reduce\)/)
   assert.match(view, /task-detail-enter-active[\s\S]*opacity 220ms[\s\S]*transform 220ms/)
   assert.match(view, /task-detail-leave-active[\s\S]*opacity 120ms[\s\S]*transform 120ms/)

@@ -209,6 +209,7 @@ function selectFromKeyboard(event: KeyboardEvent, task: AutomaticTask) {
   .task-identity::before, .task-toggle::before, .task-actions::before { display: none; }
   .task-cell:nth-child(2), .task-cell:nth-child(3), .task-cell:nth-child(4), .task-cell:nth-child(5), .task-cell:nth-child(6) { grid-column: 1; margin-top: 12px; }
   .task-toggle { grid-column: 2; grid-row: 1; align-self: start; }
+  .task-toggle :deep(.el-switch) { min-width: 44px; min-height: 44px; justify-content: center; }
   .task-actions { grid-column: 2; grid-row: 2 / span 5; align-self: end; display: grid; grid-template-columns: 44px 44px; }
   .task-actions :deep(.el-button) { width: 44px; height: 44px; }
   .task-cell b, .task-cell small { white-space: normal; overflow-wrap: anywhere; }
