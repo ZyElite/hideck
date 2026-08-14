@@ -42,12 +42,8 @@ type notificationSettingsResponse struct {
 		TextTemplate string            `json:"text_template"`
 		Headers      map[string]string `json:"headers,omitempty"`
 	} `json:"webhook"`
-	Weixin struct {
-		Enabled        bool     `json:"enabled"`
-		BaseURL        string   `json:"base_url"`
-		AllowedUserIDs []string `json:"allowed_user_ids"`
-	} `json:"weixin"`
-	Bark struct {
+	Weixin weixinNotificationSettings `json:"weixin"`
+	Bark   struct {
 		Enabled bool     `json:"enabled"`
 		URLs    []string `json:"urls"`
 		Group   string   `json:"group"`
@@ -131,6 +127,7 @@ type updateNotificationSettingsRequest struct {
 	} `json:"pushplus"`
 	WeCom    *weComNotificationSettings    `json:"wecom"`
 	WeComBot *weComBotNotificationSettings `json:"wecom_bot"`
+	Weixin   *weixinNotificationSettings   `json:"weixin"`
 }
 
 func (s *Server) handleGetNotificationSettings(c *gin.Context) {
@@ -157,6 +154,7 @@ func (s *Server) handleGetNotificationSettings(c *gin.Context) {
 	resp.Weixin.Enabled = s.fullCfg.Weixin.Enabled
 	resp.Weixin.BaseURL = s.fullCfg.Weixin.BaseURL
 	resp.Weixin.AllowedUserIDs = append([]string(nil), s.fullCfg.Weixin.AllowedUserIDs...)
+	resp.Weixin.AllowedGroupIDs = append([]string(nil), s.fullCfg.Weixin.AllowedGroupIDs...)
 
 	resp.Webhook.Enabled = s.fullCfg.Webhook.Enabled
 	resp.Webhook.URLs = s.fullCfg.Webhook.URLs
@@ -309,6 +307,11 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
+	weixinCfg, err := buildWeixinConfig(req.Weixin, s.fullCfg.Weixin)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+		return
+	}
 
 	if tg.Enabled {
 		if tg.BotToken == "" || tg.ChatID == 0 {
@@ -356,6 +359,7 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	nextConfig.Webhook, nextConfig.Bark = wh, barkCfg
 	nextConfig.Email, nextConfig.Pushplus, nextConfig.WeCom = em, pp, wecomCfg
 	nextConfig.WeComBot = wecomBotCfg
+	nextConfig.Weixin = weixinCfg
 	notificationConfigs := notificationConfigsFrom(&nextConfig)
 	if err := config.UpdateNotificationInFile(s.configPath, notificationConfigs); err != nil {
 		logger.Error("写入通知配置失败", "err", err)
@@ -372,6 +376,7 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	s.fullCfg.Pushplus = pp
 	s.fullCfg.WeCom = wecomCfg
 	s.fullCfg.WeComBot = wecomBotCfg
+	s.fullCfg.Weixin = weixinCfg
 
 	if s.notifyMgr != nil {
 		if err := s.notifyMgr.UpdateConfig(s.fullCfg); err != nil {

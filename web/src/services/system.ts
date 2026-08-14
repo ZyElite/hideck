@@ -57,6 +57,22 @@ export type QQSettings = {
   direct_ids: string
 }
 
+export type WeixinSettings = {
+  enabled: boolean
+  base_url: string
+  allowed_user_ids: string[]
+  allowed_group_ids: string[]
+}
+
+export type WeComBotSettings = {
+  enabled: boolean
+  bot_id: string
+  secret: string
+  websocket_url: string
+  allowed_user_ids: string[]
+  allowed_group_ids: string[]
+}
+
 export type WebhookSettings = {
   enabled: boolean
   urls: string[]
@@ -103,6 +119,8 @@ export type NotificationsSettingsResponse = {
   telegram?: Partial<TelegramSettings>
   feishu?: Partial<FeishuSettings>
   qq?: Partial<QQSettings>
+  weixin?: Partial<WeixinSettings>
+  wecom_bot?: Partial<WeComBotSettings>
   email?: Partial<EmailSettings>
   pushplus?: Partial<PushplusSettings>
   webhook?: Partial<WebhookSettings>
@@ -132,6 +150,8 @@ export type SaveNotificationsPayload = {
     group_ids: string
     direct_ids: string
   }
+  weixin: WeixinSettings
+  wecom_bot: WeComBotSettings
   email: {
     enabled: boolean
     use_ssl: boolean

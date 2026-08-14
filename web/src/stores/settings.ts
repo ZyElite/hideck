@@ -15,6 +15,16 @@ import {
   type TestWeComResponse,
   type WeComSettings
 } from '../services/system'
+import {
+  DEFAULT_WECOM_BOT_FORM,
+  DEFAULT_WEIXIN_FORM,
+  buildWeComBotSettings,
+  buildWeixinSettings,
+  weComBotFormFromSettings,
+  weixinFormFromSettings,
+  type WeComBotForm,
+  type WeixinForm
+} from './notificationChannelForms'
 
 const DEFAULT_SYSTEM_INFO: SystemInfo = {
   version: '',
@@ -182,6 +192,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const telegramForm = ref<TelegramForm>({ ...DEFAULT_TELEGRAM_FORM })
   const feishuForm = ref<FeishuForm>({ ...DEFAULT_FEISHU_FORM })
   const qqForm = ref<QQForm>({ ...DEFAULT_QQ_FORM })
+  const weixinForm = ref<WeixinForm>({ ...DEFAULT_WEIXIN_FORM })
+  const weComBotForm = ref<WeComBotForm>({ ...DEFAULT_WECOM_BOT_FORM })
   const webhookSettings = ref<WebhookSettings>({ ...DEFAULT_WEBHOOK_SETTINGS })
   const barkSettings = ref<BarkSettings>({ ...DEFAULT_BARK_SETTINGS })
   const emailForm = ref<EmailForm>({ ...DEFAULT_EMAIL_FORM })
@@ -220,6 +232,8 @@ export const useSettingsStore = defineStore('settings', () => {
       const tg = result.data.telegram || {}
       const fs = result.data.feishu || {}
       const qq = result.data.qq || {}
+      const weixin = result.data.weixin || {}
+      const weComBot = result.data.wecom_bot || {}
       const webhook = result.data.webhook || {}
       telegramForm.value = {
         enabled: !!tg.enabled,
@@ -242,6 +256,8 @@ export const useSettingsStore = defineStore('settings', () => {
         group_ids: qq.group_ids || '',
         direct_ids: qq.direct_ids || ''
       }
+      weixinForm.value = weixinFormFromSettings(weixin)
+      weComBotForm.value = weComBotFormFromSettings(weComBot)
       webhookSettings.value = {
         enabled: !!webhook.enabled,
         urls: Array.isArray(webhook.urls) ? webhook.urls : [],
@@ -328,6 +344,8 @@ export const useSettingsStore = defineStore('settings', () => {
         group_ids: qqForm.value.group_ids || '',
         direct_ids: qqForm.value.direct_ids || ''
       },
+      weixin: buildWeixinSettings(weixinForm.value),
+      wecom_bot: buildWeComBotSettings(weComBotForm.value),
       email: {
         enabled: !!emailForm.value.enabled,
         use_ssl: !!emailForm.value.use_ssl,
@@ -478,6 +496,8 @@ export const useSettingsStore = defineStore('settings', () => {
     telegramForm,
     feishuForm,
     qqForm,
+    weixinForm,
+    weComBotForm,
     webhookSettings,
     barkSettings,
     emailForm,

@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useSettingsStore } from '../stores/settings'
 import WorkspaceStage from '../components/WorkspaceStage.vue'
 import FieldRow from '../components/FieldRow.vue'
+import QQNotificationTab from '../components/settings/QQNotificationTab.vue'
+import WeComBotNotificationTab from '../components/settings/WeComBotNotificationTab.vue'
+import WeixinNotificationTab from '../components/settings/WeixinNotificationTab.vue'
 import { 
   Key24Regular, 
   Save24Regular,
@@ -17,7 +20,7 @@ import {
 import { formatDeviceDateTime } from '../utils/deviceTime'
 
 const settingsStore = useSettingsStore()
-const { systemInfo, loadingNotifications, savingNotifications, testingWebhook, testingBark, testingEmail, testingWeCom, changingPassword, passwordForm, telegramForm, feishuForm, qqForm, webhookSettings, barkSettings, emailForm, pushplusForm, weComSettings } = storeToRefs(settingsStore)
+const { systemInfo, loadingNotifications, savingNotifications, testingWebhook, testingBark, testingEmail, testingWeCom, changingPassword, passwordForm, telegramForm, feishuForm, qqForm, weixinForm, weComBotForm, webhookSettings, barkSettings, emailForm, pushplusForm, weComSettings } = storeToRefs(settingsStore)
 const activeNotifyTab = ref('telegram')
 const openWRTDynamicInterfaces = ref(false)
 const loadingSystemSettings = ref(false)
@@ -27,6 +30,8 @@ const enabledNotificationCount = computed(() => [
   telegramForm.value.enabled,
   feishuForm.value.enabled,
   qqForm.value.enabled,
+  weixinForm.value.enabled,
+  weComBotForm.value.enabled,
   webhookSettings.value.enabled,
   barkSettings.value.enabled,
   emailForm.value.enabled,
@@ -396,8 +401,6 @@ onMounted(() => {
   loadSystemSettings()
 })
 
-onBeforeUnmount(() => {
-})
 </script>
 
 <template>
@@ -413,7 +416,7 @@ onBeforeUnmount(() => {
       tone="success"
     >
       <div class="workspace-stage-pills">
-        <span class="workspace-stage-pill">通知通道 <strong>{{ enabledNotificationCount }} / 8</strong></span>
+        <span class="workspace-stage-pill">通知通道 <strong>{{ enabledNotificationCount }} / 10</strong></span>
         <span class="workspace-stage-pill">接口映射 <strong>{{ openWRTDynamicInterfaces ? 'OPENWRT' : 'OFF' }}</strong></span>
         <span class="workspace-stage-pill">配置 <strong>{{ systemInfo.config ? 'LOADED' : 'WAITING' }}</strong></span>
       </div>
@@ -553,7 +556,7 @@ onBeforeUnmount(() => {
          </div>
       </section>
 
-      <section class="notify-card p-8">
+      <section class="notify-card p-4 sm:p-6 lg:p-8">
          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
             <div class="flex items-center gap-3">
                <div class="w-12 h-12 rounded-md bg-teal-50 dark:bg-teal-500/10 flex items-center justify-center text-teal-700 dark:text-teal-300">
@@ -561,7 +564,7 @@ onBeforeUnmount(() => {
                </div>
                <div>
                   <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100">通知</h3>
-                  <p class="text-xs text-gray-500">Telegram / 飞书 / QQ / 企业微信 / 更多</p>
+                  <p class="text-xs text-gray-500">个人微信 / 企业微信 / QQ / Webhook / 更多</p>
                </div>
             </div>
             <el-button type="primary" :loading="savingNotifications" :disabled="loadingNotifications" @click="saveNotifications" class="!border-0">
@@ -647,43 +650,16 @@ onBeforeUnmount(() => {
                 </div>
               </el-tab-pane>
 
-              <!-- QQ -->
-              <el-tab-pane label="QQ Bot" name="qq" class="pt-2">
-                <div class="flex items-center justify-between mb-4">
-                  <div class="flex items-center gap-2">
-                    <div class="font-bold text-gray-800 dark:text-gray-100">启用 QQ 机器人</div>
-                  </div>
-                  <el-switch v-model="qqForm.enabled" />
-                </div>
+              <el-tab-pane label="个人微信" name="weixin" class="pt-2">
+                <WeixinNotificationTab />
+              </el-tab-pane>
 
-                <div class="space-y-4">
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div class="space-y-1">
-                      <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">App ID</label>
-                      <el-input v-model="qqForm.app_id" :disabled="!qqForm.enabled" placeholder="QQ Bot App ID" />
-                    </div>
-                    <div class="space-y-1">
-                      <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">App Secret</label>
-                      <el-input v-model="qqForm.app_secret" :disabled="!qqForm.enabled" type="password" show-password placeholder="••••••••" />
-                    </div>
-                  </div>
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div class="space-y-1">
-                      <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">Group IDs (群聊)</label>
-                      <el-input v-model="qqForm.group_ids" :disabled="!qqForm.enabled" placeholder="群聊 OpenID，多个使用逗号分隔" />
-                    </div>
-                    <div class="space-y-1">
-                      <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">User IDs (私聊)</label>
-                      <el-input v-model="qqForm.direct_ids" :disabled="!qqForm.enabled" placeholder="用户 OpenID，多个使用逗号分隔" />
-                    </div>
-                  </div>
-                  <div class="p-3 rounded-md bg-amber-50/50 dark:bg-amber-500/5 text-xs text-amber-700 dark:text-amber-400/80 leading-relaxed border border-amber-100/50 dark:border-amber-500/10">
-                    <ol class="list-decimal ml-4 mt-1 space-y-1">
-                      <li>QQbot申请地址：<a href="https://q.qq.com/qqbot/openclaw/index.html" target="_blank" class="underline hover:text-amber-800">官方控制台</a></li>
-                      <li>向机器人发送消息后，去系统日志查看 OpenID，填入后 Bot 只对匹配的会话进行回复和推送。</li>
-                    </ol>
-                  </div>
-                </div>
+              <el-tab-pane label="企微机器人" name="wecom-bot" class="pt-2">
+                <WeComBotNotificationTab />
+              </el-tab-pane>
+
+              <el-tab-pane label="QQ Bot" name="qq" class="pt-2">
+                <QQNotificationTab />
               </el-tab-pane>
 
                             <!-- Bark -->
@@ -955,7 +931,7 @@ onBeforeUnmount(() => {
               </el-tab-pane>
 
               <!-- 企业微信消息推送 -->
-              <el-tab-pane label="企业微信" name="wecom" class="pt-2">
+              <el-tab-pane label="企微 Webhook" name="wecom" class="pt-2">
                 <div class="flex items-center justify-between gap-3 mb-4">
                   <div class="font-bold text-gray-800 dark:text-gray-100">启用企业微信消息推送</div>
                   <div class="flex items-center gap-2">
@@ -1044,9 +1020,10 @@ onBeforeUnmount(() => {
 :deep(.settings-notify-tabs .el-tabs__header) {
   margin-bottom: 24px;
   background-color: var(--el-fill-color-light);
-  border-radius: 12px;
+  border-radius: 6px;
   border-bottom: none;
-  display: inline-flex;
+  display: block;
+  width: 100%;
   padding: 4px;
 }
 :deep(.settings-notify-tabs .el-tabs__nav-wrap::after) {
@@ -1058,8 +1035,8 @@ onBeforeUnmount(() => {
 :deep(.settings-notify-tabs .el-tabs__item) {
   height: 38px;
   line-height: 38px;
-  padding: 0 20px !important;
-  border-radius: 9px;
+  padding: 0 14px !important;
+  border-radius: 4px;
   margin-right: 4px;
   color: var(--el-text-color-regular);
   transition: background-color 160ms ease, color 160ms ease;
@@ -1122,10 +1099,16 @@ onBeforeUnmount(() => {
 .settings-page .notify-card {
   grid-column: 1 / -1;
   border-top: 1px solid var(--ui-border);
-  background:
-    radial-gradient(circle at 84% 8%, color-mix(in srgb, var(--ui-primary) 7%, transparent), transparent 28%),
-    transparent;
+  background: transparent;
   animation-delay: 80ms;
+}
+
+@media (max-width: 640px) {
+  :deep(.settings-notify-tabs .el-tabs__item) {
+    height: 44px;
+    line-height: 44px;
+    padding: 0 12px !important;
+  }
 }
 
 @keyframes settings-panel-enter {
