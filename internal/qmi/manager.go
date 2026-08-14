@@ -2277,7 +2277,7 @@ func (m *Manager) GetDeviceSnapshot() *qmimanager.DeviceSnapshot {
 // OnSimStatusChanged 注册 SIM 卡状态变化回调（插拔/状态切换时触发）。
 // 供 Pool 层订阅，当 SIM 卡变化时触发 ICCID/IMSI 缓存刷新。
 func (m *Manager) OnSimStatusChanged(handler func()) {
-	if handler == nil {
+	if m == nil || m.qmiMgr == nil || handler == nil {
 		return
 	}
 	m.qmiMgr.OnEvent(func(e qmimanager.Event) {
@@ -2285,6 +2285,14 @@ func (m *Manager) OnSimStatusChanged(handler func()) {
 			handler()
 		}
 	})
+}
+
+// OnNASServingSystemChanged 注册驻网状态变化回调。
+func (m *Manager) OnNASServingSystemChanged(handler func(*qmi.ServingSystem)) {
+	if m == nil || m.qmiMgr == nil || handler == nil {
+		return
+	}
+	m.qmiMgr.OnNASServingSystemChanged(handler)
 }
 
 // GetPrivateIP 获取私有 IP (内网 IP)

@@ -26,6 +26,7 @@ const emit = defineEmits<{
 }>()
 
 const showOperatorSelection = ref(false)
+const QMI_INVALID_SIGNAL_DBM = -128
 
 const trafficStateLabel = computed(() => {
   const status = props.device?.traffic_meta?.status
@@ -46,8 +47,19 @@ const trafficUploadRateDisplay = computed(() => props.trafficSpeedTx || trafficS
 // ---- 蜂窝模式计算属性 ----
 
 function hasValidSignalDbm(dbm: number | null | undefined): dbm is number {
-  return typeof dbm === 'number' && Number.isFinite(dbm) && dbm !== 0 && dbm !== -999
+  return typeof dbm === 'number' && Number.isFinite(dbm) && dbm > QMI_INVALID_SIGNAL_DBM && dbm !== 0
 }
+
+function signalMetricDisplay(value: number | null | undefined): number | '--' {
+  return typeof value === 'number' && Number.isFinite(value) && value !== 0 && value !== -999
+    ? value
+    : '--'
+}
+
+const signalDbmDisplay = computed(() => {
+  const dbm = props.device?.modem?.signal_dbm
+  return hasValidSignalDbm(dbm) ? dbm : '--'
+})
 
 // 0-5 格
 const signalLevel = computed<number>(() => {
@@ -158,18 +170,18 @@ const networkPanelMessage = computed(() => {
             <div>
               <div class="flex items-baseline gap-1">
                 <span class="text-2xl font-extrabold tabular-nums leading-none" :class="signalColorClass">
-                  {{ device?.modem?.signal_dbm ?? '--' }}
+                  {{ signalDbmDisplay }}
                 </span>
                 <span class="text-xs text-gray-400">dBm</span>
               </div>
               <div class="text-xs text-gray-400 mt-1">
-                RSRP {{ device?.modem?.signal_rsrp ?? '--' }}
+                RSRP {{ signalMetricDisplay(device?.modem?.signal_rsrp) }}
                 &nbsp;·&nbsp;
-                RSRQ {{ device?.modem?.signal_rsrq ?? '--' }}
+                RSRQ {{ signalMetricDisplay(device?.modem?.signal_rsrq) }}
                 &nbsp;·&nbsp;
-                SINR {{ device?.modem?.signal_sinr ?? '--' }}
+                SINR {{ signalMetricDisplay(device?.modem?.signal_sinr) }}
                 <template v-if="device?.modem?.nr5g_signal_sinr !== undefined">
-                  &nbsp;·&nbsp;NR5G SINR {{ device?.modem?.nr5g_signal_sinr }}
+                  &nbsp;·&nbsp;NR5G SINR {{ signalMetricDisplay(device?.modem?.nr5g_signal_sinr) }}
                 </template>
               </div>
             </div>

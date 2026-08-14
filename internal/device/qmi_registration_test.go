@@ -441,6 +441,37 @@ func TestEnsureQMIRegistrationRadioCyclesAfterDelayedSearchWindow(t *testing.T) 
 	}
 }
 
+func TestEnsureQMIRegistrationRadioCyclesAfterSearchBecomesNotRegistered(t *testing.T) {
+	servingSeq := []*backend.ServingSystem{
+		{RegStatus: 2, RegStatusText: "搜索中"},
+		{RegStatus: 2, RegStatusText: "搜索中"},
+	}
+	for len(servingSeq) < qmiRegistrationRadioCycleAfterTries {
+		servingSeq = append(servingSeq, &backend.ServingSystem{RegStatus: 0, RegStatusText: "未注册"})
+	}
+	servingSeq = append(servingSeq, &backend.ServingSystem{
+		RegStatus: 5, RegStatusText: "已注册(漫游)", PSAttached: true,
+	})
+	ctrl := &qmiRegistrationTestController{
+		simStatuses: []qmi.SIMStatus{qmi.SIMReady},
+		servingSeq:  servingSeq,
+	}
+
+	err := ensureQMIRegistration(context.Background(), "dev-qmi", config.DeviceConfig{}, ctrl, ctrl, qmiRegistrationOptions{
+		PollInterval: time.Nanosecond,
+		MaxAttempts:  qmiRegistrationRadioCycleAfterTries + 2,
+	})
+	if err != nil {
+		t.Fatalf("ensureQMIRegistration() error = %v", err)
+	}
+	if ctrl.forceNetworkSearchCalls != 1 {
+		t.Fatalf("forceNetworkSearchCalls=%d want 1", ctrl.forceNetworkSearchCalls)
+	}
+	if got, want := ctrl.setModeCalls, []backend.OperatingMode{backend.ModeRFOff, backend.ModeOnline}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("setModeCalls=%v want %v", got, want)
+	}
+}
+
 func TestEnsureQMIRegistrationRadioCyclesSoonerWhenForceNetworkSearchUnsupported(t *testing.T) {
 	ctrl := &qmiRegistrationTestController{
 		simStatuses: []qmi.SIMStatus{qmi.SIMReady},
@@ -645,6 +676,127 @@ func TestQMIRegistrationReconcileAsyncAllowsOnlyOneInFlightPerWorker(t *testing.
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("reconcile calls = %d, want 2 after retry", got)
+	}
+}
+
+func TestRunQMIRegistrationRecoveryRetriesTransientFailures(t *testing.T) {
+	calls := 0
+	delays := make([]time.Duration, 0, 2)
+	err := runQMIRegistrationRecovery(context.Background(), qmiRegistrationRecoveryOptions{
+		InitialRetryDelay: time.Nanosecond,
+		MaxRetryDelay:     4 * time.Nanosecond,
+		Attempt: func(context.Context) error {
+			calls++
+			if calls < 3 {
+				return context.DeadlineExceeded
+			}
+			return nil
+		},
+		OnRetry: func(_ error, delay time.Duration) {
+			delays = append(delays, delay)
+		},
+	})
+	if err != nil {
+		t.Fatalf("runQMIRegistrationRecovery() error=%v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("recovery calls=%d want 3", calls)
+	}
+	wantDelays := []time.Duration{time.Nanosecond, 2 * time.Nanosecond}
+	if len(delays) != len(wantDelays) {
+		t.Fatalf("retry delays=%v want %v", delays, wantDelays)
+	}
+	for i := range delays {
+		if delays[i] != wantDelays[i] {
+			t.Fatalf("retry delays=%v want %v", delays, wantDelays)
+		}
+	}
+}
+
+func TestRunQMIRegistrationRecoveryStopsOnDenied(t *testing.T) {
+	calls := 0
+	retries := 0
+	err := runQMIRegistrationRecovery(context.Background(), qmiRegistrationRecoveryOptions{
+		InitialRetryDelay: time.Nanosecond,
+		MaxRetryDelay:     time.Nanosecond,
+		Attempt: func(context.Context) error {
+			calls++
+			return errQMIRegistrationDenied
+		},
+		OnRetry: func(error, time.Duration) {
+			retries++
+		},
+	})
+	if !errors.Is(err, errQMIRegistrationDenied) {
+		t.Fatalf("runQMIRegistrationRecovery() error=%v want denied", err)
+	}
+	if calls != 1 || retries != 0 {
+		t.Fatalf("calls=%d retries=%d want calls=1 retries=0", calls, retries)
+	}
+}
+
+func TestRunQMIRegistrationRecoveryStopsDuringRetryDelay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	err := runQMIRegistrationRecovery(ctx, qmiRegistrationRecoveryOptions{
+		InitialRetryDelay: time.Hour,
+		MaxRetryDelay:     time.Hour,
+		Attempt: func(context.Context) error {
+			calls++
+			cancel()
+			return context.DeadlineExceeded
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("runQMIRegistrationRecovery() error=%v want canceled", err)
+	}
+	if calls != 1 {
+		t.Fatalf("recovery calls=%d want 1", calls)
+	}
+}
+
+func TestShouldRecoverQMIRegistration(t *testing.T) {
+	cases := []struct {
+		name string
+		info *qmi.ServingSystem
+		want bool
+	}{
+		{name: "nil", info: nil, want: false},
+		{name: "registered attached", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateRegistered, PSAttached: true}, want: false},
+		{name: "roaming attached", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateRoaming, PSAttached: true}, want: false},
+		{name: "registered detached", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateRegistered}, want: true},
+		{name: "searching", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateSearching}, want: true},
+		{name: "not registered", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateNotRegistered}, want: true},
+		{name: "unknown", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateUnknown}, want: true},
+		{name: "denied", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateDenied}, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldRecoverQMIRegistration(tc.info); got != tc.want {
+				t.Fatalf("shouldRecoverQMIRegistration(%v)=%v want %v", tc.info, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShouldUseExtendedQMIRegistrationRecovery(t *testing.T) {
+	cases := []struct {
+		attempt int
+		want    bool
+	}{
+		{attempt: 0, want: false},
+		{attempt: 1, want: false},
+		{attempt: 2, want: false},
+		{attempt: 3, want: true},
+		{attempt: 4, want: true},
+		{attempt: 6, want: true},
+	}
+
+	for _, tc := range cases {
+		if got := shouldUseExtendedQMIRegistrationRecovery(tc.attempt); got != tc.want {
+			t.Fatalf("shouldUseExtendedQMIRegistrationRecovery(%d)=%v want %v", tc.attempt, got, tc.want)
+		}
 	}
 }
 

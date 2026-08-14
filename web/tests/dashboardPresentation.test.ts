@@ -109,6 +109,7 @@ test('formats cellular connection and validates signal sentinels', () => {
   assert.equal(presentation.showsCellularFacts, true)
   assert.equal(formatDashboardSignal(-105), '-105 dBm')
   assert.equal(formatDashboardSignal(0), '不可用')
+  assert.equal(formatDashboardSignal(-128), '不可用')
   assert.equal(formatDashboardSignal(-999), '不可用')
   assert.equal(hasDashboardSignal(-78), true)
   assert.equal(hasDashboardSignal(Number.POSITIVE_INFINITY), false)

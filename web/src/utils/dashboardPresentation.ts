@@ -35,7 +35,9 @@ export type DashboardOperatorSource = Readonly<{
   }>
 }>
 
-const SIGNAL_SENTINELS = new Set([0, -999])
+const QMI_INVALID_SIGNAL_DBM = -128
+const LEGACY_INVALID_SIGNAL_DBM = -999
+const SIGNAL_SENTINELS = new Set([0, QMI_INVALID_SIGNAL_DBM, LEGACY_INVALID_SIGNAL_DBM])
 
 export function hasDashboardSignal(value: unknown): value is number {
   return typeof value === 'number'

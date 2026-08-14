@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/runtimehost"
+	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 	"github.com/yibaiba/hideck/internal/apduarbiter"
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/cardpolicy"
@@ -25,8 +27,6 @@ import (
 	"github.com/yibaiba/hideck/internal/vowifihost"
 	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/yibaiba/hideck/pkg/smscodec"
-	"github.com/iniwex5/vowifi-go/runtimehost"
-	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
 	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
@@ -679,10 +679,10 @@ func (w *Worker) refreshIdentityLive(ctx context.Context, reason string) (liveSI
 	return result, nil
 }
 
-// bindQMIStateIndications 订阅 SIM 卡状态变化事件。
+// bindQMIStateIndications 订阅 SIM 卡与驻网状态变化事件。
 // 切卡场景的身份刷新已收敛到 post_switch_finalize 单路径，这里不再触发补刷新。
 func (p *Pool) bindQMIStateIndications(worker *Worker) {
-	if worker == nil || worker.QMICore == nil {
+	if p == nil || worker == nil || worker.QMICore == nil {
 		return
 	}
 
@@ -695,6 +695,15 @@ func (p *Pool) bindQMIStateIndications(worker *Worker) {
 				logger.Warn("SIM 状态变化后 QMI 网络偏好协调失败", "device", worker.ID, "err", err)
 			}
 		}()
+	})
+
+	worker.QMICore.OnNASServingSystemChanged(func(info *qmi.ServingSystem) {
+		if !shouldRecoverQMIRegistration(info) {
+			return
+		}
+		if worker.StartQMIRegistrationReconcile(p.ctx, "nas_registration_lost") {
+			logger.Info("[事件驱动] QMI 驻网状态需要恢复", "device", worker.ID, "registration_state", info.RegistrationState.String(), "ps_attached", info.PSAttached)
+		}
 	})
 }
 

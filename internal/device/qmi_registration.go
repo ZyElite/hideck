@@ -32,6 +32,9 @@ const (
 	// 运营商切换等），避免 DMS 卡死时长时间占用 goroutine 并制造无意义的超时日志噪音。
 	qmiRegistrationTimeoutBestEffort  = 20 * time.Second
 	cellularRegistrationCancelTimeout = 5 * time.Second
+	qmiRegistrationRetryInitialDelay  = 5 * time.Second
+	qmiRegistrationRetryMaxDelay      = 60 * time.Second
+	qmiRegistrationExtendedAfter      = 3
 )
 
 type registrationReconcileRun struct {
@@ -74,6 +77,13 @@ type qmiRegistrationOptions struct {
 	ShouldAbort        func() bool
 }
 
+type qmiRegistrationRecoveryOptions struct {
+	InitialRetryDelay time.Duration
+	MaxRetryDelay     time.Duration
+	Attempt           func(context.Context) error
+	OnRetry           func(error, time.Duration)
+}
+
 type qmiRegistrationCommand struct {
 	deviceID    string
 	config      config.DeviceConfig
@@ -96,6 +106,72 @@ func normalizeQMIRegistrationOptions(opts qmiRegistrationOptions) qmiRegistratio
 		opts.MaxAttempts = 45
 	}
 	return opts
+}
+
+func normalizeQMIRegistrationRecoveryOptions(opts qmiRegistrationRecoveryOptions) qmiRegistrationRecoveryOptions {
+	if opts.InitialRetryDelay <= 0 {
+		opts.InitialRetryDelay = qmiRegistrationRetryInitialDelay
+	}
+	if opts.MaxRetryDelay <= 0 {
+		opts.MaxRetryDelay = qmiRegistrationRetryMaxDelay
+	}
+	if opts.MaxRetryDelay < opts.InitialRetryDelay {
+		opts.MaxRetryDelay = opts.InitialRetryDelay
+	}
+	return opts
+}
+
+func runQMIRegistrationRecovery(ctx context.Context, opts qmiRegistrationRecoveryOptions) error {
+	if opts.Attempt == nil {
+		return fmt.Errorf("qmi registration recovery attempt unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	opts = normalizeQMIRegistrationRecoveryOptions(opts)
+	retryDelay := opts.InitialRetryDelay
+
+	for {
+		err := opts.Attempt(ctx)
+		if err == nil || errors.Is(err, errQMIRegistrationSkipped) || errors.Is(err, errQMIRegistrationDenied) {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if opts.OnRetry != nil {
+			opts.OnRetry(err, retryDelay)
+		}
+		if err := sleepQMIRegistrationPoll(ctx, retryDelay); err != nil {
+			return err
+		}
+		retryDelay = nextQMIRegistrationRetryDelay(retryDelay, opts.MaxRetryDelay)
+	}
+}
+
+func nextQMIRegistrationRetryDelay(current time.Duration, maximum time.Duration) time.Duration {
+	if current >= maximum || current > maximum/2 {
+		return maximum
+	}
+	return current * 2
+}
+
+func shouldRecoverQMIRegistration(info *qmi.ServingSystem) bool {
+	if info == nil {
+		return false
+	}
+	switch info.RegistrationState {
+	case qmi.RegStateRegistered, qmi.RegStateRoaming:
+		return !info.PSAttached
+	case qmi.RegStateDenied:
+		return false
+	default:
+		return true
+	}
+}
+
+func shouldUseExtendedQMIRegistrationRecovery(attempt int) bool {
+	return attempt >= qmiRegistrationExtendedAfter
 }
 
 func ensureQMIRegistration(ctx context.Context, deviceID string, cfg config.DeviceConfig, sim qmiSIMStatusSource, ctrl qmiRegistrationController, opts qmiRegistrationOptions) error {
@@ -215,22 +291,6 @@ func ensureQMIRegistration(ctx context.Context, deviceID string, cfg config.Devi
 					}
 				}
 			}
-			if shouldRadioCycleForQMIRegistration(attempt, registerIssued, radioCycleIssued, forceNetworkSearchUnsupported, radioRestoredOnline) {
-				if opts.SuppressRadioCycle != nil && opts.SuppressRadioCycle() {
-					logger.Info("QMI 驻网恢复暂缓 radio cycle：运营商扫描进行中", "device", deviceID, "attempt", attempt)
-				} else {
-					radioCycleIssued = true
-					if err := command.radioCycle(ctx, opts.PollInterval); err != nil {
-						if errors.Is(err, errQMIRegistrationSkipped) {
-							return err
-						}
-						logger.Warn("QMI 驻网恢复 radio cycle 失败，继续等待模组自主驻网", "device", deviceID, "err", err)
-					} else {
-						registerIssued = false
-						attachIssued = false
-					}
-				}
-			}
 		case 3:
 			return fmt.Errorf("%w: %s", errQMIRegistrationDenied, ss.RegStatusText)
 		default:
@@ -240,6 +300,24 @@ func ensureQMIRegistration(ctx context.Context, deviceID string, cfg config.Devi
 					return fmt.Errorf("QMI NAS 注册失败: %w", err)
 				}
 				registerIssued = true
+			}
+		}
+
+		isUnregistered := ss.RegStatus != 1 && ss.RegStatus != 5
+		if isUnregistered && shouldRadioCycleForQMIRegistration(attempt, registerIssued, radioCycleIssued, forceNetworkSearchUnsupported, radioRestoredOnline) {
+			if opts.SuppressRadioCycle != nil && opts.SuppressRadioCycle() {
+				logger.Info("QMI 驻网恢复暂缓 radio cycle：运营商扫描进行中", "device", deviceID, "attempt", attempt)
+			} else {
+				radioCycleIssued = true
+				if err := command.radioCycle(ctx, opts.PollInterval); err != nil {
+					if errors.Is(err, errQMIRegistrationSkipped) {
+						return err
+					}
+					logger.Warn("QMI 驻网恢复 radio cycle 失败，继续等待模组自主驻网", "device", deviceID, "err", err)
+				} else {
+					registerIssued = false
+					attachIssued = false
+				}
 			}
 		}
 
@@ -484,10 +562,20 @@ func (w *Worker) StartQMIRegistrationReconcile(ctx context.Context, reason strin
 		return false
 	}
 	return w.startQMIRegistrationReconcile(ctx, reason, func(runCtx context.Context) error {
-		if err := w.ensureQMIRegistration(runCtx, false); err != nil && !errors.Is(err, errQMIRegistrationSkipped) {
-			return err
-		}
-		return nil
+		recoveryAttempt := 0
+		return runQMIRegistrationRecovery(runCtx, qmiRegistrationRecoveryOptions{
+			Attempt: func(attemptCtx context.Context) error {
+				recoveryAttempt++
+				extended := shouldUseExtendedQMIRegistrationRecovery(recoveryAttempt)
+				if extended {
+					logger.Info("QMI 后台驻网协调进入扩展恢复", "device", w.ID, "reason", reason, "recovery_attempt", recoveryAttempt, "timeout", qmiRegistrationTimeoutDataRequired)
+				}
+				return w.ensureQMIRegistration(attemptCtx, extended)
+			},
+			OnRetry: func(err error, delay time.Duration) {
+				logger.Warn("QMI 后台驻网协调未收敛，等待后重试", "device", w.ID, "reason", reason, "retry_in", delay, "err", err)
+			},
+		})
 	})
 }
 
@@ -545,6 +633,10 @@ func (w *Worker) startQMIRegistrationReconcile(ctx context.Context, reason strin
 
 		logger.Debug("QMI 后台驻网协调开始", "device", w.ID, "reason", reason)
 		if err := run(runCtx); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, errQMIRegistrationSkipped) {
+				logger.Debug("QMI 后台驻网协调已停止", "device", w.ID, "reason", reason, "elapsed_ms", time.Since(start).Milliseconds(), "err", err)
+				return
+			}
 			logger.Warn("QMI 后台驻网协调失败", "device", w.ID, "reason", reason, "elapsed_ms", time.Since(start).Milliseconds(), "err", err)
 			return
 		}
