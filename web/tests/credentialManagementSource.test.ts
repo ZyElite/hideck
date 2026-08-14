@@ -14,7 +14,8 @@ test('login surfaces config and environment password remediation', () => {
   assert.match(login, /status\.management === 'environment'/)
   assert.match(login, /PROXY_WEB_PASSWORD/)
   assert.match(login, /\/settings\?focus=password/)
-  assert.match(login, /bcrypt/)
+  assert.match(login, /当前密码仍是初始明文凭证或强度不足。建议立即修改。/)
+  assert.doesNotMatch(login, /bcrypt|config\.yaml/)
 })
 
 test('settings disables ineffective changes for environment managed passwords', () => {

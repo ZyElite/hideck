@@ -48,7 +48,7 @@ async function shouldOpenPasswordSettings(status: PasswordCredentialStatus): Pro
   }
   try {
     await ElMessageBox.confirm(
-      '当前密码仍是初始明文凭证或强度不足。建议立即修改；新密码会以 bcrypt 哈希写入 config.yaml。',
+      '当前密码仍是初始明文凭证或强度不足。建议立即修改。',
       '请修改登录密码',
       { confirmButtonText: '立即修改', cancelButtonText: '稍后处理', closeOnClickModal: false, type: 'warning' }
     )
