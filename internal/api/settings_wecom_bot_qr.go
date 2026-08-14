@@ -44,6 +44,8 @@ func (s *Server) handleWeComQRStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "session_id 不能为空"})
 		return
 	}
+	s.wecomQRMu.Lock()
+	defer s.wecomQRMu.Unlock()
 	view, err := s.wecomQR.Status(c.Request.Context(), sessionID)
 	if errors.Is(err, notify.ErrWeComQRSessionNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": err.Error()})
@@ -55,8 +57,15 @@ func (s *Server) handleWeComQRStatus(c *gin.Context) {
 	}
 	if view.Status == notify.WeComQRConfirmed && !view.Applied {
 		warning := s.applyWeComQRCredentials(view.Credentials)
-		_ = s.wecomQR.MarkApplied(sessionID, warning)
-		view, _ = s.wecomQR.Status(c.Request.Context(), sessionID)
+		if err := s.wecomQR.MarkApplied(sessionID, warning); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": err.Error()})
+			return
+		}
+		view, err = s.wecomQR.Status(c.Request.Context(), sessionID)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": err.Error()})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, buildWeComQRResponse(view))
 }
@@ -67,6 +76,8 @@ func (s *Server) handleCancelWeComQR(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "session_id 不能为空"})
 		return
 	}
+	s.wecomQRMu.Lock()
+	defer s.wecomQRMu.Unlock()
 	if err := s.wecomQR.Cancel(request.SessionID); errors.Is(err, notify.ErrWeComQRSessionNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": err.Error()})
 		return

@@ -123,8 +123,11 @@ func (s *WeixinQRService) Status(ctx context.Context, sessionID string) (WeixinQ
 	session.mu.Lock()
 	if session.terminal() {
 		view := session.viewLocked()
+		remove := session.status != WeixinQRConfirmed || session.applied || strings.TrimSpace(session.applyWarning) != ""
 		session.mu.Unlock()
-		s.removeSession(sessionID, session)
+		if remove {
+			s.removeSession(sessionID, session)
+		}
 		return view, nil
 	}
 	if !s.now().Before(session.expiresAt) {

@@ -52,6 +52,10 @@ func TestWeComQRServiceConfirmsHermesCompatibleScan(t *testing.T) {
 	if confirmed.Credentials.BotID != "bot-1" || confirmed.Credentials.Secret != "private-secret" {
 		t.Fatalf("credentials = %+v", confirmed.Credentials)
 	}
+	repeated, err := service.Status(context.Background(), started.SessionID)
+	if err != nil || repeated.Status != WeComQRConfirmed || repeated.Credentials.Secret != "private-secret" {
+		t.Fatalf("repeated confirmed Status() = %+v, %v", repeated, err)
+	}
 	if err := service.MarkApplied(started.SessionID, ""); err != nil {
 		t.Fatal(err)
 	}

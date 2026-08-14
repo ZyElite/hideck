@@ -45,6 +45,8 @@ func (s *Server) handleQQQRStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "session_id 不能为空"})
 		return
 	}
+	s.qqQRMu.Lock()
+	defer s.qqQRMu.Unlock()
 	view, err := s.qqQR.Status(c.Request.Context(), sessionID)
 	if errors.Is(err, notify.ErrQQQRSessionNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": err.Error()})
@@ -56,8 +58,15 @@ func (s *Server) handleQQQRStatus(c *gin.Context) {
 	}
 	if view.Status == notify.QQQRConfirmed && !view.Applied {
 		warning := s.applyQQQRCredentials(view.Credentials)
-		_ = s.qqQR.MarkApplied(sessionID, warning)
-		view, _ = s.qqQR.Status(c.Request.Context(), sessionID)
+		if err := s.qqQR.MarkApplied(sessionID, warning); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": err.Error()})
+			return
+		}
+		view, err = s.qqQR.Status(c.Request.Context(), sessionID)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": err.Error()})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, buildQQQRResponse(view))
 }
@@ -68,6 +77,8 @@ func (s *Server) handleCancelQQQR(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "session_id 不能为空"})
 		return
 	}
+	s.qqQRMu.Lock()
+	defer s.qqQRMu.Unlock()
 	if err := s.qqQR.Cancel(request.SessionID); errors.Is(err, notify.ErrQQQRSessionNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": err.Error()})
 		return

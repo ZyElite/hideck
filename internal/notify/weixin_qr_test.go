@@ -59,6 +59,10 @@ func TestWeixinQRServiceScansAndConfirms(t *testing.T) {
 	if confirmed.Credentials.AccountID != "bot-1" || confirmed.Credentials.Token != "secret-token" {
 		t.Fatalf("credentials = %+v", confirmed.Credentials)
 	}
+	repeated, err := service.Status(context.Background(), started.SessionID)
+	if err != nil || repeated.Status != WeixinQRConfirmed || repeated.Credentials.Token != "secret-token" {
+		t.Fatalf("repeated confirmed Status() = %+v, %v", repeated, err)
+	}
 	if err := service.MarkApplied(started.SessionID, "保存失败"); err != nil {
 		t.Fatal(err)
 	}

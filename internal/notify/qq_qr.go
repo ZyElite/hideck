@@ -129,8 +129,11 @@ func (s *QQQRService) Status(ctx context.Context, sessionID string) (QQQRView, e
 	session.mu.Lock()
 	if session.terminal() {
 		view := session.viewLocked()
+		remove := session.status != QQQRConfirmed || session.applied || strings.TrimSpace(session.applyWarning) != ""
 		session.mu.Unlock()
-		s.removeSession(sessionID, session)
+		if remove {
+			s.removeSession(sessionID, session)
+		}
 		return view, nil
 	}
 	if !s.now().Before(session.expiresAt) {

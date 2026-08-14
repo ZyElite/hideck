@@ -75,6 +75,10 @@ func TestQQQRServiceCompletesAndDecryptsCredentials(t *testing.T) {
 		confirmed.Credentials.UserOpenID != "openid-1" {
 		t.Fatalf("credentials = %+v", confirmed.Credentials)
 	}
+	repeated, err := service.Status(context.Background(), started.SessionID)
+	if err != nil || repeated.Status != QQQRConfirmed || repeated.Credentials.ClientSecret != "client-secret" {
+		t.Fatalf("repeated confirmed Status() = %+v, %v", repeated, err)
+	}
 	if err := service.MarkApplied(started.SessionID, ""); err != nil {
 		t.Fatal(err)
 	}

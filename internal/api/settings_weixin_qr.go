@@ -61,6 +61,8 @@ func (s *Server) handleWeixinQRStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "session_id 不能为空"})
 		return
 	}
+	s.weixinQRMu.Lock()
+	defer s.weixinQRMu.Unlock()
 	view, err := s.weixinQR.Status(c.Request.Context(), sessionID)
 	if errors.Is(err, notify.ErrWeixinQRSessionNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": err.Error()})
@@ -72,8 +74,15 @@ func (s *Server) handleWeixinQRStatus(c *gin.Context) {
 	}
 	if view.Status == notify.WeixinQRConfirmed && !view.Applied {
 		warning := s.applyWeixinQRCredentials(view.Credentials)
-		_ = s.weixinQR.MarkApplied(sessionID, warning)
-		view, _ = s.weixinQR.Status(c.Request.Context(), sessionID)
+		if err := s.weixinQR.MarkApplied(sessionID, warning); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": err.Error()})
+			return
+		}
+		view, err = s.weixinQR.Status(c.Request.Context(), sessionID)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": err.Error()})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, buildWeixinQRResponse(view))
 }
@@ -84,6 +93,8 @@ func (s *Server) handleCancelWeixinQR(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "session_id 不能为空"})
 		return
 	}
+	s.weixinQRMu.Lock()
+	defer s.weixinQRMu.Unlock()
 	if err := s.weixinQR.Cancel(request.SessionID); errors.Is(err, notify.ErrWeixinQRSessionNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": err.Error()})
 		return
