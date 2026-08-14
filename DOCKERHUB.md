@@ -75,24 +75,18 @@ Web 入口：`http://YOUR_IP:7575`
 
 ## 维护者发布
 
-使用本机已登录 Docker Hub 的 Buildx，一次生成 amd64、arm64 和多架构 manifest：
+本机使用独立的 `docker-compose.build.yml` 调用 Buildx，一次生成 amd64、arm64 和多架构 manifest。服务器部署仍只使用 `docker-compose.yml`，不会在服务器编译源码。
 
 ```bash
-VERSION=2.0.0
-REVISION="$(git rev-parse HEAD)"
-BUILDTIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+export HIDECK_VERSION=2.0.0
+export HIDECK_MINOR_VERSION=2.0
+export HIDECK_REVISION="$(git rev-parse HEAD)"
+export HIDECK_BUILDTIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  --build-arg "VERSION=v${VERSION}" \
-  --build-arg "REVISION=${REVISION}" \
-  --build-arg "BUILDTIME=${BUILDTIME}" \
-  --tag "yibaiba/hideck:${VERSION}" \
-  --tag "yibaiba/hideck:2.0" \
-  --tag "yibaiba/hideck:latest" \
-  --push .
+docker compose -f docker-compose.build.yml build --check
+docker compose -f docker-compose.build.yml build --push
 
-docker buildx imagetools inspect "yibaiba/hideck:${VERSION}"
+docker buildx imagetools inspect "yibaiba/hideck:${HIDECK_VERSION}"
 ```
 
 正式发布必须从干净、已提交的源码快照构建，确保镜像标签可以追溯到 `REVISION`。
