@@ -33,6 +33,7 @@ import (
 	"github.com/yibaiba/hideck/internal/phone"
 	"github.com/yibaiba/hideck/internal/proxy/server"
 	proxytraffic "github.com/yibaiba/hideck/internal/proxy/traffic"
+	"github.com/yibaiba/hideck/internal/updater"
 	vwebsheet "github.com/yibaiba/hideck/internal/websheet"
 	"github.com/yibaiba/hideck/pkg/smscodec"
 
@@ -69,6 +70,8 @@ type loginAttempt struct {
 	ResetAt time.Time
 }
 
+const updateCheckTimeout = 10 * time.Second
+
 // Server 是 API 服务器的核心结构
 type Server struct {
 	cfg                     config.ServerConfig // HTTP 服务器配置
@@ -102,6 +105,7 @@ type Server struct {
 	disclaimerAcceptances   disclaimerAcceptanceStore
 	systemTime              systemTimeProvider
 	backendSwitch           deviceBackendSwitcher
+	updateChecker           systemUpdateChecker
 
 	httpSrvMu sync.Mutex
 	httpSrv   *http.Server
@@ -151,7 +155,14 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 		disclaimerAcceptances: db.NewDisclaimerAcceptanceStore(db.DB),
 		systemTime:            newOSSystemTimeProvider(),
 		websheets:             vwebsheet.New(vwebsheet.Config{BasePath: "/api/websheets"}),
-		loginAttempts:         make(map[string]loginAttempt),
+		updateChecker: updater.NewChecker(
+			&http.Client{Timeout: updateCheckTimeout},
+			updater.CheckerOptions{
+				CurrentVersion: global.Version,
+				IsDocker:       updater.DetectDockerEnvironment(),
+			},
+		),
+		loginAttempts: make(map[string]loginAttempt),
 		smsLimiter: newSMSRateLimiterWithConfig(
 			time.Now(), time.Now, cfg.Server.SMSRateLimitDisabled,
 		),

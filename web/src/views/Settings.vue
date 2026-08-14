@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useSettingsStore } from '../stores/settings'
@@ -366,7 +366,6 @@ watch(() => emailForm.value.smtp_port, (newPort) => {
 import { systemService, type UpdateInfo } from '../services/system'
 
 const checkingUpdate = ref(false)
-const applyingUpdate = ref(false)
 const updateInfo = ref<UpdateInfo | null>(null)
 
 async function doCheckUpdate() {
@@ -385,38 +384,24 @@ async function doCheckUpdate() {
   }
 }
 
-async function doApplyUpdate() {
-  if (!updateInfo.value) return
+function showUpdateInstructions() {
+  const info = updateInfo.value
+  if (!info) return
 
-  if (updateInfo.value.is_docker) {
-    ElMessageBox.alert(
-      '检测到当前系统运行在 Docker 环境下。<br><br>不建议在 Docker 容器内直接执行文件热替换。请直接拉取明确版本镜像（如 <code>docker pull yibaiba/hideck:&lt;tag&gt;</code>）并重启容器来完成升级！',
-      '环境警告',
-      { dangerouslyUseHTMLString: true, type: 'warning' }
-    )
-    return
-  }
-
-  try {
-    await ElMessageBox.confirm(
-      `最新版本：${updateInfo.value.latest_version}，确定要现在更新并重启服务吗？<br><br><pre style="white-space: pre-wrap; font-size: 12px; max-height: 200px; overflow-y: auto; background: var(--el-fill-color-light); padding: 8px; border-radius: 4px; margin-top: 8px;">${updateInfo.value.release_note}</pre>`,
-      '应用更新',
-      { dangerouslyUseHTMLString: true, confirmButtonText: '立即更新', cancelButtonText: '取消', type: 'warning' }
-    )
-    applyingUpdate.value = true
-    const res = await systemService.applyUpdate()
-    if (!res.ok) throw new Error(res.error.message || '请求应用更新失败')
-    ElMessage.success(res.data?.message || '正在更新...')
-    setTimeout(() => {
-      window.location.reload()
-    }, 5000)
-  } catch (e: any) {
-    if (e !== 'cancel') {
-      ElMessage.error(e.message || '应用更新失败')
-    }
-  } finally {
-    applyingUpdate.value = false
-  }
+  const instructions = info.is_docker
+    ? 'docker compose pull\ndocker compose up -d'
+    : '请按当前安装方式重新部署对应版本；本程序不会在运行中覆盖自身文件。'
+  const content = h('div', { class: 'space-y-3 text-sm leading-6' }, [
+    h('p', `当前版本：${info.current_version}，最新版本：${info.latest_version}`),
+    h('p', info.release_note),
+    h('pre', {
+      class: 'overflow-x-auto rounded-lg border border-[var(--el-border-color)] bg-[var(--el-fill-color-light)] p-3 text-xs whitespace-pre-wrap'
+    }, instructions)
+  ])
+  ElMessageBox.alert(content, info.is_docker ? 'Docker 更新方法' : '更新方法', {
+    confirmButtonText: '知道了',
+    type: 'warning'
+  })
 }
 
 onMounted(() => {
@@ -536,8 +521,8 @@ onMounted(() => {
                <div class="text-xs text-amber-700 dark:text-amber-300/80 mb-4 whitespace-pre-wrap max-h-32 overflow-y-auto pr-2 custom-scrollbar">
                  {{ updateInfo.release_note || '暂无更新说明' }}
                </div>
-               <el-button type="warning" :loading="applyingUpdate" @click="doApplyUpdate" class="w-full !border-0">
-                 立即更新并重启
+               <el-button type="warning" @click="showUpdateInstructions" class="w-full !border-0">
+                 {{ updateInfo.is_docker ? '查看 Docker 更新方法' : '查看更新方法' }}
                </el-button>
             </div>
             <div class="p-3 bg-gray-50 dark:bg-white/5 rounded-lg">

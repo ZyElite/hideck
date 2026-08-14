@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -14,6 +15,10 @@ import (
 )
 
 var errNotFound = errors.New("not found")
+
+type systemUpdateChecker interface {
+	CheckUpdate(ctx context.Context) (*updater.UpdateInfo, error)
+}
 
 // resolveUninstallTargets 计算自毁流程需要清理的数据目录和配置文件路径。
 // 配置文件路径必须来自运行时实际加载的路径（config.GetConfigPath()），
@@ -45,10 +50,14 @@ func detectServiceStopCommands(lookPath func(string) (string, error), statFile f
 
 // handleCheckUpdate 检查系统更新
 func (s *Server) handleCheckUpdate(c *gin.Context) {
-	info, err := updater.CheckUpdate()
+	if s.updateChecker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "更新检查器未初始化"})
+		return
+	}
+	info, err := s.updateChecker.CheckUpdate(c.Request.Context())
 	if err != nil {
 		logger.Error("检查系统更新失败", "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, info)

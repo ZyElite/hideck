@@ -1,19 +1,32 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/updater"
 )
+
+type updateCheckerStub struct {
+	info *updater.UpdateInfo
+	err  error
+}
+
+func (stub updateCheckerStub) CheckUpdate(context.Context) (*updater.UpdateInfo, error) {
+	return stub.info, stub.err
+}
 
 // resolveUninstallTargets 必须使用运行时实际加载的配置文件路径，
 // 而不是硬编码相对路径 "config"——后者在 OpenWrt 部署下（通过 -c 传入
@@ -137,6 +150,47 @@ func TestHandleApplyUpdateReportsDisabled(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("code=%d body=%s, want 409 when updater is disabled", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleCheckUpdateReturnsInjectedCheckerResult(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := &Server{
+		auth: config.WebConfig{Username: "admin", Password: "secret"},
+		updateChecker: updateCheckerStub{info: &updater.UpdateInfo{
+			HasUpdate:   true,
+			CurrentVer:  "2.0.0",
+			LatestVer:   "2.1.0",
+			ReleaseNote: "Docker Hub 已发布 HiDeck 2.1.0",
+			IsDocker:    true,
+		}},
+	}
+	router := s.newRouter()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/system/update/check", nil)
+	request.Header.Set("Authorization", "Bearer "+testSessionToken(t, "secret", time.Now().Add(time.Hour)))
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, `"latest_version":"2.1.0"`) || !strings.Contains(body, `"is_docker":true`) {
+		t.Fatalf("body=%s, want injected Docker update result", body)
+	}
+}
+
+func TestHandleCheckUpdateExposesUpstreamFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := &Server{updateChecker: updateCheckerStub{err: errors.New("Docker Hub unavailable")}}
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/system/update/check", nil)
+
+	s.handleCheckUpdate(context)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("code=%d body=%s, want 502", recorder.Code, recorder.Body.String())
 	}
 }
 
