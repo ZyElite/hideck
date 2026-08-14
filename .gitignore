@@ -27,6 +27,7 @@
 .vscode/
 .agent/
 .shared/
+.mission/
 *.swp
 *.swo
 *~
