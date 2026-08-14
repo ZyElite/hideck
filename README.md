@@ -34,11 +34,10 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 ```bash
 git clone https://github.com/yibaiba/hideck.git
 cd hideck
-
-cp config/config.example.yaml config/config.yaml
-mkdir -p data logs
-docker compose up -d
+./deploy.sh
 ```
+
+`deploy.sh` 会在首次运行时从示例生成 `config/config.yaml`，创建持久化目录，拉取 `latest` 并启动容器。已有配置不会被覆盖。
 
 浏览器打开：
 
