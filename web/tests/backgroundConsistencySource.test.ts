@@ -57,6 +57,12 @@ test('SMS and command content let the workspace glow remain visible', () => {
   assert.match(commands, /\.commands-layout :deep\(\.balance-rail\) \{[^}]*transparent/)
 })
 
+test('settings stage stacks its statistics from the available content width', () => {
+  assert.match(settings, /\.settings-workspace-shell\s*\{[^}]*container-type: inline-size;/s)
+  assert.match(settings, /@container \(max-width: 980px\)[\s\S]*grid-template-columns: minmax\(0, 1fr\)/)
+  assert.match(settings, /\.settings-workspace-stage :deep\(\.workspace-stage-aside\)[^}]*border-left: 0;/s)
+})
+
 test('route-specific shells do not hardcode their own app canvas backgrounds', () => {
   assert.doesNotMatch(sms, /\.sms-page\s*\{[^}]*background:/s)
   assert.doesNotMatch(commands, /\.commands-page\s*\{[^}]*background:/s)

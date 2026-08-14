@@ -980,6 +980,7 @@ onBeforeUnmount(() => {
 .settings-workspace-shell {
   min-width: 0;
   overflow: hidden;
+  container-type: inline-size;
   animation: settings-panel-enter 240ms var(--ui-ease-out) both;
 }
 
@@ -1037,6 +1038,22 @@ onBeforeUnmount(() => {
   .settings-security-card {
     border-right: 0;
     border-bottom: 1px solid var(--ui-border);
+  }
+}
+
+@container (max-width: 980px) {
+  .settings-workspace-stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-workspace-stage :deep(.workspace-stage-aside) {
+    padding: 12px 24px 16px;
+    border-top: 1px solid var(--ui-border);
+    border-left: 0;
+  }
+
+  .settings-workspace-stage :deep(.workspace-stage-stats) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
