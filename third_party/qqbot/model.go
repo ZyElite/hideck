@@ -11,6 +11,7 @@ type MessageKind string
 const (
 	PlainText MessageKind = "text"
 	Markdown  MessageKind = "markdown"
+	Voice     MessageKind = "voice"
 )
 
 type RecipientKind string
@@ -33,10 +34,12 @@ type ReplyContext struct {
 }
 
 type Delivery struct {
-	To    Recipient
-	Kind  MessageKind
-	Body  string
-	Reply *ReplyContext
+	To        Recipient
+	Kind      MessageKind
+	Body      string
+	MediaPath string
+	FileName  string
+	Reply     *ReplyContext
 }
 
 type Receipt struct {

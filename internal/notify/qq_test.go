@@ -2,6 +2,8 @@ package notify
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	qqbot "github.com/iniwex5/qqbot"
@@ -97,6 +99,58 @@ func TestQQChannelRegisterCommandBlocksUnallowed(t *testing.T) {
 	}
 	if len(conv.replies) != 0 {
 		t.Fatalf("expected no reply for unallowed recipient, got %d", len(conv.replies))
+	}
+}
+
+func TestQQChannelCommandSendsVoiceAttachmentBeforeCompletionText(t *testing.T) {
+	t.Parallel()
+	app := &fakeQQApp{}
+	channel := &QQChannel{
+		app: app,
+		allowedRecipients: map[string]qqbot.Recipient{
+			"direct:user-1": {Kind: qqbot.DirectRecipient, ID: "user-1"},
+		},
+	}
+	channel.RegisterCommand("vocall", func(commandContext CommandContext, _ []string) string {
+		rich := commandContext.(interface {
+			ReplyWithAttachments(string, []CommandAttachment)
+		})
+		rich.ReplyWithAttachments("呼叫完成", []CommandAttachment{{
+			Type: "audio", Recording: "call.mp3", Path: "/recordings/call.mp3", Codec: "MP3",
+		}})
+		return ""
+	})
+	conversation := &fakeConversation{incoming: qqbot.Incoming{
+		ID: "msg-voice", To: qqbot.Recipient{Kind: qqbot.DirectRecipient, ID: "user-1"},
+	}}
+	if err := app.commands["vocall"](context.Background(), conversation, qqbot.ParsedCommand{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(conversation.deliveries) != 1 {
+		t.Fatalf("deliveries = %+v", conversation.deliveries)
+	}
+	delivery := conversation.deliveries[0]
+	if delivery.Kind != qqbot.Voice || delivery.MediaPath != "/recordings/call.mp3" || delivery.FileName != "call.mp3" {
+		t.Fatalf("voice delivery = %+v", delivery)
+	}
+	if len(conversation.replies) != 1 || conversation.replies[0] != "呼叫完成" {
+		t.Fatalf("replies = %v", conversation.replies)
+	}
+}
+
+func TestQQCommandVoiceFailureDoesNotSendCompletionText(t *testing.T) {
+	t.Parallel()
+	conversation := &fakeConversation{respondErr: errors.New("upload rejected")}
+	commandContext := &qqCommandContext{conversation: conversation, released: true}
+	commandContext.respondAndReport(qqCommandReply{
+		text: "呼叫完成",
+		attachments: []CommandAttachment{{
+			Type: "audio", Recording: "call.mp3", Path: "/recordings/call.mp3", Codec: "MP3",
+		}},
+	})
+	if len(conversation.replies) != 1 || !strings.Contains(conversation.replies[0], "录音发送失败") ||
+		strings.Contains(conversation.replies[0], "呼叫完成") {
+		t.Fatalf("replies = %v", conversation.replies)
 	}
 }
 
@@ -197,9 +251,12 @@ func (f *fakeQQApp) Close() error {
 }
 
 type fakeConversation struct {
-	incoming qqbot.Incoming
-	replies  []string
-	err      error
+	incoming   qqbot.Incoming
+	replies    []string
+	deliveries []qqbot.Delivery
+	err        error
+	respondErr error
+	textErr    error
 }
 
 func (f *fakeConversation) Incoming() qqbot.Incoming {
@@ -207,14 +264,23 @@ func (f *fakeConversation) Incoming() qqbot.Incoming {
 }
 
 func (f *fakeConversation) Respond(ctx context.Context, delivery qqbot.Delivery) (qqbot.Receipt, error) {
+	if f.respondErr != nil {
+		return qqbot.Receipt{}, f.respondErr
+	}
 	if f.err != nil {
 		return qqbot.Receipt{}, f.err
 	}
-	f.replies = append(f.replies, delivery.Body)
+	f.deliveries = append(f.deliveries, delivery)
+	if delivery.Body != "" {
+		f.replies = append(f.replies, delivery.Body)
+	}
 	return qqbot.Receipt{ID: "reply"}, nil
 }
 
 func (f *fakeConversation) RespondText(ctx context.Context, text string) (qqbot.Receipt, error) {
+	if f.textErr != nil {
+		return qqbot.Receipt{}, f.textErr
+	}
 	if f.err != nil {
 		return qqbot.Receipt{}, f.err
 	}

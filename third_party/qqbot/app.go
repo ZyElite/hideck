@@ -94,6 +94,9 @@ func New(settings Settings, opts ...Option) (*App, error) {
 }
 
 func (a *App) Send(ctx context.Context, delivery Delivery) (Receipt, error) {
+	if delivery.Kind == Voice {
+		return a.sendVoice(ctx, delivery)
+	}
 	request, err := a.encodeDelivery(delivery)
 	if err != nil {
 		return Receipt{}, err
