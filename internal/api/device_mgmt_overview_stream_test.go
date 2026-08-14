@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yibaiba/hideck/internal/modem"
 	proxytraffic "github.com/yibaiba/hideck/internal/proxy/traffic"
 )
 
@@ -105,6 +106,34 @@ func TestOverviewStreamEmitVersionTracksRuntimeBusinessState(t *testing.T) {
 	appeared := newOverviewStreamEmitVersion(baseItem)
 	if shouldSkipOverviewStatePush(&empty, appeared) {
 		t.Fatal("state push was skipped when runtime state appeared")
+	}
+}
+
+func TestOverviewStreamEmitVersionTracksIdentityAndPhone(t *testing.T) {
+	base := newOverviewStreamEmitVersion(deviceMgmtOverviewLiteItem{
+		LocalPhone: "+447700900123",
+		Modem: modem.DeviceStatus{
+			ICCID: "8944000000000000001",
+			IMSI:  "234150000000001",
+		},
+	})
+
+	tests := []struct {
+		name string
+		item deviceMgmtOverviewLiteItem
+	}{
+		{name: "phone changed", item: deviceMgmtOverviewLiteItem{Modem: modem.DeviceStatus{ICCID: "8944000000000000001", IMSI: "234150000000001"}}},
+		{name: "iccid changed", item: deviceMgmtOverviewLiteItem{LocalPhone: "+447700900123", Modem: modem.DeviceStatus{ICCID: "8944000000000000002", IMSI: "234150000000001"}}},
+		{name: "imsi changed", item: deviceMgmtOverviewLiteItem{LocalPhone: "+447700900123", Modem: modem.DeviceStatus{ICCID: "8944000000000000001", IMSI: "234150000000002"}}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			curr := newOverviewStreamEmitVersion(tc.item)
+			if shouldSkipOverviewStatePush(&base, curr) {
+				t.Fatal("state push was skipped despite identity or phone change")
+			}
+		})
 	}
 }
 

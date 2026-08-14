@@ -648,6 +648,9 @@ type overviewStreamEmitVersion struct {
 	VoWiFiActive    bool
 	LifecyclePhase  string
 	LifecycleReason string
+	LocalPhone      string
+	ICCID           string
+	IMSI            string
 	HasRuntime      bool
 	Phase           string
 	SIMReady        bool
@@ -663,6 +666,9 @@ func newOverviewStreamEmitVersion(item deviceMgmtOverviewLiteItem) overviewStrea
 		VoWiFiActive:    item.VoWiFiActive,
 		LifecyclePhase:  item.LifecyclePhase,
 		LifecycleReason: item.LifecycleReason,
+		LocalPhone:      strings.TrimSpace(item.LocalPhone),
+		ICCID:           strings.TrimSpace(item.Modem.ICCID),
+		IMSI:            strings.TrimSpace(item.Modem.IMSI),
 	}
 	if item.VoWiFiRuntime != nil {
 		v.HasRuntime = true
