@@ -4,7 +4,7 @@ export const phoneStatusLabels: Record<string, string> = {
   calling: '呼叫中',
   ringing: '响铃中',
   connected: '通话中',
-  completed: '已接通',
+  completed: '已结束',
   missed: '未接',
   rejected: '已拒接',
   busy: '忙线',
@@ -13,6 +13,16 @@ export const phoneStatusLabels: Record<string, string> = {
 
 export function phoneStatusLabel(status: string) {
   return phoneStatusLabels[status] || status
+}
+
+export function phoneCallStatusLabel(call: Readonly<PhoneCall>, ending = false) {
+  return ending ? '挂断中' : phoneStatusLabel(call.status)
+}
+
+export function phoneRecordStatusLabel(record: Readonly<PhoneRecord>) {
+  if (record.end_reason === 'local_hangup') return '已挂断'
+  if (record.end_reason === 'remote_bye') return '对方已挂断'
+  return phoneStatusLabel(record.status)
 }
 
 export function formatCallDuration(call: PhoneCall, now = Date.now()) {

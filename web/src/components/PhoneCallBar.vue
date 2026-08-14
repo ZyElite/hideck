@@ -10,12 +10,13 @@ import {
   Speaker224Regular
 } from '@vicons/fluent'
 import { usePhoneStore } from '../stores/phone'
-import { formatCallDuration, phoneErrorMessage, phoneStatusLabel } from '../utils/phone'
+import { formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
 
 const router = useRouter()
 const phone = usePhoneStore()
 const ending = ref(false)
 const call = computed(() => phone.currentCall)
+const callEnding = computed(() => call.value ? phone.isCallEnding(call.value.call_id) : false)
 const canControl = computed(() => !!call.value
   && !call.value.read_only
   && !(call.value.direction === 'inbound' && call.value.status === 'ringing'))
@@ -40,7 +41,7 @@ async function hangup() {
       <span class="call-pulse" aria-hidden="true" />
       <span class="call-copy">
         <strong>{{ call.peer || '未知号码' }}</strong>
-        <small>{{ phone.mediaMode === 'listen-only' ? '仅听 · ' : '' }}{{ phoneStatusLabel(call.status) }} · {{ formatCallDuration(call, phone.now) }}</small>
+        <small>{{ phone.mediaMode === 'listen-only' ? '仅听 · ' : '' }}{{ phoneCallStatusLabel(call, callEnding) }} · {{ formatCallDuration(call, phone.now) }}</small>
       </span>
       <span v-if="call.read_only" class="read-only-tag">只读</span>
     </button>
@@ -67,8 +68,8 @@ async function hangup() {
         v-if="canControl"
         type="button"
         class="call-action is-danger"
-        :disabled="ending"
-        aria-label="挂断电话"
+        :disabled="ending || callEnding"
+        :aria-label="ending || callEnding ? '正在挂断电话' : '挂断电话'"
         @click="hangup"
       >
         <el-icon><CallEnd24Regular /></el-icon>

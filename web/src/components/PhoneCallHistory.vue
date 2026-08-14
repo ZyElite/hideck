@@ -9,7 +9,7 @@ import {
 } from '@vicons/fluent'
 import type { PhoneRecord } from '../services/phone'
 import { usePhoneStore } from '../stores/phone'
-import { formatCallTime, formatRecordDuration, phoneStatusLabel } from '../utils/phone'
+import { formatCallTime, formatRecordDuration, phoneRecordStatusLabel } from '../utils/phone'
 
 defineProps<{ records: PhoneRecord[] }>()
 
@@ -86,7 +86,7 @@ onUnmounted(() => {
             <time>{{ formatCallTime(record.started_at) }}</time>
           </div>
           <div class="history-secondary">
-            <span :class="`status-${record.status}`">{{ phoneStatusLabel(record.status) }}</span>
+            <span :class="`status-${record.status}`">{{ phoneRecordStatusLabel(record) }}</span>
             <span>{{ formatRecordDuration(record) }}</span>
             <span>{{ record.device_id }}</span>
           </div>

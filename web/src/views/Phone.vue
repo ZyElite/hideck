@@ -17,7 +17,7 @@ import PhoneCallHistory from '../components/PhoneCallHistory.vue'
 import PhoneDialPad from '../components/PhoneDialPad.vue'
 import type { PhoneCall, PhoneDevice } from '../services/phone'
 import { usePhoneStore } from '../stores/phone'
-import { formatCallDuration, phoneErrorMessage, phoneStatusLabel } from '../utils/phone'
+import { formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
 
 const DEFAULT_HTTPS_PORT = '7576'
 const CALLEE_PATTERN = /^\+?[0-9]{1,32}$/
@@ -30,6 +30,7 @@ const keypadVisible = ref(false)
 const lastDTMF = ref('')
 
 const call = computed(() => phone.currentCall)
+const callEnding = computed(() => call.value ? phone.isCallEnding(call.value.call_id) : false)
 const connected = computed(() => call.value?.status === 'connected')
 const incoming = computed(() => call.value?.direction === 'inbound'
   && call.value.status === 'ringing'
@@ -133,7 +134,7 @@ function rejectCall(current: PhoneCall) {
 }
 
 function hangup(current: PhoneCall) {
-  return runAction('挂断', () => phone.hangup(current))
+  return runAction('挂断', () => phone.hangup(current), '已发送挂断请求')
 }
 
 function takeOver(current: PhoneCall) {
@@ -216,7 +217,7 @@ async function sendDTMF(digit: string) {
           <div class="call-identity">
             <span>{{ call.direction === 'inbound' ? 'INCOMING' : 'OUTGOING' }}</span>
             <strong>{{ call.peer || '未知号码' }}</strong>
-            <p>{{ phoneStatusLabel(call.status) }} · {{ formatCallDuration(call, phone.now) }}</p>
+            <p>{{ phoneCallStatusLabel(call, callEnding) }} · {{ formatCallDuration(call, phone.now) }}</p>
           </div>
 
           <dl class="call-meta">
@@ -267,7 +268,7 @@ async function sendDTMF(digit: string) {
               <button
                 type="button"
                 class="restore-button"
-                :disabled="!!action"
+                :disabled="!!action || callEnding"
                 @click="enableListenOnlyMedia"
               >
                 <el-icon><Speaker224Regular /></el-icon>在 15 秒内恢复仅听
@@ -275,7 +276,7 @@ async function sendDTMF(digit: string) {
               <button
                 type="button"
                 class="restore-button"
-                :disabled="!!action || !phone.secureContext"
+                :disabled="!!action || callEnding || !phone.secureContext"
                 @click="enableMedia"
               >
                 <el-icon><Mic24Regular /></el-icon>恢复双向语音
@@ -290,7 +291,7 @@ async function sendDTMF(digit: string) {
               <button
                 type="button"
                 class="secondary-button"
-                :disabled="!!action || !phone.secureContext"
+                :disabled="!!action || callEnding || !phone.secureContext"
                 @click="enableMedia"
               >
                 <el-icon><Mic24Regular /></el-icon>{{ phone.secureContext ? '启用麦克风' : 'HTTPS 下可启用麦克风' }}
@@ -299,14 +300,14 @@ async function sendDTMF(digit: string) {
 
             <div v-if="connected && keypadVisible" class="active-keypad">
               <p aria-live="polite">发送 DTMF{{ lastDTMF ? `：${lastDTMF}` : '' }}</p>
-              <PhoneDialPad :disabled="!!action" @digit="appendDigit" />
+              <PhoneDialPad :disabled="!!action || callEnding" @digit="appendDigit" />
             </div>
 
             <div class="call-controls" aria-label="通话控制">
               <button
                 type="button"
                 class="control-button"
-                :disabled="!phone.mediaReady || phone.mediaMode !== 'two-way'"
+                :disabled="callEnding || !phone.mediaReady || phone.mediaMode !== 'two-way'"
                 :aria-pressed="phone.muted"
                 @click="phone.toggleMute"
               >
@@ -320,14 +321,14 @@ async function sendDTMF(digit: string) {
               <button
                 type="button"
                 class="control-button"
-                :disabled="!connected"
+                :disabled="callEnding || !connected"
                 :aria-pressed="keypadVisible"
                 @click="keypadVisible = !keypadVisible"
               >
                 <el-icon><Dialpad24Regular /></el-icon><span>键盘</span>
               </button>
-              <button type="button" class="control-button is-hangup" :disabled="!!action" @click="hangup(call)">
-                <el-icon><CallEnd24Regular /></el-icon><span>挂断</span>
+              <button type="button" class="control-button is-hangup" :disabled="!!action || callEnding" @click="hangup(call)">
+                <el-icon><CallEnd24Regular /></el-icon><span>{{ action === '挂断' || callEnding ? '挂断中…' : '挂断' }}</span>
               </button>
             </div>
           </template>

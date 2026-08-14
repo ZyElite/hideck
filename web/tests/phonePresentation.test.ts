@@ -49,10 +49,23 @@ test('phone view exposes explicit listen-only and microphone call actions withou
   assert.match(phoneStore, /mediaMode = 'listen-only'/)
   assert.match(phoneView, /取消静音/)
   assert.match(phoneView, />键盘</)
-  assert.match(phoneView, />挂断</)
+  assert.match(phoneView, /@click="hangup\(call\)"/)
+  assert.match(phoneView, /'挂断中…' : '挂断'/)
   assert.match(phoneView, /sendDTMF\(digit\)/)
   assert.match(phoneView, /<PhoneCallHistory/)
   assert.match(callBar, /aria-live="polite"/)
+})
+
+test('hangup feedback stays pending until the real call-ended event arrives', () => {
+  assert.match(phoneStore, /endingCallIds: string\[\]/)
+  assert.match(phoneStore, /isCallEnding\(state\)/)
+  assert.match(phoneStore, /await phoneService\.hangup\(target\.call_id, this\.lease\)/)
+  assert.match(phoneStore, /this\.clearEndingCall\(target\.call_id\)/)
+  assert.match(phoneStore, /event\.type === 'call_ended'[\s\S]*this\.clearEndingCall\(event\.call\.call_id\)/)
+  assert.match(phoneView, /phoneCallStatusLabel\(call, callEnding\)/)
+  assert.match(phoneView, /已发送挂断请求/)
+  assert.match(callBar, /phoneCallStatusLabel\(call, callEnding\)/)
+  assert.match(callBar, /正在挂断电话/)
 })
 
 test('phone device picker uses the themed select without changing availability rules', () => {

@@ -17,6 +17,7 @@ type PhoneState = {
   loading: boolean
   devices: PhoneDevice[]
   calls: PhoneCall[]
+  endingCallIds: string[]
   history: PhoneRecord[]
   mediaId: string
   lease: string
@@ -40,6 +41,7 @@ export const usePhoneStore = defineStore('phone', {
     loading: false,
     devices: [],
     calls: [],
+    endingCallIds: [],
     history: [],
     mediaId: '',
     lease: '',
@@ -58,6 +60,9 @@ export const usePhoneStore = defineStore('phone', {
         || state.calls.find((call) => !call.read_only)
         || state.calls.find((call) => call.status === 'ringing')
         || state.calls[0]
+    },
+    isCallEnding(state) {
+      return (callId: string) => state.endingCallIds.includes(callId)
     },
     mediaReady(state) {
       return state.mediaState === 'connecting' || state.mediaState === 'connected'
@@ -101,6 +106,7 @@ export const usePhoneStore = defineStore('phone', {
       mediaController = null
       this.mediaState = 'idle'
       this.mediaMode = 'none'
+      this.endingCallIds = []
       this.initialized = false
     },
 
@@ -110,6 +116,7 @@ export const usePhoneStore = defineStore('phone', {
       ])
       this.devices = devices
       this.calls = calls
+      this.endingCallIds = this.endingCallIds.filter((callId) => calls.some((call) => call.call_id === callId))
       this.history = history
     },
 
@@ -212,8 +219,14 @@ export const usePhoneStore = defineStore('phone', {
 
     async hangup(call?: PhoneCall) {
       const target = call || this.currentCall
-      if (!target) return
-      await phoneService.hangup(target.call_id, this.lease)
+      if (!target || this.isCallEnding(target.call_id)) return
+      this.endingCallIds = [...this.endingCallIds, target.call_id]
+      try {
+        await phoneService.hangup(target.call_id, this.lease)
+      } catch (error) {
+        this.clearEndingCall(target.call_id)
+        throw error
+      }
     },
 
     async sendDTMF(digit: string) {
@@ -230,6 +243,10 @@ export const usePhoneStore = defineStore('phone', {
 
     clearError() {
       this.error = ''
+    },
+
+    clearEndingCall(callId: string) {
+      this.endingCallIds = this.endingCallIds.filter((value) => value !== callId)
     },
 
     async recordingURL(name: string) {
@@ -299,6 +316,7 @@ export const usePhoneStore = defineStore('phone', {
       if (ACTIVE_STATUSES.has(event.call.status)) this.upsertCall(event.call)
       else this.calls = this.calls.filter((call) => call.call_id !== event.call.call_id)
       if (event.type === 'call_ended') {
+        this.clearEndingCall(event.call.call_id)
         if (event.call.media_id === this.mediaId) this.releaseMedia()
         void this.reloadHistory()
       } else if (event.type === 'recording_ready' || event.type === 'recording_failed') {

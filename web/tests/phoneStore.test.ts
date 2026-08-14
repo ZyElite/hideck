@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createPinia, setActivePinia } from 'pinia'
-import { phoneService, type PhoneCall, type PhoneEvent } from '../src/services/phone'
+import { phoneService, type PhoneCall, type PhoneEvent, type PhoneRecord } from '../src/services/phone'
 import { usePhoneStore } from '../src/stores/phone'
-import { normalizeCallOwnership, phoneErrorMessage, shouldRefreshCallMedia } from '../src/utils/phone'
+import {
+  normalizeCallOwnership,
+  phoneCallStatusLabel,
+  phoneErrorMessage,
+  phoneRecordStatusLabel,
+  shouldRefreshCallMedia
+} from '../src/utils/phone'
 
 function call(mediaId: string, overrides: Partial<PhoneCall> = {}): PhoneCall {
   return {
@@ -135,6 +141,86 @@ test('surfaces API error messages without hiding the underlying failure', () => 
   const error = { response: { data: { message: 'phone: media session is unavailable' } } }
   assert.equal(phoneErrorMessage(error, 'fallback'), 'phone: media session is unavailable')
   assert.equal(phoneErrorMessage(new Error('network down'), 'fallback'), 'network down')
+})
+
+test('keeps a call pending until its real ended event and prevents duplicate hangups', async () => {
+  const originalHangup = phoneService.hangup
+  let requests = 0
+  phoneService.hangup = async () => { requests += 1 }
+
+  try {
+    setActivePinia(createPinia())
+    const store = usePhoneStore()
+    const active = call('media-1')
+    store.calls = [active]
+    store.mediaId = 'media-1'
+    store.lease = 'lease-1'
+    let releases = 0
+    store.releaseMedia = () => { releases += 1 }
+    store.reloadHistory = async () => {}
+
+    await store.hangup(active)
+    await store.hangup(active)
+    assert.equal(requests, 1)
+    assert.equal(store.isCallEnding(active.call_id), true)
+    assert.equal(store.calls.length, 1)
+
+    store.handleEvent({
+      id: 12,
+      type: 'call_ended',
+      call: call('media-1', {
+        status: 'completed',
+        ended_at: '2026-08-13T12:01:00Z',
+        end_reason: 'local_hangup'
+      }),
+      time: '2026-08-13T12:01:00Z'
+    })
+    assert.equal(store.isCallEnding(active.call_id), false)
+    assert.equal(store.calls.length, 0)
+    assert.equal(releases, 1)
+  } finally {
+    phoneService.hangup = originalHangup
+  }
+})
+
+test('clears the ending state but keeps the call when hangup fails', async () => {
+  const originalHangup = phoneService.hangup
+  phoneService.hangup = async () => { throw new Error('BYE rejected') }
+
+  try {
+    setActivePinia(createPinia())
+    const store = usePhoneStore()
+    const active = call('media-1')
+    store.calls = [active]
+
+    await assert.rejects(store.hangup(active), /BYE rejected/)
+    assert.equal(store.isCallEnding(active.call_id), false)
+    assert.equal(store.calls.length, 1)
+  } finally {
+    phoneService.hangup = originalHangup
+  }
+})
+
+test('labels pending and ended calls from their real lifecycle data', () => {
+  const active = call('media-1')
+  const record = (endReason?: string): PhoneRecord => ({
+    id: 1,
+    call_id: active.call_id,
+    device_id: active.device_id,
+    direction: active.direction,
+    peer: active.peer,
+    status: 'completed',
+    started_at: active.started_at,
+    ended_at: '2026-08-13T12:01:00Z',
+    duration_seconds: 60,
+    end_reason: endReason
+  })
+
+  assert.equal(phoneCallStatusLabel(active), '通话中')
+  assert.equal(phoneCallStatusLabel(active, true), '挂断中')
+  assert.equal(phoneRecordStatusLabel(record('local_hangup')), '已挂断')
+  assert.equal(phoneRecordStatusLabel(record('remote_bye')), '对方已挂断')
+  assert.equal(phoneRecordStatusLabel(record()), '已结束')
 })
 
 test('refreshes ringing outbound media but leaves an unclaimed incoming call unattached', () => {
