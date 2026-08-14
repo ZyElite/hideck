@@ -9,13 +9,19 @@
 
 ## 快速启动（推荐）
 
-进入已有项目目录，运行内置部署脚本。它会初始化缺失的配置和持久化目录，再拉取并启动最新镜像：
+直接通过 curl 运行部署脚本，默认安装到当前目录下的 `hideck/`：
 
 ```bash
-./deploy.sh
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | sh
 ```
 
-脚本不会覆盖已有的 `config/config.yaml`。
+自定义安装目录：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | HIDECK_DIR=/opt/hideck sh
+```
+
+脚本会下载 `docker-compose.yml` 和配置模板，创建持久化目录并拉取 `latest`；不会覆盖已有的部署文件和 `config/config.yaml`。
 
 ## 手工部署
 
