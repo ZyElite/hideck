@@ -29,6 +29,21 @@ type blockingChannel struct {
 	closeOnce sync.Once
 }
 
+type namedLifecycleChannel struct {
+	name      string
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+func (c *namedLifecycleChannel) Name() string                           { return c.name }
+func (c *namedLifecycleChannel) Send(string) error                      { return nil }
+func (c *namedLifecycleChannel) RegisterCommand(string, CommandHandler) {}
+func (c *namedLifecycleChannel) Start() error                           { return nil }
+func (c *namedLifecycleChannel) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
+}
+
 func (c *blockingChannel) Name() string { return "blocking" }
 func (c *blockingChannel) Send(string) error {
 	c.startOnce.Do(func() { close(c.started) })
@@ -255,6 +270,30 @@ func TestManagerUpdateConfigFailureKeepsCurrentChannels(t *testing.T) {
 	}
 	manager.NotifyRaw("still active")
 	waitUntil(t, time.Second, func() bool { return capture.Last() == "still active" })
+	manager.Close()
+}
+
+func TestManagerRevokeChannelRetiresOnlyMatchingChannel(t *testing.T) {
+	telegram := &namedLifecycleChannel{name: "telegram", closed: make(chan struct{})}
+	other := &namedLifecycleChannel{name: "other", closed: make(chan struct{})}
+	manager := &Manager{channels: []Channel{telegram, other}}
+
+	if !manager.RevokeChannel("telegram") {
+		t.Fatal("RevokeChannel() = false, want true")
+	}
+	select {
+	case <-telegram.closed:
+	default:
+		t.Fatal("Telegram channel was not closed")
+	}
+	select {
+	case <-other.closed:
+		t.Fatal("unrelated channel was closed")
+	default:
+	}
+	if names := manager.GetChannelNames(); len(names) != 1 || names[0] != "other" {
+		t.Fatalf("GetChannelNames() = %v", names)
+	}
 	manager.Close()
 }
 

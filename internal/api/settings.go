@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/yibaiba/hideck/internal/config"
-	"github.com/yibaiba/hideck/internal/notify"
 	"github.com/yibaiba/hideck/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -386,20 +385,21 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	nextConfig.WeComBot = wecomBotCfg
 	nextConfig.Weixin = weixinCfg
 	notificationConfigs := notificationConfigsFrom(&nextConfig)
-	if telegramIdentityChanged(previousTelegram, tg) && s.notifyMgr != nil {
-		if err := s.notifyMgr.UpdateRuntimeState(func(state *notify.RuntimeState) error {
-			state.Telegram.DefaultTarget = 0
-			return nil
-		}); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status": "error", "message": "清除旧 Telegram 绑定失败: " + err.Error(),
-			})
-			return
-		}
+	telegramTransition, err := prepareTelegramIdentityTransition(s.notifyMgr, previousTelegram, tg)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error", "message": "清除旧 Telegram 绑定失败: " + err.Error(),
+		})
+		return
 	}
 	if err := config.UpdateNotificationInFile(s.configPath, notificationConfigs); err != nil {
+		rollbackErr := telegramTransition.rollbackBinding()
 		logger.Error("写入通知配置失败", "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "写入配置文件失败: " + err.Error()})
+		message := "写入配置文件失败: " + err.Error()
+		if rollbackErr != nil {
+			message += "; 恢复 Telegram 绑定失败: " + rollbackErr.Error()
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": message})
 		return
 	}
 
@@ -415,6 +415,7 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	s.fullCfg.Weixin = weixinCfg
 
 	if s.notifyMgr != nil {
+		telegramTransition.revokePreviousChannel()
 		if err := s.notifyMgr.UpdateConfig(s.fullCfg); err != nil {
 			logger.Error("应用通知配置失败", "err", err)
 			c.JSON(http.StatusOK, gin.H{
@@ -427,25 +428,6 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "applied": true})
-}
-
-func (s *Server) telegramBindingStatus() (int64, string) {
-	if s.fullCfg.Telegram.ChatID != 0 {
-		return s.fullCfg.Telegram.ChatID, ""
-	}
-	if s.notifyMgr == nil {
-		return 0, ""
-	}
-	state, err := s.notifyMgr.LoadRuntimeState()
-	if err != nil {
-		return 0, err.Error()
-	}
-	return state.Telegram.DefaultTarget, ""
-}
-
-func telegramIdentityChanged(previous, next config.TelegramConfig) bool {
-	return previous.BotToken != next.BotToken || previous.AdminID != next.AdminID ||
-		(previous.ChatID != 0 && next.ChatID == 0)
 }
 
 func notificationConfigsFrom(cfg *config.Config) config.NotificationConfigs {

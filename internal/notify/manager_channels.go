@@ -149,6 +149,37 @@ func (m *Manager) UpdateConfig(cfg *config.Config) error {
 	return m.initChannels(cfg)
 }
 
+// RevokeChannel retires a channel immediately while leaving unrelated channels active.
+func (m *Manager) RevokeChannel(name string) bool {
+	if m == nil {
+		return false
+	}
+	m.updateMu.Lock()
+	defer m.updateMu.Unlock()
+
+	m.channelsMu.Lock()
+	kept := make([]Channel, 0, len(m.channels))
+	revoked := make([]Channel, 0, 1)
+	for _, channel := range m.channels {
+		if channel.Name() == name {
+			revoked = append(revoked, channel)
+			continue
+		}
+		kept = append(kept, channel)
+	}
+	if len(revoked) == 0 {
+		m.channelsMu.Unlock()
+		return false
+	}
+	previousActivity := m.channelActivity
+	m.channels = kept
+	m.channelActivity = &channelActivity{}
+	m.channelsMu.Unlock()
+
+	retireChannels(revoked, previousActivity)
+	return true
+}
+
 func (m *Manager) GetChannelNames() []string {
 	m.channelsMu.Lock()
 	defer m.channelsMu.Unlock()

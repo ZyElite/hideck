@@ -87,6 +87,67 @@ func TestTelegramIdentityChangeClearsRuntimeBinding(t *testing.T) {
 	}
 }
 
+func TestTelegramIdentityChangeRevokesOldChannelWhenReplacementFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	botAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/botold-token/getMe") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"result": map[string]any{
+					"id": 1, "is_bot": true, "first_name": "old", "username": "old_bot",
+				},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "description": "invalid token"})
+	}))
+	t.Cleanup(botAPI.Close)
+	telegramConfig := config.TelegramConfig{
+		Enabled: true, BotToken: "old-token", AdminID: 42,
+		BaseURL: botAPI.URL + "/bot%s/%s",
+	}
+	manager := newConfiguredTelegramSettingsManager(t, telegramConfig, 42)
+	server := &Server{
+		configPath: writeTelegramSettingsConfig(t), notifyMgr: manager,
+		fullCfg: &config.Config{Telegram: telegramConfig},
+	}
+	body := `{"telegram":{"enabled":true,"bot_token":"bad-token","admin_id":99,"chat_id":0,"base_url":"` +
+		botAPI.URL + `/bot%s/%s"}}`
+	recorder := requestTelegramSettingsUpdate(server, body)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"applied":false`) {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	for _, name := range manager.GetChannelNames() {
+		if name == "telegram" {
+			t.Fatalf("old Telegram channel remained active: %v", manager.GetChannelNames())
+		}
+	}
+	state, err := manager.LoadRuntimeState()
+	if err != nil || state.Telegram.DefaultTarget != 0 {
+		t.Fatalf("state = %+v, error = %v", state, err)
+	}
+}
+
+func TestTelegramIdentityChangeRestoresBindingWhenConfigWriteFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	manager := newTelegramSettingsManager(t, 42)
+	server := &Server{
+		configPath: t.TempDir(), notifyMgr: manager,
+		fullCfg: &config.Config{Telegram: config.TelegramConfig{
+			Enabled: true, BotToken: "old-token", AdminID: 42,
+		}},
+	}
+	body := `{"telegram":{"enabled":false,"bot_token":"********","admin_id":99,"chat_id":0}}`
+	recorder := requestTelegramSettingsUpdate(server, body)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	state, err := manager.LoadRuntimeState()
+	if err != nil || state.Telegram.DefaultTarget != 42 {
+		t.Fatalf("state = %+v, error = %v", state, err)
+	}
+}
+
 func newTelegramSettingsManager(t *testing.T, target int64) *notify.Manager {
 	t.Helper()
 	store := notify.NewFileRuntimeStateStore(filepath.Join(t.TempDir(), "notification-state.json"))
@@ -97,6 +158,28 @@ func newTelegramSettingsManager(t *testing.T, target int64) *notify.Manager {
 	if err := manager.SaveRuntimeState(notify.RuntimeState{
 		Telegram: notify.TelegramRuntimeState{DefaultTarget: target},
 	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	return manager
+}
+
+func newConfiguredTelegramSettingsManager(
+	t *testing.T,
+	telegramConfig config.TelegramConfig,
+	target int64,
+) *notify.Manager {
+	t.Helper()
+	store := notify.NewFileRuntimeStateStore(filepath.Join(t.TempDir(), "notification-state.json"))
+	if err := store.Save(notify.RuntimeState{
+		Telegram: notify.TelegramRuntimeState{DefaultTarget: target},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := notify.NewManagerWithOptions(
+		&config.Config{Telegram: telegramConfig}, nil, notify.ManagerOptions{StateStore: store},
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(manager.Close)
