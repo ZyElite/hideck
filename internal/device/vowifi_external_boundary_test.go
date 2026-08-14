@@ -13,13 +13,13 @@ func TestVoWiFiHostImportsExternalRuntimehostOnly(t *testing.T) {
 	repoRoot := filepath.Clean(filepath.Join("..", ".."))
 	scanRoots := []string{"cmd", "internal"}
 	allowedVoWiFiImports := map[string]bool{
-		"github.com/iniwex5/vowifi-go/runtimehost":             true,
-		"github.com/iniwex5/vowifi-go/runtimehost/carrier":     true,
-		"github.com/iniwex5/vowifi-go/runtimehost/e911":        true,
-		"github.com/iniwex5/vowifi-go/runtimehost/eventhost":   true,
-		"github.com/iniwex5/vowifi-go/runtimehost/identity":    true,
-		"github.com/iniwex5/vowifi-go/runtimehost/messaging":   true,
-		"github.com/iniwex5/vowifi-go/runtimehost/voicehost":   true,
+		"github.com/iniwex5/vowifi-go/runtimehost":           true,
+		"github.com/iniwex5/vowifi-go/runtimehost/carrier":   true,
+		"github.com/iniwex5/vowifi-go/runtimehost/e911":      true,
+		"github.com/iniwex5/vowifi-go/runtimehost/eventhost": true,
+		"github.com/iniwex5/vowifi-go/runtimehost/identity":  true,
+		"github.com/iniwex5/vowifi-go/runtimehost/messaging": true,
+		"github.com/iniwex5/vowifi-go/runtimehost/voicehost": true,
 	}
 	var offenders []string
 	fset := token.NewFileSet()

@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
-	qmipkg "github.com/yibaiba/hideck/internal/qmi"
+	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 	"github.com/yibaiba/hideck/internal/backend"
+	qmipkg "github.com/yibaiba/hideck/internal/qmi"
 	"github.com/yibaiba/hideck/pkg/logger"
 )
 
