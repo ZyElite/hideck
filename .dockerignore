@@ -1,6 +1,7 @@
 .git
 .github
 .gitignore
+.mission
 go.work
 
 **/*.log
@@ -12,9 +13,13 @@ logs
 data
 tmp
 dist
+design-system
+old
+output
 
 web/node_modules
 web/dist
+web/prototypes
 
 internal/web/dist
 

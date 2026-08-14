@@ -1,15 +1,17 @@
-# GitHub Actions 多架构构建专用 Dockerfile
+# syntax=docker/dockerfile:1.10
+
+# HiDeck multi-platform image for local Buildx and CI builds.
 
 # 构建阶段 1: 前端构建 (Frontend)
 # 使用 --platform=$BUILDPLATFORM 强制在构建机本地架构（通常是amd64）运行
 # 避免在 arm64 构建时使用 QEMU 模拟，大幅提升速度且产物跨平台通用
-FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend-builder
 ARG BUILDPLATFORM
 WORKDIR /app/web
 COPY web/package*.json ./
 # 挂载 npm 缓存，加速依赖安装
 RUN --mount=type=cache,target=/root/.npm,id=npm-${BUILDPLATFORM},sharing=locked \
-    npm ci
+    npm ci --no-audit --no-fund
 COPY web/ .
 RUN npm run build
 
@@ -73,18 +75,27 @@ RUN --mount=type=cache,target=/root/.cache/go-build,id=gobuild-${TARGETOS}-${TAR
     ls -lh /app/hideck
 
 # 运行时基础层
-FROM alpine:latest AS runtime-base
+FROM alpine:3.24 AS runtime-base
+ARG VERSION=unknown
+ARG BUILDTIME=unknown
 ARG REVISION=unknown
 WORKDIR /app
-LABEL org.opencontainers.image.revision=${REVISION}
+LABEL org.opencontainers.image.title="HiDeck" \
+      org.opencontainers.image.description="Qualcomm modem management platform" \
+      org.opencontainers.image.source="https://github.com/yibaiba/hideck" \
+      org.opencontainers.image.version=${VERSION} \
+      org.opencontainers.image.created=${BUILDTIME} \
+      org.opencontainers.image.revision=${REVISION}
 
 # - ca-certificates / tzdata: 基础 HTTPS 与时区支持
 # - opencore-amr / vo-amrwbenc: AMR 与 AMR-WB 实时编解码
 # - lame-libs: 双向混音录音的 MP3 编码
+# - psmisc: 提供 fuser，用于安全释放串口占用
 RUN apk add --no-cache \
       ca-certificates \
       lame-libs \
       opencore-amr \
+      psmisc \
       tzdata \
       vo-amrwbenc && \
     test -e /usr/lib/libopencore-amrnb.so.0 && \
@@ -99,7 +110,7 @@ EXPOSE 7575/tcp 7576/tcp 7580/udp
 FROM runtime-base AS runtime
 
 # 复制二进制文件
-COPY --from=backend-builder /app/hideck .
+COPY --from=backend-builder /app/hideck /usr/local/bin/hideck
 
 # 创建配置和数据目录
 RUN mkdir -p config data logs
@@ -108,6 +119,9 @@ RUN mkdir -p config data logs
 ENV CONFIG_PATH=/app/config/config.yaml
 ENV TZ=Asia/Shanghai
 
-# 入口点
-ENTRYPOINT ["./hideck"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -q -T 3 -O /dev/null http://127.0.0.1:7575/ping || exit 1
+
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/local/bin/hideck"]
 CMD ["-c", "/app/config/config.yaml"]

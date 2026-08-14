@@ -1,6 +1,6 @@
 services:
   hideck:
-    image: yibaiba/hideck:${HIDECK_TAG:-1.5.5}
+    image: yibaiba/hideck:${HIDECK_TAG:-2.0.0}
     container_name: hideck
     restart: unless-stopped
     network_mode: host

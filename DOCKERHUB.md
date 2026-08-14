@@ -39,7 +39,7 @@ vowifi:
 ```yaml
 services:
   hideck:
-    image: yibaiba/hideck:${HIDECK_TAG:-1.5.5}
+    image: yibaiba/hideck:${HIDECK_TAG:-2.0.0}
     container_name: hideck
     restart: unless-stopped
     network_mode: host
@@ -66,10 +66,34 @@ Web 入口：`http://YOUR_IP:7575`
 
 首次登录后请立即修改密码。
 
+## 维护者发布
+
+使用本机已登录 Docker Hub 的 Buildx，一次生成 amd64、arm64 和多架构 manifest：
+
+```bash
+VERSION=2.0.0
+REVISION="$(git rev-parse HEAD)"
+BUILDTIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --build-arg "VERSION=v${VERSION}" \
+  --build-arg "REVISION=${REVISION}" \
+  --build-arg "BUILDTIME=${BUILDTIME}" \
+  --tag "yibaiba/hideck:${VERSION}" \
+  --tag "yibaiba/hideck:2.0" \
+  --tag "yibaiba/hideck:latest" \
+  --push .
+
+docker buildx imagetools inspect "yibaiba/hideck:${VERSION}"
+```
+
+正式发布必须从干净、已提交的源码快照构建，确保镜像标签可以追溯到 `REVISION`。
+
 ## 更新镜像
 
 ```bash
-docker pull "yibaiba/hideck:${HIDECK_TAG:-1.5.5}"
+docker pull "yibaiba/hideck:${HIDECK_TAG:-2.0.0}"
 docker compose up -d
 ```
 
