@@ -131,6 +131,45 @@ func TestWeixinChannelGroupCannotClaimFirstBinding(t *testing.T) {
 	}
 }
 
+func TestWeixinAllowedDirectMessageSetsMissingDefaultTarget(t *testing.T) {
+	store := NewFileRuntimeStateStore(filepath.Join(t.TempDir(), "state.json"))
+	state := newRuntimeState()
+	state.Weixin = WeixinRuntimeState{AccountID: "bot-1", Token: "token-1"}
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	channel, err := NewWeixinChannel(WeixinChannelOptions{
+		Config: config.WeixinConfig{Enabled: true, AllowedUserIDs: []string{"known-user"}}, StateStore: store,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, err := channel.authorizeMessage(weixinAuthorizationRequest{
+		Kind: "direct", ChatID: "known-chat", Sender: "known-user", ContextToken: "context-1",
+	})
+	if err != nil || !allowed {
+		t.Fatalf("authorizeMessage() = %v, %v", allowed, err)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Weixin.DefaultTarget != "known-chat" || loaded.Weixin.ContextTokens["known-chat"] != "context-1" {
+		t.Fatalf("saved state = %+v", loaded.Weixin)
+	}
+
+	allowed, err = channel.authorizeMessage(weixinAuthorizationRequest{
+		Kind: "direct", ChatID: "second-chat", Sender: "known-user",
+	})
+	if err != nil || !allowed {
+		t.Fatalf("second authorizeMessage() = %v, %v", allowed, err)
+	}
+	loaded, _ = store.Load()
+	if loaded.Weixin.DefaultTarget != "known-chat" {
+		t.Fatalf("existing default target was replaced: %+v", loaded.Weixin)
+	}
+}
+
 func TestWeixinChannelUsesPersistedCursorAfterRestart(t *testing.T) {
 	cursorSeen := make(chan string, 1)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
