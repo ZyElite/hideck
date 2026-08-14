@@ -3,6 +3,8 @@
 .gitignore
 .mission
 go.work
+go.work.sum
+README.md
 
 **/*.log
 **/*.db
