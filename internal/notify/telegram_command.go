@@ -107,7 +107,7 @@ func (t *TelegramChannel) sendAudio(chatID int64, attachment CommandAttachment) 
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("读取录音文件失败: %w", err)
+		return redactTelegramError(fmt.Errorf("读取录音文件失败: %w", err), path)
 	}
 	if !info.Mode().IsRegular() {
 		return errors.New("录音路径不是普通文件")
@@ -115,7 +115,7 @@ func (t *TelegramChannel) sendAudio(chatID int64, attachment CommandAttachment) 
 	audio := tgbotapi.NewAudio(chatID, tgbotapi.FilePath(path))
 	audio.Title = firstNonEmpty(strings.TrimSpace(attachment.Recording), filepath.Base(path))
 	_, err = t.api.Send(audio)
-	return t.redactAPIError(err)
+	return t.redactAPIError(err, fmt.Sprint(chatID), path)
 }
 
 var telegramCommandDescriptions = map[string]string{

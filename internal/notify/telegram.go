@@ -6,6 +6,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -93,11 +94,7 @@ func newTelegramBotAPI(cfg config.TelegramConfig) (*tgbotapi.BotAPI, error) {
 
 	bot, err := tgbotapi.NewBotAPIWithClient(cfg.BotToken, endpoint, httpClient)
 	if err != nil {
-		msg := err.Error()
-		if cfg.BotToken != "" {
-			msg = strings.ReplaceAll(msg, cfg.BotToken, "<redacted>")
-		}
-		return nil, fmt.Errorf("创建 telegram bot 失败: %s", msg)
+		return nil, fmt.Errorf("创建 telegram bot 失败: %w", redactTelegramError(err, cfg.BotToken))
 	}
 	return bot, nil
 }
@@ -137,7 +134,7 @@ func (t *TelegramChannel) sendTo(chatID int64, text string) error {
 	msg := buildTelegramTextMessage(chatID, text)
 	_, err := t.api.Send(msg)
 	if err != nil {
-		err = t.redactAPIError(err)
+		err = t.redactAPIError(err, strconv.FormatInt(chatID, 10))
 		logger.Error("发送 telegram 消息失败", "err", err)
 		return err
 	}
@@ -166,25 +163,42 @@ func (t *TelegramChannel) authorized(message *tgbotapi.Message) bool {
 	return t.configuredChatID != 0 && message.Chat.ID == t.configuredChatID
 }
 
-type telegramAPIError struct {
-	err   error
-	token string
+type telegramRedactedError struct {
+	err       error
+	sensitive []string
 }
 
-func (e *telegramAPIError) Error() string {
+func (e *telegramRedactedError) Error() string {
 	if e == nil || e.err == nil {
 		return ""
 	}
-	return strings.ReplaceAll(e.err.Error(), e.token, "<redacted>")
+	message := e.err.Error()
+	for _, value := range e.sensitive {
+		if value != "" {
+			message = strings.ReplaceAll(message, value, "<redacted>")
+		}
+	}
+	return message
 }
 
-func (e *telegramAPIError) Unwrap() error { return e.err }
+func (e *telegramRedactedError) Unwrap() error { return e.err }
 
-func (t *TelegramChannel) redactAPIError(err error) error {
-	if err == nil || t == nil || t.api == nil || t.api.Token == "" {
+func (t *TelegramChannel) redactAPIError(err error, sensitive ...string) error {
+	if err == nil {
 		return err
 	}
-	return &telegramAPIError{err: err, token: t.api.Token}
+	values := append([]string(nil), sensitive...)
+	if t != nil && t.api != nil {
+		values = append(values, t.api.Token)
+	}
+	return redactTelegramError(err, values...)
+}
+
+func redactTelegramError(err error, sensitive ...string) error {
+	if err == nil {
+		return nil
+	}
+	return &telegramRedactedError{err: err, sensitive: append([]string(nil), sensitive...)}
 }
 
 func (t *TelegramChannel) bindPrivateTarget(message *tgbotapi.Message) error {

@@ -29,6 +29,7 @@ type telegramAPICapture struct {
 	audioFiles  [][]byte
 	sequence    []string
 	rejectAudio bool
+	rejectText  bool
 }
 
 type telegramToggleStateStore struct {
@@ -92,9 +93,16 @@ func (c *telegramAPICapture) handler(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		text := r.Form.Get("text")
 		c.mu.Lock()
+		reject := c.rejectText
 		c.messages = append(c.messages, text)
 		c.sequence = append(c.sequence, "text")
 		c.mu.Unlock()
+		if reject {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": false, "description": "rejected " + telegramTestToken + " for chat 42",
+			})
+			return
+		}
 		writeTelegramResult(w, map[string]any{
 			"message_id": 1, "date": 1, "chat": map[string]any{"id": 42, "type": "private"}, "text": text,
 		})
@@ -117,7 +125,7 @@ func (c *telegramAPICapture) handler(w http.ResponseWriter, r *http.Request) {
 		c.mu.Unlock()
 		if reject {
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok": false, "description": "rejected " + telegramTestToken,
+				"ok": false, "description": "rejected " + telegramTestToken + " for chat 42",
 			})
 			return
 		}
@@ -374,15 +382,31 @@ func TestTelegramAudioRejectionSendsOnlyFailure(t *testing.T) {
 	messages := append([]string(nil), capture.messages...)
 	capture.mu.Unlock()
 	if len(messages) != 1 || !strings.Contains(messages[0], "录音发送失败") ||
-		strings.Contains(messages[0], "呼叫完成") || strings.Contains(messages[0], telegramTestToken) {
+		strings.Contains(messages[0], "呼叫完成") || strings.Contains(messages[0], telegramTestToken) ||
+		strings.Contains(messages[0], "42") || strings.Contains(messages[0], path) {
 		t.Fatalf("messages = %v", messages)
+	}
+}
+
+func TestTelegramTextErrorRedactsTokenAndTargetAndPreservesCause(t *testing.T) {
+	channel, capture := newTelegramTestChannel(t, nil, 42, 0)
+	capture.mu.Lock()
+	capture.rejectText = true
+	capture.mu.Unlock()
+	err := channel.sendTo(42, "test")
+	if err == nil || strings.Contains(err.Error(), telegramTestToken) || strings.Contains(err.Error(), "42") {
+		t.Fatalf("sendTo() error = %v", err)
+	}
+	if errors.Unwrap(err) == nil {
+		t.Fatalf("sendTo() error does not preserve cause: %v", err)
 	}
 }
 
 func TestTelegramAudioRejectsMissingAndNonMP3Files(t *testing.T) {
 	channel, _ := newTelegramTestChannel(t, nil, 42, 0)
-	if err := channel.sendAudio(42, CommandAttachment{Path: "/missing/call.mp3", Codec: "MP3"}); err == nil {
-		t.Fatal("sendAudio() accepted missing file")
+	missingPath := "/missing/private/call.mp3"
+	if err := channel.sendAudio(42, CommandAttachment{Path: missingPath, Codec: "MP3"}); err == nil || strings.Contains(err.Error(), missingPath) || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("sendAudio() missing-file error = %v", err)
 	}
 	path := filepath.Join(t.TempDir(), "call.wav")
 	if err := os.WriteFile(path, []byte("wav"), 0o600); err != nil {
