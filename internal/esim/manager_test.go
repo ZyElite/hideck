@@ -1429,11 +1429,15 @@ func TestNotifyModemResetDelayedClearsCacheImmediatelyAndReloadsAfterDelay(t *te
 	if mgr.cachedOverview() != nil {
 		t.Fatal("overview cache should be cleared immediately")
 	}
-	if mgr.chipInfoCache != nil {
+	mgr.cacheMu.RLock()
+	chipInfoCache := mgr.chipInfoCache
+	discoveredEUICCs := append([]EUICCInfo(nil), mgr.discoveredEUICCs...)
+	mgr.cacheMu.RUnlock()
+	if chipInfoCache != nil {
 		t.Fatal("chipInfoCache should be cleared immediately")
 	}
-	if len(mgr.discoveredEUICCs) != 0 {
-		t.Fatalf("discoveredEUICCs = %v, want cleared", mgr.discoveredEUICCs)
+	if len(discoveredEUICCs) != 0 {
+		t.Fatalf("discoveredEUICCs = %v, want cleared", discoveredEUICCs)
 	}
 	select {
 	case <-loaded:
