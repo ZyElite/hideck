@@ -343,18 +343,11 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 		return
 	}
 
-	notificationConfigs := config.NotificationConfigs{
-		Telegram: tg,
-		Feishu:   fs,
-		QQ:       qq,
-		Weixin:   s.fullCfg.Weixin,
-		WeComBot: s.fullCfg.WeComBot,
-		Webhook:  wh,
-		Bark:     barkCfg,
-		Email:    em,
-		Pushplus: pp,
-		WeCom:    wecomCfg,
-	}
+	nextConfig := *s.fullCfg
+	nextConfig.Telegram, nextConfig.Feishu, nextConfig.QQ = tg, fs, qq
+	nextConfig.Webhook, nextConfig.Bark = wh, barkCfg
+	nextConfig.Email, nextConfig.Pushplus, nextConfig.WeCom = em, pp, wecomCfg
+	notificationConfigs := notificationConfigsFrom(&nextConfig)
 	if err := config.UpdateNotificationInFile(s.configPath, notificationConfigs); err != nil {
 		logger.Error("写入通知配置失败", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "写入配置文件失败: " + err.Error()})
@@ -383,6 +376,14 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "applied": true})
+}
+
+func notificationConfigsFrom(cfg *config.Config) config.NotificationConfigs {
+	return config.NotificationConfigs{
+		Telegram: cfg.Telegram, Feishu: cfg.Feishu, QQ: cfg.QQ,
+		Weixin: cfg.Weixin, WeComBot: cfg.WeComBot, Webhook: cfg.Webhook,
+		Bark: cfg.Bark, Email: cfg.Email, Pushplus: cfg.Pushplus, WeCom: cfg.WeCom,
+	}
 }
 
 func resolveMaskedNotificationSecret(incoming, current, field string) (string, error) {

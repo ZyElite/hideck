@@ -86,6 +86,7 @@ type Server struct {
 	phone                   *phone.Service
 	phoneCACertificate      string
 	notifyMgr               *notify.Manager
+	weixinQR                *notify.WeixinQRService
 	commandCenter           *commandcenter.Service
 	automaticTasks          automaticTaskService
 	balance                 *balance.Service
@@ -132,6 +133,7 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 		proxyMgr:      proxyMgr,
 		voiceGW:       voiceGW,
 		notifyMgr:     notifyMgr,
+		weixinQR:      notify.NewWeixinQRService(notify.WeixinQROptions{}),
 		proxyRepo:     repo.NewDBRepo(),
 		cardPolicies:  databaseCardPolicyStore{},
 		systemTime:    newOSSystemTimeProvider(),
@@ -344,6 +346,9 @@ func (s *Server) newRouter() *gin.Engine {
 		api.POST("/settings/notifications/bark/test", s.handleTestBarkNotification)
 		api.POST("/settings/notifications/email/test", s.handleTestEmailNotification)
 		api.POST("/settings/notifications/wecom/test", s.handleTestWeComNotification)
+		api.POST("/settings/notifications/weixin/qr/start", s.handleStartWeixinQR)
+		api.GET("/settings/notifications/weixin/qr/status", s.handleWeixinQRStatus)
+		api.POST("/settings/notifications/weixin/qr/cancel", s.handleCancelWeixinQR)
 		api.POST("/settings/password", s.handleChangePassword) // 修改登录密码
 		api.GET("/system/info", s.handleSystemInfo)            // 获取系统运行与版本信息
 		api.GET("/system/time", s.handleSystemTime)            // 获取设备时间和时区
