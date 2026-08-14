@@ -63,13 +63,13 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <section class="chat-shell" aria-label="VoHive 命令会话">
+  <section class="chat-shell" aria-label="HiDeck 命令会话">
     <header class="chat-header">
       <div class="chat-heading">
         <span class="chat-title-icon" aria-hidden="true"><el-icon><Chat24Regular /></el-icon></span>
         <div>
           <div class="chat-title-row">
-            <h2>VoHive 命令会话</h2>
+            <h2>HiDeck 命令会话</h2>
             <span class="stream-state" :class="{ online: streamConnected }" aria-live="polite">
               <el-icon><PlugConnected24Regular /></el-icon>
               {{ streamConnected ? '实时连接' : '正在重连' }}

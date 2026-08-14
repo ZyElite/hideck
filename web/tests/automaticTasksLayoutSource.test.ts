@@ -10,7 +10,7 @@ const taskRuns = await readFile(new URL('../src/components/AutomaticTaskRunsDial
 const service = await readFile(new URL('../src/services/automation.ts', import.meta.url), 'utf8')
 
 test('automatic tasks use the Studio workspace with real task selection and summary', () => {
-  assert.match(view, /VOHIVE \/ AUTOMATION/)
+  assert.match(view, /HIDECK \/ AUTOMATION/)
   assert.match(view, /<AutomaticTaskList/)
   assert.match(view, /<AutomaticTaskDetail/)
   assert.match(view, /const selectedTask = computed/)

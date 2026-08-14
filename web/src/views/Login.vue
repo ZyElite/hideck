@@ -50,7 +50,7 @@ async function handleLogin() {
 
 <template>
   <main class="login-page">
-    <section class="login-identity" aria-label="VoHive 产品信息">
+    <section class="login-identity" aria-label="HiDeck 产品信息">
       <div class="network-map" aria-hidden="true">
         <span class="network-line line-a" />
         <span class="network-line line-b" />
@@ -66,9 +66,9 @@ async function handleLogin() {
       </div>
 
       <div class="identity-topline">
-        <span class="identity-mark">V</span>
+        <span class="identity-mark">H</span>
         <div>
-          <strong>VoHive</strong>
+          <strong>HiDeck</strong>
           <span>MODEM CONTROL</span>
         </div>
       </div>
@@ -95,7 +95,7 @@ async function handleLogin() {
       <div class="login-form-wrap">
         <header>
           <span class="form-kicker">SECURE ACCESS</span>
-          <h2>登录 VoHive</h2>
+          <h2>登录 HiDeck</h2>
           <p>使用管理账户进入控制台</p>
         </header>
 
@@ -133,7 +133,7 @@ async function handleLogin() {
           </button>
         </form>
 
-        <footer>VoHive · 2026</footer>
+        <footer>HiDeck · 2026</footer>
       </div>
     </section>
   </main>

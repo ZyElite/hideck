@@ -184,7 +184,7 @@ function taskToInput(task: AutomaticTask, overrides: Partial<AutomaticTaskInput>
   <div class="app-page automation-page">
     <header class="page-heading">
       <div>
-        <span>VOHIVE / AUTOMATION</span>
+        <span>HIDECK / AUTOMATION</span>
         <h1>自动任务</h1>
         <p>定时执行短信、通话与公网 IP 任务</p>
       </div>

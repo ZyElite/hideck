@@ -106,7 +106,7 @@ const isPCSCBackend = computed(() => configuredBackend.value === 'pcsc')
           </div>
           <div v-if="isPCSCBackend" class="config-field">
             <label>SIM PIN 环境变量名</label>
-            <el-input v-model="editConfig.sim_pin_env" placeholder="例如 VOHIVE_SIM_PIN_READER1" />
+            <el-input v-model="editConfig.sim_pin_env" placeholder="例如 HIDECK_SIM_PIN_READER1" />
           </div>
         </section>
       </div>

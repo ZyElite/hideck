@@ -74,7 +74,7 @@ function isTerminalCallback(callback: unknown) {
 function isCurrentWebsheetMessage(data: unknown): data is { type: string; token?: unknown; callback?: unknown } {
   if (!data || typeof data !== 'object') return false
   const record = data as { type?: unknown; token?: unknown }
-  if (record.type !== 'vohive-websheet-callback') return false
+  if (record.type !== 'hideck-websheet-callback') return false
   const currentToken = websheetToken.value
   const incomingToken = typeof record.token === 'string' ? record.token : ''
   if (currentToken && incomingToken && incomingToken !== currentToken) return false
@@ -95,7 +95,7 @@ function onMessage(event: MessageEvent) {
 }
 
 function onStorage(event: StorageEvent) {
-  if (event.key !== 'vohive-websheet-complete' || !event.newValue) return
+  if (event.key !== 'hideck-websheet-complete' || !event.newValue) return
   try {
     handleShellMessage(JSON.parse(event.newValue))
   } catch {
@@ -107,7 +107,7 @@ onMounted(() => {
   window.addEventListener('message', onMessage)
   window.addEventListener('storage', onStorage)
   try {
-    websheetChannel = new BroadcastChannel('vohive-websheet')
+    websheetChannel = new BroadcastChannel('hideck-websheet')
     websheetChannel.onmessage = event => handleShellMessage(event.data)
   } catch {
     websheetChannel = null

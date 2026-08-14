@@ -1,7 +1,7 @@
 import { ref, watch } from 'vue'
 import type { Ref } from 'vue'
 
-const SENSITIVE_VISIBILITY_STORAGE_KEY = 'vohive_show_sensitive'
+const SENSITIVE_VISIBILITY_STORAGE_KEY = 'hideck_show_sensitive'
 
 function readSensitiveVisibility(): boolean {
   try {

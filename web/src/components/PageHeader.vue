@@ -9,7 +9,7 @@ defineProps<{
   <header class="page-header">
     <div class="page-heading">
       <div>
-        <span class="page-heading-kicker">VOHIVE / CONTROL PLANE</span>
+        <span class="page-heading-kicker">HIDECK / CONTROL PLANE</span>
         <h1>{{ title }}</h1>
         <p v-if="subtitle">{{ subtitle }}</p>
       </div>

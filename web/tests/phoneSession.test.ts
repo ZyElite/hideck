@@ -20,7 +20,7 @@ test('keeps the control lease in tab-scoped session storage and clears empty con
 })
 
 test('discards malformed saved control instead of manufacturing a lease', (context) => {
-  const values = new Map([['vohive_phone_control', '{invalid']])
+  const values = new Map([['hideck_phone_control', '{invalid']])
   const fakeStorage = {
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => values.set(key, value),

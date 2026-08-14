@@ -161,7 +161,7 @@ watch(
       </div>
       <div v-if="isPCSCBackendOnly" class="space-y-1">
         <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">SIM PIN 环境变量名</label>
-        <el-input v-model="addConfig.sim_pin_env" placeholder="例如 VOHIVE_SIM_PIN_READER1" />
+        <el-input v-model="addConfig.sim_pin_env" placeholder="例如 HIDECK_SIM_PIN_READER1" />
       </div>
       <div class="space-y-1">
         <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">名称</label>

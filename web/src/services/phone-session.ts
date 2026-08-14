@@ -1,4 +1,4 @@
-const PHONE_CONTROL_KEY = 'vohive_phone_control'
+const PHONE_CONTROL_KEY = 'hideck_phone_control'
 
 export type SavedPhoneControl = { mediaId: string; lease: string }
 

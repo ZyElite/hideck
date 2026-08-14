@@ -10,7 +10,7 @@ defineProps({
     <div class="loading-state">
       <div class="loading-context">
         <span class="loading-dot" aria-hidden="true" />
-        <span>VOHIVE CONTROL PLANE</span>
+        <span>HIDECK CONTROL PLANE</span>
       </div>
       <div class="loading-copy">
         <strong>{{ title }}</strong>

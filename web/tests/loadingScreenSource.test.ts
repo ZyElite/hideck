@@ -7,7 +7,7 @@ const source = readFileSync(new URL('../src/components/LoadingScreen.vue', impor
 test('loading state uses a lightweight workspace surface instead of a notification card', () => {
   assert.match(source, /class="loading-screen" role="status" aria-live="polite"/)
   assert.match(source, /class="loading-state"/)
-  assert.match(source, /VOHIVE CONTROL PLANE/)
+  assert.match(source, /HIDECK CONTROL PLANE/)
   assert.doesNotMatch(source, /loading-panel|loading-mark|loading-spinner/)
 })
 

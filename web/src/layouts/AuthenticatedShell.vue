@@ -150,9 +150,9 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
       class="h-full transition-[width] duration-200 relative sidebar-shell app-sidebar"
     >
       <div class="h-16 px-4 flex items-center sidebar-brand" :class="effectiveCollapsed ? 'justify-center px-0' : ''">
-        <div class="sidebar-brand-icon">V</div>
+        <div class="sidebar-brand-icon">H</div>
         <div v-if="!effectiveCollapsed" class="ml-3 min-w-0">
-          <div class="sidebar-brand-title">VoHive</div>
+          <div class="sidebar-brand-title">HiDeck</div>
           <div class="sidebar-brand-subtitle">MODEM CONTROL</div>
         </div>
       </div>
@@ -194,9 +194,9 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
     <el-drawer v-model="drawerOpen" direction="ltr" size="256px" :with-header="false" class="mobile-drawer">
       <div class="h-full relative sidebar-shell app-sidebar">
         <div class="h-16 px-4 flex items-center">
-          <div class="sidebar-brand-icon">V</div>
+          <div class="sidebar-brand-icon">H</div>
           <div class="ml-3 min-w-0">
-            <div class="sidebar-brand-title">VoHive</div>
+            <div class="sidebar-brand-title">HiDeck</div>
             <div class="sidebar-brand-subtitle">MODEM CONTROL</div>
           </div>
         </div>
@@ -240,7 +240,7 @@ const activeMenuItem = computed(() => menuItems.find((item) => item.index === ro
               <Fold v-else />
             </el-icon>
           </el-button>
-          <span class="topbar-product">VOHIVE</span>
+          <span class="topbar-product">HIDECK</span>
         </div>
 
         <div class="topbar-route"><strong>{{ activeMenuItem.label }}</strong></div>

@@ -199,7 +199,7 @@ function removeWebhookUrl(index: number) {
 
 // 自定义请求头以「行」形式编辑（rows 为唯一编辑源），保存时单向回写为 map。
 // 受保护的系统头由后端强制覆盖。
-const PROTECTED_WEBHOOK_HEADERS = new Set(['content-type', 'x-vohive-signature'])
+const PROTECTED_WEBHOOK_HEADERS = new Set(['content-type', 'x-hideck-signature'])
 // 常用请求头预设，下拉可选；filterable + allow-create 也允许自行输入其它名称
 const COMMON_WEBHOOK_HEADERS = [
   'Authorization',
@@ -361,7 +361,7 @@ async function doApplyUpdate() {
 
   if (updateInfo.value.is_docker) {
     ElMessageBox.alert(
-      '检测到当前系统运行在 Docker 环境下。<br><br>不建议在 Docker 容器内直接执行文件热替换。请直接拉取明确版本镜像（如 <code>docker pull skyhotspur/vohive:&lt;tag&gt;</code>）并重启容器来完成升级！',
+      '检测到当前系统运行在 Docker 环境下。<br><br>不建议在 Docker 容器内直接执行文件热替换。请直接拉取明确版本镜像（如 <code>docker pull yibaiba/hideck:&lt;tag&gt;</code>）并重启容器来完成升级！',
       '环境警告',
       { dangerouslyUseHTMLString: true, type: 'warning' }
     )
@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
       class="settings-workspace-stage"
       compact
       kicker="GATEWAY CONTROL"
-      title="VoHive Gateway"
+      title="HiDeck Gateway"
       subtitle="管理访问安全、运行环境、系统集成与消息通知通道"
       status="系统配置已加载"
       tone="success"
@@ -511,7 +511,7 @@ onBeforeUnmount(() => {
               <FieldRow label="配置路径" :value="systemInfo.config" monospace copyable />
             </div>
             <div class="p-3 bg-gray-50 dark:bg-white/5 rounded-lg">
-              <FieldRow label="交流群" value="https://t.me/vohive" monospace copyable />
+              <FieldRow label="项目主页" value="https://github.com/yibaiba/hideck" monospace copyable />
             </div>
             <div class="ui-panel-muted px-4 py-4">
               <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -731,7 +731,7 @@ onBeforeUnmount(() => {
 
                   <div class="space-y-1">
                     <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">分组 (Group)</label>
-                    <el-input v-model="barkSettings.group" :disabled="!barkSettings.enabled" placeholder="例如 vohive" />
+                    <el-input v-model="barkSettings.group" :disabled="!barkSettings.enabled" placeholder="例如 hideck" />
                     <div class="text-[10px] text-gray-400 mt-1">iOS 设备上的通知分组。</div>
                   </div>
 

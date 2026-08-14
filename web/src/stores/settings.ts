@@ -134,7 +134,7 @@ const DEFAULT_WEBHOOK_SETTINGS: WebhookSettings = {
 }
 
 // 受保护的系统头（小写），与后端保持一致：自定义头不可覆盖这些
-const PROTECTED_WEBHOOK_HEADERS = new Set(['content-type', 'x-vohive-signature'])
+const PROTECTED_WEBHOOK_HEADERS = new Set(['content-type', 'x-hideck-signature'])
 
 // sanitizeWebhookHeaders 去除空白 key、丢弃受保护的系统头，返回干净的 headers map
 function sanitizeWebhookHeaders(headers: Record<string, string> | undefined): Record<string, string> {
@@ -151,7 +151,7 @@ function sanitizeWebhookHeaders(headers: Record<string, string> | undefined): Re
 const DEFAULT_BARK_SETTINGS: BarkSettings = {
   enabled: false,
   urls: [],
-  group: 'vohive',
+  group: 'hideck',
   icon: '',
   level: 'active'
 }
@@ -255,7 +255,7 @@ export const useSettingsStore = defineStore('settings', () => {
       barkSettings.value = {
         enabled: !!bark.enabled,
         urls: Array.isArray(bark.urls) ? bark.urls : [],
-        group: bark.group || 'vohive',
+        group: bark.group || 'hideck',
         icon: bark.icon || '',
         level: bark.level || 'active'
       }

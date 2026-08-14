@@ -157,7 +157,7 @@ function exportATHistory() {
 
       <div class="at-terminal-output" aria-live="polite" aria-label="AT 终端输出">
       <div v-if="atHistory.length === 0 && !atSending" class="at-terminal-empty">
-        <span>VoHive AT Console</span>
+        <span>HiDeck AT Console</span>
         <small>输入命令后，真实设备响应将显示在这里</small>
       </div>
       <div v-for="(h, i) in atHistory" :key="h.ts + h.cmd + i" class="at-terminal-entry">
