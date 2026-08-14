@@ -118,6 +118,7 @@ func (w *WeixinChannel) authorizeMessage(request weixinAuthorizationRequest) (bo
 	w.authMu.Lock()
 	defer w.authMu.Unlock()
 	state := w.snapshotState()
+	changed := false
 	if request.Kind == "group" {
 		if !containsString(w.config.AllowedGroupIDs, request.ChatID) || !w.allowedDirect(state, request.Sender) {
 			return false, nil
@@ -128,16 +129,27 @@ func (w *WeixinChannel) authorizeMessage(request weixinAuthorizationRequest) (bo
 				return false, nil
 			}
 			state.Weixin.AllowedUsers = append(state.Weixin.AllowedUsers, request.Sender)
+			changed = true
 		}
 		if strings.TrimSpace(state.Weixin.DefaultTarget) == "" {
-			state.Weixin.DefaultTarget = firstNonEmpty(request.ChatID, request.Sender)
+			if target := firstNonEmpty(request.ChatID, request.Sender); target != "" {
+				state.Weixin.DefaultTarget = target
+				changed = true
+			}
 		}
 	}
 	if strings.TrimSpace(request.ContextToken) != "" {
 		if state.Weixin.ContextTokens == nil {
 			state.Weixin.ContextTokens = make(map[string]string)
 		}
-		state.Weixin.ContextTokens[request.ChatID] = strings.TrimSpace(request.ContextToken)
+		contextToken := strings.TrimSpace(request.ContextToken)
+		if state.Weixin.ContextTokens[request.ChatID] != contextToken {
+			state.Weixin.ContextTokens[request.ChatID] = contextToken
+			changed = true
+		}
+	}
+	if !changed {
+		return true, nil
 	}
 	if err := w.saveState(state); err != nil {
 		return false, err
