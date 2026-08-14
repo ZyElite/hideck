@@ -1,0 +1,37 @@
+#!/bin/sh
+
+python3 - "$1" <<'PY'
+import pathlib
+import sys
+
+
+EMOJI_RANGES = (
+    (0x2300, 0x23FF),
+    (0x2600, 0x27BF),
+    (0x2B00, 0x2BFF),
+    (0x1F000, 0x1FAFF),
+)
+EMOJI_CODEPOINTS = {0x00A9, 0x00AE, 0x200D, 0x20E3, 0x3030, 0x303D, 0x3297, 0x3299, 0xFE0F}
+
+
+def is_emoji(character: str) -> bool:
+    codepoint = ord(character)
+    return codepoint in EMOJI_CODEPOINTS or any(
+        start <= codepoint <= end for start, end in EMOJI_RANGES
+    )
+
+
+message_path = pathlib.Path(sys.argv[1])
+message = message_path.read_text(encoding="utf-8")
+for line_number, line in enumerate(message.splitlines(), start=1):
+    if line.lstrip().startswith("#"):
+        continue
+    for character in line:
+        if is_emoji(character):
+            print(
+                f"commit-msg: emoji U+{ord(character):04X} is not allowed "
+                f"on line {line_number}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+PY
