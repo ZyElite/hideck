@@ -26,6 +26,7 @@ const emptyState = await readFile(
 
 test('proxy page uses the compact production inventory workspace', () => {
   assert.match(proxyView, /<PageHeader title="代理管理"/)
+  assert.match(proxyView, /<section class="proxy-workspace ui-card">/)
   assert.match(proxyView, /<ProxyModeSwitch/)
   assert.match(proxyView, /<ProxyUpstreamInventory/)
   assert.match(proxyView, /<ProxyOutboundInventory/)
@@ -62,6 +63,8 @@ test('both proxy modes share one compact inventory shell', () => {
   assert.match(inventoryShell, /min-height: 76px/)
   assert.match(inventoryShell, /<EmptyState[\s\S]*compact/)
   assert.match(emptyState, /min-height: 156px/)
+  assert.doesNotMatch(modeSwitch, /class="proxy-mode-switch ui-card"/)
+  assert.doesNotMatch(inventoryShell, /class="proxy-inventory ui-card"/)
   assert.doesNotMatch(inventoryShell, /letter-spacing/)
   assert.doesNotMatch(upstreamInventory, /proxy-inventory-header/)
   assert.doesNotMatch(outboundInventory, /proxy-inventory-header/)

@@ -518,64 +518,66 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
   <div class="app-page proxy-page">
     <PageHeader title="代理管理" subtitle="配置 VoWiFi 漫游路由与绑定物理网络接口的本地出口" />
 
-    <ProxyModeSwitch
-      v-model="activeTab"
-      :enabled-upstream-count="enabledUpstreamCount"
-      :outbound-count="instances.length"
-      :rule-count="upstreamStore.countryRules.length"
-      :running-outbound-count="runningOutboundCount"
-      :upstream-count="upstreamStore.proxies.length"
-    />
+    <section class="proxy-workspace ui-card">
+      <ProxyModeSwitch
+        v-model="activeTab"
+        :enabled-upstream-count="enabledUpstreamCount"
+        :outbound-count="instances.length"
+        :rule-count="upstreamStore.countryRules.length"
+        :running-outbound-count="runningOutboundCount"
+        :upstream-count="upstreamStore.proxies.length"
+      />
 
-    <Transition name="proxy-mode" mode="out-in">
-      <div v-if="activeTab === 'upstream'" key="upstream">
-        <ErrorState
-          v-if="upstreamError"
-          class="mb-6"
-          title="加载前置代理失败"
-          :message="upstreamError.message"
-          :status-code="upstreamError.status"
-          retry-text="重试"
-          @retry="fetchUpstream"
-        />
+      <Transition name="proxy-mode" mode="out-in">
+        <div v-if="activeTab === 'upstream'" key="upstream" class="proxy-workspace-content">
+          <ErrorState
+            v-if="upstreamError"
+            class="m-4"
+            title="加载前置代理失败"
+            :message="upstreamError.message"
+            :status-code="upstreamError.status"
+            retry-text="重试"
+            @retry="fetchUpstream"
+          />
 
-        <ProxyUpstreamInventory
-          :loading="upstreamLoading"
-          :refreshing="upstreamRefreshing"
-          :rows="upstreamRows"
-          @add="openUpstreamDrawer()"
-          @delete="removeUpstreamProxy"
-          @edit="editUpstreamProxy"
-          @refresh="fetchUpstream"
-          @rules="manageUpstreamRules"
-        />
-      </div>
+          <ProxyUpstreamInventory
+            :loading="upstreamLoading"
+            :refreshing="upstreamRefreshing"
+            :rows="upstreamRows"
+            @add="openUpstreamDrawer()"
+            @delete="removeUpstreamProxy"
+            @edit="editUpstreamProxy"
+            @refresh="fetchUpstream"
+            @rules="manageUpstreamRules"
+          />
+        </div>
 
-      <div v-else key="outbound">
-        <ErrorState
-          v-if="loadError"
-          class="mb-6"
-          title="加载代理配置失败"
-          :message="loadError.message"
-          :status-code="loadError.status"
-          retry-text="重试"
-          @retry="fetchOverview"
-        />
+        <div v-else key="outbound" class="proxy-workspace-content">
+          <ErrorState
+            v-if="loadError"
+            class="m-4"
+            title="加载代理配置失败"
+            :message="loadError.message"
+            :status-code="loadError.status"
+            retry-text="重试"
+            @retry="fetchOverview"
+          />
 
-        <ProxyOutboundInventory
-          :loading="initialLoading"
-          :refreshing="refreshing"
-          :rows="outboundRows"
-          @add="openDrawer()"
-          @delete="deleteInstance"
-          @edit="editOutboundInstance"
-          @refresh="fetchOverview"
-          @restart="restartInstance"
-          @start="startInstance"
-          @stop="stopInstance"
-        />
-      </div>
-    </Transition>
+          <ProxyOutboundInventory
+            :loading="initialLoading"
+            :refreshing="refreshing"
+            :rows="outboundRows"
+            @add="openDrawer()"
+            @delete="deleteInstance"
+            @edit="editOutboundInstance"
+            @refresh="fetchOverview"
+            @restart="restartInstance"
+            @start="startInstance"
+            @stop="stopInstance"
+          />
+        </div>
+      </Transition>
+    </section>
 
     <ProxyInstanceEditorDrawer
       v-model="drawerOpen"
@@ -607,9 +609,8 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
 </template>
 
 <style scoped>
-.proxy-page :deep(.ui-card) {
-  border-radius: 7px;
-}
+.proxy-workspace { min-width: 0; overflow: hidden; }
+.proxy-workspace-content { min-width: 0; }
 
 .proxy-page :deep(.ui-panel-muted) {
   border-radius: 7px;

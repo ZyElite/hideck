@@ -28,7 +28,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <aside class="task-detail ui-card" aria-label="任务详情">
+  <aside class="task-detail" aria-label="任务详情">
     <header>
       <div>
         <span>AUTOMATION PROFILE</span>
@@ -65,7 +65,7 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-.task-detail { min-width: 0; padding: 18px 16px; overflow: auto; }
+.task-detail { min-width: 0; padding: 18px 16px; border-left: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-surface-strong) 70%, transparent); overflow: auto; }
 .task-detail > header { min-height: 42px; margin-bottom: 14px; padding: 0 3px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .task-detail > header span { color: var(--ui-primary); font: var(--ui-font-caption)/1.2 "v-mono", monospace; letter-spacing: .14em; }
 .task-detail h2 { margin: 5px 0 0; color: var(--ui-text); font-size: 20px; overflow-wrap: anywhere; }
@@ -84,7 +84,7 @@ const emit = defineEmits<{
 .task-detail > footer { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .task-detail > footer :deep(.el-button) { min-height: 40px; margin: 0; }
 @media (max-width: 1180px) {
-  .task-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .task-detail { border-top: 1px solid var(--ui-border); border-left: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .task-detail > header, .task-detail > footer { grid-column: 1 / -1; }
   .detail-panel + .detail-panel { margin-top: 0; }
 }

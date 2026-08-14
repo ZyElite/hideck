@@ -15,7 +15,7 @@ const mode = defineModel<ProxyWorkspaceMode>({ required: true })
 </script>
 
 <template>
-  <nav class="proxy-mode-switch ui-card" aria-label="代理工作区">
+  <nav class="proxy-mode-switch" aria-label="代理工作区">
     <div class="proxy-mode-tabs">
       <button
         type="button"
@@ -48,7 +48,7 @@ const mode = defineModel<ProxyWorkspaceMode>({ required: true })
 </template>
 
 <style scoped>
-.proxy-mode-switch { min-height: 62px; margin-bottom: 14px; padding: 0; display: flex; align-items: stretch; justify-content: space-between; gap: 16px; overflow: hidden; border-radius: 7px; }
+.proxy-mode-switch { min-height: 62px; padding: 0; display: flex; align-items: stretch; justify-content: space-between; gap: 16px; overflow: hidden; border-bottom: 1px solid var(--ui-border); }
 .proxy-mode-tabs { min-width: 0; display: flex; }
 .proxy-mode-tabs button { min-width: 220px; min-height: 62px; padding: 9px 14px; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 0; border-right: 1px solid var(--ui-border); border-bottom: 2px solid transparent; background: transparent; color: var(--ui-text-muted); text-align: left; cursor: pointer; transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease; }
 .proxy-mode-tabs button:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: -3px; }

@@ -198,7 +198,7 @@ function taskToInput(task: AutomaticTask, overrides: Partial<AutomaticTaskInput>
       </div>
     </header>
 
-    <section class="automation-shell" :class="{ 'detail-open': selectedTask }">
+    <section class="automation-shell ui-card" :class="{ 'detail-open': selectedTask }">
       <AutomaticTaskList
         :tasks="tasks"
         :selected-task-id="selectedTaskId"
@@ -247,7 +247,7 @@ function taskToInput(task: AutomaticTask, overrides: Partial<AutomaticTaskInput>
 .page-heading p { margin: 0; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 .heading-actions { display: flex; align-items: center; gap: 8px; }
 .heading-actions :deep(.el-button) { min-height: 40px; margin: 0; }
-.automation-shell { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 16px; }
+.automation-shell { min-width: 0; overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr); }
 .automation-shell.detail-open { grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 400px); }
 .task-list-region { overflow-x: auto; }
 .task-detail-enter-active { transition: opacity 220ms var(--ui-ease-out), transform 220ms var(--ui-ease-out); }

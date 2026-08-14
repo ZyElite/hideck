@@ -60,7 +60,7 @@ function selectFromKeyboard(event: KeyboardEvent, task: AutomaticTask) {
 </script>
 
 <template>
-  <section class="task-list-region ui-card" aria-label="自动任务列表" :aria-busy="loading">
+  <section class="task-list-region" aria-label="自动任务列表" :aria-busy="loading">
     <header class="task-summary" aria-label="自动任务摘要">
       <span><b>{{ summary.total }}</b> 个任务</span><i aria-hidden="true" />
       <span><b>{{ summary.enabled }}</b> 已启用</span><i aria-hidden="true" />

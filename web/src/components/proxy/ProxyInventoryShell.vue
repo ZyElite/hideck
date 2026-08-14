@@ -24,7 +24,7 @@ defineEmits<{
 </script>
 
 <template>
-  <section class="proxy-inventory ui-card" :aria-labelledby="titleId">
+  <section class="proxy-inventory" :aria-labelledby="titleId">
     <header class="proxy-inventory-header">
       <div class="proxy-inventory-heading">
         <span class="section-icon" :class="`section-icon-${tone}`" aria-hidden="true">
