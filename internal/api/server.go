@@ -81,6 +81,7 @@ type Server struct {
 	trafficRT               realtimeTrafficSubscriber
 	proxyRepo               repo.ProxyInstanceRepository
 	proxySyncMu             sync.Mutex
+	notificationConfigMu    sync.Mutex
 	voiceGW                 *voicehost.Gateway
 	voiceRecordingDirectory string
 	phone                   *phone.Service

@@ -78,6 +78,8 @@ func (s *Server) applyWeComQRCredentials(credentials notify.WeComQRCredentials) 
 	if strings.TrimSpace(credentials.BotID) == "" || strings.TrimSpace(credentials.Secret) == "" {
 		return "企业微信扫码凭证不完整，请手工填写 Bot ID 与 Secret"
 	}
+	s.notificationConfigMu.Lock()
+	defer s.notificationConfigMu.Unlock()
 	nextConfig := *s.fullCfg
 	nextConfig.WeComBot.Enabled = true
 	nextConfig.WeComBot.BotID = credentials.BotID

@@ -90,7 +90,10 @@ func (s *Server) handleTestWeComNotification(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "请先启用企业微信消息推送后再测试"})
 		return
 	}
-	cfg, err := buildWeComConfig(&request, s.fullCfg.WeCom)
+	s.notificationConfigMu.Lock()
+	current := s.fullCfg.WeCom
+	s.notificationConfigMu.Unlock()
+	cfg, err := buildWeComConfig(&request, current)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 		return

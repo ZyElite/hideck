@@ -43,7 +43,9 @@ func (s *Server) handleStartWeixinQR(c *gin.Context) {
 	}
 	baseURL := strings.TrimSpace(request.BaseURL)
 	if baseURL == "" {
+		s.notificationConfigMu.Lock()
 		baseURL = s.fullCfg.Weixin.BaseURL
+		s.notificationConfigMu.Unlock()
 	}
 	view, err := s.weixinQR.Start(c.Request.Context(), baseURL)
 	if err != nil {
@@ -102,6 +104,8 @@ func (s *Server) applyWeixinQRCredentials(credentials notify.WeixinQRCredentials
 	}); err != nil {
 		return err.Error()
 	}
+	s.notificationConfigMu.Lock()
+	defer s.notificationConfigMu.Unlock()
 	nextConfig := *s.fullCfg
 	nextConfig.Weixin.Enabled = true
 	nextConfig.Weixin.BaseURL = credentials.BaseURL

@@ -3,12 +3,14 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	yaml "go.yaml.in/yaml/v3"
 )
 
 func UpdateNotificationInFile(path string, notifications NotificationConfigs) error {
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("读取配置文件失败: %w", err)
@@ -106,21 +108,14 @@ func UpdateNotificationInFile(path string, notifications NotificationConfigs) er
 		return fmt.Errorf("序列化配置文件失败: %w", err)
 	}
 
-	tmp := path + ".tmp"
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("创建配置目录失败: %w", err)
-	}
-	if err := os.WriteFile(tmp, out, 0o600); err != nil {
-		return fmt.Errorf("写入临时配置文件失败: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("替换配置文件失败: %w", err)
-	}
-	return nil
+	return writeConfigAtomically(path, out)
 }
 
 // UpdateWebCredentialsInFile 更新配置文件中的 Web 凭证（用户名和密码）
 func UpdateWebCredentialsInFile(path string, username, password string) error {
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("读取配置文件失败: %w", err)
@@ -142,15 +137,5 @@ func UpdateWebCredentialsInFile(path string, username, password string) error {
 		return fmt.Errorf("序列化配置文件失败: %w", err)
 	}
 
-	tmp := path + ".tmp"
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("创建配置目录失败: %w", err)
-	}
-	if err := os.WriteFile(tmp, out, 0o600); err != nil {
-		return fmt.Errorf("写入临时配置文件失败: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("替换配置文件失败: %w", err)
-	}
-	return nil
+	return writeConfigAtomically(path, out)
 }

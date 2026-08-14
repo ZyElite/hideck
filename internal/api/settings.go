@@ -131,6 +131,9 @@ type updateNotificationSettingsRequest struct {
 }
 
 func (s *Server) handleGetNotificationSettings(c *gin.Context) {
+	s.notificationConfigMu.Lock()
+	defer s.notificationConfigMu.Unlock()
+
 	var resp notificationSettingsResponse
 	resp.Telegram.Enabled = s.fullCfg.Telegram.Enabled
 	resp.Telegram.BotToken = s.fullCfg.Telegram.BotToken
@@ -198,6 +201,8 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "参数错误"})
 		return
 	}
+	s.notificationConfigMu.Lock()
+	defer s.notificationConfigMu.Unlock()
 
 	tg := config.TelegramConfig{
 		Enabled:  req.Telegram.Enabled,

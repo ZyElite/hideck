@@ -91,6 +91,8 @@ func (s *Server) applyQQQRCredentials(credentials notify.QQQRCredentials) string
 	}); err != nil {
 		return err.Error()
 	}
+	s.notificationConfigMu.Lock()
+	defer s.notificationConfigMu.Unlock()
 	nextConfig := *s.fullCfg
 	nextConfig.QQ.Enabled = true
 	nextConfig.QQ.AppID = credentials.AppID
