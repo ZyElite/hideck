@@ -58,19 +58,19 @@ RUN --mount=type=cache,target=/root/.cache/go-build,id=gobuild-${TARGETOS}-${TAR
       BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"; \
     fi && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -mod=readonly -trimpath -buildvcs=false -tags "with_utls nomsgpack" -ldflags "-s -w -X 'github.com/iniwex5/vohive/internal/global.Version=${VERSION}' -X 'github.com/iniwex5/vohive/internal/global.BuildTime=${BUILD_TIME}'" -o vo-hive ./cmd/vohive && \
+    go build -mod=readonly -trimpath -buildvcs=false -tags "with_utls nomsgpack" -ldflags "-s -w -X 'github.com/yibaiba/hideck/internal/global.Version=${VERSION}' -X 'github.com/yibaiba/hideck/internal/global.BuildTime=${BUILD_TIME}'" -o hideck ./cmd/hideck && \
     if [ "${ENABLE_UPX}" = "1" ] || [ "${ENABLE_UPX}" = "true" ]; then \
       echo "UPX enabled, compressing binary..."; \
       (apk add --no-cache upx >/dev/null 2>&1 || apk add --no-cache upx-ucl >/dev/null 2>&1 || true); \
       if command -v upx >/dev/null 2>&1; then \
-        upx --best --lzma /app/vo-hive; \
+        upx --best --lzma /app/hideck; \
       else \
         echo "UPX package not available, skip compression."; \
       fi; \
     else \
       echo "UPX disabled."; \
     fi && \
-    ls -lh /app/vo-hive
+    ls -lh /app/hideck
 
 # 运行时基础层
 FROM alpine:latest AS runtime-base
@@ -99,7 +99,7 @@ EXPOSE 7575/tcp 7576/tcp 7580/udp
 FROM runtime-base AS runtime
 
 # 复制二进制文件
-COPY --from=backend-builder /app/vo-hive .
+COPY --from=backend-builder /app/hideck .
 
 # 创建配置和数据目录
 RUN mkdir -p config data logs
@@ -109,5 +109,5 @@ ENV CONFIG_PATH=/app/config/config.yaml
 ENV TZ=Asia/Shanghai
 
 # 入口点
-ENTRYPOINT ["./vo-hive"]
+ENTRYPOINT ["./hideck"]
 CMD ["-c", "/app/config/config.yaml"]

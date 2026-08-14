@@ -1,5 +1,5 @@
 # 构建产物
-/vo-hive
+/hideck
 /mbimprobe
 *.exe
 *.dll
@@ -51,7 +51,7 @@ coverage.out
 .cache/
 /server
 /reader
-vohive.code-workspace
+hideck.code-workspace
 PushNotification.pdf
 Quectel_LTE_Standard_UAC_应用指导_V1.0.pdf
 

@@ -1,7 +1,7 @@
 services:
-  vohive:
-    image: skyhotspur/vohive:${VOHIVE_TAG:-1.5.5}
-    container_name: vohive
+  hideck:
+    image: yibaiba/hideck:${HIDECK_TAG:-1.5.5}
+    container_name: hideck
     restart: unless-stopped
     network_mode: host
     privileged: true

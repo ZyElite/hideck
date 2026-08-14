@@ -12,7 +12,7 @@ on:
         default: "false"
 
 env:
-  DOCKER_IMAGE: skyhotspur/vohive
+  DOCKER_IMAGE: yibaiba/hideck
 
 jobs:
   build:

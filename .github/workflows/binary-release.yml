@@ -117,8 +117,8 @@ jobs:
           mkdir -p dist
           GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} GOARM=${{ matrix.goarm }} \
             go build -trimpath -buildvcs=false -tags "with_utls nomsgpack" \
-            -ldflags "-s -w -X 'github.com/iniwex5/vohive/internal/global.Version=${{ steps.vars.outputs.version }}' -X 'github.com/iniwex5/vohive/internal/global.BuildTime=${{ steps.vars.outputs.buildtime }}'" \
-            -o dist/vo-hive ./cmd/vohive
+            -ldflags "-s -w -X 'github.com/yibaiba/hideck/internal/global.Version=${{ steps.vars.outputs.version }}' -X 'github.com/yibaiba/hideck/internal/global.BuildTime=${{ steps.vars.outputs.buildtime }}'" \
+            -o dist/hideck ./cmd/hideck
 
       - name: Install UPX
         if: ${{ steps.vars.outputs.enable_upx == '1' }}
@@ -131,14 +131,14 @@ jobs:
         if: ${{ steps.vars.outputs.enable_upx == '1' }}
         shell: bash
         run: |
-          upx --best --lzma dist/vo-hive || upx -9 dist/vo-hive
+          upx --best --lzma dist/hideck || upx -9 dist/hideck
 
       - name: Package artifact
         shell: bash
         run: |
-          OUT="vohive_${{ steps.vars.outputs.version }}_linux_${{ matrix.artifact_arch }}"
+          OUT="hideck_${{ steps.vars.outputs.version }}_linux_${{ matrix.artifact_arch }}"
           mkdir -p out
-          cp dist/vo-hive "out/${OUT}"
+          cp dist/hideck "out/${OUT}"
           sha256sum "out/${OUT}" > "out/${OUT}.sha256"
 
       - name: Upload artifact
