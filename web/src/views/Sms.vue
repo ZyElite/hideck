@@ -848,7 +848,17 @@ async function confirmDeleteThread(thread: SmsThread) {
 
 .sms-conversation-pane {
   overflow: hidden;
-  background: var(--ui-surface);
+  background: transparent;
+}
+
+.sms-workspace :deep(.sms-device-rail),
+.sms-workspace :deep(.sms-thread-list),
+.sms-workspace :deep(.sms-conversation-header) {
+  background: transparent;
+}
+
+.sms-workspace :deep(.sms-composer) {
+  background: color-mix(in srgb, var(--ui-surface) 82%, transparent);
 }
 
 @keyframes sms-workspace-enter {

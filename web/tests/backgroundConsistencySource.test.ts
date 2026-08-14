@@ -51,6 +51,12 @@ test('continuous workspaces share the semantic primary glow', () => {
   assert.match(globalStyles, /html\.dark \.ui-workspace-glow::before/)
 })
 
+test('SMS and command content let the workspace glow remain visible', () => {
+  assert.match(sms, /\.sms-workspace :deep\(\.sms-device-rail\),[\s\S]*background: transparent;/)
+  assert.match(commands, /\.commands-layout :deep\(\.chat-shell\) \{[^}]*background: transparent;/)
+  assert.match(commands, /\.commands-layout :deep\(\.balance-rail\) \{[^}]*transparent/)
+})
+
 test('route-specific shells do not hardcode their own app canvas backgrounds', () => {
   assert.doesNotMatch(sms, /\.sms-page\s*\{[^}]*background:/s)
   assert.doesNotMatch(commands, /\.commands-page\s*\{[^}]*background:/s)

@@ -541,7 +541,9 @@ function updateRulesOpen(open: boolean) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(300px, 25vw, 360px);
 }
-.commands-layout :deep(.chat-shell) { border: 0; border-radius: 0; }
+.commands-layout :deep(.chat-shell) { border: 0; border-radius: 0; background: transparent; }
+.commands-layout :deep(.balance-rail) { background: color-mix(in srgb, var(--ui-surface-strong) 64%, transparent); }
+.commands-layout :deep(.composer) { background: color-mix(in srgb, var(--ui-surface) 82%, transparent); }
 @media (max-width: 1023px) {
   .commands-layout { height: auto; min-height: 0; grid-template-columns: minmax(0, 1fr); overflow: visible; }
   .commands-layout :deep(.chat-shell) { height: 690px; min-height: 690px; }
