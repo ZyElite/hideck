@@ -9,11 +9,9 @@
 
 ## 快速启动（推荐）
 
-仓库内置部署脚本，会初始化缺失的配置和持久化目录，再拉取并启动最新镜像：
+进入已有项目目录，运行内置部署脚本。它会初始化缺失的配置和持久化目录，再拉取并启动最新镜像：
 
 ```bash
-git clone https://github.com/yibaiba/hideck.git
-cd hideck
 ./deploy.sh
 ```
 

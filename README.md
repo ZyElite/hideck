@@ -31,9 +31,9 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 运行环境需要 Linux、Docker Compose、host 网络和 USB 设备访问权限。
 服务器使用 `docker-compose.yml` 拉取发布镜像；维护者本机的多架构构建使用独立的 `docker-compose.build.yml`。
 
+在已有项目目录中执行：
+
 ```bash
-git clone https://github.com/yibaiba/hideck.git
-cd hideck
 ./deploy.sh
 ```
 
