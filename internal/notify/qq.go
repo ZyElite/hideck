@@ -101,11 +101,29 @@ func (q *QQChannel) Send(text string) error {
 			Body: text,
 		})
 		if err != nil {
-			lastErr = err
-			logger.Warn("发送 QQ 消息失败", "recipient_hash", qqLogID(recipient.ID), "kind", recipient.Kind, "err", err)
+			lastErr = newQQDeliveryError(err, recipient)
+			logger.Warn("发送 QQ 消息失败", "recipient_hash", qqLogID(recipient.ID), "kind", recipient.Kind, "err", lastErr)
 		}
 	}
 	return lastErr
+}
+
+type qqDeliveryError struct {
+	cause   error
+	message string
+}
+
+func (e *qqDeliveryError) Error() string { return e.message }
+func (e *qqDeliveryError) Unwrap() error { return e.cause }
+
+func newQQDeliveryError(err error, recipient qqbot.Recipient) error {
+	message := err.Error()
+	if recipient.ID != "" {
+		message = strings.ReplaceAll(message, recipient.ID, "<redacted>")
+	}
+	return &qqDeliveryError{
+		cause: err, message: "QQ " + string(recipient.Kind) + " 消息发送失败: " + message,
+	}
 }
 
 // RegisterCommand 注册命令处理器，内部自动添加白名单鉴权

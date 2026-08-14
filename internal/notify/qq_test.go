@@ -187,6 +187,25 @@ func TestQQChannelSendNoRecipientsReturnsExplicitError(t *testing.T) {
 	}
 }
 
+func TestQQChannelSendRedactsRecipientFromReturnedError(t *testing.T) {
+	t.Parallel()
+	const openID = "private-openid-123"
+	sourceErr := errors.New("Post https://api.sgroup.qq.com/v2/users/" + openID + "/messages: connection reset")
+	channel := &QQChannel{
+		app: &fakeQQApp{sendErr: sourceErr},
+		allowedRecipients: map[string]qqbot.Recipient{
+			"direct:" + openID: {Kind: qqbot.DirectRecipient, ID: openID},
+		},
+	}
+	err := channel.Send("hello")
+	if err == nil || strings.Contains(err.Error(), openID) || !strings.Contains(err.Error(), "<redacted>") {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if !errors.Is(err, sourceErr) {
+		t.Fatalf("Send() did not preserve cause: %v", err)
+	}
+}
+
 func TestQQLogIDIsStableAndDoesNotExposeOpenID(t *testing.T) {
 	t.Parallel()
 	const openID = "private-openid-123"
