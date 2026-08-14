@@ -283,7 +283,7 @@ function focusNameInput() {
 
 <style scoped>
 :global(.automatic-task-editor-scrim) { background: color-mix(in srgb, #000 54%, transparent); }
-:global(.automatic-task-editor) { border-radius: 8px 0 0 8px; background: var(--ui-surface-strong); }
+:global(.automatic-task-editor) { border-radius: 8px 0 0 8px; background: var(--ui-surface); }
 :global(.automatic-task-editor .el-drawer__header) { min-height: 70px; margin: 0; padding: 12px 18px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text); }
 :global(.automatic-task-editor .el-drawer__body) { min-height: 0; padding: 16px 18px 0; overflow-y: auto; }
 :global(.automatic-task-editor .el-drawer__footer) { padding: 0 18px; border-top: 1px solid var(--ui-border); }

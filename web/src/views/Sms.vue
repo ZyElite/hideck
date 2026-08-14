@@ -713,7 +713,7 @@ async function confirmDeleteThread(thread: SmsThread) {
       @retry="refreshAll"
     />
 
-    <div class="flex-1 sms-workspace overflow-hidden relative">
+    <div class="flex-1 sms-workspace ui-card overflow-hidden relative">
       <div v-if="loading && threads.length === 0" class="absolute inset-0 z-20 flex items-center justify-center bg-white/70 dark:bg-black/40">
         <el-icon class="is-loading" size="28"><Loading /></el-icon>
       </div>
@@ -835,10 +835,6 @@ async function confirmDeleteThread(thread: SmsThread) {
 
 .sms-workspace {
   min-height: 0;
-  border: 1px solid var(--ui-border);
-  border-radius: 14px;
-  background: var(--ui-surface);
-  box-shadow: var(--ui-shadow-sm);
   animation: sms-workspace-enter 220ms var(--ui-ease-out) both;
 }
 
@@ -877,7 +873,7 @@ async function confirmDeleteThread(thread: SmsThread) {
 
 .sms-action-sheet {
   width: min(520px, 100%);
-  background: var(--ui-surface-strong);
+  background: var(--ui-surface);
   border-top-left-radius: 8px;
   border-top-right-radius: 8px;
   border: 1px solid var(--ui-border);
@@ -974,9 +970,6 @@ async function confirmDeleteThread(thread: SmsThread) {
     grid-template-columns: 52px minmax(0, 1fr);
   }
 
-  .sms-workspace {
-    border-radius: 10px;
-  }
 }
 
 /* 消息详情区域原生滚动条样式 */

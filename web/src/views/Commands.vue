@@ -428,7 +428,7 @@ function updateRulesOpen(open: boolean) {
 
 <template>
   <div class="app-page commands-page">
-    <div class="commands-layout">
+    <div class="commands-layout ui-card">
       <CommandChat
         v-model:selected-device="selectedDevice"
         :events="events"
@@ -538,9 +538,6 @@ function updateRulesOpen(open: boolean) {
   height: calc(100dvh - 112px);
   min-height: 540px;
   overflow: hidden;
-  border: 1px solid var(--ui-border);
-  border-radius: 8px;
-  background: var(--ui-surface);
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(300px, 25vw, 360px);
 }

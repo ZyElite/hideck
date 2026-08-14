@@ -107,15 +107,25 @@ test('automatic task runs use the real paginated polling contract in a timeline 
 })
 
 test('automatic task workspace keeps the responsive theme and safe-area contract', () => {
-  assert.match(view, /@media \(max-width: 1180px\)[\s\S]*\.automation-shell\.detail-open \{ min-height: 0; display: block; \}/)
+  assert.match(view, /@media \(max-width: 1180px\)[\s\S]*\.automation-shell\.detail-open \{ display: grid; grid-template-columns: minmax\(0, 1fr\); \}/)
   assert.match(view, /@media \(max-width: 820px\)[\s\S]*env\(safe-area-inset-bottom\)/)
   assert.match(view, /@media \(max-width: 640px\)[\s\S]*\.page-heading \{[\s\S]*flex-direction: column/)
   assert.match(taskList, /@media \(max-width: 640px\)[\s\S]*\.task-table \{ min-width: 0/)
   assert.match(taskList, /\.task-cell b, \.task-cell small \{ white-space: normal; overflow-wrap: anywhere; \}/)
-  assert.match(taskDetail, /@media \(max-width: 1180px\)[\s\S]*border-left: 0/)
+  assert.match(taskDetail, /@media \(max-width: 1180px\)[\s\S]*\.task-detail \{ display: grid; grid-template-columns: 1fr 1fr;/)
   assert.match(taskDetail, /@media \(max-width: 640px\)[\s\S]*grid-template-columns: 1fr/)
   assert.match(taskEditor, /@media \(max-width: 640px\)[\s\S]*safe-area-inset-bottom/)
   assert.match(taskRuns, /@media \(max-width: 640px\)[\s\S]*safe-area-inset-bottom/)
   assert.match(view + taskList + taskDetail + taskEditor + taskRuns, /var\(--ui-text\)/)
   assert.match(view + taskList + taskDetail + taskEditor + taskRuns, /prefers-reduced-motion: reduce/)
+})
+
+test('automatic task backgrounds follow the device management canvas and surface hierarchy', () => {
+  assert.doesNotMatch(view, /class="ui-panel automation-shell"/)
+  assert.match(view, /\.automation-shell \{[^}]*display: grid;[^}]*gap: 16px;/)
+  assert.match(taskList, /class="task-list-region ui-card"/)
+  assert.match(taskList, /\.task-state \{[^}]*var\(--ui-primary\)[^}]*var\(--ui-surface\);/)
+  assert.match(taskDetail, /class="task-detail ui-card"/)
+  assert.match(taskEditor, /\.automatic-task-editor\) \{[^}]*background: var\(--ui-surface\);/)
+  assert.match(taskRuns, /\.automatic-task-runs\) \{[^}]*background: var\(--ui-surface\);/)
 })

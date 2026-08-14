@@ -198,7 +198,7 @@ function taskToInput(task: AutomaticTask, overrides: Partial<AutomaticTaskInput>
       </div>
     </header>
 
-    <section class="ui-panel automation-shell" :class="{ 'detail-open': selectedTask }">
+    <section class="automation-shell" :class="{ 'detail-open': selectedTask }">
       <AutomaticTaskList
         :tasks="tasks"
         :selected-task-id="selectedTaskId"
@@ -247,14 +247,14 @@ function taskToInput(task: AutomaticTask, overrides: Partial<AutomaticTaskInput>
 .page-heading p { margin: 0; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 .heading-actions { display: flex; align-items: center; gap: 8px; }
 .heading-actions :deep(.el-button) { min-height: 40px; margin: 0; }
-.automation-shell { min-width: 0; min-height: 620px; overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr); border-radius: 6px; }
+.automation-shell { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 16px; }
 .automation-shell.detail-open { grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 400px); }
 .task-list-region { overflow-x: auto; }
 .task-detail-enter-active { transition: opacity 220ms var(--ui-ease-out), transform 220ms var(--ui-ease-out); }
 .task-detail-leave-active { transition: opacity 120ms var(--ui-ease-out), transform 120ms var(--ui-ease-out); }
 .task-detail-enter-from, .task-detail-leave-to { opacity: 0; transform: translateX(12px); }
 @media (max-width: 1180px) {
-  .automation-shell, .automation-shell.detail-open { min-height: 0; display: block; }
+  .automation-shell, .automation-shell.detail-open { display: grid; grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 820px) {
   .automation-page { padding-inline: 12px; padding-bottom: calc(92px + env(safe-area-inset-bottom)); }
@@ -264,7 +264,6 @@ function taskToInput(task: AutomaticTask, overrides: Partial<AutomaticTaskInput>
   .page-heading h1 { font-size: 20px; }
   .heading-actions { width: 100%; justify-content: flex-start; }
   .heading-actions :deep(.el-button) { min-height: 44px; }
-  .automation-shell { border-radius: 6px; }
   .task-list-region { overflow: visible; }
 }
 @media (prefers-reduced-motion: reduce) {

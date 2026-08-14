@@ -453,7 +453,7 @@ function lines(value: string) {
 
 <style scoped>
 :global(.command-rule-tray-scrim) { background: color-mix(in srgb, #000 54%, transparent); }
-:global(.command-rule-drawer) { border-radius: 8px 0 0 8px; background: var(--ui-surface-strong); }
+:global(.command-rule-drawer) { border-radius: 8px 0 0 8px; background: var(--ui-surface); }
 :global(.command-rule-drawer .el-drawer__header) { min-height: 64px; margin: 0; padding: 10px 18px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text); }
 :global(.command-rule-drawer .el-drawer__title) { font-size: 18px; font-weight: 650; }
 :global(.command-rule-drawer .el-drawer__body) { min-height: 0; padding: 0 18px 24px; overflow-y: auto; }

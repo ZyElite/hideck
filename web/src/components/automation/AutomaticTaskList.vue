@@ -60,7 +60,7 @@ function selectFromKeyboard(event: KeyboardEvent, task: AutomaticTask) {
 </script>
 
 <template>
-  <section class="task-list-region" aria-label="自动任务列表" :aria-busy="loading">
+  <section class="task-list-region ui-card" aria-label="自动任务列表" :aria-busy="loading">
     <header class="task-summary" aria-label="自动任务摘要">
       <span><b>{{ summary.total }}</b> 个任务</span><i aria-hidden="true" />
       <span><b>{{ summary.enabled }}</b> 已启用</span><i aria-hidden="true" />
@@ -163,10 +163,10 @@ function selectFromKeyboard(event: KeyboardEvent, task: AutomaticTask) {
 .task-summary span { white-space: nowrap; }
 .task-summary b, .task-summary strong { color: var(--ui-text); font-weight: 550; }
 .task-summary i { width: 3px; height: 3px; border-radius: 50%; background: var(--ui-text-subtle); }
-.task-state { min-height: 220px; border: 1px solid var(--ui-border); border-radius: 6px; color: var(--ui-text-muted); display: grid; place-items: center; align-content: center; gap: 8px; font-size: var(--ui-font-body); text-align: center; }
+.task-state { min-height: 220px; border: 1px solid var(--ui-border); border-radius: 6px; background: linear-gradient(145deg, color-mix(in srgb, var(--ui-primary) 4%, transparent), transparent 42%), var(--ui-surface); color: var(--ui-text-muted); display: grid; place-items: center; align-content: center; gap: 8px; font-size: var(--ui-font-body); text-align: center; }
 .task-state strong { color: var(--ui-text); }
 .task-error { min-height: 72px; margin-bottom: 10px; padding: 12px; border-color: color-mix(in srgb, var(--ui-danger) 38%, var(--ui-border)); color: var(--ui-danger); grid-template-columns: minmax(0, 1fr) auto; text-align: left; }
-.task-table { min-width: 900px; border: 1px solid var(--ui-border); border-radius: 6px; overflow: hidden; }
+.task-table { min-width: 900px; border: 1px solid var(--ui-border); border-radius: 6px; background: var(--ui-surface); overflow: hidden; }
 .task-row { display: grid; grid-template-columns: minmax(130px, 1.15fr) minmax(130px, 1.05fr) minmax(105px, .85fr) minmax(132px, 1fr) minmax(118px, .9fr) minmax(90px, .7fr) 68px 176px; }
 .task-table-head { min-height: 42px; align-items: center; border-bottom: 1px solid var(--ui-border); background: color-mix(in srgb, var(--ui-surface-muted) 40%, transparent); color: var(--ui-text-subtle); font-size: var(--ui-font-caption); }
 .task-table-head > span { padding: 10px; }

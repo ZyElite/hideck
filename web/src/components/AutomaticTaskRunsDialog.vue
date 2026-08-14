@@ -161,7 +161,7 @@ function handleOpenChange(open: boolean) {
 
 <style scoped>
 :global(.automatic-task-runs-scrim) { background: color-mix(in srgb, #000 54%, transparent); }
-:global(.automatic-task-runs) { border-radius: 8px 0 0 8px; background: var(--ui-surface-strong); }
+:global(.automatic-task-runs) { border-radius: 8px 0 0 8px; background: var(--ui-surface); }
 :global(.automatic-task-runs .el-drawer__header) { min-height: 70px; margin: 0; padding: 12px 18px; border-bottom: 1px solid var(--ui-border); color: var(--ui-text); }
 :global(.automatic-task-runs .el-drawer__body) { min-height: 0; padding: 0 18px 24px; overflow-y: auto; }
 .runs-header { width: 100%; min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
