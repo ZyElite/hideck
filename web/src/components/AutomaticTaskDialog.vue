@@ -314,6 +314,7 @@ function focusNameInput() {
 @media (max-width: 640px) {
   :global(.automatic-task-editor) { border-radius: 0; }
   :global(.automatic-task-editor .el-drawer__body) { padding-inline: 14px; }
+  :global(.automatic-task-editor .el-drawer__footer) { padding-bottom: env(safe-area-inset-bottom); }
   .form-grid, .form-grid-schedule { grid-template-columns: minmax(0, 1fr); }
   .editor-footer { padding: 10px 0; align-items: stretch; flex-direction: column; }
   .editor-footer > div { display: grid; grid-template-columns: 1fr 1fr; }
