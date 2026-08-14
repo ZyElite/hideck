@@ -63,6 +63,7 @@ type WeixinQRService struct {
 type weixinQRSession struct {
 	mu           sync.Mutex
 	cleanup      *time.Timer
+	cleanupGen   uint64
 	id           string
 	baseURL      string
 	pollBaseURL  string
@@ -108,9 +109,9 @@ func (s *WeixinQRService) Start(ctx context.Context, baseURL string) (WeixinQRVi
 	s.mu.Lock()
 	s.sessions[sessionID] = session
 	s.mu.Unlock()
-	session.cleanup = time.AfterFunc(weixinQRSessionTTL+qrSessionCleanupGrace, func() {
-		s.removeSession(sessionID, session)
-	})
+	session.mu.Lock()
+	s.scheduleCleanupLocked(session)
+	session.mu.Unlock()
 	return session.view(), nil
 }
 
@@ -172,6 +173,8 @@ func (s *WeixinQRService) finishStatus(sessionID string, session *weixinQRSessio
 }
 
 func (s *WeixinQRService) removeSession(sessionID string, session *weixinQRSession) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
 	s.mu.Lock()
 	removed := false
 	if s.sessions[strings.TrimSpace(sessionID)] == session {
@@ -182,13 +185,38 @@ func (s *WeixinQRService) removeSession(sessionID string, session *weixinQRSessi
 	if !removed {
 		return
 	}
-	session.mu.Lock()
+	session.cleanupGen++
 	if session.cleanup != nil {
 		session.cleanup.Stop()
 		session.cleanup = nil
 	}
 	session.clearSensitiveLocked()
-	session.mu.Unlock()
+}
+
+func (s *WeixinQRService) scheduleCleanupLocked(session *weixinQRSession) {
+	session.cleanupGen++
+	generation := session.cleanupGen
+	if session.cleanup != nil {
+		session.cleanup.Stop()
+	}
+	session.cleanup = time.AfterFunc(weixinQRSessionTTL+qrSessionCleanupGrace, func() {
+		s.cleanupSession(session, generation)
+	})
+}
+
+func (s *WeixinQRService) cleanupSession(session *weixinQRSession, generation uint64) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.cleanupGen != generation {
+		return
+	}
+	s.mu.Lock()
+	if s.sessions[session.id] == session {
+		delete(s.sessions, session.id)
+	}
+	s.mu.Unlock()
+	session.cleanup = nil
+	session.clearSensitiveLocked()
 }
 
 func (s *WeixinQRService) pollLocked(ctx context.Context, session *weixinQRSession) error {
@@ -227,6 +255,7 @@ func (s *WeixinQRService) refreshLocked(ctx context.Context, session *weixinQRSe
 	session.pollBaseURL = session.baseURL
 	session.expiresAt = s.now().Add(weixinQRSessionTTL)
 	session.status = WeixinQRWait
+	s.scheduleCleanupLocked(session)
 	return nil
 }
 

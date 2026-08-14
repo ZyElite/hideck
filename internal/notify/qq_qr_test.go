@@ -90,6 +90,7 @@ func TestQQQRServiceCompletesAndDecryptsCredentials(t *testing.T) {
 func TestQQQRServiceRefreshesAtMostThreeTimes(t *testing.T) {
 	var mu sync.Mutex
 	createCalls := 0
+	now := time.Unix(100, 0)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case qqQRCreatePath:
@@ -105,16 +106,24 @@ func TestQQQRServiceRefreshesAtMostThreeTimes(t *testing.T) {
 		}
 	}))
 	defer provider.Close()
-	service := NewQQQRService(QQQROptions{HTTPClient: provider.Client(), BaseURL: provider.URL, QRBaseURL: provider.URL})
+	service := NewQQQRService(QQQROptions{
+		HTTPClient: provider.Client(), BaseURL: provider.URL, QRBaseURL: provider.URL, Now: func() time.Time { return now },
+	})
 	started, err := service.Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	var view QQQRView
-	for range qqQRMaxRefreshes + 1 {
+	for index := range qqQRMaxRefreshes + 1 {
+		if index == 0 {
+			now = now.Add(qqQRSessionTTL / 2)
+		}
 		view, err = service.Status(context.Background(), started.SessionID)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if index == 0 && !view.ExpiresAt.Equal(now.Add(qqQRSessionTTL)) {
+			t.Fatalf("refreshed expiry = %s", view.ExpiresAt)
 		}
 	}
 	mu.Lock()

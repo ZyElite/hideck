@@ -66,6 +66,7 @@ type QQQRService struct {
 type qqQRSession struct {
 	mu           sync.Mutex
 	cleanup      *time.Timer
+	cleanupGen   uint64
 	id           string
 	taskID       string
 	qrURL        string
@@ -114,9 +115,9 @@ func (s *QQQRService) Start(ctx context.Context) (QQQRView, error) {
 	s.mu.Lock()
 	s.sessions[sessionID] = session
 	s.mu.Unlock()
-	session.cleanup = time.AfterFunc(qqQRSessionTTL+qrSessionCleanupGrace, func() {
-		s.removeSession(sessionID, session)
-	})
+	session.mu.Lock()
+	s.scheduleCleanupLocked(session)
+	session.mu.Unlock()
 	return session.view(), nil
 }
 
@@ -184,6 +185,8 @@ func (s *QQQRService) finishStatus(sessionID string, session *qqQRSession) (QQQR
 }
 
 func (s *QQQRService) removeSession(sessionID string, session *qqQRSession) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
 	s.mu.Lock()
 	removed := false
 	if s.sessions[strings.TrimSpace(sessionID)] == session {
@@ -194,13 +197,38 @@ func (s *QQQRService) removeSession(sessionID string, session *qqQRSession) {
 	if !removed {
 		return
 	}
-	session.mu.Lock()
+	session.cleanupGen++
 	if session.cleanup != nil {
 		session.cleanup.Stop()
 		session.cleanup = nil
 	}
 	session.clearSensitiveLocked()
-	session.mu.Unlock()
+}
+
+func (s *QQQRService) scheduleCleanupLocked(session *qqQRSession) {
+	session.cleanupGen++
+	generation := session.cleanupGen
+	if session.cleanup != nil {
+		session.cleanup.Stop()
+	}
+	session.cleanup = time.AfterFunc(qqQRSessionTTL+qrSessionCleanupGrace, func() {
+		s.cleanupSession(session, generation)
+	})
+}
+
+func (s *QQQRService) cleanupSession(session *qqQRSession, generation uint64) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.cleanupGen != generation {
+		return
+	}
+	s.mu.Lock()
+	if s.sessions[session.id] == session {
+		delete(s.sessions, session.id)
+	}
+	s.mu.Unlock()
+	session.cleanup = nil
+	session.clearSensitiveLocked()
 }
 
 func (s *QQQRService) createTask(ctx context.Context) (string, []byte, error) {
@@ -253,8 +281,10 @@ func (s *QQQRService) refreshLocked(ctx context.Context, session *qqQRSession) e
 	clear(session.key)
 	session.taskID, session.key = taskID, key
 	session.qrURL = buildQQQRURL(s.qrBaseURL, taskID)
+	session.expiresAt = s.now().Add(qqQRSessionTTL)
 	session.refreshCount++
 	session.status = QQQRWait
+	s.scheduleCleanupLocked(session)
 	return nil
 }
 

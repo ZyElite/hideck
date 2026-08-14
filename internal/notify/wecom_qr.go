@@ -69,6 +69,7 @@ type WeComQRService struct {
 type weComQRSession struct {
 	mu           sync.Mutex
 	cleanup      *time.Timer
+	cleanupGen   uint64
 	id           string
 	scode        string
 	qrURL        string
@@ -128,9 +129,9 @@ func (s *WeComQRService) Start(ctx context.Context) (WeComQRView, error) {
 	s.mu.Lock()
 	s.sessions[sessionID] = session
 	s.mu.Unlock()
-	session.cleanup = time.AfterFunc(weComQRSessionTTL+qrSessionCleanupGrace, func() {
-		s.removeSession(sessionID, session)
-	})
+	session.mu.Lock()
+	s.scheduleCleanupLocked(session)
+	session.mu.Unlock()
 	return session.view(), nil
 }
 
@@ -192,6 +193,8 @@ func (s *WeComQRService) finishStatus(sessionID string, session *weComQRSession)
 }
 
 func (s *WeComQRService) removeSession(sessionID string, session *weComQRSession) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
 	s.mu.Lock()
 	removed := false
 	if s.sessions[strings.TrimSpace(sessionID)] == session {
@@ -202,13 +205,38 @@ func (s *WeComQRService) removeSession(sessionID string, session *weComQRSession
 	if !removed {
 		return
 	}
-	session.mu.Lock()
+	session.cleanupGen++
 	if session.cleanup != nil {
 		session.cleanup.Stop()
 		session.cleanup = nil
 	}
 	session.clearSensitiveLocked()
-	session.mu.Unlock()
+}
+
+func (s *WeComQRService) scheduleCleanupLocked(session *weComQRSession) {
+	session.cleanupGen++
+	generation := session.cleanupGen
+	if session.cleanup != nil {
+		session.cleanup.Stop()
+	}
+	session.cleanup = time.AfterFunc(weComQRSessionTTL+qrSessionCleanupGrace, func() {
+		s.cleanupSession(session, generation)
+	})
+}
+
+func (s *WeComQRService) cleanupSession(session *weComQRSession, generation uint64) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.cleanupGen != generation {
+		return
+	}
+	s.mu.Lock()
+	if s.sessions[session.id] == session {
+		delete(s.sessions, session.id)
+	}
+	s.mu.Unlock()
+	session.cleanup = nil
+	session.clearSensitiveLocked()
 }
 
 func (s *WeComQRService) pollLocked(ctx context.Context, session *weComQRSession) error {
