@@ -11,6 +11,15 @@ type channelActivity struct {
 	sends sync.WaitGroup
 }
 
+type channelDelivery struct {
+	channel  Channel
+	activity *channelActivity
+}
+
+type channelCommandReceiver interface {
+	StopReceivingCommands()
+}
+
 type channelFactory struct {
 	name    string
 	enabled bool
@@ -85,25 +94,40 @@ func (m *Manager) installChannels(channels []Channel) {
 	retireChannels(oldChannels, oldActivity)
 }
 
-func (m *Manager) swapChannels(channels []Channel) ([]Channel, *channelActivity) {
+func (m *Manager) swapChannels(channels []Channel) ([]Channel, []*channelActivity) {
 	m.channelsMu.Lock()
 	oldChannels, oldActivity := m.channels, m.channelActivity
 	m.channels = append([]Channel(nil), channels...)
-	m.channelActivity = &channelActivity{}
+	m.channelActivity = newChannelActivities(len(channels))
 	m.channelsMu.Unlock()
 	return oldChannels, oldActivity
 }
 
-func (m *Manager) beginChannelSends() ([]Channel, *channelActivity) {
+func (m *Manager) beginChannelSends() []channelDelivery {
 	m.channelsMu.Lock()
-	if m.channelActivity == nil {
-		m.channelActivity = &channelActivity{}
+	m.ensureChannelActivitiesLocked()
+	deliveries := make([]channelDelivery, len(m.channels))
+	for index, channel := range m.channels {
+		activity := m.channelActivity[index]
+		activity.sends.Add(1)
+		deliveries[index] = channelDelivery{channel: channel, activity: activity}
 	}
-	channels := append([]Channel(nil), m.channels...)
-	activity := m.channelActivity
-	activity.sends.Add(len(channels))
 	m.channelsMu.Unlock()
-	return channels, activity
+	return deliveries
+}
+
+func (m *Manager) ensureChannelActivitiesLocked() {
+	if len(m.channelActivity) != len(m.channels) {
+		m.channelActivity = newChannelActivities(len(m.channels))
+	}
+}
+
+func newChannelActivities(count int) []*channelActivity {
+	activities := make([]*channelActivity, count)
+	for index := range activities {
+		activities[index] = &channelActivity{}
+	}
+	return activities
 }
 
 func (m *Manager) channelCount() int {
@@ -123,11 +147,13 @@ func startChannels(channels []Channel) {
 	}
 }
 
-func retireChannels(channels []Channel, activity *channelActivity) {
-	if activity != nil {
-		activity.sends.Wait()
+func retireChannels(channels []Channel, activities []*channelActivity) {
+	for index, channel := range channels {
+		if index < len(activities) && activities[index] != nil {
+			activities[index].sends.Wait()
+		}
+		_ = channel.Close()
 	}
-	closeChannels(channels)
 }
 
 func closeChannels(channels []Channel) {
@@ -158,26 +184,39 @@ func (m *Manager) RevokeChannel(name string) bool {
 	defer m.updateMu.Unlock()
 
 	m.channelsMu.Lock()
+	m.ensureChannelActivitiesLocked()
 	kept := make([]Channel, 0, len(m.channels))
+	keptActivity := make([]*channelActivity, 0, len(m.channels))
 	revoked := make([]Channel, 0, 1)
-	for _, channel := range m.channels {
+	revokedActivity := make([]*channelActivity, 0, 1)
+	for index, channel := range m.channels {
 		if channel.Name() == name {
 			revoked = append(revoked, channel)
+			revokedActivity = append(revokedActivity, m.channelActivity[index])
 			continue
 		}
 		kept = append(kept, channel)
+		keptActivity = append(keptActivity, m.channelActivity[index])
 	}
 	if len(revoked) == 0 {
 		m.channelsMu.Unlock()
 		return false
 	}
-	previousActivity := m.channelActivity
 	m.channels = kept
-	m.channelActivity = &channelActivity{}
+	m.channelActivity = keptActivity
 	m.channelsMu.Unlock()
 
-	retireChannels(revoked, previousActivity)
+	stopChannelCommandReceivers(revoked)
+	retireChannels(revoked, revokedActivity)
 	return true
+}
+
+func stopChannelCommandReceivers(channels []Channel) {
+	for _, channel := range channels {
+		if receiver, ok := channel.(channelCommandReceiver); ok {
+			receiver.StopReceivingCommands()
+		}
+	}
 }
 
 func (m *Manager) GetChannelNames() []string {

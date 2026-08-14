@@ -25,6 +25,7 @@ type TelegramChannel struct {
 	adminID          int64
 	stateStore       RuntimeStateStore
 	stateMu          sync.RWMutex
+	stopOnce         sync.Once
 	defaultTarget    int64
 	handlers         map[string]CommandHandler
 }
@@ -278,9 +279,13 @@ func (t *TelegramChannel) Start() error {
 }
 
 func (t *TelegramChannel) Close() error {
-	if t == nil || t.api == nil {
-		return nil
-	}
-	t.api.StopReceivingUpdates()
+	t.StopReceivingCommands()
 	return nil
+}
+
+func (t *TelegramChannel) StopReceivingCommands() {
+	if t == nil || t.api == nil {
+		return
+	}
+	t.stopOnce.Do(t.api.StopReceivingUpdates)
 }

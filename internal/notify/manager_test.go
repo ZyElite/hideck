@@ -31,7 +31,9 @@ type blockingChannel struct {
 
 type namedLifecycleChannel struct {
 	name      string
+	stopOnce  sync.Once
 	closeOnce sync.Once
+	stopped   chan struct{}
 	closed    chan struct{}
 }
 
@@ -39,7 +41,38 @@ func (c *namedLifecycleChannel) Name() string                           { return
 func (c *namedLifecycleChannel) Send(string) error                      { return nil }
 func (c *namedLifecycleChannel) RegisterCommand(string, CommandHandler) {}
 func (c *namedLifecycleChannel) Start() error                           { return nil }
+func (c *namedLifecycleChannel) StopReceivingCommands() {
+	if c.stopped != nil {
+		c.stopOnce.Do(func() { close(c.stopped) })
+	}
+}
 func (c *namedLifecycleChannel) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
+}
+
+type revocableBlockingChannel struct {
+	started   chan struct{}
+	release   chan struct{}
+	stopped   chan struct{}
+	closed    chan struct{}
+	startOnce sync.Once
+	stopOnce  sync.Once
+	closeOnce sync.Once
+}
+
+func (c *revocableBlockingChannel) Name() string { return "telegram" }
+func (c *revocableBlockingChannel) Send(string) error {
+	c.startOnce.Do(func() { close(c.started) })
+	<-c.release
+	return nil
+}
+func (c *revocableBlockingChannel) RegisterCommand(string, CommandHandler) {}
+func (c *revocableBlockingChannel) Start() error                           { return nil }
+func (c *revocableBlockingChannel) StopReceivingCommands() {
+	c.stopOnce.Do(func() { close(c.stopped) })
+}
+func (c *revocableBlockingChannel) Close() error {
 	c.closeOnce.Do(func() { close(c.closed) })
 	return nil
 }
@@ -295,6 +328,86 @@ func TestManagerRevokeChannelRetiresOnlyMatchingChannel(t *testing.T) {
 		t.Fatalf("GetChannelNames() = %v", names)
 	}
 	manager.Close()
+}
+
+func TestManagerRevokeChannelDoesNotWaitForOtherChannelSend(t *testing.T) {
+	telegram := &namedLifecycleChannel{name: "telegram", closed: make(chan struct{})}
+	other := &blockingChannel{
+		started: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{}),
+	}
+	manager := &Manager{channels: []Channel{telegram, other}}
+	manager.NotifyRaw("in flight")
+	select {
+	case <-other.started:
+	case <-time.After(time.Second):
+		t.Fatal("other channel send did not start")
+	}
+
+	revoked := make(chan bool, 1)
+	go func() { revoked <- manager.RevokeChannel("telegram") }()
+	select {
+	case ok := <-revoked:
+		if !ok {
+			t.Fatal("RevokeChannel() = false, want true")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Telegram revocation waited for another channel send")
+	}
+	select {
+	case <-telegram.closed:
+	default:
+		t.Fatal("Telegram channel was not closed")
+	}
+	select {
+	case <-other.closed:
+		t.Fatal("other channel was closed")
+	default:
+	}
+
+	close(other.release)
+	manager.Close()
+}
+
+func TestManagerRevokeChannelStopsCommandsBeforeOwnSendCompletes(t *testing.T) {
+	telegram := &revocableBlockingChannel{
+		started: make(chan struct{}), release: make(chan struct{}),
+		stopped: make(chan struct{}), closed: make(chan struct{}),
+	}
+	manager := &Manager{channels: []Channel{telegram}}
+	manager.NotifyRaw("in flight")
+	select {
+	case <-telegram.started:
+	case <-time.After(time.Second):
+		t.Fatal("Telegram send did not start")
+	}
+
+	revoked := make(chan bool, 1)
+	go func() { revoked <- manager.RevokeChannel("telegram") }()
+	select {
+	case <-telegram.stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Telegram commands were not stopped before waiting")
+	}
+	select {
+	case <-telegram.closed:
+		t.Fatal("Telegram channel closed before its send completed")
+	default:
+	}
+
+	close(telegram.release)
+	select {
+	case ok := <-revoked:
+		if !ok {
+			t.Fatal("RevokeChannel() = false, want true")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Telegram revocation did not finish")
+	}
+	select {
+	case <-telegram.closed:
+	default:
+		t.Fatal("Telegram channel was not closed")
+	}
 }
 
 func TestManagerNotifyIPRotatedUsesPlainTemplate(t *testing.T) {

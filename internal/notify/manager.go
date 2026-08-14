@@ -18,7 +18,7 @@ type Manager struct {
 	updateMu        sync.Mutex
 	channelsMu      sync.Mutex
 	channels        []Channel // 所有已启用的通知渠道
-	channelActivity *channelActivity
+	channelActivity []*channelActivity
 	stateStore      RuntimeStateStore
 	commandMu       sync.Mutex
 	commandService  *CommandService
@@ -268,11 +268,12 @@ func (m *Manager) broadcastWithContext(ctx NotificationContext) {
 		ctx.Event = "notification"
 	}
 
-	channels, activity := m.beginChannelSends()
-	for _, ch := range channels {
-		ch := ch // capture variable
+	deliveries := m.beginChannelSends()
+	for _, delivery := range deliveries {
+		delivery := delivery
 		go func() {
-			defer activity.sends.Done()
+			defer delivery.activity.sends.Done()
+			ch := delivery.channel
 			if withCtx, ok := ch.(contextualChannel); ok {
 				if err := withCtx.SendWithContext(ctx); err != nil {
 					logger.Warn("通知渠道发送失败", "channel", ch.Name(), "event", ctx.Event, "err", err)
