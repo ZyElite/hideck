@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -81,6 +82,38 @@ func TestCommandServiceDefinitionForInput(t *testing.T) {
 	}
 	if definition.Name != "send" || !definition.Async || len(args) != 3 {
 		t.Fatalf("DefinitionForInput() = %+v, %v", definition, args)
+	}
+}
+
+func TestHelpShowsLiveSortedDeviceIDs(t *testing.T) {
+	service := NewCommandService(nil)
+	devices := []HelpDevice{{ID: "wwan2"}, {ID: "wwan0", Name: "主卡"}}
+	service.SetHelpDevicesProvider(func() []HelpDevice { return devices })
+
+	got, err := service.Execute(&commandCapture{}, "/help")
+	if err != nil {
+		t.Fatalf("Execute(/help) error = %v", err)
+	}
+	wantPrefix := "可用设备（2）\n- wwan0  主卡\n- wwan2\n\n命令帮助"
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Fatalf("help = %q, want prefix %q", got, wantPrefix)
+	}
+
+	devices = []HelpDevice{{ID: "wwan1", Name: "备用卡"}}
+	got, err = service.Execute(&commandCapture{}, "/help")
+	if err != nil || !strings.HasPrefix(got, "可用设备（1）\n- wwan1  备用卡") {
+		t.Fatalf("live help = %q, err = %v", got, err)
+	}
+}
+
+func TestHelpShowsEmptyDeviceState(t *testing.T) {
+	service := NewCommandService(nil)
+	got, err := service.Execute(&commandCapture{}, "/help")
+	if err != nil {
+		t.Fatalf("Execute(/help) error = %v", err)
+	}
+	if !strings.HasPrefix(got, "可用设备（0）\n当前没有已配置设备\n\n命令帮助") {
+		t.Fatalf("help = %q", got)
 	}
 }
 

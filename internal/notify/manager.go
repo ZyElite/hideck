@@ -54,7 +54,7 @@ func NewManager(cfg *config.Config, pool *device.Pool) (*Manager, error) {
 	m := &Manager{
 		pool: pool,
 	}
-	m.commandService = NewCommandService(m.baseCommandHandlers())
+	m.commandService = m.newCommandService()
 
 	// 初始化所有通知渠道
 	if err := m.initChannels(cfg); err != nil {
@@ -208,9 +208,30 @@ func (m *Manager) CommandService() *CommandService {
 	m.commandMu.Lock()
 	defer m.commandMu.Unlock()
 	if m.commandService == nil {
-		m.commandService = NewCommandService(m.baseCommandHandlers())
+		m.commandService = m.newCommandService()
 	}
 	return m.commandService
+}
+
+func (m *Manager) newCommandService() *CommandService {
+	service := NewCommandService(m.baseCommandHandlers())
+	service.SetHelpDevicesProvider(m.helpDevices)
+	return service
+}
+
+func (m *Manager) helpDevices() []HelpDevice {
+	if m.pool == nil {
+		return nil
+	}
+	workers := m.pool.GetAllWorkers()
+	devices := make([]HelpDevice, 0, len(workers))
+	for _, worker := range workers {
+		if worker == nil || strings.TrimSpace(worker.ID) == "" {
+			continue
+		}
+		devices = append(devices, HelpDevice{ID: worker.ID, Name: worker.Config.Name})
+	}
+	return devices
 }
 
 func (m *Manager) SetBalanceCommandHandler(handler CommandHandler) error {

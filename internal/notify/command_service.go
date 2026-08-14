@@ -22,10 +22,18 @@ type CommandDefinition struct {
 	DeviceArgument bool   `json:"device_argument"`
 }
 
+type HelpDevice struct {
+	ID   string
+	Name string
+}
+
+type HelpDevicesProvider func() []HelpDevice
+
 type CommandService struct {
-	mu          sync.RWMutex
-	definitions map[string]CommandDefinition
-	handlers    map[string]CommandHandler
+	mu                  sync.RWMutex
+	definitions         map[string]CommandDefinition
+	handlers            map[string]CommandHandler
+	helpDevicesProvider HelpDevicesProvider
 }
 
 func NewCommandService(handlers map[string]CommandHandler) *CommandService {
@@ -111,6 +119,12 @@ func (s *CommandService) SetHandler(name string, handler CommandHandler) error {
 	return nil
 }
 
+func (s *CommandService) SetHelpDevicesProvider(provider HelpDevicesProvider) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.helpDevicesProvider = provider
+}
+
 func (s *CommandService) handler(name string) CommandHandler {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -119,7 +133,8 @@ func (s *CommandService) handler(name string) CommandHandler {
 
 func (s *CommandService) handleHelp(_ CommandContext, _ []string) string {
 	var builder strings.Builder
-	builder.WriteString("命令帮助")
+	writeHelpDevices(&builder, s.helpDevices())
+	builder.WriteString("\n\n命令帮助")
 	for _, definition := range s.Definitions() {
 		builder.WriteString("\n")
 		builder.WriteString(definition.Usage)
@@ -127,6 +142,34 @@ func (s *CommandService) handleHelp(_ CommandContext, _ []string) string {
 		builder.WriteString(definition.Summary)
 	}
 	return builder.String()
+}
+
+func (s *CommandService) helpDevices() []HelpDevice {
+	s.mu.RLock()
+	provider := s.helpDevicesProvider
+	s.mu.RUnlock()
+	if provider == nil {
+		return nil
+	}
+	devices := append([]HelpDevice(nil), provider()...)
+	sort.Slice(devices, func(i, j int) bool { return devices[i].ID < devices[j].ID })
+	return devices
+}
+
+func writeHelpDevices(builder *strings.Builder, devices []HelpDevice) {
+	builder.WriteString(fmt.Sprintf("可用设备（%d）", len(devices)))
+	if len(devices) == 0 {
+		builder.WriteString("\n当前没有已配置设备")
+		return
+	}
+	for _, device := range devices {
+		builder.WriteString("\n- ")
+		builder.WriteString(strings.TrimSpace(device.ID))
+		if name := strings.TrimSpace(device.Name); name != "" {
+			builder.WriteString("  ")
+			builder.WriteString(name)
+		}
+	}
 }
 
 func parseCommand(input string) (string, []string, error) {
