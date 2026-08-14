@@ -40,7 +40,11 @@ const openURL = computed(() => {
         <div class="qr-status" :class="`qr-status--${presentation.tone}`" aria-live="polite">
           <span class="qr-status__dot" aria-hidden="true"></span>
           <span>{{ presentation.label }}</span>
-          <span v-if="polling" class="qr-status__polling">正在查询</span>
+          <span
+            class="qr-status__polling"
+            :class="{ 'is-visible': polling }"
+            :aria-hidden="!polling"
+          >正在查询</span>
         </div>
       </div>
       <div class="qr-connect__actions">
@@ -136,7 +140,13 @@ const openURL = computed(() => {
 .qr-status--success .qr-status__dot { background: var(--ui-success); }
 .qr-status--warning .qr-status__dot { background: var(--ui-warning); }
 .qr-status--danger .qr-status__dot { background: var(--ui-danger); }
-.qr-status__polling { color: var(--ui-text-muted); }
+.qr-status__polling {
+  min-width: 4em;
+  color: var(--ui-text-muted);
+  visibility: hidden;
+}
+
+.qr-status__polling.is-visible { visibility: visible; }
 
 .qr-connect__stage {
   display: grid;

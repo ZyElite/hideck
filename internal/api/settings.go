@@ -13,14 +13,15 @@ import (
 
 type notificationSettingsResponse struct {
 	Telegram struct {
-		Enabled      bool   `json:"enabled"`
-		BotToken     string `json:"bot_token"`
-		ChatID       int64  `json:"chat_id"`
-		AdminID      int64  `json:"admin_id"`
-		BoundChatID  int64  `json:"bound_chat_id"`
-		BindingError string `json:"binding_error,omitempty"`
-		BaseURL      string `json:"base_url"`
-		Proxy        string `json:"proxy"`
+		Enabled       bool   `json:"enabled"`
+		BotToken      string `json:"bot_token"`
+		ChatID        int64  `json:"chat_id"`
+		AdminID       int64  `json:"admin_id"`
+		BoundChatID   int64  `json:"bound_chat_id"`
+		BindingError  string `json:"binding_error,omitempty"`
+		RecordingMode string `json:"recording_mode"`
+		BaseURL       string `json:"base_url"`
+		Proxy         string `json:"proxy"`
 	} `json:"telegram"`
 	Feishu struct {
 		Enabled   bool     `json:"enabled"`
@@ -74,12 +75,13 @@ type notificationSettingsResponse struct {
 
 type updateNotificationSettingsRequest struct {
 	Telegram struct {
-		Enabled  bool   `json:"enabled"`
-		BotToken string `json:"bot_token"`
-		ChatID   int64  `json:"chat_id"`
-		AdminID  int64  `json:"admin_id"`
-		BaseURL  string `json:"base_url"`
-		Proxy    string `json:"proxy"` // HTTP 代理
+		Enabled       bool   `json:"enabled"`
+		BotToken      string `json:"bot_token"`
+		ChatID        int64  `json:"chat_id"`
+		AdminID       int64  `json:"admin_id"`
+		RecordingMode string `json:"recording_mode"`
+		BaseURL       string `json:"base_url"`
+		Proxy         string `json:"proxy"` // HTTP 代理
 	} `json:"telegram"`
 	Feishu struct {
 		Enabled   bool     `json:"enabled"`
@@ -144,6 +146,7 @@ func (s *Server) handleGetNotificationSettings(c *gin.Context) {
 	resp.Telegram.ChatID = s.fullCfg.Telegram.ChatID
 	resp.Telegram.AdminID = s.fullCfg.Telegram.AdminID
 	resp.Telegram.BoundChatID, resp.Telegram.BindingError = s.telegramBindingStatus()
+	resp.Telegram.RecordingMode = config.NormalizeTelegramRecordingMode(s.fullCfg.Telegram.RecordingMode)
 	resp.Telegram.BaseURL = s.fullCfg.Telegram.BaseURL
 	resp.Telegram.Proxy = s.fullCfg.Telegram.Proxy
 
@@ -216,14 +219,20 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
+	recordingMode := config.NormalizeTelegramRecordingMode(req.Telegram.RecordingMode)
+	if err := config.ValidateTelegramRecordingMode(recordingMode); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+		return
+	}
 	previousTelegram := s.fullCfg.Telegram
 	tg := config.TelegramConfig{
-		Enabled:  req.Telegram.Enabled,
-		BotToken: telegramToken,
-		ChatID:   req.Telegram.ChatID,
-		AdminID:  req.Telegram.AdminID,
-		BaseURL:  strings.TrimSpace(req.Telegram.BaseURL),
-		Proxy:    strings.TrimSpace(req.Telegram.Proxy),
+		Enabled:       req.Telegram.Enabled,
+		BotToken:      telegramToken,
+		ChatID:        req.Telegram.ChatID,
+		AdminID:       req.Telegram.AdminID,
+		RecordingMode: recordingMode,
+		BaseURL:       strings.TrimSpace(req.Telegram.BaseURL),
+		Proxy:         strings.TrimSpace(req.Telegram.Proxy),
 	}
 
 	var fsChatIDs []string

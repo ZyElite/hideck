@@ -29,7 +29,13 @@ func TestQQQRHandlersApplyCredentialsWithoutLeakingSecret(t *testing.T) {
 	}
 	cfg := &config.Config{}
 	stateStore := notify.NewFileRuntimeStateStore(filepath.Join(directory, "notification-state.json"))
-	manager, err := notify.NewManagerWithOptions(cfg, nil, notify.ManagerOptions{StateStore: stateStore})
+	welcome := &qqRegistrationHelpCapture{}
+	manager, err := notify.NewManagerWithOptions(cfg, nil, notify.ManagerOptions{
+		StateStore: stateStore,
+		QQChannelFactory: func(config.QQConfig) (notify.Channel, error) {
+			return welcome, nil
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +71,25 @@ func TestQQQRHandlersApplyCredentialsWithoutLeakingSecret(t *testing.T) {
 	}
 	assertQQQRState(t, stateStore)
 	assertQQQRConfig(t, configPath, cfg)
+	if welcome.target != "openid-1" || !strings.Contains(welcome.message, "/help") ||
+		!strings.Contains(welcome.message, "当前没有已配置设备") {
+		t.Fatalf("registration help target=%q message=%q", welcome.target, welcome.message)
+	}
+}
+
+type qqRegistrationHelpCapture struct {
+	target  string
+	message string
+}
+
+func (c *qqRegistrationHelpCapture) Name() string                                  { return "qq" }
+func (c *qqRegistrationHelpCapture) Send(string) error                             { return nil }
+func (c *qqRegistrationHelpCapture) RegisterCommand(string, notify.CommandHandler) {}
+func (c *qqRegistrationHelpCapture) Start() error                                  { return nil }
+func (c *qqRegistrationHelpCapture) Close() error                                  { return nil }
+func (c *qqRegistrationHelpCapture) SendRegistrationHelp(target, message string) error {
+	c.target, c.message = target, message
+	return nil
 }
 
 func newQQQRProvider(t *testing.T) *httptest.Server {

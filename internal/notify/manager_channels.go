@@ -64,7 +64,7 @@ func (m *Manager) channelFactories(cfg *config.Config) []channelFactory {
 			})
 		}},
 		{name: "feishu", enabled: cfg.Feishu.Enabled, build: func() (Channel, error) { return NewFeishuChannel(cfg.Feishu) }},
-		{name: "qq", enabled: cfg.QQ.Enabled, build: func() (Channel, error) { return NewQQChannel(cfg.QQ) }},
+		{name: "qq", enabled: cfg.QQ.Enabled, build: func() (Channel, error) { return m.buildQQChannel(cfg.QQ) }},
 		{name: "weixin", enabled: cfg.Weixin.Enabled, build: func() (Channel, error) {
 			return NewWeixinChannel(WeixinChannelOptions{Config: cfg.Weixin, StateStore: m.stateStore})
 		}},
@@ -77,6 +77,13 @@ func (m *Manager) channelFactories(cfg *config.Config) []channelFactory {
 		{name: "pushplus", enabled: cfg.Pushplus.Enabled, build: func() (Channel, error) { return NewPushplusChannel(cfg.Pushplus) }},
 		{name: "wecom", enabled: cfg.WeCom.Enabled, build: func() (Channel, error) { return NewWeComChannel(cfg.WeCom) }},
 	}
+}
+
+func (m *Manager) buildQQChannel(cfg config.QQConfig) (Channel, error) {
+	if m.qqChannelFactory != nil {
+		return m.qqChannelFactory(cfg)
+	}
+	return NewQQChannel(cfg)
 }
 
 func (m *Manager) registerCommands(channels []Channel) {

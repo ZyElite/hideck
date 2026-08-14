@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -20,6 +21,59 @@ type mediaHashes struct {
 	MD5    string
 	SHA1   string
 	MD510M string
+}
+
+func (c *Client) uploadMediaFile(
+	ctx context.Context, request MediaRequest, file *os.File, size int64,
+) (string, error) {
+	if size < mediaChunkedThreshold {
+		return c.uploadInlineMedia(ctx, request, file, size)
+	}
+	hashes, err := hashMediaFile(file, size)
+	if err != nil {
+		return "", fmt.Errorf("计算 QQ 媒体文件哈希失败: %w", err)
+	}
+	prepare, err := c.prepareMediaUpload(ctx, request, size, hashes)
+	if err != nil {
+		return "", fmt.Errorf("准备 QQ 媒体上传失败: %w", err)
+	}
+	if err := c.uploadMediaParts(ctx, request, file, size, prepare); err != nil {
+		return "", err
+	}
+	fileInfo, err := c.completeMediaUpload(ctx, request, prepare.UploadID)
+	if err != nil {
+		return "", fmt.Errorf("完成 QQ 媒体上传失败: %w", err)
+	}
+	return fileInfo, nil
+}
+
+func (c *Client) uploadInlineMedia(
+	ctx context.Context, request MediaRequest, file *os.File, size int64,
+) (string, error) {
+	data, err := io.ReadAll(io.LimitReader(file, mediaChunkedThreshold))
+	if err != nil {
+		return "", fmt.Errorf("读取 QQ 媒体文件失败: %w", err)
+	}
+	if int64(len(data)) != size {
+		return "", fmt.Errorf("文件读取长度为 %d，预期 %d", len(data), size)
+	}
+	payload := map[string]any{
+		"file_type": request.FileType, "srv_send_msg": false,
+		"file_data": base64.StdEncoding.EncodeToString(data),
+	}
+	if request.FileType == MediaTypeFile {
+		payload["file_name"] = request.FileName
+	}
+	var response mediaCompleteResponse
+	endpoint := mediaEndpoint(c.baseURL, request, "files")
+	if err := c.doAuthenticatedJSON(ctx, endpoint, payload, &response); err != nil {
+		return "", fmt.Errorf("上传 QQ 媒体失败: %w", err)
+	}
+	fileInfo := response.fileInfo()
+	if fileInfo == "" {
+		return "", errors.New("QQ 媒体上传响应缺少 file_info")
+	}
+	return fileInfo, nil
 }
 
 func hashMediaFile(file *os.File, size int64) (mediaHashes, error) {

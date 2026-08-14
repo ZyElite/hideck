@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/pkg/logger"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -76,7 +77,7 @@ func (c *tgCommandContext) respond(reply telegramCommandReply) error {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	for _, attachment := range reply.attachments {
-		if err := c.channel.sendAudio(c.target, attachment); err != nil {
+		if err := c.channel.sendRecording(c.target, attachment); err != nil {
 			return fmt.Errorf("上传或发送 Telegram 录音附件失败: %w", err)
 		}
 	}
@@ -96,25 +97,50 @@ func (c *tgCommandContext) respondAndReport(reply telegramCommandReply) {
 	}
 }
 
-func (t *TelegramChannel) sendAudio(chatID int64, attachment CommandAttachment) error {
+func (t *TelegramChannel) sendRecording(chatID int64, attachment CommandAttachment) error {
+	path, err := validateTelegramRecordingAttachment(attachment)
+	if err != nil {
+		return err
+	}
+	switch t.recordingMode {
+	case config.TelegramRecordingModeVoice:
+		return t.sendVoice(chatID, path)
+	case config.TelegramRecordingModeAudio:
+		return t.sendAudio(chatID, path, attachment)
+	default:
+		return fmt.Errorf("未知的 Telegram 录音发送样式: %q", t.recordingMode)
+	}
+}
+
+func validateTelegramRecordingAttachment(attachment CommandAttachment) (string, error) {
 	path := strings.TrimSpace(attachment.Path)
 	if path == "" {
-		return errors.New("录音路径为空")
+		return "", errors.New("录音路径为空")
 	}
 	if !strings.EqualFold(strings.TrimSpace(attachment.Codec), "MP3") ||
 		!strings.EqualFold(filepath.Ext(path), ".mp3") {
-		return errors.New("Telegram 音频附件必须是 MP3")
+		return "", errors.New("Telegram 录音附件必须是 MP3")
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return redactTelegramError(fmt.Errorf("读取录音文件失败: %w", err), path)
+		return "", redactTelegramError(fmt.Errorf("读取录音文件失败: %w", err), path)
 	}
 	if !info.Mode().IsRegular() {
-		return errors.New("录音路径不是普通文件")
+		return "", errors.New("录音路径不是普通文件")
 	}
+	return path, nil
+}
+
+func (t *TelegramChannel) sendVoice(chatID int64, path string) error {
+	voice := tgbotapi.NewVoice(chatID, tgbotapi.FilePath(path))
+	_, err := t.api.Send(voice)
+	return t.redactAPIError(err, fmt.Sprint(chatID), path)
+}
+
+func (t *TelegramChannel) sendAudio(chatID int64, path string, attachment CommandAttachment) error {
 	audio := tgbotapi.NewAudio(chatID, tgbotapi.FilePath(path))
 	audio.Title = firstNonEmpty(strings.TrimSpace(attachment.Recording), filepath.Base(path))
-	_, err = t.api.Send(audio)
+	_, err := t.api.Send(audio)
 	return t.redactAPIError(err, fmt.Sprint(chatID), path)
 }
 

@@ -7,6 +7,10 @@ import RefreshButton from '../RefreshButton.vue'
 const settingsStore = useSettingsStore()
 const { telegramForm, refreshingTelegramBinding } = storeToRefs(settingsStore)
 const boundTarget = computed(() => Number(telegramForm.value.bound_chat_id) || 0)
+const recordingModeOptions = [
+  { label: '语音气泡', value: 'voice' },
+  { label: '音频附件', value: 'audio' }
+]
 </script>
 
 <template>
@@ -62,6 +66,17 @@ const boundTarget = computed(() => Number(telegramForm.value.bound_chat_id) || 0
           <label for="telegram-chat-id" class="text-xs font-semibold text-gray-600 dark:text-gray-300">通知 Chat ID（可选）</label>
           <el-input id="telegram-chat-id" v-model="telegramForm.chat_id" :disabled="!telegramForm.enabled" type="number" inputmode="numeric" placeholder="自动绑定后显示" />
         </div>
+      </div>
+
+      <div class="space-y-1">
+        <span id="telegram-recording-mode-label" class="text-xs font-semibold text-gray-600 dark:text-gray-300">录音发送样式</span>
+        <el-segmented
+          v-model="telegramForm.recording_mode"
+          :options="recordingModeOptions"
+          :disabled="!telegramForm.enabled"
+          aria-labelledby="telegram-recording-mode-label"
+          block
+        />
       </div>
 
       <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">

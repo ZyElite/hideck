@@ -24,6 +24,7 @@ type TelegramChannel struct {
 	api              *tgbotapi.BotAPI
 	configuredChatID int64
 	adminID          int64
+	recordingMode    string
 	stateStore       RuntimeStateStore
 	stateMu          sync.RWMutex
 	stopOnce         sync.Once
@@ -49,6 +50,10 @@ func NewTelegramChannelWithOptions(options TelegramChannelOptions) (*TelegramCha
 	if !cfg.Enabled {
 		return nil, nil
 	}
+	recordingMode := config.NormalizeTelegramRecordingMode(cfg.RecordingMode)
+	if err := config.ValidateTelegramRecordingMode(recordingMode); err != nil {
+		return nil, err
+	}
 	bot, err := newTelegramBotAPI(cfg)
 	if err != nil {
 		return nil, err
@@ -57,7 +62,7 @@ func NewTelegramChannelWithOptions(options TelegramChannelOptions) (*TelegramCha
 
 	channel := &TelegramChannel{
 		api: bot, configuredChatID: cfg.ChatID, adminID: cfg.AdminID,
-		stateStore: options.StateStore, defaultTarget: cfg.ChatID,
+		recordingMode: recordingMode, stateStore: options.StateStore, defaultTarget: cfg.ChatID,
 		handlers: make(map[string]CommandHandler),
 	}
 	if cfg.ChatID == 0 && options.StateStore != nil {
@@ -204,31 +209,33 @@ func redactTelegramError(err error, sensitive ...string) error {
 	return &telegramRedactedError{err: err, sensitive: append([]string(nil), sensitive...)}
 }
 
-func (t *TelegramChannel) bindPrivateTarget(message *tgbotapi.Message) error {
+func (t *TelegramChannel) bindPrivateTarget(message *tgbotapi.Message) (bool, error) {
 	if message.Chat == nil || !message.Chat.IsPrivate() || t.configuredChatID != 0 {
-		return nil
+		return false, nil
 	}
 	t.stateMu.Lock()
 	defer t.stateMu.Unlock()
 	if t.defaultTarget != 0 {
-		return nil
+		return false, nil
 	}
 	if t.stateStore != nil {
 		var persistedTarget int64
+		bound := false
 		if err := t.stateStore.Update(func(state *RuntimeState) error {
 			if state.Telegram.DefaultTarget == 0 {
 				state.Telegram.DefaultTarget = message.Chat.ID
+				bound = true
 			}
 			persistedTarget = state.Telegram.DefaultTarget
 			return nil
 		}); err != nil {
-			return fmt.Errorf("保存 Telegram 默认通知目标失败: %w", err)
+			return false, fmt.Errorf("保存 Telegram 默认通知目标失败: %w", err)
 		}
 		t.defaultTarget = persistedTarget
-		return nil
+		return bound, nil
 	}
 	t.defaultTarget = message.Chat.ID
-	return nil
+	return true, nil
 }
 
 func (t *TelegramChannel) handleMessage(message *tgbotapi.Message) {
@@ -236,7 +243,8 @@ func (t *TelegramChannel) handleMessage(message *tgbotapi.Message) {
 		return
 	}
 	ctx := &tgCommandContext{channel: t, target: message.Chat.ID}
-	if err := t.bindPrivateTarget(message); err != nil {
+	bound, err := t.bindPrivateTarget(message)
+	if err != nil {
 		ctx.Reply("Telegram 绑定失败\n原因    " + err.Error())
 		ctx.release()
 		return
@@ -247,6 +255,11 @@ func (t *TelegramChannel) handleMessage(message *tgbotapi.Message) {
 	}
 	args := strings.Fields(message.CommandArguments())
 	logger.Info("收到 Telegram 命令", "command", command)
+	if bound && command != "help" {
+		if help := t.handlers["help"]; help != nil {
+			ctx.Reply(help(ctx, nil))
+		}
+	}
 	handler, ok := t.handlers[command]
 	if !ok {
 		ctx.Reply(unknownCommandReply(command))

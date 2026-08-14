@@ -17,6 +17,8 @@ const (
 	MBIMTransportProxy          = "proxy"
 	MBIMTransportDirect         = "direct"
 	DefaultWebhookTextTemplate  = "{{device_label}} {{text}}"
+	TelegramRecordingModeVoice  = "voice"
+	TelegramRecordingModeAudio  = "audio"
 	DefaultWeComPayloadTemplate = `{
   "msgtype": "text",
   "text": {
@@ -55,6 +57,23 @@ func ValidateESIMTransport(in string) error {
 		return nil
 	default:
 		return fmt.Errorf("invalid esim transport: %q", strings.TrimSpace(in))
+	}
+}
+
+func NormalizeTelegramRecordingMode(in string) string {
+	mode := strings.ToLower(strings.TrimSpace(in))
+	if mode == "" {
+		return TelegramRecordingModeVoice
+	}
+	return mode
+}
+
+func ValidateTelegramRecordingMode(in string) error {
+	switch NormalizeTelegramRecordingMode(in) {
+	case TelegramRecordingModeVoice, TelegramRecordingModeAudio:
+		return nil
+	default:
+		return fmt.Errorf("无效的 Telegram 录音发送样式: %q (允许 voice|audio)", strings.TrimSpace(in))
 	}
 }
 
@@ -217,12 +236,13 @@ type DeviceConfig struct {
 }
 
 type TelegramConfig struct {
-	Enabled  bool   `mapstructure:"enabled"`
-	BotToken string `mapstructure:"bot_token"`
-	ChatID   int64  `mapstructure:"chat_id"`
-	AdminID  int64  `mapstructure:"admin_id"`
-	BaseURL  string `mapstructure:"base_url"` // 反向代理地址 (例如 https://api.telegram.org/bot%s/%s)
-	Proxy    string `mapstructure:"proxy"`    // HTTP 代理地址 (例如 http://127.0.0.1:7890)
+	Enabled       bool   `mapstructure:"enabled"`
+	BotToken      string `mapstructure:"bot_token"`
+	ChatID        int64  `mapstructure:"chat_id"`
+	AdminID       int64  `mapstructure:"admin_id"`
+	RecordingMode string `mapstructure:"recording_mode"`
+	BaseURL       string `mapstructure:"base_url"` // 反向代理地址 (例如 https://api.telegram.org/bot%s/%s)
+	Proxy         string `mapstructure:"proxy"`    // HTTP 代理地址 (例如 http://127.0.0.1:7890)
 }
 
 // FeishuConfig 飞书通知配置
@@ -321,6 +341,7 @@ func Load(path string) (*Config, error) {
 	// 默认值设置
 	viper.SetDefault("server.port", 7575)
 	viper.SetDefault("system.openwrt_dynamic_interfaces", false)
+	viper.SetDefault("telegram.recording_mode", TelegramRecordingModeVoice)
 	viper.SetDefault("webhook.timeout_ms", 5000)
 	viper.SetDefault("webhook.retry_max", 3)
 	viper.SetDefault("webhook.text_template", DefaultWebhookTextTemplate)
@@ -359,6 +380,10 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
+	}
+	cfg.Telegram.RecordingMode = NormalizeTelegramRecordingMode(cfg.Telegram.RecordingMode)
+	if err := ValidateTelegramRecordingMode(cfg.Telegram.RecordingMode); err != nil {
+		return nil, err
 	}
 	cfg.Web.PasswordSource = resolveWebPasswordSource()
 

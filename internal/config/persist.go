@@ -22,12 +22,13 @@ func UpdateNotificationInFile(path string, notifications NotificationConfigs) er
 	}
 
 	root["telegram"] = map[string]any{
-		"enabled":   notifications.Telegram.Enabled,
-		"bot_token": notifications.Telegram.BotToken,
-		"chat_id":   notifications.Telegram.ChatID,
-		"admin_id":  notifications.Telegram.AdminID,
-		"base_url":  notifications.Telegram.BaseURL,
-		"proxy":     notifications.Telegram.Proxy,
+		"enabled":        notifications.Telegram.Enabled,
+		"bot_token":      notifications.Telegram.BotToken,
+		"chat_id":        notifications.Telegram.ChatID,
+		"admin_id":       notifications.Telegram.AdminID,
+		"recording_mode": NormalizeTelegramRecordingMode(notifications.Telegram.RecordingMode),
+		"base_url":       notifications.Telegram.BaseURL,
+		"proxy":          notifications.Telegram.Proxy,
 	}
 
 	root["feishu"] = map[string]any{

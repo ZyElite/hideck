@@ -63,3 +63,8 @@ type Channel interface {
 	// Close 释放资源，停止监听
 	Close() error
 }
+
+// RegistrationHelpSender sends onboarding help to one newly registered target.
+type RegistrationHelpSender interface {
+	SendRegistrationHelp(target, text string) error
+}

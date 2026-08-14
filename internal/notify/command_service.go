@@ -125,6 +125,10 @@ func (s *CommandService) SetHelpDevicesProvider(provider HelpDevicesProvider) {
 	s.helpDevicesProvider = provider
 }
 
+func (s *CommandService) HelpText() string {
+	return s.handleHelp(nil, nil)
+}
+
 func (s *CommandService) handler(name string) CommandHandler {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -182,6 +186,11 @@ func parseCommand(input string) (string, []string, error) {
 		return "", nil, ErrInvalidCommand
 	}
 	return name, append([]string(nil), fields[1:]...), nil
+}
+
+func isHelpCommand(input string) bool {
+	name, _, err := parseCommand(input)
+	return err == nil && name == "help"
 }
 
 func unavailableBalanceHandler(_ CommandContext, _ []string) string {

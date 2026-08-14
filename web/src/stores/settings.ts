@@ -7,6 +7,7 @@ import {
   type SaveNotificationsPayload,
   type SaveNotificationsResponse,
   type SystemInfo,
+  type TelegramRecordingMode,
   type TestWebhookResponse,
   type WebhookSettings,
   type BarkSettings,
@@ -50,6 +51,7 @@ type TelegramForm = {
   admin_id: number | null
   bound_chat_id: number | null
   binding_error: string
+  recording_mode: TelegramRecordingMode
   base_url: string
   proxy: string
 }
@@ -100,6 +102,7 @@ const DEFAULT_TELEGRAM_FORM: TelegramForm = {
   admin_id: null,
   bound_chat_id: null,
   binding_error: '',
+  recording_mode: 'voice',
   base_url: '',
   proxy: ''
 }
@@ -247,6 +250,7 @@ export const useSettingsStore = defineStore('settings', () => {
         admin_id: tg.admin_id ?? null,
         bound_chat_id: tg.bound_chat_id ?? null,
         binding_error: tg.binding_error || '',
+        recording_mode: tg.recording_mode === 'audio' ? 'audio' : 'voice',
         base_url: tg.base_url || '',
         proxy: tg.proxy || ''
       }
@@ -348,6 +352,7 @@ export const useSettingsStore = defineStore('settings', () => {
         bot_token: telegramForm.value.bot_token || '',
         chat_id: telegramForm.value.chat_id ? Number(telegramForm.value.chat_id) : 0,
         admin_id: telegramForm.value.admin_id ? Number(telegramForm.value.admin_id) : 0,
+        recording_mode: telegramForm.value.recording_mode,
         base_url: telegramForm.value.base_url || '',
         proxy: telegramForm.value.proxy || ''
       },

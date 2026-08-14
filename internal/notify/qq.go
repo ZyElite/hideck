@@ -13,7 +13,10 @@ import (
 	"github.com/yibaiba/hideck/pkg/logger"
 )
 
-var ErrNoQQRecipients = errors.New("QQ 渠道没有已授权的通知目标")
+var (
+	ErrNoQQRecipients        = errors.New("QQ 渠道没有已授权的通知目标")
+	ErrQQRecipientNotAllowed = errors.New("QQ 注册帮助目标不在私聊白名单中")
+)
 
 type qqApp interface {
 	Send(ctx context.Context, delivery qqbot.Delivery) (qqbot.Receipt, error)
@@ -66,10 +69,7 @@ func NewQQChannel(cfg config.QQConfig) (*QQChannel, error) {
 	channel.app = app
 
 	// 所有文本消息都记录日志，但只对白名单内的会话进行响应
-	channel.app.OnText(func(ctx context.Context, c qqbot.Conversation) error {
-		channel.logIncoming(c.Incoming())
-		return nil
-	})
+	channel.app.OnText(channel.handleText)
 
 	if len(allowed) > 0 {
 		logger.Info("QQ Bot OpenID 白名单已加载", "count", len(allowed))
@@ -106,6 +106,20 @@ func (q *QQChannel) Send(text string) error {
 		}
 	}
 	return lastErr
+}
+
+func (q *QQChannel) SendRegistrationHelp(target, text string) error {
+	if q == nil || q.app == nil {
+		return errors.New("QQ 渠道未初始化")
+	}
+	recipient := qqbot.Recipient{Kind: qqbot.DirectRecipient, ID: strings.TrimSpace(target)}
+	if !q.isAllowed(qqbot.Incoming{To: recipient}) {
+		return ErrQQRecipientNotAllowed
+	}
+	_, err := q.app.Send(context.Background(), qqbot.Delivery{
+		To: recipient, Kind: qqbot.PlainText, Body: text,
+	})
+	return newQQDeliveryError(err, recipient)
 }
 
 type qqDeliveryError struct {
@@ -182,6 +196,16 @@ func (q *QQChannel) Close() error {
 	return q.app.Close()
 }
 
+func (q *QQChannel) handleText(ctx context.Context, conversation qqbot.Conversation) error {
+	incoming := conversation.Incoming()
+	q.logIncoming(incoming)
+	if !q.isAllowed(incoming) {
+		return nil
+	}
+	_, err := conversation.RespondText(ctx, "请发送 /help 查看可用命令")
+	return newQQConversationDeliveryError(err, conversation)
+}
+
 // logIncoming 只记录排障元数据，不把消息正文或完整 OpenID 写入日志。
 func (q *QQChannel) logIncoming(incoming qqbot.Incoming) {
 	logger.Info("QQ Bot 收到消息",
@@ -190,6 +214,7 @@ func (q *QQChannel) logIncoming(incoming qqbot.Incoming) {
 		"to_openid_hash", qqLogID(incoming.To.ID),
 		"to_kind", string(incoming.To.Kind),
 		"text_length", len(incoming.Text),
+		"authorized", q.isAllowed(incoming),
 	)
 }
 

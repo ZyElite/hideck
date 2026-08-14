@@ -102,6 +102,40 @@ func TestQQChannelRegisterCommandBlocksUnallowed(t *testing.T) {
 	}
 }
 
+func TestQQChannelTextPromptsAllowedRecipientToUseHelp(t *testing.T) {
+	t.Parallel()
+	channel := &QQChannel{allowedRecipients: map[string]qqbot.Recipient{
+		"direct:user-1": {Kind: qqbot.DirectRecipient, ID: "user-1"},
+	}}
+	conversation := &fakeConversation{incoming: qqbot.Incoming{
+		To: qqbot.Recipient{Kind: qqbot.DirectRecipient, ID: "user-1"},
+	}}
+
+	if err := channel.handleText(context.Background(), conversation); err != nil {
+		t.Fatalf("handleText() error = %v", err)
+	}
+	if len(conversation.replies) != 1 || conversation.replies[0] != "请发送 /help 查看可用命令" {
+		t.Fatalf("replies = %v", conversation.replies)
+	}
+}
+
+func TestQQChannelTextIgnoresUnallowedRecipient(t *testing.T) {
+	t.Parallel()
+	channel := &QQChannel{allowedRecipients: map[string]qqbot.Recipient{
+		"direct:user-1": {Kind: qqbot.DirectRecipient, ID: "user-1"},
+	}}
+	conversation := &fakeConversation{incoming: qqbot.Incoming{
+		To: qqbot.Recipient{Kind: qqbot.DirectRecipient, ID: "user-2"},
+	}}
+
+	if err := channel.handleText(context.Background(), conversation); err != nil {
+		t.Fatalf("handleText() error = %v", err)
+	}
+	if len(conversation.replies) != 0 {
+		t.Fatalf("replies = %v, want none", conversation.replies)
+	}
+}
+
 func TestQQChannelCommandSendsVoiceAttachmentBeforeCompletionText(t *testing.T) {
 	t.Parallel()
 	app := &fakeQQApp{}

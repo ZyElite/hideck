@@ -4314,6 +4314,11 @@ components:
           type: string
           readOnly: true
           description: 读取持久化绑定状态失败时的明确错误
+        recording_mode:
+          type: string
+          enum: [voice, audio]
+          default: voice
+          description: 通话录音发送样式，voice 为语音气泡，audio 为音频附件
         base_url:
           type: string
           description: 可选 Bot API 反向代理模板

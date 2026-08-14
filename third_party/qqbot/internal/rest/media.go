@@ -11,11 +11,12 @@ import (
 )
 
 const (
-	MediaTypeImage = 1
-	MediaTypeVideo = 2
-	MediaTypeVoice = 3
-	MediaTypeFile  = 4
-	mediaMessage   = 7
+	MediaTypeImage        = 1
+	MediaTypeVideo        = 2
+	MediaTypeVoice        = 3
+	MediaTypeFile         = 4
+	mediaMessage          = 7
+	mediaChunkedThreshold = int64(5 * 1024 * 1024)
 )
 
 type MediaRequest struct {
@@ -67,20 +68,9 @@ func (c *Client) SendMedia(ctx context.Context, request MediaRequest) (SendResul
 		return SendResult{}, err
 	}
 	defer file.Close()
-	hashes, err := hashMediaFile(file, size)
+	fileInfo, err := c.uploadMediaFile(ctx, request, file, size)
 	if err != nil {
-		return SendResult{}, fmt.Errorf("计算 QQ 媒体文件哈希失败: %w", err)
-	}
-	prepare, err := c.prepareMediaUpload(ctx, request, size, hashes)
-	if err != nil {
-		return SendResult{}, fmt.Errorf("准备 QQ 媒体上传失败: %w", err)
-	}
-	if err := c.uploadMediaParts(ctx, request, file, size, prepare); err != nil {
 		return SendResult{}, err
-	}
-	fileInfo, err := c.completeMediaUpload(ctx, request, prepare.UploadID)
-	if err != nil {
-		return SendResult{}, fmt.Errorf("完成 QQ 媒体上传失败: %w", err)
 	}
 	return c.sendMediaMessage(ctx, request, fileInfo)
 }

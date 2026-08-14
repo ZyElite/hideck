@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -61,7 +62,7 @@ func (w *WeComBotChannel) processCallback(ctx context.Context, frame weComFrame)
 	if text == "" {
 		return nil
 	}
-	allowed, err := w.authorizeMessage(weComAuthorizationRequest{kind: kind, chatID: chatID, sender: sender})
+	allowed, bound, err := w.authorizeMessage(weComAuthorizationRequest{kind: kind, chatID: chatID, sender: sender})
 	if err != nil || !allowed {
 		return err
 	}
@@ -72,38 +73,46 @@ func (w *WeComBotChannel) processCallback(ctx context.Context, frame weComFrame)
 	if messageID != "" && w.seenMessage(messageID) {
 		return nil
 	}
+	if bound && !isHelpCommand(text) {
+		if err := w.executeMessage(ctx, chatID, "", "/help"); err != nil {
+			return fmt.Errorf("发送企业微信注册帮助失败: %w", err)
+		}
+	}
 	return w.executeMessage(ctx, chatID, frame.Headers.RequestID, text)
 }
 
-func (w *WeComBotChannel) authorizeMessage(request weComAuthorizationRequest) (bool, error) {
+func (w *WeComBotChannel) authorizeMessage(request weComAuthorizationRequest) (bool, bool, error) {
 	w.authMu.Lock()
 	defer w.authMu.Unlock()
 	state := w.snapshotState()
 	if request.kind == "group" {
 		allowed := containsString(w.config.AllowedGroupIDs, request.chatID) && w.allowedDirect(state, request.sender)
-		return allowed, nil
+		return allowed, false, nil
 	}
 	allowed := w.allowedDirect(state, request.sender)
 	changed := false
+	bound := false
 	if !allowed {
 		hasBinding := len(w.config.AllowedUserIDs) > 0 || len(state.WeComBot.AllowedUsers) > 0 || state.WeComBot.DefaultTarget != ""
 		if hasBinding {
-			return false, nil
+			return false, false, nil
 		}
 		state.WeComBot.AllowedUsers = append(state.WeComBot.AllowedUsers, request.sender)
 		allowed = true
 		changed = true
+		bound = true
 	}
 	if state.WeComBot.DefaultTarget == "" {
 		state.WeComBot.DefaultTarget = request.chatID
 		changed = true
+		bound = true
 	}
 	if changed {
 		if err := w.saveState(state); err != nil {
-			return false, err
+			return false, false, err
 		}
 	}
-	return allowed, nil
+	return allowed, bound, nil
 }
 
 func (w *WeComBotChannel) allowedDirect(state RuntimeState, userID string) bool {

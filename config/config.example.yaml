@@ -48,6 +48,7 @@ telegram:
   bot_token: ""
   admin_id: 0
   chat_id: 0
+  recording_mode: voice
   base_url: ""
   proxy: ""
 

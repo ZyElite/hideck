@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/yibaiba/hideck/pkg/logger"
@@ -62,11 +63,16 @@ func (w *WeixinChannel) processMessage(ctx context.Context, message weixinMessag
 		return nil
 	}
 	chatKind, chatID := message.chat(state.Weixin.AccountID)
-	allowed, err := w.authorizeMessage(weixinAuthorizationRequest{
+	allowed, bound, err := w.authorizeMessage(weixinAuthorizationRequest{
 		Kind: chatKind, ChatID: chatID, Sender: sender, ContextToken: message.ContextToken,
 	})
 	if err != nil || !allowed {
 		return err
+	}
+	if bound && !isHelpCommand(text) {
+		if err := w.executeMessage(ctx, chatID, "/help"); err != nil {
+			return fmt.Errorf("发送个人微信注册帮助失败: %w", err)
+		}
 	}
 	return w.executeMessage(ctx, chatID, text)
 }

@@ -152,6 +152,7 @@ webhook:
 `)
 
 	err := UpdateNotificationInFile(path, NotificationConfigs{
+		Telegram: TelegramConfig{RecordingMode: TelegramRecordingModeAudio},
 		QQ: QQConfig{
 			Enabled:   true,
 			AppID:     "app-id",
@@ -188,6 +189,7 @@ webhook:
 	}
 	text := string(raw)
 	for _, want := range []string{
+		"recording_mode: audio",
 		"qq:",
 		"enabled: true",
 		"app_id: app-id",

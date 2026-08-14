@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,14 +18,25 @@ import (
 	"testing"
 )
 
-func TestClientSendMediaUploadsExactPartsAndSendsRichMedia(t *testing.T) {
+func TestClientSendMediaUploadsSmallFileInlineAndSendsRichMedia(t *testing.T) {
 	content := []byte("abcdefg")
 	path := filepath.Join(t.TempDir(), "call.mp3")
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	capture := &mediaProtocolCapture{}
-	server := newMediaProtocolServer(t, capture)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/users/user-1/files":
+			_ = json.NewDecoder(r.Body).Decode(&capture.upload)
+			_, _ = w.Write([]byte(`{"file_info":"file-token"}`))
+		case "/v2/users/user-1/messages":
+			_ = json.NewDecoder(r.Body).Decode(&capture.message)
+			_, _ = w.Write([]byte(`{"id":"media-message-1","timestamp":"2026-08-14T12:00:00Z"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
 	defer server.Close()
 	client := New(Config{
 		BaseURL: server.URL, Client: server.Client(), Tokens: &fakeTokens{current: "token-1"},
@@ -41,12 +53,43 @@ func TestClientSendMediaUploadsExactPartsAndSendsRichMedia(t *testing.T) {
 	if result.ID != "media-message-1" {
 		t.Fatalf("result ID = %q", result.ID)
 	}
-	assertMediaPrepare(t, capture.prepare, content)
-	if len(capture.parts) != 2 || !bytes.Equal(capture.parts[0], content[:4]) ||
-		!bytes.Equal(capture.parts[1], content[4:]) {
-		t.Fatalf("uploaded parts = %q", capture.parts)
+	if int(capture.upload["file_type"].(float64)) != MediaTypeVoice ||
+		capture.upload["srv_send_msg"] != false ||
+		capture.upload["file_data"] != base64.StdEncoding.EncodeToString(content) {
+		t.Fatalf("upload payload = %#v", capture.upload)
 	}
-	assertMediaFinishes(t, capture.finishes, content)
+	assertRichMediaMessage(t, capture.message)
+	if capture.prepare != nil || len(capture.parts) != 0 {
+		t.Fatalf("small media unexpectedly used chunked upload: %+v", capture)
+	}
+}
+
+func TestClientSendMediaUsesChunkedUploadAtThreshold(t *testing.T) {
+	content := bytes.Repeat([]byte("a"), int(mediaChunkedThreshold))
+	path := filepath.Join(t.TempDir(), "call.mp3")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	capture := &mediaProtocolCapture{}
+	server := newMediaProtocolServer(t, capture, len(content))
+	defer server.Close()
+	client := New(Config{
+		BaseURL: server.URL, Client: server.Client(), Tokens: &fakeTokens{current: "token-1"},
+	})
+
+	_, err := client.SendMedia(context.Background(), MediaRequest{
+		RecipientKind: "c2c", RecipientID: "user-1", FileType: MediaTypeVoice,
+		Path: path, FileName: "recording.mp3", Content: "呼叫完成",
+		Reply: &ReplyRequest{MessageID: "msg-1", Sequence: 2},
+	})
+	if err != nil {
+		t.Fatalf("SendMedia() error = %v", err)
+	}
+	assertMediaPrepare(t, capture.prepare, content)
+	if len(capture.parts) != 1 || !bytes.Equal(capture.parts[0], content) {
+		t.Fatalf("uploaded part count = %d", len(capture.parts))
+	}
+	assertMediaFinishes(t, capture.finishes, [][]byte{content})
 	assertRichMediaMessage(t, capture.message)
 	if capture.presignedAuth != "" {
 		t.Fatalf("presigned upload leaked Authorization header: %q", capture.presignedAuth)
@@ -54,6 +97,7 @@ func TestClientSendMediaUploadsExactPartsAndSendsRichMedia(t *testing.T) {
 }
 
 type mediaProtocolCapture struct {
+	upload        map[string]any
 	prepare       map[string]any
 	parts         [][]byte
 	finishes      []map[string]any
@@ -61,7 +105,9 @@ type mediaProtocolCapture struct {
 	presignedAuth string
 }
 
-func newMediaProtocolServer(t *testing.T, capture *mediaProtocolCapture) *httptest.Server {
+func newMediaProtocolServer(
+	t *testing.T, capture *mediaProtocolCapture, blockSize int,
+) *httptest.Server {
 	t.Helper()
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -79,10 +125,9 @@ func newMediaProtocolServer(t *testing.T, capture *mediaProtocolCapture) *httpte
 		case "/v2/users/user-1/upload_prepare":
 			_ = json.NewDecoder(r.Body).Decode(&capture.prepare)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
-				"upload_id": "upload-1", "block_size": 4,
+				"upload_id": "upload-1", "block_size": blockSize,
 				"parts": []map[string]any{
 					{"part_index": 1, "presigned_url": server.URL + "/cos/1"},
-					{"part_index": 2, "presigned_url": server.URL + "/cos/2"},
 				},
 			}})
 		case "/v2/users/user-1/upload_part_finish":
@@ -119,12 +164,12 @@ func assertMediaPrepare(t *testing.T, payload map[string]any, content []byte) {
 	}
 }
 
-func assertMediaFinishes(t *testing.T, finishes []map[string]any, content []byte) {
+func assertMediaFinishes(t *testing.T, finishes []map[string]any, parts [][]byte) {
 	t.Helper()
-	if len(finishes) != 2 {
+	if len(finishes) != len(parts) {
 		t.Fatalf("finish count = %d", len(finishes))
 	}
-	for index, part := range [][]byte{content[:4], content[4:]} {
+	for index, part := range parts {
 		digest := md5.Sum(part)
 		finish := finishes[index]
 		if int(finish["part_index"].(float64)) != index+1 ||
@@ -147,7 +192,10 @@ func assertRichMediaMessage(t *testing.T, payload map[string]any) {
 
 func TestClientSendMediaStopsWhenPartUploadFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "call.mp3")
-	if err := os.WriteFile(path, []byte("voice"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte{0}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, mediaChunkedThreshold); err != nil {
 		t.Fatal(err)
 	}
 	messageCalls := 0
@@ -156,7 +204,7 @@ func TestClientSendMediaStopsWhenPartUploadFails(t *testing.T) {
 		switch {
 		case r.URL.Path == "/v2/users/user-1/upload_prepare":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"upload_id": "upload-1", "block_size": 5,
+				"upload_id": "upload-1", "block_size": mediaChunkedThreshold,
 				"parts": []map[string]any{{"part_index": 1, "url": server.URL + "/cos/1"}},
 			})
 		case r.URL.Path == "/cos/1":
@@ -177,6 +225,35 @@ func TestClientSendMediaStopsWhenPartUploadFails(t *testing.T) {
 	}
 	if messageCalls != 0 {
 		t.Fatalf("message calls = %d", messageCalls)
+	}
+}
+
+func TestClientSendMediaReportsInvalidJSONWithoutResponseBody(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "call.mp3")
+	if err := os.WriteFile(path, []byte("voice"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const sensitiveBody = "<html>internal gateway detail</html>"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("x-tps-trace-id", "trace-1")
+		_, _ = w.Write([]byte(sensitiveBody))
+	}))
+	defer server.Close()
+	client := New(Config{
+		BaseURL: server.URL, Client: server.Client(), Tokens: &fakeTokens{current: "token"},
+	})
+
+	_, err := client.SendMedia(context.Background(), MediaRequest{
+		RecipientKind: "c2c", RecipientID: "user-1", FileType: MediaTypeVoice, Path: path,
+	})
+	if err == nil || !strings.Contains(err.Error(), "http_status=200") ||
+		!strings.Contains(err.Error(), `content_type="text/html"`) ||
+		!strings.Contains(err.Error(), `trace_id="trace-1"`) {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.Contains(err.Error(), sensitiveBody) {
+		t.Fatalf("error leaked response body: %v", err)
 	}
 }
 

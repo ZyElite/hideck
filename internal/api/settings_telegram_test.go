@@ -35,6 +35,9 @@ func TestTelegramSettingsMaskTokenAndExposeRuntimeBinding(t *testing.T) {
 	if response.Telegram.BotToken != notificationSecretMask || response.Telegram.BoundChatID != 123456 {
 		t.Fatalf("telegram response = %+v", response.Telegram)
 	}
+	if response.Telegram.RecordingMode != config.TelegramRecordingModeVoice {
+		t.Fatalf("recording mode = %q, want voice", response.Telegram.RecordingMode)
+	}
 }
 
 func TestTelegramSettingsPreserveMaskedTokenAndAllowAutomaticBinding(t *testing.T) {
@@ -52,8 +55,37 @@ func TestTelegramSettingsPreserveMaskedTokenAndAllowAutomaticBinding(t *testing.
 		t.Fatalf("telegram config = %+v", server.fullCfg.Telegram)
 	}
 	data, err := os.ReadFile(configPath)
-	if err != nil || !strings.Contains(string(data), "bot_token: private-token") {
+	if err != nil || !strings.Contains(string(data), "bot_token: private-token") ||
+		!strings.Contains(string(data), "recording_mode: voice") {
 		t.Fatalf("config = %s, error = %v", data, err)
+	}
+}
+
+func TestTelegramSettingsPersistAudioRecordingMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	configPath := writeTelegramSettingsConfig(t)
+	server := &Server{configPath: configPath, fullCfg: &config.Config{}}
+	body := `{"telegram":{"enabled":false,"recording_mode":"audio"}}`
+	recorder := requestTelegramSettingsUpdate(server, body)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if server.fullCfg.Telegram.RecordingMode != config.TelegramRecordingModeAudio {
+		t.Fatalf("telegram config = %+v", server.fullCfg.Telegram)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil || !strings.Contains(string(data), "recording_mode: audio") {
+		t.Fatalf("config = %s, error = %v", data, err)
+	}
+}
+
+func TestTelegramSettingsRejectUnknownRecordingMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	server := &Server{configPath: writeTelegramSettingsConfig(t), fullCfg: &config.Config{}}
+	body := `{"telegram":{"enabled":false,"recording_mode":"document"}}`
+	recorder := requestTelegramSettingsUpdate(server, body)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "voice|audio") {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

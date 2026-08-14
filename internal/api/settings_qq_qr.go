@@ -116,6 +116,9 @@ func (s *Server) applyQQQRCredentials(credentials notify.QQQRCredentials) string
 	if err := s.notifyMgr.UpdateConfig(s.fullCfg); err != nil {
 		return "凭证已保存，但渠道启动失败: " + err.Error()
 	}
+	if err := s.notifyMgr.SendRegistrationHelp("qq", credentials.UserOpenID); err != nil {
+		return "凭证已保存，但注册帮助发送失败: " + err.Error()
+	}
 	return ""
 }
 

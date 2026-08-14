@@ -144,11 +144,11 @@ func TestWeixinAllowedDirectMessageSetsMissingDefaultTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowed, err := channel.authorizeMessage(weixinAuthorizationRequest{
+	allowed, bound, err := channel.authorizeMessage(weixinAuthorizationRequest{
 		Kind: "direct", ChatID: "known-chat", Sender: "known-user", ContextToken: "context-1",
 	})
-	if err != nil || !allowed {
-		t.Fatalf("authorizeMessage() = %v, %v", allowed, err)
+	if err != nil || !allowed || !bound {
+		t.Fatalf("authorizeMessage() = allowed:%v bound:%v error:%v", allowed, bound, err)
 	}
 	loaded, err := store.Load()
 	if err != nil {
@@ -158,11 +158,11 @@ func TestWeixinAllowedDirectMessageSetsMissingDefaultTarget(t *testing.T) {
 		t.Fatalf("saved state = %+v", loaded.Weixin)
 	}
 
-	allowed, err = channel.authorizeMessage(weixinAuthorizationRequest{
+	allowed, bound, err = channel.authorizeMessage(weixinAuthorizationRequest{
 		Kind: "direct", ChatID: "second-chat", Sender: "known-user",
 	})
-	if err != nil || !allowed {
-		t.Fatalf("second authorizeMessage() = %v, %v", allowed, err)
+	if err != nil || !allowed || bound {
+		t.Fatalf("second authorizeMessage() = allowed:%v bound:%v error:%v", allowed, bound, err)
 	}
 	loaded, _ = store.Load()
 	if loaded.Weixin.DefaultTarget != "known-chat" {

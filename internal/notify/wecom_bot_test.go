@@ -186,17 +186,17 @@ func TestWeComBotDirectAllowlistRejectsUnknownAndSetsKnownDefault(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	unknown, err := channel.authorizeMessage(weComAuthorizationRequest{
+	unknown, bound, err := channel.authorizeMessage(weComAuthorizationRequest{
 		kind: "direct", chatID: "unknown-chat", sender: "unknown-user",
 	})
-	if err != nil || unknown {
-		t.Fatalf("unknown allowed = %v, error = %v", unknown, err)
+	if err != nil || unknown || bound {
+		t.Fatalf("unknown allowed = %v, bound = %v, error = %v", unknown, bound, err)
 	}
-	known, err := channel.authorizeMessage(weComAuthorizationRequest{
+	known, bound, err := channel.authorizeMessage(weComAuthorizationRequest{
 		kind: "direct", chatID: "known-chat", sender: "known-user",
 	})
-	if err != nil || !known {
-		t.Fatalf("known allowed = %v, error = %v", known, err)
+	if err != nil || !known || !bound {
+		t.Fatalf("known allowed = %v, bound = %v, error = %v", known, bound, err)
 	}
 	state, err := store.Load()
 	if err != nil || state.WeComBot.DefaultTarget != "known-chat" {

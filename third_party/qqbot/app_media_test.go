@@ -2,6 +2,7 @@ package qqbot
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -22,20 +23,12 @@ func TestAppSendVoiceMapsDeliveryToMediaProtocol(t *testing.T) {
 	if err := os.WriteFile(path, []byte("mp3-data"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	var upload map[string]any
 	var message map[string]any
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v2/groups/group-1/upload_prepare":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"upload_id": "upload-1", "block_size": 8,
-				"parts": []map[string]any{{"part_index": 1, "url": server.URL + "/cos/1"}},
-			})
-		case "/cos/1":
-			w.WriteHeader(http.StatusOK)
-		case "/v2/groups/group-1/upload_part_finish":
-			_, _ = w.Write([]byte(`{}`))
 		case "/v2/groups/group-1/files":
+			_ = json.NewDecoder(r.Body).Decode(&upload)
 			_, _ = w.Write([]byte(`{"file_info":"file-token"}`))
 		case "/v2/groups/group-1/messages":
 			_ = json.NewDecoder(r.Body).Decode(&message)
@@ -60,8 +53,9 @@ func TestAppSendVoiceMapsDeliveryToMediaProtocol(t *testing.T) {
 	media, _ := message["media"].(map[string]any)
 	if receipt.ID != "reply-1" || int(message["msg_type"].(float64)) != 7 ||
 		media["file_info"] != "file-token" || message["msg_id"] != "msg-1" ||
-		int(message["msg_seq"].(float64)) != 3 {
-		t.Fatalf("receipt = %+v, message = %#v", receipt, message)
+		int(message["msg_seq"].(float64)) != 3 ||
+		upload["file_data"] != base64.StdEncoding.EncodeToString([]byte("mp3-data")) {
+		t.Fatalf("receipt = %+v, upload = %#v, message = %#v", receipt, upload, message)
 	}
 }
 

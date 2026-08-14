@@ -28,8 +28,10 @@ type telegramAPICapture struct {
 	methods     []string
 	messages    []string
 	commands    []tgbotapi.BotCommand
+	voiceFiles  [][]byte
 	audioFiles  [][]byte
 	sequence    []string
+	rejectVoice bool
 	rejectAudio bool
 	rejectText  bool
 }
@@ -187,35 +189,45 @@ func (c *telegramAPICapture) handler(w http.ResponseWriter, r *http.Request) {
 		writeTelegramResult(w, map[string]any{
 			"message_id": 1, "date": 1, "chat": map[string]any{"id": 42, "type": "private"}, "text": text,
 		})
+	case "sendVoice":
+		c.captureRecording(w, r, "voice")
 	case "sendAudio":
-		file, _, err := r.FormFile("audio")
-		if err != nil {
-			http.Error(w, `{"ok":false,"description":"missing audio"}`, http.StatusBadRequest)
-			return
-		}
-		data, readErr := io.ReadAll(file)
-		_ = file.Close()
-		if readErr != nil {
-			http.Error(w, `{"ok":false,"description":"read audio"}`, http.StatusBadRequest)
-			return
-		}
-		c.mu.Lock()
-		c.audioFiles = append(c.audioFiles, data)
-		c.sequence = append(c.sequence, "audio")
-		reject := c.rejectAudio
-		c.mu.Unlock()
-		if reject {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok": false, "description": "rejected " + telegramTestToken + " for chat 42",
-			})
-			return
-		}
-		writeTelegramResult(w, map[string]any{
-			"message_id": 2, "date": 1, "chat": map[string]any{"id": 42, "type": "private"},
-		})
+		c.captureRecording(w, r, "audio")
 	default:
 		http.Error(w, `{"ok":false,"description":"unsupported"}`, http.StatusBadRequest)
 	}
+}
+
+func (c *telegramAPICapture) captureRecording(w http.ResponseWriter, r *http.Request, kind string) {
+	file, _, err := r.FormFile(kind)
+	if err != nil {
+		http.Error(w, `{"ok":false,"description":"missing recording"}`, http.StatusBadRequest)
+		return
+	}
+	data, readErr := io.ReadAll(file)
+	_ = file.Close()
+	if readErr != nil {
+		http.Error(w, `{"ok":false,"description":"read recording"}`, http.StatusBadRequest)
+		return
+	}
+	c.mu.Lock()
+	if kind == "voice" {
+		c.voiceFiles = append(c.voiceFiles, data)
+	} else {
+		c.audioFiles = append(c.audioFiles, data)
+	}
+	c.sequence = append(c.sequence, kind)
+	reject := (kind == "voice" && c.rejectVoice) || (kind == "audio" && c.rejectAudio)
+	c.mu.Unlock()
+	if reject {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": false, "description": "rejected " + telegramTestToken + " for chat 42",
+		})
+		return
+	}
+	writeTelegramResult(w, map[string]any{
+		"message_id": 2, "date": 1, "chat": map[string]any{"id": 42, "type": "private"},
+	})
 }
 
 func writeTelegramResult(w http.ResponseWriter, result any) {
@@ -229,6 +241,16 @@ func newTelegramTestChannel(
 	adminID int64,
 	chatID int64,
 ) (*TelegramChannel, *telegramAPICapture) {
+	return newTelegramTestChannelWithMode(t, store, adminID, chatID, "")
+}
+
+func newTelegramTestChannelWithMode(
+	t *testing.T,
+	store RuntimeStateStore,
+	adminID int64,
+	chatID int64,
+	recordingMode string,
+) (*TelegramChannel, *telegramAPICapture) {
 	t.Helper()
 	capture := &telegramAPICapture{}
 	server := httptest.NewServer(http.HandlerFunc(capture.handler))
@@ -236,7 +258,7 @@ func newTelegramTestChannel(
 	channel, err := NewTelegramChannelWithOptions(TelegramChannelOptions{
 		Config: config.TelegramConfig{
 			Enabled: true, BotToken: telegramTestToken, AdminID: adminID, ChatID: chatID,
-			BaseURL: server.URL + "/bot%s/%s",
+			RecordingMode: recordingMode, BaseURL: server.URL + "/bot%s/%s",
 		},
 		StateStore: store,
 	})
@@ -269,19 +291,20 @@ func waitForTelegramMessages(t *testing.T, capture *telegramAPICapture, count in
 	return nil
 }
 
-func waitForTelegramDelivery(t *testing.T, capture *telegramAPICapture, audio, messages int) {
+func waitForTelegramDelivery(t *testing.T, capture *telegramAPICapture, voice, audio, messages int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		capture.mu.Lock()
-		ready := len(capture.audioFiles) >= audio && len(capture.messages) >= messages
+		ready := len(capture.voiceFiles) >= voice && len(capture.audioFiles) >= audio &&
+			len(capture.messages) >= messages
 		capture.mu.Unlock()
 		if ready {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("Telegram delivery did not reach audio=%d messages=%d", audio, messages)
+	t.Fatalf("Telegram delivery did not reach voice=%d audio=%d messages=%d", voice, audio, messages)
 }
 
 func TestBuildTelegramTextMessageKeepsRawSMSContent(t *testing.T) {
@@ -491,18 +514,52 @@ func TestTelegramVoiceCallCompletionSendsValidMP3BeforeText(t *testing.T) {
 		Success: true, AudioPath: path, AudioCodec: "MP3",
 	})
 	ctx.release()
-	waitForTelegramDelivery(t, capture, 1, 1)
+	waitForTelegramDelivery(t, capture, 1, 0, 1)
+
+	capture.mu.Lock()
+	sequence := append([]string(nil), capture.sequence...)
+	voice := append([]byte(nil), capture.voiceFiles[0]...)
+	messages := append([]string(nil), capture.messages...)
+	capture.mu.Unlock()
+	if strings.Join(sequence, ",") != "voice,text" || !bytes.Equal(voice, mp3) {
+		t.Fatalf("sequence = %v, voice bytes = %d", sequence, len(voice))
+	}
+	if messages[0] != "呼叫完成\n录音    call.mp3" {
+		t.Fatalf("message = %q", messages[0])
+	}
+}
+
+func TestTelegramAudioModeSendsAudioAttachmentBeforeText(t *testing.T) {
+	channel, capture := newTelegramTestChannelWithMode(
+		t, nil, 42, 0, config.TelegramRecordingModeAudio,
+	)
+	path := filepath.Join(t.TempDir(), "call.mp3")
+	mp3 := validSilentMP3()
+	if err := os.WriteFile(path, mp3, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &tgCommandContext{channel: channel, target: 42}
+	ctx.ReplyWithAttachments("呼叫完成", []CommandAttachment{{
+		Path: path, Codec: "MP3", Recording: "call.mp3",
+	}})
+	ctx.release()
+	waitForTelegramDelivery(t, capture, 0, 1, 1)
 
 	capture.mu.Lock()
 	sequence := append([]string(nil), capture.sequence...)
 	audio := append([]byte(nil), capture.audioFiles[0]...)
-	messages := append([]string(nil), capture.messages...)
 	capture.mu.Unlock()
 	if strings.Join(sequence, ",") != "audio,text" || !bytes.Equal(audio, mp3) {
 		t.Fatalf("sequence = %v, audio bytes = %d", sequence, len(audio))
 	}
-	if messages[0] != "呼叫完成\n录音    call.mp3" {
-		t.Fatalf("message = %q", messages[0])
+}
+
+func TestTelegramRejectsUnknownRecordingMode(t *testing.T) {
+	_, err := NewTelegramChannel(config.TelegramConfig{
+		Enabled: true, BotToken: telegramTestToken, RecordingMode: "document",
+	})
+	if err == nil || !strings.Contains(err.Error(), "voice|audio") {
+		t.Fatalf("NewTelegramChannel() error = %v", err)
 	}
 }
 
@@ -521,10 +578,10 @@ func validSilentMP3() []byte {
 	return data
 }
 
-func TestTelegramAudioRejectionSendsOnlyFailure(t *testing.T) {
+func TestTelegramVoiceRejectionSendsOnlyFailure(t *testing.T) {
 	channel, capture := newTelegramTestChannel(t, nil, 42, 0)
 	capture.mu.Lock()
-	capture.rejectAudio = true
+	capture.rejectVoice = true
 	capture.mu.Unlock()
 	path := filepath.Join(t.TempDir(), "call.mp3")
 	if err := os.WriteFile(path, []byte("mp3"), 0o600); err != nil {
@@ -533,7 +590,7 @@ func TestTelegramAudioRejectionSendsOnlyFailure(t *testing.T) {
 	ctx := &tgCommandContext{channel: channel, target: 42}
 	ctx.ReplyWithAttachments("呼叫完成", []CommandAttachment{{Path: path, Codec: "MP3"}})
 	ctx.release()
-	waitForTelegramDelivery(t, capture, 1, 1)
+	waitForTelegramDelivery(t, capture, 1, 0, 1)
 
 	capture.mu.Lock()
 	messages := append([]string(nil), capture.messages...)
@@ -559,17 +616,17 @@ func TestTelegramTextErrorRedactsTokenAndTargetAndPreservesCause(t *testing.T) {
 	}
 }
 
-func TestTelegramAudioRejectsMissingAndNonMP3Files(t *testing.T) {
+func TestTelegramRecordingRejectsMissingAndNonMP3Files(t *testing.T) {
 	channel, _ := newTelegramTestChannel(t, nil, 42, 0)
 	missingPath := "/missing/private/call.mp3"
-	if err := channel.sendAudio(42, CommandAttachment{Path: missingPath, Codec: "MP3"}); err == nil || strings.Contains(err.Error(), missingPath) || !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("sendAudio() missing-file error = %v", err)
+	if err := channel.sendRecording(42, CommandAttachment{Path: missingPath, Codec: "MP3"}); err == nil || strings.Contains(err.Error(), missingPath) || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("sendRecording() missing-file error = %v", err)
 	}
 	path := filepath.Join(t.TempDir(), "call.wav")
 	if err := os.WriteFile(path, []byte("wav"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := channel.sendAudio(42, CommandAttachment{Path: path, Codec: "WAV"}); err == nil {
-		t.Fatal("sendAudio() accepted non-MP3 file")
+	if err := channel.sendRecording(42, CommandAttachment{Path: path, Codec: "WAV"}); err == nil {
+		t.Fatal("sendRecording() accepted non-MP3 file")
 	}
 }

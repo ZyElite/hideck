@@ -40,7 +40,10 @@ func (c *Client) doAuthenticatedJSON(ctx context.Context, endpoint string, paylo
 			return nil
 		}
 		if err := json.Unmarshal(raw, target); err != nil {
-			return errors.New("QQ 媒体接口返回无效 JSON")
+			return fmt.Errorf(
+				"QQ 媒体接口返回无效 JSON: http_status=%d content_type=%q response_bytes=%d trace_id=%q: %w",
+				status, header.Get("Content-Type"), len(raw), header.Get("x-tps-trace-id"), err,
+			)
 		}
 		return nil
 	}

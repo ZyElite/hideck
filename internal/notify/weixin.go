@@ -114,27 +114,30 @@ func (w *WeixinChannel) Close() error {
 	return nil
 }
 
-func (w *WeixinChannel) authorizeMessage(request weixinAuthorizationRequest) (bool, error) {
+func (w *WeixinChannel) authorizeMessage(request weixinAuthorizationRequest) (bool, bool, error) {
 	w.authMu.Lock()
 	defer w.authMu.Unlock()
 	state := w.snapshotState()
 	changed := false
+	bound := false
 	if request.Kind == "group" {
 		if !containsString(w.config.AllowedGroupIDs, request.ChatID) || !w.allowedDirect(state, request.Sender) {
-			return false, nil
+			return false, false, nil
 		}
 	} else {
 		if !w.allowedDirect(state, request.Sender) {
 			if len(w.config.AllowedUserIDs) > 0 || len(state.Weixin.AllowedUsers) > 0 || state.Weixin.DefaultTarget != "" {
-				return false, nil
+				return false, false, nil
 			}
 			state.Weixin.AllowedUsers = append(state.Weixin.AllowedUsers, request.Sender)
 			changed = true
+			bound = true
 		}
 		if strings.TrimSpace(state.Weixin.DefaultTarget) == "" {
 			if target := firstNonEmpty(request.ChatID, request.Sender); target != "" {
 				state.Weixin.DefaultTarget = target
 				changed = true
+				bound = true
 			}
 		}
 	}
@@ -149,12 +152,12 @@ func (w *WeixinChannel) authorizeMessage(request weixinAuthorizationRequest) (bo
 		}
 	}
 	if !changed {
-		return true, nil
+		return true, bound, nil
 	}
 	if err := w.saveState(state); err != nil {
-		return false, err
+		return false, false, err
 	}
-	return true, nil
+	return true, bound, nil
 }
 
 func firstNonEmpty(values ...string) string {

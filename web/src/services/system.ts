@@ -34,6 +34,8 @@ export type DisclaimerStatus = {
   version: string
 }
 
+export type TelegramRecordingMode = 'voice' | 'audio'
+
 export type TelegramSettings = {
   enabled: boolean
   bot_token: string
@@ -41,6 +43,7 @@ export type TelegramSettings = {
   admin_id: number | null
   bound_chat_id: number | null
   binding_error: string
+  recording_mode: TelegramRecordingMode
   base_url: string
   proxy: string
 }
@@ -137,6 +140,7 @@ export type SaveNotificationsPayload = {
     bot_token: string
     chat_id: number
     admin_id: number
+    recording_mode: TelegramRecordingMode
     base_url: string
     proxy: string
   }
