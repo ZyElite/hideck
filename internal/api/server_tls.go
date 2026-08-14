@@ -16,6 +16,21 @@ const (
 	maxServerHeaderBytes = 1 << 20
 )
 
+func (s *Server) serveHTTP() error {
+	handler := withCommandEventStreamDeadlineDisabled(s.newRouter())
+	httpServer := newManagedHTTPServer(s.cfg.Port, handler)
+	httpListener, err := net.Listen("tcp", httpServer.Addr)
+	if err != nil {
+		return fmt.Errorf("监听 HTTP %s: %w", httpServer.Addr, err)
+	}
+	httpServer.Addr = httpListener.Addr().String()
+	s.httpSrvMu.Lock()
+	s.httpSrv, s.httpsSrv = httpServer, nil
+	s.httpSrvMu.Unlock()
+	logger.Info("启动 HTTP 管理服务器", "address", httpListener.Addr().String())
+	return serverFailure(httpServer.Serve(httpListener))
+}
+
 func (s *Server) serveHTTPAndHTTPS(certificate tls.Certificate) error {
 	handler := withCommandEventStreamDeadlineDisabled(s.newRouter())
 	httpServer := newManagedHTTPServer(s.cfg.Port, handler)

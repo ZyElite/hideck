@@ -72,11 +72,14 @@ docker compose logs -f hideck
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `server.port` | `7575` | HTTP 管理端口 |
-| `server.https_port` | `7576` | HTTPS 管理端口 |
+| `server.https_enabled` | `false` | 是否启用内置 HTTPS；使用 Nginx/Caddy 等反向代理时保持关闭 |
+| `server.https_port` | `7576` | 内置 HTTPS 启用时的监听端口 |
 | `web.username` | `admin` | Web 登录账号 |
 | `web.password` | `admin` | Web 登录密码，登录后应立即修改 |
 | `system.openwrt_dynamic_interfaces` | `false` | 仅在 OpenWrt 上启用动态接口映射 |
 | `vowifi.enabled` | `false` | 全局 VoWiFi 开关 |
+
+默认关闭内置 HTTPS。使用 Nginx、Caddy 等反向代理时，让代理监听 `443` 并转发到 `server.port` 即可。如需直接使用 HiDeck 的本地证书，将 `server.https_enabled` 改为 `true`，重启后通过 `https://YOUR_IP:7576` 访问。
 
 不要把 SIM PIN、Bot Token、API Key 或其他凭据直接提交到配置仓库。SIM PIN 配置只保存环境变量名，例如 `HIDECK_SIM_PIN_READER1`。
 

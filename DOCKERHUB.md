@@ -36,6 +36,7 @@ cd hideck
 server:
   port: 7575
   debug: false
+  https_enabled: false
 
 web:
   username: admin

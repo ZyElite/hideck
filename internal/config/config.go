@@ -162,6 +162,7 @@ type WebConfig struct {
 
 type ServerConfig struct {
 	Port                 string   `mapstructure:"port"`
+	HTTPSEnabled         bool     `mapstructure:"https_enabled"`
 	HTTPSPort            string   `mapstructure:"https_port"`
 	WebRTCUDPAddress     string   `mapstructure:"webrtc_udp_address"`
 	TLSCertFile          string   `mapstructure:"tls_cert_file"`
@@ -361,6 +362,7 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("wecom_bot.websocket_url", "wss://openws.work.weixin.qq.com")
 	viper.SetDefault("web.username", "admin")
 	viper.SetDefault("web.password", "admin")
+	viper.SetDefault("server.https_enabled", false)
 	viper.SetDefault("server.https_port", 7576)
 	viper.SetDefault("server.webrtc_udp_address", ":7580")
 	viper.SetDefault("server.tls_data_dir", "data/tls")

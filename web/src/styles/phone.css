@@ -1,10 +1,8 @@
 .phone-page { max-width: 1180px; margin: 0 auto; }
-.security-notice { margin-bottom: 16px; padding: 14px 16px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; border: 1px solid color-mix(in srgb, var(--ui-warning) 38%, var(--ui-border)); border-radius: 10px; background: color-mix(in srgb, var(--ui-warning) 8%, var(--ui-surface)); }
+.security-notice { margin-bottom: 16px; padding: 14px 16px; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 14px; border: 1px solid color-mix(in srgb, var(--ui-warning) 38%, var(--ui-border)); border-radius: 10px; background: color-mix(in srgb, var(--ui-warning) 8%, var(--ui-surface)); }
 .notice-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--ui-warning) 14%, var(--ui-surface)); color: var(--ui-warning); font-size: 20px; }
 .security-notice strong { font-size: 13px; }
 .security-notice p { margin: 3px 0 0; color: var(--ui-text-muted); font-size: 12px; }
-.notice-actions { display: flex; gap: 8px; }
-.notice-actions a { min-height: 44px; padding: 0 12px; display: inline-flex; align-items: center; border: 1px solid var(--ui-border); border-radius: 6px; background: var(--ui-surface); color: var(--ui-primary); font-size: 12px; font-weight: 600; text-decoration: none; }
 .phone-error { margin-bottom: 16px; padding: 10px 12px; display: flex; justify-content: space-between; gap: 16px; border: 1px solid color-mix(in srgb, var(--ui-danger) 38%, var(--ui-border)); border-radius: 8px; background: color-mix(in srgb, var(--ui-danger) 8%, var(--ui-surface)); color: var(--ui-danger); font-size: 12px; }
 .phone-error button { width: 44px; height: 44px; margin: -7px -8px -7px 0; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 20px; }
 .phone-workspace { min-width: 0; overflow: hidden; animation: phone-workspace-enter 240ms var(--ui-ease-out) both; }
@@ -93,8 +91,6 @@
 
 @media (max-width: 640px) {
   .security-notice { grid-template-columns: auto 1fr; }
-  .notice-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; }
-  .notice-actions a { justify-content: center; }
   .console-header { align-items: stretch; flex-direction: column; }
   .device-selector { width: 100%; min-width: 0; }
   .dialer, .active-call { padding: 20px 14px 24px; }

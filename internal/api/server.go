@@ -176,6 +176,7 @@ func (s *Server) initializeCommandCenter() {
 	s.carrierRules = databaseCarrierRuleStore{}
 	s.commandCenter = commandcenter.NewService(s.notifyMgr.CommandService(), commandcenter.NewDatabaseStore(db.DB))
 	_ = s.notifyMgr.SetBalanceCommandHandler(s.handleBalanceCommand)
+	s.notifyMgr.SetChannelCommandExecutor(s.commandCenter)
 	s.pool.OnInboundSMS(func(message device.InboundSMS) error {
 		_, err := s.balance.HandleInboundSMS(context.Background(), balance.InboundSMS{
 			DeviceID: message.DeviceID, ICCID: message.ICCID, Sender: message.Sender,
@@ -457,6 +458,10 @@ func (s *Server) newRouter() *gin.Engine {
 }
 
 func (s *Server) Run() error {
+	if !s.cfg.HTTPSEnabled {
+		s.phoneCACertificate = ""
+		return s.serveHTTP()
+	}
 	tlsFiles, err := localtls.Ensure(localtls.Config{
 		CertificateFile: s.cfg.TLSCertFile, PrivateKeyFile: s.cfg.TLSKeyFile,
 		DataDirectory: s.cfg.TLSDataDir,

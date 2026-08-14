@@ -14,6 +14,9 @@ var (
 
 // InitGlobalManager 初始化全局配置管理器，将首次从文件加载到内存
 func InitGlobalManager(path string) error {
+	if err := ensureServerHTTPSSettingInFile(path); err != nil {
+		return err
+	}
 	configPath = path
 	return ReloadFromFile()
 }

@@ -19,7 +19,6 @@ import type { PhoneCall, PhoneDevice } from '../services/phone'
 import { usePhoneStore } from '../stores/phone'
 import { formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
 
-const DEFAULT_HTTPS_PORT = '7576'
 const CALLEE_PATTERN = /^\+?[0-9]{1,32}$/
 
 const phone = usePhoneStore()
@@ -40,15 +39,6 @@ const canPlaceCall = computed(() => CALLEE_PATTERN.test(callee.value)
   && !!selected.value
   && isDeviceReady(selected.value)
   && !isDeviceBusy(selected.value))
-const httpsPhoneURL = computed(() => {
-  if (typeof window === 'undefined') return '#'
-  const target = new URL(window.location.href)
-  target.protocol = 'https:'
-  target.port = DEFAULT_HTTPS_PORT
-  target.hash = '#/phone'
-  return target.toString()
-})
-
 watch(() => phone.devices, (devices) => selectFirstAvailableDevice(devices), { immediate: true })
 watch(call, (current) => {
   if (!current || current.status !== 'connected') keypadVisible.value = false
@@ -168,11 +158,7 @@ async function sendDTMF(digit: string) {
       <div class="notice-icon"><el-icon><LockClosed24Regular /></el-icon></div>
       <div>
         <strong>麦克风需要受信任的 HTTPS</strong>
-        <p>当前 HTTP 页面可“仅听接听”或“仅听呼叫”，不会申请麦克风，因此对方听不到你。双向通话需要使用受信任的 HTTPS。</p>
-      </div>
-      <div class="notice-actions">
-        <a href="/api/phone/ca.crt" download>下载 CA 证书</a>
-        <a :href="httpsPhoneURL">打开默认 HTTPS</a>
+        <p>当前 HTTP 页面可“仅听接听”或“仅听呼叫”，不会申请麦克风，因此对方听不到你。请通过已配置的 Nginx、Caddy 或其他受信任 HTTPS 地址访问后再使用双向通话。</p>
       </div>
     </section>
 

@@ -1,6 +1,8 @@
 server:
   debug: false
   port: 7575
+  # 使用 Nginx/Caddy 等外部 HTTPS 反向代理时保持 false。
+  https_enabled: false
   https_port: 7576
   webrtc_udp_address: ":7580"
   tls_data_dir: data/tls

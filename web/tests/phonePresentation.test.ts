@@ -28,9 +28,10 @@ test('dial pad is an explicit fixed 3 by 4 control with accessible buttons', () 
 })
 
 test('phone view exposes explicit listen-only and microphone call actions without hiding the limitation', () => {
-  assert.match(phoneView, /下载 CA 证书/)
   assert.match(phoneView, /麦克风需要受信任的 HTTPS/)
   assert.match(phoneView, /当前 HTTP 页面可“仅听接听”或“仅听呼叫”/)
+  assert.match(phoneView, /Nginx、Caddy 或其他受信任 HTTPS 地址/)
+  assert.doesNotMatch(phoneView, /DEFAULT_HTTPS_PORT|打开默认 HTTPS/)
   assert.match(phoneView, />拒接</)
   assert.match(phoneView, />仅听接听</)
   assert.match(phoneView, />麦克风接听</)

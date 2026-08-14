@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,8 @@ import (
 func TestServerRunsHTTPAndTrustedHTTPSAndExposesOnlyCACertificate(t *testing.T) {
 	server := New(&config.Config{
 		Server: config.ServerConfig{
-			Port: "127.0.0.1:0", HTTPSPort: "127.0.0.1:0", TLSDataDir: t.TempDir(),
+			Port: "127.0.0.1:0", HTTPSEnabled: true,
+			HTTPSPort: "127.0.0.1:0", TLSDataDir: t.TempDir(),
 		},
 		Web: config.WebConfig{Username: "admin", Password: "secret"},
 	}, nil, nil, nil, nil, nil, "config.yaml")
@@ -80,6 +82,49 @@ func TestServerRunsHTTPAndTrustedHTTPSAndExposesOnlyCACertificate(t *testing.T) 
 	}
 }
 
+func TestServerRunsHTTPOnlyWhenHTTPSDisabled(t *testing.T) {
+	tlsDirectory := filepath.Join(t.TempDir(), "tls")
+	server := New(&config.Config{
+		Server: config.ServerConfig{
+			Port: "127.0.0.1:0", HTTPSEnabled: false,
+			HTTPSPort: "127.0.0.1:0", TLSDataDir: tlsDirectory,
+		},
+		Web: config.WebConfig{Username: "admin", Password: "secret"},
+	}, nil, nil, nil, nil, nil, "config.yaml")
+	runError := make(chan error, 1)
+	go func() { runError <- server.Run() }()
+	httpAddress := waitHTTPServerAddress(t, server)
+
+	response, err := http.Get("http://" + httpAddress + "/ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPingResponse(t, response)
+	server.httpSrvMu.Lock()
+	httpsServer := server.httpsSrv
+	server.httpSrvMu.Unlock()
+	if httpsServer != nil || server.phoneCACertificate != "" {
+		t.Fatal("HTTPS resources initialized while https_enabled is false")
+	}
+	if _, err := os.Stat(tlsDirectory); !os.IsNotExist(err) {
+		t.Fatalf("TLS directory exists with HTTPS disabled: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-runError:
+		if err != nil {
+			t.Fatalf("Run returned after shutdown: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("Run did not return after HTTP-only shutdown")
+	}
+}
+
 func TestServerReturnsHTTPSBindFailureAndClosesHTTPListener(t *testing.T) {
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -88,7 +133,8 @@ func TestServerReturnsHTTPSBindFailureAndClosesHTTPListener(t *testing.T) {
 	defer occupied.Close()
 	server := New(&config.Config{
 		Server: config.ServerConfig{
-			Port: "127.0.0.1:0", HTTPSPort: occupied.Addr().String(), TLSDataDir: t.TempDir(),
+			Port: "127.0.0.1:0", HTTPSEnabled: true,
+			HTTPSPort: occupied.Addr().String(), TLSDataDir: t.TempDir(),
 		},
 		Web: config.WebConfig{Username: "admin", Password: "secret"},
 	}, nil, nil, nil, nil, nil, "config.yaml")
@@ -101,6 +147,22 @@ func TestServerReturnsHTTPSBindFailureAndClosesHTTPListener(t *testing.T) {
 	if server.httpSrv != nil || server.httpsSrv != nil {
 		t.Fatal("failed startup published partially running servers")
 	}
+}
+
+func waitHTTPServerAddress(t *testing.T, server *Server) string {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		server.httpSrvMu.Lock()
+		httpServer := server.httpSrv
+		server.httpSrvMu.Unlock()
+		if httpServer != nil {
+			return httpServer.Addr
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("HTTP server did not start")
+	return ""
 }
 
 func waitServerAddresses(t *testing.T, server *Server) (string, string) {
