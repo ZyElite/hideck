@@ -73,11 +73,38 @@ func TestAcceptDisclaimerRequiresExactConfirmationAndPersists(t *testing.T) {
 	}
 }
 
-func TestDisclaimerHandlersExposeDatabaseFailures(t *testing.T) {
-	store := &disclaimerStoreStub{statusErr: errors.New("database offline")}
-	server := &Server{disclaimerAcceptances: store}
+func TestDisclaimerHandlersHideDatabaseFailures(t *testing.T) {
+	internalError := errors.New("database offline at /private/hideck.db")
+	tests := []struct {
+		name        string
+		method      string
+		store       *disclaimerStoreStub
+		body        any
+		wantMessage string
+	}{
+		{name: "read", method: http.MethodGet, store: &disclaimerStoreStub{statusErr: internalError}, wantMessage: "读取免责声明状态失败"},
+		{name: "save", method: http.MethodPut, store: &disclaimerStoreStub{acceptErr: internalError}, body: map[string]string{"confirmation": disclaimerConfirmationText}, wantMessage: "保存免责声明状态失败"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := requestDisclaimer(t, &Server{disclaimerAcceptances: test.store}, test.method, test.body)
+			if recorder.Code != http.StatusInternalServerError {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if !bytes.Contains(recorder.Body.Bytes(), []byte(test.wantMessage)) {
+				t.Fatalf("missing public message %q in %s", test.wantMessage, recorder.Body.String())
+			}
+			if bytes.Contains(recorder.Body.Bytes(), []byte(internalError.Error())) {
+				t.Fatalf("response leaked internal error: %s", recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestDisclaimerHandlersReportUnavailableDatabase(t *testing.T) {
+	server := &Server{}
 	recorder := requestDisclaimer(t, server, http.MethodGet, nil)
-	if recorder.Code != http.StatusInternalServerError || !bytes.Contains(recorder.Body.Bytes(), []byte("database offline")) {
+	if recorder.Code != http.StatusServiceUnavailable || !bytes.Contains(recorder.Body.Bytes(), []byte("免责声明数据库未初始化")) {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

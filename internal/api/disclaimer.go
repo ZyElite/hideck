@@ -8,11 +8,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 const (
 	disclaimerVersion          = "1"
 	disclaimerConfirmationText = "我同意并确认"
+	disclaimerReadOperation    = "read"
+	disclaimerSaveOperation    = "save"
 )
 
 type disclaimerAcceptanceStore interface {
@@ -33,12 +36,12 @@ type acceptDisclaimerRequest struct {
 func (s *Server) handleGetDisclaimerStatus(c *gin.Context) {
 	store := s.disclaimerAcceptances
 	if store == nil {
-		writeDisclaimerStoreError(c, db.ErrDisclaimerDatabaseUnavailable)
+		writeDisclaimerStoreError(c, disclaimerReadOperation, db.ErrDisclaimerDatabaseUnavailable)
 		return
 	}
 	acceptedAt, accepted, err := store.Status(c.Request.Context(), disclaimerVersion)
 	if err != nil {
-		writeDisclaimerStoreError(c, err)
+		writeDisclaimerStoreError(c, disclaimerReadOperation, err)
 		return
 	}
 	c.JSON(http.StatusOK, disclaimerStatus(accepted, acceptedAt))
@@ -56,12 +59,12 @@ func (s *Server) handleAcceptDisclaimer(c *gin.Context) {
 	}
 	store := s.disclaimerAcceptances
 	if store == nil {
-		writeDisclaimerStoreError(c, db.ErrDisclaimerDatabaseUnavailable)
+		writeDisclaimerStoreError(c, disclaimerSaveOperation, db.ErrDisclaimerDatabaseUnavailable)
 		return
 	}
 	acceptedAt, err := store.Accept(c.Request.Context(), disclaimerVersion, time.Now().UTC())
 	if err != nil {
-		writeDisclaimerStoreError(c, err)
+		writeDisclaimerStoreError(c, disclaimerSaveOperation, err)
 		return
 	}
 	c.JSON(http.StatusOK, disclaimerStatus(true, acceptedAt))
@@ -76,9 +79,13 @@ func disclaimerStatus(accepted bool, acceptedAt time.Time) disclaimerStatusPaylo
 	return payload
 }
 
-func writeDisclaimerStoreError(c *gin.Context, err error) {
+func writeDisclaimerStoreError(c *gin.Context, operation string, err error) {
+	logger.Error("免责声明数据库操作失败", "operation", operation, "err", err)
 	status := http.StatusInternalServerError
-	message := "读取免责声明状态失败: " + err.Error()
+	message := "读取免责声明状态失败"
+	if operation == disclaimerSaveOperation {
+		message = "保存免责声明状态失败"
+	}
 	if errors.Is(err, db.ErrDisclaimerDatabaseUnavailable) {
 		status = http.StatusServiceUnavailable
 		message = "免责声明数据库未初始化"
