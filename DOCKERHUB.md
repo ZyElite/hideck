@@ -132,6 +132,8 @@ Web 入口为 `https://hideck.example.com`。Caddy 处理页面、API 和 WebRTC
 
 DNS-01 使用预构建的 `yibaiba/hideck-caddy-dns:2.11.4`，同时支持 `cloudflare`、`alidns`、`tencentcloud` 和 `route53`。分别使用 `CLOUDFLARE_API_TOKEN`，阿里云 AccessKey，腾讯云 SecretId/SecretKey，或 AWS 标准凭证环境变量。
 
+完整的 Nginx、Caddy、Lucky IPv4/IPv6 与 WebRTC 端口配置见 [HTTPS 与 WebRTC 部署指南](docs/https-webrtc.md)。
+
 维护该镜像时，进入仓库的 `caddy-dns-image/` 目录执行：
 
 ```bash
