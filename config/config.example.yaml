@@ -38,6 +38,31 @@ vowifi:
 webhook:
   enabled: false
 
+# QQ Bot 可在设置页扫码注册，也可手工填写以下字段。
+qq:
+  enabled: false
+  app_id: ""
+  app_secret: ""
+  group_ids: ""
+  direct_ids: ""
+
+# 个人微信使用 iLink 扫码；登录 Token 和会话绑定保存在同目录 notification-state.json。
+weixin:
+  enabled: false
+  base_url: https://ilinkai.weixin.qq.com
+  cdn_base_url: https://novac2c.cdn.weixin.qq.com/c2c
+  allowed_user_ids: []
+  allowed_group_ids: []
+
+# 企业微信长连接机器人，与下方 Webhook 通知渠道相互独立。
+wecom_bot:
+  enabled: false
+  bot_id: ""
+  secret: ""
+  websocket_url: wss://openws.work.weixin.qq.com
+  allowed_user_ids: []
+  allowed_group_ids: []
+
 wecom:
   enabled: false
   urls: []

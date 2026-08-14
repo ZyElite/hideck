@@ -695,6 +695,8 @@ paths:
           $ref: '#/components/responses/ErrorMessage'
         '404':
           $ref: '#/components/responses/ErrorMessage'
+        '502':
+          $ref: '#/components/responses/ErrorMessage'
 
   /settings/notifications/weixin/qr/cancel:
     post:
@@ -706,6 +708,120 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CancelWeixinQRRequest'
+      responses:
+        '200':
+          description: 已取消
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /settings/notifications/wecom-bot/qr/start:
+    post:
+      tags: [settings]
+      summary: 开始企业微信长连接机器人二维码会话
+      description: 扫码服务不可用时返回 502，并明确允许改用 Bot ID 和 Secret 手工配置。
+      responses:
+        '200':
+          description: 二维码会话已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeComBotQRResponse'
+        '502':
+          $ref: '#/components/responses/QROnboardingError'
+
+  /settings/notifications/wecom-bot/qr/status:
+    get:
+      tags: [settings]
+      summary: 查询企业微信长连接机器人二维码状态
+      parameters:
+        - $ref: '#/components/parameters/QRSessionID'
+      responses:
+        '200':
+          description: 二维码状态；确认后凭证已尝试写入配置，Secret 不会返回。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeComBotQRResponse'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '502':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /settings/notifications/wecom-bot/qr/cancel:
+    post:
+      tags: [settings]
+      summary: 取消企业微信长连接机器人二维码会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelQRRequest'
+      responses:
+        '200':
+          description: 已取消
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /settings/notifications/qq/qr/start:
+    post:
+      tags: [settings]
+      summary: 开始 QQ Bot 扫码注册会话
+      description: 创建 source=vohive 的 QQ Lite 绑定任务；扫码服务不可用时可改用 App ID、App Secret 和 OpenID 手工配置。
+      responses:
+        '200':
+          description: 二维码会话已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QQQRResponse'
+        '502':
+          $ref: '#/components/responses/QROnboardingError'
+
+  /settings/notifications/qq/qr/status:
+    get:
+      tags: [settings]
+      summary: 查询 QQ Bot 扫码注册状态
+      parameters:
+        - $ref: '#/components/parameters/QRSessionID'
+      responses:
+        '200':
+          description: 二维码状态；确认后 App Secret 已尝试写入配置但不会返回。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QQQRResponse'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '502':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /settings/notifications/qq/qr/cancel:
+    post:
+      tags: [settings]
+      summary: 取消 QQ Bot 扫码注册会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelQRRequest'
       responses:
         '200':
           description: 已取消
@@ -2991,6 +3107,13 @@ components:
       schema:
         type: string
       description: 恢复时为旧控制租约；只读查询或显式接管时可省略
+    QRSessionID:
+      in: query
+      name: session_id
+      required: true
+      schema:
+        type: string
+      description: 扫码会话 ID
 
   responses:
     Unauthorized:
@@ -3005,6 +3128,22 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    QROnboardingError:
+      description: 扫码服务不可用，可改用同渠道的手工配置
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, message, manual_setup_available]
+            properties:
+              status:
+                type: string
+                example: error
+              message:
+                type: string
+              manual_setup_available:
+                type: boolean
+                example: true
     PhoneError:
       description: 电话边界、状态或控制租约错误；message 包含可操作的真实失败原因。
       content:
@@ -4174,6 +4313,7 @@ components:
           type: string
         app_secret:
           type: string
+          description: 读取已保存配置时返回脱敏值 ********
         group_ids:
           type: string
         direct_ids:
@@ -4208,6 +4348,32 @@ components:
           type: array
           items:
             type: string
+        allowed_group_ids:
+          type: array
+          items:
+            type: string
+
+    WeComBotSettings:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        bot_id:
+          type: string
+        secret:
+          type: string
+          description: 读取已保存配置时返回脱敏值 ********
+        websocket_url:
+          type: string
+          description: 必须使用 WSS；仅本机测试允许 WS
+        allowed_user_ids:
+          type: array
+          items:
+            type: string
+        allowed_group_ids:
+          type: array
+          items:
+            type: string
 
     WeComSettings:
       type: object
@@ -4236,6 +4402,8 @@ components:
           $ref: '#/components/schemas/WebhookSettings'
         weixin:
           $ref: '#/components/schemas/WeixinSettings'
+        wecom_bot:
+          $ref: '#/components/schemas/WeComBotSettings'
         wecom:
           $ref: '#/components/schemas/WeComSettings'
 
@@ -4301,6 +4469,13 @@ components:
         session_id:
           type: string
 
+    CancelQRRequest:
+      type: object
+      required: [session_id]
+      properties:
+        session_id:
+          type: string
+
     WeixinQRStartResponse:
       type: object
       properties:
@@ -4322,6 +4497,8 @@ components:
       properties:
         session_id:
           type: string
+        qr_token:
+          type: string
         status:
           type: string
           enum: [wait, scaned, confirmed, expired, error]
@@ -4341,6 +4518,58 @@ components:
         bot_user_id:
           type: string
         base_url:
+          type: string
+
+    WeComBotQRResponse:
+      type: object
+      required: [session_id, status]
+      properties:
+        session_id:
+          type: string
+        qr_url:
+          type: string
+        open_url:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [wait, scaned, confirmed, expired, error]
+        applied:
+          type: boolean
+        apply_warning:
+          type: string
+        error:
+          type: string
+        bot_id:
+          type: string
+
+    QQQRResponse:
+      type: object
+      required: [session_id, status]
+      properties:
+        session_id:
+          type: string
+        task_id:
+          type: string
+        qr_url:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [wait, confirmed, expired, error]
+        applied:
+          type: boolean
+        apply_warning:
+          type: string
+        error:
+          type: string
+        app_id:
+          type: string
+        user_openid:
           type: string
 
     ChangePasswordRequest:
