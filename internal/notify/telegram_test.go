@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,45 @@ type telegramAPICapture struct {
 	audioFiles  [][]byte
 	sequence    []string
 	rejectAudio bool
+}
+
+type telegramToggleStateStore struct {
+	mu         sync.Mutex
+	state      RuntimeState
+	updateFail bool
+}
+
+func (s *telegramToggleStateStore) Load() (RuntimeState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneRuntimeState(s.state), nil
+}
+
+func (s *telegramToggleStateStore) Save(state RuntimeState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = cloneRuntimeState(state)
+	return nil
+}
+
+func (s *telegramToggleStateStore) Update(update func(*RuntimeState) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := cloneRuntimeState(s.state)
+	if err := update(&next); err != nil {
+		return err
+	}
+	if s.updateFail {
+		return errors.New("simulated state write failure")
+	}
+	s.state = next
+	return nil
+}
+
+func (s *telegramToggleStateStore) allowUpdates() {
+	s.mu.Lock()
+	s.updateFail = false
+	s.mu.Unlock()
 }
 
 func (c *telegramAPICapture) handler(w http.ResponseWriter, r *http.Request) {
@@ -206,6 +246,32 @@ func TestTelegramAdminPrivateStartBindsTargetAndUsesHelp(t *testing.T) {
 	}
 	if messages := waitForTelegramMessages(t, restartedCapture, 1); messages[0] != "重启后通知" {
 		t.Fatalf("restarted reply = %q", messages[0])
+	}
+}
+
+func TestTelegramBindingPublishesTargetOnlyAfterStateUpdateSucceeds(t *testing.T) {
+	store := &telegramToggleStateStore{state: newRuntimeState(), updateFail: true}
+	channel, capture := newTelegramTestChannel(t, store, 42, 0)
+	channel.RegisterCommand("help", func(CommandContext, []string) string { return "help" })
+	message := telegramCommandMessage("/start", "private", 42, 42)
+
+	channel.handleMessage(message)
+	if replies := waitForTelegramMessages(t, capture, 1); !strings.Contains(replies[0], "绑定失败") {
+		t.Fatalf("reply = %q", replies[0])
+	}
+	if err := channel.Send("must not send"); !errors.Is(err, ErrNoTelegramTarget) {
+		t.Fatalf("Send() error = %v, want ErrNoTelegramTarget", err)
+	}
+
+	store.allowUpdates()
+	channel.handleMessage(message)
+	replies := waitForTelegramMessages(t, capture, 2)
+	if replies[1] != "help" {
+		t.Fatalf("retry reply = %q", replies[1])
+	}
+	state, err := store.Load()
+	if err != nil || state.Telegram.DefaultTarget != 42 {
+		t.Fatalf("state = %+v, error = %v", state, err)
 	}
 }
 

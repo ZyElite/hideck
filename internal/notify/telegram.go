@@ -197,15 +197,17 @@ func (t *TelegramChannel) bindPrivateTarget(message *tgbotapi.Message) error {
 		return nil
 	}
 	if t.stateStore != nil {
+		var persistedTarget int64
 		if err := t.stateStore.Update(func(state *RuntimeState) error {
 			if state.Telegram.DefaultTarget == 0 {
 				state.Telegram.DefaultTarget = message.Chat.ID
 			}
-			t.defaultTarget = state.Telegram.DefaultTarget
+			persistedTarget = state.Telegram.DefaultTarget
 			return nil
 		}); err != nil {
 			return fmt.Errorf("保存 Telegram 默认通知目标失败: %w", err)
 		}
+		t.defaultTarget = persistedTarget
 		return nil
 	}
 	t.defaultTarget = message.Chat.ID
