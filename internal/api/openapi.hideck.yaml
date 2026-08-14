@@ -568,6 +568,46 @@ paths:
         '500':
           $ref: '#/components/responses/ErrorMessage'
 
+  /settings/disclaimer:
+    get:
+      tags: [settings]
+      summary: 获取免责声明同意状态
+      description: 从 HiDeck 数据库读取当前免责声明版本的全局同意状态。
+      responses:
+        '200':
+          description: 当前数据库中的同意状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisclaimerStatus'
+        '503':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+    put:
+      tags: [settings]
+      summary: 同意当前免责声明
+      description: 把当前免责声明版本及服务端接受时间持久化到 HiDeck 数据库。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptDisclaimerRequest'
+      responses:
+        '200':
+          description: 已持久化同意状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisclaimerStatus'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '503':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+
   /settings/notifications/webhook/test:
     post:
       tags: [settings]
@@ -3521,6 +3561,27 @@ components:
         openwrt_dynamic_interfaces:
           type: boolean
           description: 是否将拨号后的实际 Linux 数据接口动态映射到 OpenWrt netifd
+
+    DisclaimerStatus:
+      type: object
+      required: [accepted, accepted_at, version]
+      properties:
+        accepted:
+          type: boolean
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        version:
+          type: string
+
+    AcceptDisclaimerRequest:
+      type: object
+      required: [confirmation]
+      properties:
+        confirmation:
+          type: string
+          enum: [我同意并确认]
 
     SystemTimeResponse:
       type: object

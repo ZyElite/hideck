@@ -175,6 +175,7 @@ func Init(dbPath string) error {
 		&TrafficWeek{},
 		&TrafficMonth{},
 		&VoiceCallRecord{},
+		&DisclaimerAcceptance{},
 	); err != nil {
 		return err
 	}

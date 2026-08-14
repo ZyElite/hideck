@@ -35,6 +35,7 @@ func TestOpenAPIHiDeckYAMLValid(t *testing.T) {
 		"/balance/queries/{query_id}", "/balance/rules", "/balance/rules/{rule_id}",
 		"/devices/{device_id}/esim/actions/disable",
 		"/settings/notifications/wecom/test",
+		"/settings/disclaimer",
 	} {
 		if paths[path] == nil {
 			t.Fatalf("openapi.hideck.yaml missing %s", path)

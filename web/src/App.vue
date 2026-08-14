@@ -5,12 +5,11 @@ import { useAuthStore } from './stores/auth'
 import LoadingScreen from './components/LoadingScreen.vue'
 import ErrorState from './components/ErrorState.vue'
 import { ElMessage } from 'element-plus'
-import { shouldShowDisclaimer } from './disclaimer'
 import { systemService } from './services/system'
-import { configureDeviceTime, deviceNow, resetDeviceTime } from './utils/deviceTime'
+import { configureDeviceTime, resetDeviceTime } from './utils/deviceTime'
 import { Warning24Regular } from '@vicons/fluent'
 
-const DISCLAIMER_AGREED_AT_KEY = 'hideck_disclaimer_agreed_at'
+type StartupState = 'idle' | 'loading' | 'ready' | 'error'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -19,10 +18,15 @@ const isDark = ref(localStorage.getItem('theme') === 'dark')
 const showDisclaimer = ref(false)
 const confirmText = ref('')
 const expectedConfirmText = '我同意并确认'
-const canAccept = computed(() => confirmText.value === expectedConfirmText)
-const deviceTimeState = ref<'idle' | 'loading' | 'ready' | 'error'>(auth.isAuthenticated ? 'loading' : 'idle')
+const acceptingDisclaimer = ref(false)
+const disclaimerActionError = ref('')
+const canAccept = computed(() => confirmText.value === expectedConfirmText && !acceptingDisclaimer.value)
+const deviceTimeState = ref<StartupState>(auth.isAuthenticated ? 'loading' : 'idle')
 const deviceTimeError = ref('')
+const disclaimerState = ref<StartupState>(auth.isAuthenticated ? 'loading' : 'idle')
+const disclaimerError = ref('')
 let deviceTimeGeneration = 0
+let disclaimerGeneration = 0
 
 function toggleTheme() {
   isDark.value = !isDark.value
@@ -42,21 +46,6 @@ function updateHtmlClass(mode: 'dark' | 'light') {
 onMounted(() => {
   updateHtmlClass(isDark.value ? 'dark' : 'light')
 })
-
-// 监听登录状态，每周首次登录弹一次（同意状态持久化在 localStorage，
-// 跨会话/跨标签页生效，距上次同意满一周后再次登录才会重新弹出）
-watch([() => auth.isAuthenticated, deviceTimeState], ([isAuthenticated, timeState]) => {
-  if (isAuthenticated && timeState === 'ready') {
-    const agreedAtRaw = localStorage.getItem(DISCLAIMER_AGREED_AT_KEY)
-    const agreedAt = agreedAtRaw === null ? null : Number(agreedAtRaw)
-    if (shouldShowDisclaimer(agreedAt, deviceNow())) {
-      confirmText.value = ''
-      showDisclaimer.value = true
-    }
-  } else {
-    showDisclaimer.value = false
-  }
-}, { immediate: true })
 
 async function syncDeviceTime() {
   const generation = ++deviceTimeGeneration
@@ -80,22 +69,54 @@ async function syncDeviceTime() {
   }
 }
 
+async function loadDisclaimerStatus() {
+  const generation = ++disclaimerGeneration
+  disclaimerState.value = 'loading'
+  disclaimerError.value = ''
+  disclaimerActionError.value = ''
+  const result = await systemService.getDisclaimerStatus()
+  if (generation !== disclaimerGeneration || !auth.isAuthenticated) return
+  if (!result.ok) {
+    disclaimerState.value = 'error'
+    disclaimerError.value = result.error.message
+    return
+  }
+  confirmText.value = ''
+  showDisclaimer.value = !result.data.accepted
+  disclaimerState.value = 'ready'
+}
+
+async function acceptDisclaimer() {
+  if (!canAccept.value) return
+  acceptingDisclaimer.value = true
+  disclaimerActionError.value = ''
+  const result = await systemService.acceptDisclaimer(confirmText.value)
+  acceptingDisclaimer.value = false
+  if (!result.ok) {
+    disclaimerActionError.value = result.error.message
+    ElMessage.error(result.error.message)
+    return
+  }
+  confirmText.value = ''
+  showDisclaimer.value = false
+}
+
 watch(() => auth.isAuthenticated, (isAuthenticated) => {
   if (isAuthenticated) {
     void syncDeviceTime()
+    void loadDisclaimerStatus()
     return
   }
   deviceTimeGeneration++
+  disclaimerGeneration++
   resetDeviceTime()
   deviceTimeState.value = 'idle'
+  disclaimerState.value = 'idle'
   deviceTimeError.value = ''
-}, { immediate: true })
-
-function acceptDisclaimer() {
-  if (!canAccept.value) return
-  localStorage.setItem(DISCLAIMER_AGREED_AT_KEY, String(deviceNow()))
+  disclaimerError.value = ''
+  disclaimerActionError.value = ''
   showDisclaimer.value = false
-}
+}, { immediate: true })
 
 function rejectDisclaimer() {
   ElMessage.warning('正在退出并清理软件...')
@@ -114,7 +135,23 @@ const UnauthenticatedShell = defineAsyncComponent(() => import('./layouts/Unauth
 const shell = computed(() =>
   auth.isAuthenticated && route.name !== 'Login' ? AuthenticatedShell : UnauthenticatedShell
 )
-const canRenderShell = computed(() => !auth.isAuthenticated || deviceTimeState.value === 'ready')
+const canRenderShell = computed(() => !auth.isAuthenticated || (
+  deviceTimeState.value === 'ready' && disclaimerState.value === 'ready'
+))
+const startupLoading = computed(() => auth.isAuthenticated && (
+  deviceTimeState.value === 'loading' || disclaimerState.value === 'loading'
+))
+const startupError = computed(() => {
+  if (deviceTimeState.value === 'error') {
+    return { title: '设备时间同步失败', message: deviceTimeError.value }
+  }
+  return { title: '免责声明状态加载失败', message: disclaimerError.value }
+})
+
+function retryStartup() {
+  if (deviceTimeState.value === 'error') void syncDeviceTime()
+  if (disclaimerState.value === 'error') void loadDisclaimerStatus()
+}
 </script>
 
 <template>
@@ -127,14 +164,14 @@ const canRenderShell = computed(() => !auth.isAuthenticated || deviceTimeState.v
         <LoadingScreen />
       </template>
     </Suspense>
-    <LoadingScreen v-else-if="deviceTimeState === 'loading'" />
+    <LoadingScreen v-else-if="startupLoading" />
     <div v-else class="h-full flex items-center justify-center p-6">
       <ErrorState
         class="w-full max-w-xl"
-        title="设备时间同步失败"
-        :message="deviceTimeError"
+        :title="startupError.title"
+        :message="startupError.message"
         retry-text="重试"
-        @retry="syncDeviceTime"
+        @retry="retryStartup"
       />
     </div>
 
@@ -184,6 +221,10 @@ const canRenderShell = computed(() => !auth.isAuthenticated || deviceTimeState.v
                 />
               </div>
 
+              <p v-if="disclaimerActionError" class="mb-4 text-center text-sm text-red-500 dark:text-red-400">
+                {{ disclaimerActionError }}
+              </p>
+
               <div class="flex gap-4">
                 <button @click="rejectDisclaimer" class="license-reject flex-1 px-4 py-3 text-sm font-bold transition-colors">
                   拒绝并卸载
@@ -198,7 +239,7 @@ const canRenderShell = computed(() => !auth.isAuthenticated || deviceTimeState.v
                       : 'license-accept license-accept-disabled cursor-not-allowed'
                   ]"
                 >
-                  同意并继续
+                  {{ acceptingDisclaimer ? '正在保存…' : '同意并继续' }}
                 </button>
               </div>
             </div>

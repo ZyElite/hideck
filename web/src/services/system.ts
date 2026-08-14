@@ -27,6 +27,12 @@ export type SystemSettings = {
 	openwrt_dynamic_interfaces: boolean
 }
 
+export type DisclaimerStatus = {
+  accepted: boolean
+  accepted_at: string | null
+  version: string
+}
+
 export type TelegramSettings = {
   enabled: boolean
   bot_token: string
@@ -221,6 +227,18 @@ export type TestWeComResponse = {
 }
 
 export const systemService = {
+  getDisclaimerStatus() {
+    return callService(async () => {
+      const res = await api.get<DisclaimerStatus>('/settings/disclaimer')
+      return res.data
+    })
+  },
+  acceptDisclaimer(confirmation: string) {
+    return callService(async () => {
+      const res = await api.put<DisclaimerStatus>('/settings/disclaimer', { confirmation })
+      return res.data
+    })
+  },
   getTime() {
     return callService(async () => {
       const res = await api.get('/system/time')

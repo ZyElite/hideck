@@ -34,20 +34,23 @@ test('production Vue surfaces present the HiDeck brand consistently', async () =
 })
 
 test('frontend integration identifiers use the HiDeck namespace', async () => {
-  const [app, websheet, sensitive, phoneSession, settingsStore] = await Promise.all([
+  const [app, systemService, websheet, sensitive, phoneSession, settingsStore] = await Promise.all([
     source('../src/App.vue'),
+    source('../src/services/system.ts'),
     source('../src/components/CarrierWebsheetDialog.vue'),
     source('../src/composables/useSensitiveVisibility.ts'),
     source('../src/services/phone-session.ts'),
     source('../src/stores/settings.ts')
   ])
 
-  assert.match(app, /hideck_disclaimer_agreed_at/)
+  assert.doesNotMatch(app, /disclaimer_agreed_at|shouldShowDisclaimer/)
+  assert.match(app, /getDisclaimerStatus/)
+  assert.match(systemService, /put<DisclaimerStatus>\('\/settings\/disclaimer'/)
   assert.match(websheet, /hideck-websheet-callback/)
   assert.match(websheet, /hideck-websheet-complete/)
   assert.match(websheet, /hideck-websheet/)
   assert.match(sensitive, /hideck_show_sensitive/)
   assert.match(phoneSession, /hideck_phone_control/)
   assert.match(settingsStore, /x-hideck-signature/)
-  assert.doesNotMatch([app, websheet, sensitive, phoneSession, settingsStore].join('\n'), /vohive/i)
+  assert.doesNotMatch([app, systemService, websheet, sensitive, phoneSession, settingsStore].join('\n'), /vohive/i)
 })

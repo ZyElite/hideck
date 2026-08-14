@@ -95,6 +95,7 @@ type Server struct {
 	carrierRules            carrierRuleStore
 	websheets               *vwebsheet.Broker
 	cardPolicies            cardPolicyStore
+	disclaimerAcceptances   disclaimerAcceptanceStore
 	systemTime              systemTimeProvider
 	backendSwitch           deviceBackendSwitcher
 
@@ -126,23 +127,24 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 		configPath = "config/config.yaml"
 	}
 	s := &Server{
-		cfg:           cfg.Server,
-		fullCfg:       cfg,
-		auth:          cfg.Web,
-		pool:          pool,
-		fs:            fs,
-		configPath:    configPath,
-		proxyMgr:      proxyMgr,
-		voiceGW:       voiceGW,
-		notifyMgr:     notifyMgr,
-		weixinQR:      notify.NewWeixinQRService(notify.WeixinQROptions{}),
-		wecomQR:       notify.NewWeComQRService(notify.WeComQROptions{}),
-		qqQR:          notify.NewQQQRService(notify.QQQROptions{}),
-		proxyRepo:     repo.NewDBRepo(),
-		cardPolicies:  databaseCardPolicyStore{},
-		systemTime:    newOSSystemTimeProvider(),
-		websheets:     vwebsheet.New(vwebsheet.Config{BasePath: "/api/websheets"}),
-		loginAttempts: make(map[string]loginAttempt),
+		cfg:                   cfg.Server,
+		fullCfg:               cfg,
+		auth:                  cfg.Web,
+		pool:                  pool,
+		fs:                    fs,
+		configPath:            configPath,
+		proxyMgr:              proxyMgr,
+		voiceGW:               voiceGW,
+		notifyMgr:             notifyMgr,
+		weixinQR:              notify.NewWeixinQRService(notify.WeixinQROptions{}),
+		wecomQR:               notify.NewWeComQRService(notify.WeComQROptions{}),
+		qqQR:                  notify.NewQQQRService(notify.QQQROptions{}),
+		proxyRepo:             repo.NewDBRepo(),
+		cardPolicies:          databaseCardPolicyStore{},
+		disclaimerAcceptances: db.NewDisclaimerAcceptanceStore(db.DB),
+		systemTime:            newOSSystemTimeProvider(),
+		websheets:             vwebsheet.New(vwebsheet.Config{BasePath: "/api/websheets"}),
+		loginAttempts:         make(map[string]loginAttempt),
 		smsLimiter: newSMSRateLimiterWithConfig(
 			time.Now(), time.Now, cfg.Server.SMSRateLimitDisabled,
 		),
@@ -346,6 +348,8 @@ func (s *Server) newRouter() *gin.Engine {
 		api.PUT("/settings/notifications", s.handleUpdateNotificationSettings) // 更新通知设置
 		api.GET("/settings/system", s.handleGetSystemSettings)
 		api.PUT("/settings/system", s.handleUpdateSystemSettings)
+		api.GET("/settings/disclaimer", s.handleGetDisclaimerStatus)
+		api.PUT("/settings/disclaimer", s.handleAcceptDisclaimer)
 		api.POST("/settings/notifications/webhook/test", s.handleTestWebhookNotification)
 		api.POST("/settings/notifications/bark/test", s.handleTestBarkNotification)
 		api.POST("/settings/notifications/email/test", s.handleTestEmailNotification)
