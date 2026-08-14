@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 	"github.com/yibaiba/hideck/internal/balance"
 	"github.com/yibaiba/hideck/internal/commandcenter"
 	"github.com/yibaiba/hideck/internal/config"
@@ -34,10 +35,9 @@ import (
 	proxytraffic "github.com/yibaiba/hideck/internal/proxy/traffic"
 	vwebsheet "github.com/yibaiba/hideck/internal/websheet"
 	"github.com/yibaiba/hideck/pkg/smscodec"
-	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 
-	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/spf13/viper"
+	"github.com/yibaiba/hideck/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -87,6 +87,7 @@ type Server struct {
 	phoneCACertificate      string
 	notifyMgr               *notify.Manager
 	weixinQR                *notify.WeixinQRService
+	wecomQR                 *notify.WeComQRService
 	commandCenter           *commandcenter.Service
 	automaticTasks          automaticTaskService
 	balance                 *balance.Service
@@ -134,6 +135,7 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 		voiceGW:       voiceGW,
 		notifyMgr:     notifyMgr,
 		weixinQR:      notify.NewWeixinQRService(notify.WeixinQROptions{}),
+		wecomQR:       notify.NewWeComQRService(notify.WeComQROptions{}),
 		proxyRepo:     repo.NewDBRepo(),
 		cardPolicies:  databaseCardPolicyStore{},
 		systemTime:    newOSSystemTimeProvider(),
@@ -349,6 +351,9 @@ func (s *Server) newRouter() *gin.Engine {
 		api.POST("/settings/notifications/weixin/qr/start", s.handleStartWeixinQR)
 		api.GET("/settings/notifications/weixin/qr/status", s.handleWeixinQRStatus)
 		api.POST("/settings/notifications/weixin/qr/cancel", s.handleCancelWeixinQR)
+		api.POST("/settings/notifications/wecom-bot/qr/start", s.handleStartWeComQR)
+		api.GET("/settings/notifications/wecom-bot/qr/status", s.handleWeComQRStatus)
+		api.POST("/settings/notifications/wecom-bot/qr/cancel", s.handleCancelWeComQR)
 		api.POST("/settings/password", s.handleChangePassword) // 修改登录密码
 		api.GET("/system/info", s.handleSystemInfo)            // 获取系统运行与版本信息
 		api.GET("/system/time", s.handleSystemTime)            // 获取设备时间和时区

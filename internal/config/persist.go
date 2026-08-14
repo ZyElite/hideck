@@ -52,11 +52,12 @@ func UpdateNotificationInFile(path string, notifications NotificationConfigs) er
 	}
 
 	root["wecom_bot"] = map[string]any{
-		"enabled":          notifications.WeComBot.Enabled,
-		"bot_id":           notifications.WeComBot.BotID,
-		"secret":           notifications.WeComBot.Secret,
-		"websocket_url":    notifications.WeComBot.WebSocketURL,
-		"allowed_user_ids": notifications.WeComBot.AllowedUserIDs,
+		"enabled":           notifications.WeComBot.Enabled,
+		"bot_id":            notifications.WeComBot.BotID,
+		"secret":            notifications.WeComBot.Secret,
+		"websocket_url":     notifications.WeComBot.WebSocketURL,
+		"allowed_user_ids":  notifications.WeComBot.AllowedUserIDs,
+		"allowed_group_ids": notifications.WeComBot.AllowedGroupIDs,
 	}
 
 	root["webhook"] = map[string]any{

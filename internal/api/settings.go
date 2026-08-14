@@ -70,7 +70,8 @@ type notificationSettingsResponse struct {
 		Topic   string `json:"topic"`
 		Channel string `json:"channel"`
 	} `json:"pushplus"`
-	WeCom weComNotificationSettings `json:"wecom"`
+	WeCom    weComNotificationSettings    `json:"wecom"`
+	WeComBot weComBotNotificationSettings `json:"wecom_bot"`
 }
 
 type updateNotificationSettingsRequest struct {
@@ -128,7 +129,8 @@ type updateNotificationSettingsRequest struct {
 		Topic   string `json:"topic"`
 		Channel string `json:"channel"`
 	} `json:"pushplus"`
-	WeCom *weComNotificationSettings `json:"wecom"`
+	WeCom    *weComNotificationSettings    `json:"wecom"`
+	WeComBot *weComBotNotificationSettings `json:"wecom_bot"`
 }
 
 func (s *Server) handleGetNotificationSettings(c *gin.Context) {
@@ -187,6 +189,7 @@ func (s *Server) handleGetNotificationSettings(c *gin.Context) {
 		URLs:            maskedWeComURLs(s.fullCfg.WeCom.URLs),
 		PayloadTemplate: s.fullCfg.WeCom.PayloadTemplate,
 	}
+	resp.WeComBot = maskedWeComBotSettings(s.fullCfg.WeComBot)
 
 	c.JSON(http.StatusOK, resp)
 }
@@ -301,6 +304,11 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
+	wecomBotCfg, err := buildWeComBotConfig(req.WeComBot, s.fullCfg.WeComBot)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+		return
+	}
 
 	if tg.Enabled {
 		if tg.BotToken == "" || tg.ChatID == 0 {
@@ -347,6 +355,7 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	nextConfig.Telegram, nextConfig.Feishu, nextConfig.QQ = tg, fs, qq
 	nextConfig.Webhook, nextConfig.Bark = wh, barkCfg
 	nextConfig.Email, nextConfig.Pushplus, nextConfig.WeCom = em, pp, wecomCfg
+	nextConfig.WeComBot = wecomBotCfg
 	notificationConfigs := notificationConfigsFrom(&nextConfig)
 	if err := config.UpdateNotificationInFile(s.configPath, notificationConfigs); err != nil {
 		logger.Error("写入通知配置失败", "err", err)
@@ -362,6 +371,7 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	s.fullCfg.Email = em
 	s.fullCfg.Pushplus = pp
 	s.fullCfg.WeCom = wecomCfg
+	s.fullCfg.WeComBot = wecomBotCfg
 
 	if s.notifyMgr != nil {
 		if err := s.notifyMgr.UpdateConfig(s.fullCfg); err != nil {

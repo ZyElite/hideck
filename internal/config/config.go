@@ -240,11 +240,12 @@ type WeixinConfig struct {
 }
 
 type WeComBotConfig struct {
-	Enabled        bool     `mapstructure:"enabled"`
-	BotID          string   `mapstructure:"bot_id"`
-	Secret         string   `mapstructure:"secret"`
-	WebSocketURL   string   `mapstructure:"websocket_url"`
-	AllowedUserIDs []string `mapstructure:"allowed_user_ids"`
+	Enabled         bool     `mapstructure:"enabled"`
+	BotID           string   `mapstructure:"bot_id"`
+	Secret          string   `mapstructure:"secret"`
+	WebSocketURL    string   `mapstructure:"websocket_url"`
+	AllowedUserIDs  []string `mapstructure:"allowed_user_ids"`
+	AllowedGroupIDs []string `mapstructure:"allowed_group_ids"`
 }
 
 type WebhookConfig struct {

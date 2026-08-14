@@ -165,6 +165,7 @@ webhook:
 		WeComBot: WeComBotConfig{
 			Enabled: true, BotID: "bot-id", Secret: "bot-secret",
 			WebSocketURL: "wss://openws.example", AllowedUserIDs: []string{"wecom-user"},
+			AllowedGroupIDs: []string{"wecom-group"},
 		},
 		Webhook: WebhookConfig{
 			Enabled:      true,
@@ -199,6 +200,8 @@ webhook:
 		"bot_id: bot-id",
 		"secret: bot-secret",
 		"websocket_url: wss://openws.example",
+		"allowed_group_ids:",
+		"wecom-group",
 		"text_template:",
 		"{{device_label}}",
 		"{{text}}",
