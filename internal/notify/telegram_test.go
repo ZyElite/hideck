@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"github.com/yibaiba/hideck/internal/config"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 )
 
 const telegramTestToken = "123456:test-token"
@@ -338,16 +340,20 @@ func TestTelegramCommandMenuContainsSharedCommands(t *testing.T) {
 	}
 }
 
-func TestTelegramCommandContextSendsMP3BeforeCompletion(t *testing.T) {
+func TestTelegramVoiceCallCompletionSendsValidMP3BeforeText(t *testing.T) {
 	channel, capture := newTelegramTestChannel(t, nil, 42, 0)
 	path := filepath.Join(t.TempDir(), "call.mp3")
-	if err := os.WriteFile(path, []byte("real-mp3-bytes"), 0o600); err != nil {
+	mp3 := validSilentMP3()
+	if contentType := http.DetectContentType(mp3); contentType != "audio/mpeg" {
+		t.Fatalf("fixture content type = %q", contentType)
+	}
+	if err := os.WriteFile(path, mp3, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ctx := &tgCommandContext{channel: channel, target: 42}
-	ctx.ReplyWithAttachments("呼叫完成", []CommandAttachment{{
-		Type: "audio", Recording: "call.mp3", ContentType: "audio/mpeg", Path: path, Codec: "MP3",
-	}})
+	replyVoiceCallCompletion(ctx, "呼叫完成", &voicehost.SimulateCallResult{
+		Success: true, AudioPath: path, AudioCodec: "MP3",
+	})
 	ctx.release()
 	waitForTelegramDelivery(t, capture, 1, 1)
 
@@ -356,12 +362,27 @@ func TestTelegramCommandContextSendsMP3BeforeCompletion(t *testing.T) {
 	audio := append([]byte(nil), capture.audioFiles[0]...)
 	messages := append([]string(nil), capture.messages...)
 	capture.mu.Unlock()
-	if strings.Join(sequence, ",") != "audio,text" || string(audio) != "real-mp3-bytes" {
-		t.Fatalf("sequence = %v, audio = %q", sequence, audio)
+	if strings.Join(sequence, ",") != "audio,text" || !bytes.Equal(audio, mp3) {
+		t.Fatalf("sequence = %v, audio bytes = %d", sequence, len(audio))
 	}
-	if messages[0] != "呼叫完成" {
+	if messages[0] != "呼叫完成\n录音    call.mp3" {
 		t.Fatalf("message = %q", messages[0])
 	}
+}
+
+func validSilentMP3() []byte {
+	const (
+		frameSize  = 417
+		frameCount = 4
+	)
+	id3Header := []byte{'I', 'D', '3', 4, 0, 0, 0, 0, 0, 0}
+	data := make([]byte, len(id3Header)+frameSize*frameCount)
+	copy(data, id3Header)
+	for offset := len(id3Header); offset < len(data); offset += frameSize {
+		// MPEG-1 Layer III, 128 kbps, 44.1 kHz, joint stereo, no CRC.
+		copy(data[offset:], []byte{0xff, 0xfb, 0x90, 0x64})
+	}
+	return data
 }
 
 func TestTelegramAudioRejectionSendsOnlyFailure(t *testing.T) {
