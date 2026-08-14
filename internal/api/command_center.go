@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -187,6 +188,13 @@ func (s *Server) handleCommandEventStream(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
+	if !commandEventResumeRequested(c) {
+		after, err = s.latestCommandEventID(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
+			return
+		}
+	}
 	updates, unsubscribe := s.commandCenter.Subscribe()
 	defer unsubscribe()
 	if err := prepareSSE(c); err != nil {
@@ -196,6 +204,19 @@ func (s *Server) handleCommandEventStream(c *gin.Context) {
 		return
 	}
 	s.streamCommandEvents(c, updates, after)
+}
+
+func commandEventResumeRequested(c *gin.Context) bool {
+	return strings.TrimSpace(c.GetHeader("Last-Event-ID")) != "" ||
+		strings.TrimSpace(c.Query("after_id")) != ""
+}
+
+func (s *Server) latestCommandEventID(ctx context.Context) (uint64, error) {
+	events, err := s.commandCenter.ListEventsBefore(ctx, 0, 1)
+	if err != nil || len(events) == 0 {
+		return 0, err
+	}
+	return events[0].ID, nil
 }
 
 func (s *Server) writeCommandBacklog(c *gin.Context, after uint64) (uint64, error) {

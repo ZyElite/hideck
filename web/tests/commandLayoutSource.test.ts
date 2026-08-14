@@ -83,15 +83,17 @@ test('command workspace stacks cleanly at the application mobile boundary', () =
 
 test('command realtime stream starts before secondary page data finishes', () => {
   const pageDataIndex = commandsView.indexOf('const pageData = Promise.all')
-  const historyIndex = commandsView.indexOf('await loadEvents()')
-  const connectIndex = commandsView.indexOf('void stream.connect()')
+  const historyIndex = commandsView.indexOf('const eventsLoaded = await loadEvents()')
+  const connectIndex = commandsView.indexOf('if (eventsLoaded) startEventStream()')
   const pageDataAwaitIndex = commandsView.indexOf('await pageData')
 
   assert.ok(pageDataIndex >= 0)
   assert.ok(historyIndex > pageDataIndex)
   assert.ok(connectIndex > historyIndex)
   assert.ok(pageDataAwaitIndex > connectIndex)
-  assert.match(commandsView, /await loadEvents\(\)\s+if \(disposed\) return/)
+  assert.match(commandsView, /const eventsLoaded = await loadEvents\(\)\s+if \(disposed\) return\s+if \(eventsLoaded\) startEventStream\(\)/)
+  assert.match(commandsView, /stream\.setLastEventId\(events\.value\.at\(-1\)\?\.id \?\? 0\)/)
+  assert.match(commandChat, /streamStarted \? '正在重连' : '实时连接已暂停'/)
   assert.match(commandsView, /await pageData\s+if \(disposed\) return/)
   assert.match(commandsView, /onUnmounted\(\(\) => \{\s+disposed = true/)
 })

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -353,6 +354,43 @@ func TestCommandEventStreamResumesAfterLastEventID(t *testing.T) {
 		}
 	}
 	t.Fatalf("stream ended without event: %v", scanner.Err())
+}
+
+func TestCommandEventStreamWithoutCursorStartsAfterExistingHistory(t *testing.T) {
+	server, token, _ := newCommandCenterAPITestServer(t)
+	if _, err := server.commandCenter.Execute(context.Background(), commandcenter.ExecuteRequest{Input: "/list"}); err != nil {
+		t.Fatal(err)
+	}
+	existing := waitForAPIEvents(t, server.commandCenter, 2)
+	httpServer := httptest.NewServer(server.newRouter())
+	defer httpServer.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, httpServer.URL+"/api/command-center/stream", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	if !scanner.Scan() || scanner.Text() != ": connected" {
+		t.Fatalf("initial stream frame = %q, want connected comment", scanner.Text())
+	}
+	if _, err := server.commandCenter.Execute(context.Background(), commandcenter.ExecuteRequest{Input: "/list"}); err != nil {
+		t.Fatal(err)
+	}
+	for scanner.Scan() {
+		if !strings.HasPrefix(scanner.Text(), "id:") {
+			continue
+		}
+		got, parseErr := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "id:")), 10, 64)
+		if parseErr != nil || got <= existing[len(existing)-1].ID {
+			t.Fatalf("first live event id = %d, want greater than existing %d", got, existing[len(existing)-1].ID)
+		}
+		return
+	}
+	t.Fatalf("stream ended without a new event: %v", scanner.Err())
 }
 
 type writeDeadlineRecorder struct {

@@ -30,6 +30,7 @@ const props = defineProps<{
   refreshVersion: number
   busy: boolean
   streamConnected: boolean
+  streamStarted: boolean
   refreshing: boolean
   syncWarning: string
   lastSyncedAt: number | null
@@ -72,7 +73,7 @@ const emit = defineEmits<{
             <h2>HiDeck 命令会话</h2>
             <span class="stream-state" :class="{ online: streamConnected }" aria-live="polite">
               <el-icon><PlugConnected24Regular /></el-icon>
-              {{ streamConnected ? '实时连接' : '正在重连' }}
+              {{ streamConnected ? '实时连接' : streamStarted ? '正在重连' : '实时连接已暂停' }}
             </span>
           </div>
           <span class="record-count">当前设备 · {{ visibleRecordCount }} 条记录 · {{ syncLabel }}</span>

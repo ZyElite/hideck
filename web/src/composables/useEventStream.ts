@@ -148,7 +148,7 @@ export function useEventStream<T>(options: EventStreamOptions<T>) {
   }
 
   function setLastEventId(value: string | number) {
-    lastEventId.value = String(value || '')
+    lastEventId.value = value === '' ? '' : String(value)
   }
 
   return { connected, paused, lastError, lastEventId, connect, disconnect, setPaused, setQuery, setLastEventId }

@@ -11,10 +11,15 @@ import { commandService } from '../services/commands'
 import { devicesService } from '../services/devices'
 import type { BalanceQuery, CarrierQueryRule, CommandDefinition, CommandEvent, ManualBalanceInput } from '../types/commands'
 import { isCarrierRuleOperationBlocked } from '../utils/carrierRuleRuntime'
+import {
+  COMMAND_EVENT_PAGE_SIZE,
+  mergeCommandEvents,
+  PASSIVE_COMMAND_EVENT_LIMIT,
+  retainLatestCommandEvents
+} from '../utils/commandEventWindow'
 import { buildDangerousCommand } from '../utils/commandInput'
 import { createDeviceRequestScope } from '../utils/deviceRequestScope'
 
-const pageSize = 100
 const definitions = ref<CommandDefinition[]>([])
 const events = ref<CommandEvent[]>([])
 const builtInRules = ref<CarrierQueryRule[]>([])
@@ -45,6 +50,7 @@ const rulesLoaded = ref(false)
 const rulesError = ref('')
 const manualBalance = ref<BalanceQuery | null>(null)
 const manualBalanceError = ref('')
+const historyError = ref('')
 const ruleOperationBlocked = computed(() => isCarrierRuleOperationBlocked({
   loading: rulesLoading.value,
   saving: savingRule.value,
@@ -53,6 +59,8 @@ const ruleOperationBlocked = computed(() => isCarrierRuleOperationBlocked({
 const dangerousDefinition = ref<CommandDefinition | null>(null)
 const dangerForm = reactive({ device: '', target: '', phone: '', duration: 15 })
 let disposed = false
+const streamStarted = ref(false)
+let retainedEventLimit = PASSIVE_COMMAND_EVENT_LIMIT
 let rulesRequestID = 0
 const manualBalanceRequestScope = createDeviceRequestScope('')
 
@@ -80,12 +88,13 @@ const stream = useEventStream<CommandEvent>({
   path: '/command-center/stream',
   eventName: 'command',
   parse: (payload) => JSON.parse(payload) as CommandEvent,
-  onEvent: (event) => mergeEvents([event]),
+  onEvent: (event) => mergeLiveEvents([event]),
   reconnectDelayMs: 2500
 })
 const streamConnected = stream.connected
 const syncWarning = computed(() => [
   stream.lastError.value ? `实时事件：${stream.lastError.value}` : '',
+  historyError.value,
   runtimeStatus.syncWarning.value,
   manualBalanceError.value ? `手动余额：${manualBalanceError.value}` : ''
 ].filter(Boolean).join('；'))
@@ -114,11 +123,9 @@ const dangerousTitle = computed(() => {
 
 onMounted(async () => {
   const pageData = Promise.all([loadCatalog(), runtimeStatus.refresh(), loadRules()])
-  await loadEvents()
+  const eventsLoaded = await loadEvents()
   if (disposed) return
-  const latest = events.value.at(-1)?.id
-  if (latest) stream.setLastEventId(latest)
-  void stream.connect()
+  if (eventsLoaded) startEventStream()
   await pageData
   if (disposed) return
   runtimeStatus.startPolling()
@@ -139,30 +146,43 @@ async function loadCatalog() {
 
 async function loadEvents() {
   const latestBeforeRequest = events.value.at(-1)?.id || 0
-  const result = await commandService.events({ beforeId: 0, limit: pageSize })
+  const result = await commandService.events({ beforeId: 0, limit: COMMAND_EVENT_PAGE_SIZE })
   if (!result.ok) {
+    const detail = `命令历史：${result.error.message || '加载失败'}`
+    historyError.value = streamStarted.value ? detail : `${detail}；实时连接已暂停以避免回放全部历史`
     ElMessage.error(result.error.message || '命令历史加载失败')
     return false
   }
   const liveEvents = events.value.filter((event) => event.id > latestBeforeRequest)
-  events.value = mergeEventLists(result.data, liveEvents)
-  hasOlder.value = result.data.length === pageSize
+  retainedEventLimit = PASSIVE_COMMAND_EVENT_LIMIT
+  events.value = mergeCommandEvents(result.data, liveEvents)
+  hasOlder.value = result.data.length === COMMAND_EVENT_PAGE_SIZE
+  historyError.value = ''
   return true
+}
+
+function startEventStream() {
+  if (streamStarted.value || disposed) return
+  stream.setLastEventId(events.value.at(-1)?.id ?? 0)
+  streamStarted.value = true
+  void stream.connect()
 }
 
 async function loadOlder() {
   const firstID = events.value[0]?.id
   if (!firstID || loadingOlder.value) return
   loadingOlder.value = true
-  const result = await commandService.events({ beforeId: firstID, limit: pageSize })
+  const result = await commandService.events({ beforeId: firstID, limit: COMMAND_EVENT_PAGE_SIZE })
   loadingOlder.value = false
   if (!result.ok) {
     ElMessage.error(result.error.message || '更早记录加载失败')
     return
   }
-  mergeEvents(result.data)
+  const merged = mergeCommandEvents(events.value, result.data)
+  retainedEventLimit = Math.max(retainedEventLimit, merged.length)
+  events.value = merged
   historyVersion.value += 1
-  hasOlder.value = result.data.length === pageSize
+  hasOlder.value = result.data.length === COMMAND_EVENT_PAGE_SIZE
 }
 
 async function loadRules() {
@@ -195,22 +215,17 @@ async function execute(input: string) {
   }
   const latest = events.value.at(-1)?.id || 0
   const catchup = await commandService.events({ afterId: latest, limit: 20 })
-  if (catchup.ok) mergeEvents(catchup.data)
+  if (catchup.ok) mergeLiveEvents(catchup.data)
   if (input.trim().split(/\s+/, 1)[0]?.toLowerCase() === '/balance') {
     await runtimeStatus.refresh({ background: true })
   }
 }
 
-function mergeEvents(incoming: CommandEvent[]) {
-  events.value = mergeEventLists(events.value, incoming)
-}
-
-function mergeEventLists(...lists: CommandEvent[][]) {
-  const merged = new Map<number, CommandEvent>()
-  for (const list of lists) {
-    for (const event of list) merged.set(event.id, event)
-  }
-  return [...merged.values()].sort((left, right) => left.id - right.id)
+function mergeLiveEvents(incoming: CommandEvent[]) {
+  const merged = mergeCommandEvents(events.value, incoming)
+  const retained = retainLatestCommandEvents(merged, retainedEventLimit)
+  events.value = retained.events
+  if (retained.dropped) hasOlder.value = true
 }
 
 async function refreshAll() {
@@ -223,7 +238,10 @@ async function refreshAll() {
       loadCatalog(),
       loadRules()
     ])
-    if (eventsLoaded) refreshVersion.value += 1
+    if (eventsLoaded) {
+      refreshVersion.value += 1
+      startEventStream()
+    }
     if (!manualBalanceOpening.value) await loadManualBalance(true)
   } finally {
     manualRefreshing.value = false
@@ -442,6 +460,7 @@ function updateRulesOpen(open: boolean) {
         :refresh-version="refreshVersion"
         :busy="executing"
         :stream-connected="streamConnected"
+        :stream-started="streamStarted"
         :refreshing="manualRefreshing || runtimeStatus.refreshing.value"
         :sync-warning="syncWarning"
         :last-synced-at="runtimeStatus.lastSyncedAt.value"
