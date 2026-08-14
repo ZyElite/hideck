@@ -43,6 +43,20 @@ func UpdateNotificationInFile(path string, notifications NotificationConfigs) er
 		"direct_ids": notifications.QQ.DirectIDs,
 	}
 
+	root["weixin"] = map[string]any{
+		"enabled":          notifications.Weixin.Enabled,
+		"base_url":         notifications.Weixin.BaseURL,
+		"allowed_user_ids": notifications.Weixin.AllowedUserIDs,
+	}
+
+	root["wecom_bot"] = map[string]any{
+		"enabled":          notifications.WeComBot.Enabled,
+		"bot_id":           notifications.WeComBot.BotID,
+		"secret":           notifications.WeComBot.Secret,
+		"websocket_url":    notifications.WeComBot.WebSocketURL,
+		"allowed_user_ids": notifications.WeComBot.AllowedUserIDs,
+	}
+
 	root["webhook"] = map[string]any{
 		"enabled":       notifications.Webhook.Enabled,
 		"urls":          notifications.Webhook.URLs,

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -146,9 +147,14 @@ func (s *Server) handleGetNotificationSettings(c *gin.Context) {
 
 	resp.QQ.Enabled = s.fullCfg.QQ.Enabled
 	resp.QQ.AppID = s.fullCfg.QQ.AppID
-	resp.QQ.AppSecret = s.fullCfg.QQ.AppSecret
+	if s.fullCfg.QQ.AppSecret != "" {
+		resp.QQ.AppSecret = notificationSecretMask
+	}
 	resp.QQ.GroupIDs = s.fullCfg.QQ.GroupIDs
 	resp.QQ.DirectIDs = s.fullCfg.QQ.DirectIDs
+	resp.Weixin.Enabled = s.fullCfg.Weixin.Enabled
+	resp.Weixin.BaseURL = s.fullCfg.Weixin.BaseURL
+	resp.Weixin.AllowedUserIDs = append([]string(nil), s.fullCfg.Weixin.AllowedUserIDs...)
 
 	resp.Webhook.Enabled = s.fullCfg.Webhook.Enabled
 	resp.Webhook.URLs = s.fullCfg.Webhook.URLs
@@ -216,10 +222,15 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 		ChatIDs:   fsChatIDs,
 	}
 
+	qqSecret, err := resolveMaskedNotificationSecret(req.QQ.AppSecret, s.fullCfg.QQ.AppSecret, "QQ App Secret")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+		return
+	}
 	qq := config.QQConfig{
 		Enabled:   req.QQ.Enabled,
 		AppID:     strings.TrimSpace(req.QQ.AppID),
-		AppSecret: strings.TrimSpace(req.QQ.AppSecret),
+		AppSecret: qqSecret,
 		GroupIDs:  strings.TrimSpace(req.QQ.GroupIDs),
 		DirectIDs: strings.TrimSpace(req.QQ.DirectIDs),
 	}
@@ -336,6 +347,8 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 		Telegram: tg,
 		Feishu:   fs,
 		QQ:       qq,
+		Weixin:   s.fullCfg.Weixin,
+		WeComBot: s.fullCfg.WeComBot,
 		Webhook:  wh,
 		Bark:     barkCfg,
 		Email:    em,
@@ -370,4 +383,15 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "applied": true})
+}
+
+func resolveMaskedNotificationSecret(incoming, current, field string) (string, error) {
+	value := strings.TrimSpace(incoming)
+	if value != notificationSecretMask {
+		return value, nil
+	}
+	if strings.TrimSpace(current) == "" {
+		return "", fmt.Errorf("%s 脱敏值没有可保留的原配置", field)
+	}
+	return current, nil
 }

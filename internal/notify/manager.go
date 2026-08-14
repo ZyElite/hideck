@@ -16,8 +16,13 @@ import (
 type Manager struct {
 	pool           *device.Pool
 	channels       []Channel // 所有已启用的通知渠道
+	stateStore     RuntimeStateStore
 	commandMu      sync.Mutex
 	commandService *CommandService
+}
+
+type ManagerOptions struct {
+	StateStore RuntimeStateStore
 }
 
 type NotificationContext struct {
@@ -51,8 +56,13 @@ type contextualChannel interface {
 
 // NewManager 根据配置创建通知管理器，初始化所有已启用的通知渠道
 func NewManager(cfg *config.Config, pool *device.Pool) (*Manager, error) {
+	return NewManagerWithOptions(cfg, pool, ManagerOptions{})
+}
+
+func NewManagerWithOptions(cfg *config.Config, pool *device.Pool, options ManagerOptions) (*Manager, error) {
 	m := &Manager{
-		pool: pool,
+		pool:       pool,
+		stateStore: options.StateStore,
 	}
 	m.commandService = m.newCommandService()
 
@@ -62,6 +72,20 @@ func NewManager(cfg *config.Config, pool *device.Pool) (*Manager, error) {
 	}
 
 	return m, nil
+}
+
+func (m *Manager) LoadRuntimeState() (RuntimeState, error) {
+	if m == nil || m.stateStore == nil {
+		return RuntimeState{}, ErrRuntimeStateStoreUnavailable
+	}
+	return m.stateStore.Load()
+}
+
+func (m *Manager) SaveRuntimeState(state RuntimeState) error {
+	if m == nil || m.stateStore == nil {
+		return ErrRuntimeStateStoreUnavailable
+	}
+	return m.stateStore.Save(state)
 }
 
 // initChannels 根据配置创建并启动所有通知渠道

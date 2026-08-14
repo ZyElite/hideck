@@ -83,6 +83,8 @@ type Config struct {
 	Telegram TelegramConfig `mapstructure:"telegram"`
 	Feishu   FeishuConfig   `mapstructure:"feishu"`
 	QQ       QQConfig       `mapstructure:"qq"`
+	Weixin   WeixinConfig   `mapstructure:"weixin"`
+	WeComBot WeComBotConfig `mapstructure:"wecom_bot"`
 	Webhook  WebhookConfig  `mapstructure:"webhook"`
 
 	Bark     BarkConfig     `mapstructure:"bark"`
@@ -229,6 +231,20 @@ type QQConfig struct {
 	DirectIDs string `mapstructure:"direct_ids"` // 逗号分隔的私聊 OpenID
 }
 
+type WeixinConfig struct {
+	Enabled        bool     `mapstructure:"enabled"`
+	BaseURL        string   `mapstructure:"base_url"`
+	AllowedUserIDs []string `mapstructure:"allowed_user_ids"`
+}
+
+type WeComBotConfig struct {
+	Enabled        bool     `mapstructure:"enabled"`
+	BotID          string   `mapstructure:"bot_id"`
+	Secret         string   `mapstructure:"secret"`
+	WebSocketURL   string   `mapstructure:"websocket_url"`
+	AllowedUserIDs []string `mapstructure:"allowed_user_ids"`
+}
+
 type WebhookConfig struct {
 	Enabled      bool              `mapstructure:"enabled"`
 	URLs         []string          `mapstructure:"urls"`
@@ -275,6 +291,8 @@ type NotificationConfigs struct {
 	Telegram TelegramConfig
 	Feishu   FeishuConfig
 	QQ       QQConfig
+	Weixin   WeixinConfig
+	WeComBot WeComBotConfig
 	Webhook  WebhookConfig
 	Bark     BarkConfig
 	Email    EmailConfig
@@ -301,6 +319,10 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("pushplus.enabled", false)
 	viper.SetDefault("wecom.enabled", false)
 	viper.SetDefault("wecom.payload_template", DefaultWeComPayloadTemplate)
+	viper.SetDefault("weixin.enabled", false)
+	viper.SetDefault("weixin.base_url", "https://ilinkai.weixin.qq.com")
+	viper.SetDefault("wecom_bot.enabled", false)
+	viper.SetDefault("wecom_bot.websocket_url", "wss://openws.work.weixin.qq.com")
 	viper.SetDefault("web.username", "admin")
 	viper.SetDefault("web.password", "admin")
 	viper.SetDefault("server.https_port", 7576)

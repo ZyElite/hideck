@@ -159,6 +159,13 @@ webhook:
 			GroupIDs:  "G123",
 			DirectIDs: "U456",
 		},
+		Weixin: WeixinConfig{
+			Enabled: true, BaseURL: "https://ilink.example", AllowedUserIDs: []string{"wx-user"},
+		},
+		WeComBot: WeComBotConfig{
+			Enabled: true, BotID: "bot-id", Secret: "bot-secret",
+			WebSocketURL: "wss://openws.example", AllowedUserIDs: []string{"wecom-user"},
+		},
 		Webhook: WebhookConfig{
 			Enabled:      true,
 			URLs:         []string{"https://example.com/webhook"},
@@ -186,6 +193,12 @@ webhook:
 		"app_secret: secret",
 		"group_ids: G123",
 		"direct_ids: U456",
+		"weixin:",
+		"base_url: https://ilink.example",
+		"wecom_bot:",
+		"bot_id: bot-id",
+		"secret: bot-secret",
+		"websocket_url: wss://openws.example",
 		"text_template:",
 		"{{device_label}}",
 		"{{text}}",
@@ -196,5 +209,12 @@ webhook:
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected config to contain %q, got:\n%s", want, text)
 		}
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %o, want 600", info.Mode().Perm())
 	}
 }

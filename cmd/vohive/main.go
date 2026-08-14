@@ -146,6 +146,9 @@ func main() {
 	voiceGW.SetPCAPDirectory(voiceRecordingDirectory)
 	voiceGW.SetAudioTranscoder(audioTranscoder)
 	pool.SetVoiceGateway(voiceGW)
+	notificationStateStore := notify.NewFileRuntimeStateStore(
+		filepath.Join(filepath.Dir(configPath), "notification-state.json"),
+	)
 
 	if err := voiceGW.Start(context.Background()); err != nil {
 		logger.Error("语音网关启动失败", "err", err)
@@ -154,7 +157,7 @@ func main() {
 
 		// 通知管理器初始化
 		var err error
-		notifyMgr, err = notify.NewManager(cfg, pool)
+		notifyMgr, err = notify.NewManagerWithOptions(cfg, pool, notify.ManagerOptions{StateStore: notificationStateStore})
 		if err != nil {
 			logger.Warn("通知管理器初始化异常", "err", err)
 		} else {
@@ -187,7 +190,7 @@ func main() {
 	// 通知管理器如果在上方未初始化，在这里兜底（防止 VoiceGW 未配置/启动的场景）
 	if notifyMgr == nil {
 		var err error
-		notifyMgr, err = notify.NewManager(cfg, pool)
+		notifyMgr, err = notify.NewManagerWithOptions(cfg, pool, notify.ManagerOptions{StateStore: notificationStateStore})
 		if err != nil {
 			logger.Warn("通知管理器初始化异常", "err", err)
 		} else {

@@ -40,6 +40,52 @@ func TestGetNotificationSettingsMasksWeComURLs(t *testing.T) {
 	}
 }
 
+func TestGetNotificationSettingsMasksQQSecret(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	server := &Server{fullCfg: &config.Config{QQ: config.QQConfig{
+		Enabled: true, AppID: "app-id", AppSecret: "qq-secret",
+	}}}
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/settings/notifications", nil)
+	server.handleGetNotificationSettings(context)
+
+	if strings.Contains(recorder.Body.String(), "qq-secret") {
+		t.Fatalf("response leaks QQ secret: %s", recorder.Body.String())
+	}
+	var response notificationSettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.QQ.AppSecret != notificationSecretMask {
+		t.Fatalf("QQ app_secret = %q", response.QQ.AppSecret)
+	}
+}
+
+func TestUpdateNotificationSettingsPreservesMaskedQQSecret(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("server:\n  port: 7575\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{configPath: configPath, fullCfg: &config.Config{QQ: config.QQConfig{
+		Enabled: true, AppID: "app-id", AppSecret: "qq-secret", DirectIDs: "user-1",
+	}}}
+	body := `{"qq":{"enabled":true,"app_id":"app-id","app_secret":"********","direct_ids":"user-1"}}`
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPut, "/api/settings/notifications", strings.NewReader(body))
+	context.Request.Header.Set("Content-Type", "application/json")
+	server.handleUpdateNotificationSettings(context)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if server.fullCfg.QQ.AppSecret != "qq-secret" {
+		t.Fatalf("runtime QQ secret = %q", server.fullCfg.QQ.AppSecret)
+	}
+}
+
 func TestUpdateNotificationSettingsPreservesMaskedWeComURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	const secretURL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=secret"
