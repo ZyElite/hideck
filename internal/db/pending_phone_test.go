@@ -117,3 +117,23 @@ func TestGetPhoneNumberPrefersIMSISubscription(t *testing.T) {
 		t.Fatalf("phone=%q, want +447700900127 from IMSI subscription", got)
 	}
 }
+
+func TestGetPhoneNumberFallsBackToSubscriptionICCID(t *testing.T) {
+	initPhoneNumberTestDB(t)
+	imsi := "234150000000007"
+	iccid := "8944000000000000007"
+	if err := UpsertSIMCard(iccid, imsi, "", "TestOp", nil); err != nil {
+		t.Fatalf("UpsertSIMCard error=%v", err)
+	}
+	if err := RecordModemPhoneNumber(imsi, iccid, "+447700900128"); err != nil {
+		t.Fatalf("RecordModemPhoneNumber error=%v", err)
+	}
+
+	got, err := GetPhoneNumberByIMSIOrICCID("", iccid)
+	if err != nil {
+		t.Fatalf("GetPhoneNumberByIMSIOrICCID error=%v", err)
+	}
+	if got != "+447700900128" {
+		t.Fatalf("phone=%q, want +447700900128 from subscription ICCID", got)
+	}
+}

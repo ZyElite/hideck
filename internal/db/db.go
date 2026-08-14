@@ -870,20 +870,46 @@ func GetSIMCardPhoneNumberByIMSI(imsi string) (string, error) {
 	return strings.TrimSpace(sub.PhoneNumber), nil
 }
 
-// GetPhoneNumberByIMSIOrICCID 先按 IMSI 查 sim_subscriptions，空则按 ICCID 查 staging。
+func getSIMSubscriptionPhoneNumberByICCID(iccid string) (string, error) {
+	canonicalICCID := CanonicalICCID(iccid)
+	if DB == nil || canonicalICCID == "" {
+		return "", nil
+	}
+
+	var sub SIMSubscription
+	err := DB.Select("phone_number").
+		Where("current_iccid = ? AND COALESCE(phone_number, '') <> ''", canonicalICCID).
+		Order("updated_at DESC").
+		Limit(1).
+		Take(&sub).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(sub.PhoneNumber), nil
+}
+
+// GetPhoneNumberByIMSIOrICCID 先按 IMSI 查订阅；IMSI 不可用时按 ICCID 查订阅，最后查暂存记录。
 func GetPhoneNumberByIMSIOrICCID(imsi, iccid string) (string, error) {
 	if phone, err := GetSIMCardPhoneNumberByIMSI(imsi); err != nil {
 		return "", err
 	} else if strings.TrimSpace(phone) != "" {
 		return strings.TrimSpace(phone), nil
 	}
-	iccid = strings.TrimSpace(iccid)
-	if DB == nil || iccid == "" {
+	canonicalICCID := CanonicalICCID(iccid)
+	if phone, err := getSIMSubscriptionPhoneNumberByICCID(canonicalICCID); err != nil {
+		return "", err
+	} else if strings.TrimSpace(phone) != "" {
+		return strings.TrimSpace(phone), nil
+	}
+	if DB == nil || canonicalICCID == "" {
 		return "", nil
 	}
 	var pending PendingPhoneNumber
 	err := DB.Select("phone_number").
-		Where("iccid = ? AND COALESCE(phone_number, '') <> ''", iccid).
+		Where("iccid = ? AND COALESCE(phone_number, '') <> ''", canonicalICCID).
 		Limit(1).First(&pending).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", nil

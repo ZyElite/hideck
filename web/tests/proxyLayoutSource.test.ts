@@ -23,6 +23,10 @@ const emptyState = await readFile(
   new URL('../src/components/EmptyState.vue', import.meta.url),
   'utf8'
 )
+const upstreamEditor = await readFile(
+  new URL('../src/components/proxy/ProxyUpstreamEditorDrawer.vue', import.meta.url),
+  'utf8'
+)
 
 test('proxy page uses the compact production inventory workspace', () => {
   assert.match(proxyView, /<PageHeader title="代理管理"/)
@@ -68,6 +72,12 @@ test('both proxy modes share one compact inventory shell', () => {
   assert.doesNotMatch(inventoryShell, /letter-spacing/)
   assert.doesNotMatch(upstreamInventory, /proxy-inventory-header/)
   assert.doesNotMatch(outboundInventory, /proxy-inventory-header/)
+})
+
+test('upstream authentication inputs do not stretch to the helper text row', () => {
+  assert.match(upstreamEditor, /\.proxy-editor-grid \{[^}]*align-items:\s*start;/)
+  assert.match(upstreamEditor, /<span>用户名<\/span>[\s\S]*<el-input[^>]*form\.username/)
+  assert.match(upstreamEditor, /<span>密码<\/span>[\s\S]*<el-input[^>]*form\.password/)
 })
 
 test('outbound editing never falls back to incomplete overview data', () => {

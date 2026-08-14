@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/yibaiba/hideck/internal/apduarbiter"
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/config"
@@ -22,7 +23,6 @@ import (
 	"github.com/yibaiba/hideck/internal/pcsc"
 	proxytraffic "github.com/yibaiba/hideck/internal/proxy/traffic"
 	"github.com/yibaiba/hideck/pkg/logger"
-	"github.com/iniwex5/vowifi-go/runtimehost"
 
 	"github.com/gin-gonic/gin"
 )
@@ -701,18 +701,6 @@ func effectiveOverviewIMSI(w *device.Worker, status modem.DeviceStatus) string {
 	return strings.TrimSpace(w.GetCachedIMSI())
 }
 
-func overviewLocalPhoneByIMSI(imsi string) string {
-	imsi = strings.TrimSpace(imsi)
-	if imsi == "" {
-		return ""
-	}
-	phone, err := db.GetSIMCardPhoneNumberByIMSI(imsi)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(phone)
-}
-
 func overviewLocalPhone(imsi, iccid string) string {
 	imsi = strings.TrimSpace(imsi)
 	iccid = strings.TrimSpace(iccid)
@@ -721,6 +709,7 @@ func overviewLocalPhone(imsi, iccid string) string {
 	}
 	phone, err := db.GetPhoneNumberByIMSIOrICCID(imsi, iccid)
 	if err != nil {
+		logger.Error("读取设备本机号码失败", "err", err)
 		return ""
 	}
 	return strings.TrimSpace(phone)

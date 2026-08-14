@@ -67,7 +67,7 @@ const form = defineModel<UpstreamProxy>('form', { required: true })
 .proxy-editor header > span { width: 3px; height: 16px; border-radius: 2px; background: var(--ui-primary); }
 .proxy-editor header.is-auth > span { background: var(--ui-warning); }
 .proxy-editor h3 { margin: 0; color: var(--ui-text); font-size: 13px; font-weight: 700; }
-.proxy-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.proxy-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; }
 .proxy-editor label { min-width: 0; display: grid; gap: 6px; }
 .proxy-editor label > span { color: var(--ui-text-muted); font: 700 var(--ui-font-caption) "v-mono", ui-monospace, monospace; letter-spacing: .06em; text-transform: uppercase; }
 .proxy-editor label > small { color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); line-height: 1.5; }
