@@ -18,6 +18,8 @@ const (
 	EventProgress = "progress"
 	EventResult   = "result"
 	EventError    = "error"
+
+	SourceWeb = "web"
 )
 
 var ErrUnavailable = errors.New("命令中心未配置")

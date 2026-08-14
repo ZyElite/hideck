@@ -16,6 +16,20 @@ type commandReplyCapture struct{}
 
 func (commandReplyCapture) Reply(string) {}
 
+type channelReplyCapture struct {
+	replies     []string
+	attachments [][]notify.CommandAttachment
+}
+
+func (c *channelReplyCapture) Reply(text string) {
+	c.replies = append(c.replies, text)
+}
+
+func (c *channelReplyCapture) ReplyWithAttachments(text string, attachments []notify.CommandAttachment) {
+	c.replies = append(c.replies, text)
+	c.attachments = append(c.attachments, append([]notify.CommandAttachment(nil), attachments...))
+}
+
 func TestServicePersistsAsyncCommandTimeline(t *testing.T) {
 	service := newTestService(t, map[string]notify.CommandHandler{
 		"send": func(ctx notify.CommandContext, _ []string) string {
@@ -73,6 +87,40 @@ func TestServicePersistsAsyncCommandAudioAttachmentReturnedBeforeActivation(t *t
 	reloaded, err := service.ListEvents(context.Background(), 0, 20)
 	if err != nil || len(reloaded) != 4 || len(reloaded[3].Attachments) != 1 {
 		t.Fatalf("reloaded events = %+v, err=%v", reloaded, err)
+	}
+}
+
+func TestServiceMirrorsChannelCommandIntoTimelineAndOriginalReply(t *testing.T) {
+	service := newTestService(t, map[string]notify.CommandHandler{
+		"vocall": func(ctx notify.CommandContext, _ []string) string {
+			ctx.(interface{ Progress(string) }).Progress("发起 VoWiFi 呼叫 / 已接通")
+			ctx.(interface {
+				ReplyWithAttachments(string, []notify.CommandAttachment)
+			}).ReplyWithAttachments("发起 VoWiFi 呼叫 / 完成", []notify.CommandAttachment{{
+				Type: "audio", Recording: "call_test.mp3", ContentType: "audio/mpeg", Path: "/tmp/call_test.mp3",
+			}})
+			return "发起 VoWiFi 呼叫 / 已受理"
+		},
+	})
+	reply := &channelReplyCapture{}
+	handler := service.commands.Handlers()["vocall"]
+	result := service.ExecuteChannelCommand(reply, notify.ChannelCommandRequest{
+		Channel: "qq", Name: "vocall", Arguments: []string{"wwan1", "10086", "10"},
+	}, handler)
+	if result != "发起 VoWiFi 呼叫 / 已受理" {
+		t.Fatalf("result = %q", result)
+	}
+	events := waitForEvents(t, service, 0, 4)
+	if events[0].Execution == nil || events[0].Execution.Source != "qq" ||
+		events[0].Execution.Input != "/vocall wwan1 10086 10" {
+		t.Fatalf("channel execution = %+v", events[0].Execution)
+	}
+	if events[2].Kind != EventProgress || events[3].Kind != EventResult || len(events[3].Attachments) != 1 {
+		t.Fatalf("channel events = %+v", events)
+	}
+	if len(reply.replies) != 2 || reply.replies[0] != "发起 VoWiFi 呼叫 / 已接通" ||
+		len(reply.attachments) != 1 || reply.attachments[0][0].Path != "/tmp/call_test.mp3" {
+		t.Fatalf("channel replies = %+v, attachments = %+v", reply.replies, reply.attachments)
 	}
 }
 

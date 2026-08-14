@@ -1,6 +1,7 @@
 server:
   debug: false
   port: 7575
+  https_enabled: false
 
 web:
   username: admin

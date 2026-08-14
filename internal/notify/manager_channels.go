@@ -89,16 +89,37 @@ func (m *Manager) buildQQChannel(cfg config.QQConfig) (Channel, error) {
 func (m *Manager) registerCommands(channels []Channel) {
 	commands := m.CommandService().Handlers()
 	for _, channel := range channels {
+		channelName := channel.Name()
 		for name, handler := range commands {
-			channel.RegisterCommand(name, handler)
+			channel.RegisterCommand(name, m.channelCommandHandler(channelName, name, handler))
 		}
 	}
 }
 
 func (m *Manager) installChannels(channels []Channel) {
 	oldChannels, oldActivity := m.swapChannels(channels)
-	startChannels(channels)
+	if m.commandReceiversStarted {
+		startChannels(channels)
+	}
 	retireChannels(oldChannels, oldActivity)
+}
+
+// StartCommandReceivers starts inbound Bot listeners after their shared command
+// executor has been wired. Repeated calls are safe.
+func (m *Manager) StartCommandReceivers() {
+	if m == nil {
+		return
+	}
+	m.updateMu.Lock()
+	defer m.updateMu.Unlock()
+	if m.commandReceiversStarted {
+		return
+	}
+	m.commandReceiversStarted = true
+	m.channelsMu.Lock()
+	channels := append([]Channel(nil), m.channels...)
+	m.channelsMu.Unlock()
+	startChannels(channels)
 }
 
 func (m *Manager) swapChannels(channels []Channel) ([]Channel, []*channelActivity) {
@@ -172,6 +193,7 @@ func closeChannels(channels []Channel) {
 func (m *Manager) Close() {
 	m.updateMu.Lock()
 	defer m.updateMu.Unlock()
+	m.commandReceiversStarted = false
 	channels, activity := m.swapChannels(nil)
 	retireChannels(channels, activity)
 }

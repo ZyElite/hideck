@@ -103,7 +103,8 @@ func TestCommandCenterRoutesRequireAuthAndPersistExecution(t *testing.T) {
 	}
 	waitForAPIEvents(t, server.commandCenter, 2)
 	events := performAPIRequest(router, apiRequestOptions{method: http.MethodGet, path: "/api/command-center/events?after_id=0", token: token})
-	if events.Code != http.StatusOK || !strings.Contains(events.Body.String(), `"state":"completed"`) {
+	if events.Code != http.StatusOK || !strings.Contains(events.Body.String(), `"state":"completed"`) ||
+		!strings.Contains(events.Body.String(), `"source":"web"`) {
 		t.Fatalf("events status=%d body=%s", events.Code, events.Body.String())
 	}
 }

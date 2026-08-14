@@ -46,7 +46,7 @@ func (s *Service) Execute(ctx context.Context, request ExecuteRequest) (db.Comma
 	if err != nil {
 		return db.CommandExecution{}, err
 	}
-	execution, event, err := s.createExecution(ctx, request.Input, definition.Name, args)
+	execution, event, err := s.createExecution(ctx, request.Input, definition.Name, SourceWeb, args)
 	if err != nil {
 		return db.CommandExecution{}, err
 	}
@@ -77,14 +77,19 @@ func (s *Service) Subscribe() (<-chan Event, func()) {
 	return ch, func() { s.unsubscribe(id) }
 }
 
-func (s *Service) createExecution(ctx context.Context, input, name string, args []string) (db.CommandExecution, Event, error) {
+func (s *Service) createExecution(
+	ctx context.Context,
+	input, name, source string,
+	args []string,
+) (db.CommandExecution, Event, error) {
 	now := s.now()
 	encodedArgs, err := json.Marshal(args)
 	if err != nil {
 		return db.CommandExecution{}, Event{}, err
 	}
 	execution := db.CommandExecution{ID: uuid.NewString(), Input: strings.TrimSpace(input), Command: name,
-		ArgumentsJSON: string(encodedArgs), State: StateRunning, StartedAt: &now, CreatedAt: now, UpdatedAt: now}
+		Source: normalizeSource(source), ArgumentsJSON: string(encodedArgs), State: StateRunning,
+		StartedAt: &now, CreatedAt: now, UpdatedAt: now}
 	event := db.CommandEvent{ExecutionID: execution.ID, Kind: EventAccepted, Text: "命令已受理", CreatedAt: now}
 	created, err := s.store.Create(ctx, execution, event)
 	return execution, created, err
@@ -173,6 +178,7 @@ type replyContext struct {
 	service     *Service
 	executionID string
 	finalReply  bool
+	downstream  notify.CommandContext
 	once        sync.Once
 	mu          sync.Mutex
 	active      bool
@@ -182,14 +188,19 @@ type replyContext struct {
 }
 
 func (c *replyContext) Reply(text string) {
-	c.reply(eventContent{kind: EventProgress, text: text})
+	content := eventContent{kind: EventProgress, text: text}
+	c.reply(content)
+	c.forward(content)
 }
 
 func (c *replyContext) ReplyWithAttachments(text string, attachments []notify.CommandAttachment) {
-	c.reply(eventContent{kind: EventProgress, text: text, attachments: attachments})
+	content := eventContent{kind: EventProgress, text: text, attachments: attachments}
+	c.reply(content)
+	c.forward(content)
 }
 
 func (c *replyContext) Progress(text string) {
+	defer c.forwardProgress(text)
 	if !c.finalReply {
 		c.service.addEvent(c.executionID, eventContent{kind: EventProgress, text: text})
 		return

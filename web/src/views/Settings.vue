@@ -98,7 +98,7 @@ async function changePassword() {
   }
   authStore.applyToken(result.data.token)
   passwordStatus.value = result.data.credential
-  ElMessage.success('密码已更新并安全写入配置文件')
+  ElMessage.success('密码已更新')
   settingsStore.resetPasswordForm()
 }
 
@@ -479,8 +479,8 @@ onMounted(() => {
              <div v-else-if="passwordManagedByEnvironment" class="rounded-xl border border-amber-300/60 bg-amber-50/80 dark:border-amber-500/30 dark:bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-800 dark:text-amber-200">
                当前密码由环境变量 <code>{{ passwordStatus.environment_variable || 'PROXY_WEB_PASSWORD' }}</code> 管理。请在部署环境中修改后重启 HiDeck；控制台不会覆盖它。
              </div>
-             <div v-else class="rounded-xl border border-emerald-300/60 bg-emerald-50/70 dark:border-emerald-500/25 dark:bg-emerald-500/[0.08] px-4 py-3 text-sm leading-6 text-emerald-800 dark:text-emerald-200">
-               {{ passwordStatus.change_required ? '当前密码为初始明文凭证或强度不足，请尽快修改。' : '密码由配置文件管理，更新后会以 bcrypt 哈希安全写入。' }}
+             <div v-else-if="passwordStatus.change_required" class="rounded-xl border border-amber-300/60 bg-amber-50/80 dark:border-amber-500/30 dark:bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-800 dark:text-amber-200">
+               当前密码为初始明文凭证或强度不足，请尽快修改。
              </div>
              <div class="space-y-1">
                 <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">当前密码</label>

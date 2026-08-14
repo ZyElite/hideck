@@ -3509,7 +3509,7 @@ components:
 
     CommandExecution:
       type: object
-      required: [id, input, command, state, created_at, updated_at]
+      required: [id, input, command, source, state, created_at, updated_at]
       properties:
         id:
           type: string
@@ -3517,6 +3517,9 @@ components:
           type: string
         command:
           type: string
+        source:
+          type: string
+          enum: [web, qq, weixin, wecom_bot, telegram, feishu]
         state:
           type: string
           enum: [running, completed, failed]

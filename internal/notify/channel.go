@@ -44,6 +44,20 @@ func reportProgress(ctx CommandContext, text string) {
 // CommandHandler 命令处理器，接收上下文及参数切片，返回回复文本
 type CommandHandler func(cmdCtx CommandContext, args []string) string
 
+// ChannelCommandRequest identifies a command received from an interactive bot.
+// User and conversation identifiers intentionally stay inside the channel adapter.
+type ChannelCommandRequest struct {
+	Channel   string
+	Name      string
+	Arguments []string
+}
+
+// ChannelCommandExecutor lets an external command surface execute through a
+// shared timeline while keeping delivery in the originating bot context.
+type ChannelCommandExecutor interface {
+	ExecuteChannelCommand(CommandContext, ChannelCommandRequest, CommandHandler) string
+}
+
 // Channel 统一通知渠道接口
 // 所有通知渠道（Telegram、飞书、未来的 Discord/Slack 等）均实现此接口
 type Channel interface {

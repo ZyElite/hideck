@@ -14,10 +14,24 @@ export type BalanceStatePresentation = Readonly<{
   tone: BalanceTone
 }>
 
+const commandSourceLabels: Readonly<Record<string, string>> = Object.freeze({
+  web: '网页',
+  qq: 'QQ Bot',
+  weixin: '个人微信',
+  wecom_bot: '企业微信 Bot',
+  telegram: 'Telegram',
+  feishu: '飞书 Bot'
+})
+
+export function commandSourceLabel(source?: string): string {
+  const normalized = source?.trim().toLowerCase() || 'web'
+  return commandSourceLabels[normalized] || normalized
+}
+
 export function presentCommandEvent(event: CommandEvent): CommandEventPresentation {
   if (event.kind === 'accepted') {
     return {
-      title: '已发送',
+      title: event.execution?.source && event.execution.source !== 'web' ? '收到命令' : '已发送',
       detail: event.execution?.input || event.text || '命令已提交',
       tone: 'sent'
     }

@@ -19,7 +19,7 @@ func TestPhoneServerDefaultsAndAddressNormalization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Server.HTTPSEnabled || cfg.Server.Port != ":7575" || cfg.Server.HTTPSPort != ":7576" ||
+	if !cfg.Server.HTTPSEnabled || cfg.Server.Port != ":7575" || cfg.Server.HTTPSPort != ":7576" ||
 		cfg.Server.WebRTCUDPAddress != ":7580" || cfg.Server.TLSDataDir != "data/tls" {
 		t.Fatalf("server defaults = %+v", cfg.Server)
 	}

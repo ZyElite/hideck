@@ -4,6 +4,7 @@ import type { BalanceQuery, CommandEvent } from '../src/types/commands'
 import {
   balanceResultText,
   balanceTransportLabel,
+  commandSourceLabel,
   presentBalanceState,
   presentCommandEvent
 } from '../src/utils/commandPresentation'
@@ -38,7 +39,7 @@ function balanceQuery(overrides: Partial<BalanceQuery>): BalanceQuery {
 
 test('maps command events without turning running or failed work into success', () => {
   const accepted = commandEvent({ kind: 'accepted', execution: {
-    id: 'exec-1', input: '/signal wwan0', command: 'signal', state: 'failed',
+    id: 'exec-1', input: '/signal wwan0', command: 'signal', source: 'web', state: 'failed',
     created_at: '', updated_at: ''
   } })
   assert.deepEqual(presentCommandEvent(accepted), {
@@ -47,12 +48,26 @@ test('maps command events without turning running or failed work into success', 
   assert.equal(presentCommandEvent(commandEvent({
     kind: 'progress',
     text: '正在读取信号',
-    execution: { id: 'exec-1', input: '', command: 'signal', state: 'failed', created_at: '', updated_at: '' }
+    execution: { id: 'exec-1', input: '', command: 'signal', source: 'web', state: 'failed', created_at: '', updated_at: '' }
   })).tone, 'running')
   assert.deepEqual(presentCommandEvent(commandEvent({ kind: 'error', text: '设备离线' })), {
     title: '执行失败', detail: '设备离线', tone: 'danger'
   })
   assert.equal(presentCommandEvent(commandEvent({ kind: 'result', text: '查询完成' })).tone, 'success')
+})
+
+test('labels bot command sources and presents inbound commands accurately', () => {
+  const event = commandEvent({ kind: 'accepted', execution: {
+    id: 'exec-2', input: '/help', command: 'help', source: 'qq', state: 'completed',
+    created_at: '', updated_at: ''
+  } })
+  assert.equal(presentCommandEvent(event).title, '收到命令')
+  assert.equal(commandSourceLabel('qq'), 'QQ Bot')
+  assert.equal(commandSourceLabel('weixin'), '个人微信')
+  assert.equal(commandSourceLabel('wecom_bot'), '企业微信 Bot')
+  assert.equal(commandSourceLabel('telegram'), 'Telegram')
+  assert.equal(commandSourceLabel('feishu'), '飞书 Bot')
+  assert.equal(commandSourceLabel(undefined), '网页')
 })
 
 test('keeps all balance lifecycle states explicit', () => {

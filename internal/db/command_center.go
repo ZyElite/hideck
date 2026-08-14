@@ -14,6 +14,7 @@ type CommandExecution struct {
 	ID            string     `gorm:"primaryKey" json:"id"`
 	Input         string     `gorm:"not null" json:"input"`
 	Command       string     `gorm:"index;not null" json:"command"`
+	Source        string     `gorm:"index;not null;default:web" json:"source"`
 	ArgumentsJSON string     `gorm:"column:arguments_json;not null" json:"-"`
 	State         string     `gorm:"index;not null" json:"state"`
 	Error         string     `json:"error,omitempty"`

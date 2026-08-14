@@ -362,7 +362,9 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("wecom_bot.websocket_url", "wss://openws.work.weixin.qq.com")
 	viper.SetDefault("web.username", "admin")
 	viper.SetDefault("web.password", "admin")
-	viper.SetDefault("server.https_enabled", false)
+	// Missing values belong to legacy configurations, which always started HTTPS.
+	// New installations explicitly set this to false in their generated template.
+	viper.SetDefault("server.https_enabled", true)
 	viper.SetDefault("server.https_port", 7576)
 	viper.SetDefault("server.webrtc_udp_address", ":7580")
 	viper.SetDefault("server.tls_data_dir", "data/tls")

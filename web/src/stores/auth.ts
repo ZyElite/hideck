@@ -78,6 +78,9 @@ api.interceptors.response.use(
   (error) => {
     debugCollector.recordApiError(error)
     if (error?.response?.status === 401) {
+      if (isPasswordValidationError(error)) {
+        return Promise.reject(error)
+      }
       try {
         const current = String(window.location.hash || '').replace(/^#/, '') || '/'
         if (!current.startsWith('/login')) {
@@ -98,3 +101,9 @@ api.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+
+function isPasswordValidationError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false
+  const data = error.response?.data as { code?: unknown } | undefined
+  return error.config?.url === '/settings/password' && data?.code === 'invalid_password'
+}

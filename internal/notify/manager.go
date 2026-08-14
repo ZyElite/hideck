@@ -14,20 +14,24 @@ import (
 // Manager 统一通知管理器
 // 持有多个 Channel 实例，向所有已启用渠道广播通知和命令
 type Manager struct {
-	pool             *device.Pool
-	updateMu         sync.Mutex
-	channelsMu       sync.Mutex
-	channels         []Channel // 所有已启用的通知渠道
-	channelActivity  []*channelActivity
-	stateStore       RuntimeStateStore
-	qqChannelFactory func(config.QQConfig) (Channel, error)
-	commandMu        sync.Mutex
-	commandService   *CommandService
+	pool                    *device.Pool
+	updateMu                sync.Mutex
+	channelsMu              sync.Mutex
+	channels                []Channel // 所有已启用的通知渠道
+	channelActivity         []*channelActivity
+	stateStore              RuntimeStateStore
+	qqChannelFactory        func(config.QQConfig) (Channel, error)
+	commandMu               sync.Mutex
+	commandService          *CommandService
+	commandExecutorMu       sync.RWMutex
+	commandExecutor         ChannelCommandExecutor
+	commandReceiversStarted bool
 }
 
 type ManagerOptions struct {
-	StateStore       RuntimeStateStore
-	QQChannelFactory func(config.QQConfig) (Channel, error)
+	StateStore                RuntimeStateStore
+	QQChannelFactory          func(config.QQConfig) (Channel, error)
+	DeferCommandReceiverStart bool
 }
 
 type NotificationContext struct {
@@ -66,9 +70,10 @@ func NewManager(cfg *config.Config, pool *device.Pool) (*Manager, error) {
 
 func NewManagerWithOptions(cfg *config.Config, pool *device.Pool, options ManagerOptions) (*Manager, error) {
 	m := &Manager{
-		pool:             pool,
-		stateStore:       options.StateStore,
-		qqChannelFactory: options.QQChannelFactory,
+		pool:                    pool,
+		stateStore:              options.StateStore,
+		qqChannelFactory:        options.QQChannelFactory,
+		commandReceiversStarted: !options.DeferCommandReceiverStart,
 	}
 	m.commandService = m.newCommandService()
 

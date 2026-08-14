@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useRoute, useRouter } from 'vue-router'
 import { Person24Regular, LockClosed24Regular, ArrowRight24Regular } from '@vicons/fluent'
+import { systemService } from '../services/system'
 import type { PasswordCredentialStatus } from '../types/credentials'
 
 const auth = useAuthStore()
@@ -10,6 +11,11 @@ const router = useRouter()
 const route = useRoute()
 const form = ref({ username: '', password: '' })
 const loading = ref(false)
+const passwordChangeOpen = ref(false)
+const changingPassword = ref(false)
+const passwordChangeError = ref('')
+const newPasswordInput = ref<{ focus: () => void } | null>(null)
+const passwordChangeForm = ref({ old_password: '', new_password: '', confirm_password: '' })
 
 async function handleLogin() {
   const { ElMessage } = await import('element-plus')
@@ -26,15 +32,13 @@ async function handleLogin() {
     return
   }
 
-  ElMessage.success('欢迎回来')
-  if (await shouldOpenPasswordSettings(result.credential)) {
-    await router.push('/settings?focus=password')
+  if (await startPasswordRemediation(result.credential)) {
     return
   }
-  await redirectAfterLogin()
+  await completeLogin('欢迎回来')
 }
 
-async function shouldOpenPasswordSettings(status: PasswordCredentialStatus): Promise<boolean> {
+async function startPasswordRemediation(status: PasswordCredentialStatus): Promise<boolean> {
   if (!status.change_required) return false
   const { ElMessageBox } = await import('element-plus')
   if (status.management === 'environment') {
@@ -46,16 +50,50 @@ async function shouldOpenPasswordSettings(status: PasswordCredentialStatus): Pro
     )
     return false
   }
-  try {
-    await ElMessageBox.confirm(
-      '当前密码仍是初始明文凭证或强度不足。建议立即修改。',
-      '请修改登录密码',
-      { confirmButtonText: '立即修改', cancelButtonText: '稍后处理', closeOnClickModal: false, type: 'warning' }
-    )
-    return true
-  } catch {
-    return false
+  passwordChangeForm.value = {
+    old_password: form.value.password,
+    new_password: '',
+    confirm_password: ''
   }
+  form.value.password = ''
+  passwordChangeError.value = ''
+  passwordChangeOpen.value = true
+  return true
+}
+
+async function submitPasswordChange() {
+  passwordChangeError.value = validatePasswordChange()
+  if (passwordChangeError.value) return
+
+  changingPassword.value = true
+  const result = await systemService.changePassword(passwordChangeForm.value)
+  changingPassword.value = false
+  if (!result.ok) {
+    passwordChangeError.value = result.error.message || '密码更新失败'
+    return
+  }
+  auth.applyToken(result.data.token)
+  await completeLogin('密码已更新')
+}
+
+function validatePasswordChange(): string {
+  if (!passwordChangeForm.value.old_password || !passwordChangeForm.value.new_password) {
+    return '请填写当前密码和新密码'
+  }
+  if (passwordChangeForm.value.new_password !== passwordChangeForm.value.confirm_password) {
+    return '两次输入的新密码不一致'
+  }
+  return ''
+}
+
+async function completeLogin(message: string) {
+  const { ElMessage } = await import('element-plus')
+  passwordChangeOpen.value = false
+  passwordChangeForm.value = { old_password: '', new_password: '', confirm_password: '' }
+  passwordChangeError.value = ''
+  form.value.password = ''
+  ElMessage.success(message)
+  await redirectAfterLogin()
 }
 
 async function redirectAfterLogin() {
@@ -169,6 +207,65 @@ async function redirectAfterLogin() {
         <footer>HiDeck · 2026</footer>
       </div>
     </section>
+
+    <el-dialog
+      v-model="passwordChangeOpen"
+      title="修改登录密码"
+      width="min(440px, calc(100vw - 32px))"
+      :show-close="false"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      @opened="newPasswordInput?.focus()"
+    >
+      <form class="password-change-form" @submit.prevent="submitPasswordChange">
+        <p class="password-change-notice">当前密码仍是初始明文凭证或强度不足。建议立即修改。</p>
+
+        <div class="space-y-1">
+          <label for="login-current-password">当前密码</label>
+          <el-input
+            id="login-current-password"
+            v-model="passwordChangeForm.old_password"
+            type="password"
+            show-password
+            autocomplete="current-password"
+          />
+        </div>
+        <div class="space-y-1">
+          <label for="login-new-password">新密码</label>
+          <el-input
+            id="login-new-password"
+            ref="newPasswordInput"
+            v-model="passwordChangeForm.new_password"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            placeholder="至少 8 位，建议 12 位以上"
+          />
+        </div>
+        <div class="space-y-1">
+          <label for="login-confirm-password">确认新密码</label>
+          <el-input
+            id="login-confirm-password"
+            v-model="passwordChangeForm.confirm_password"
+            type="password"
+            show-password
+            autocomplete="new-password"
+          />
+        </div>
+
+        <p v-if="passwordChangeError" class="password-change-error" role="alert">
+          {{ passwordChangeError }}
+        </p>
+        <div class="password-change-actions">
+          <el-button native-type="button" :disabled="changingPassword" @click="completeLogin('欢迎回来')">
+            稍后处理
+          </el-button>
+          <el-button type="primary" native-type="submit" :loading="changingPassword">
+            更新密码并进入
+          </el-button>
+        </div>
+      </form>
+    </el-dialog>
   </main>
 </template>
 
@@ -500,6 +597,45 @@ button svg { width: 18px; height: 18px; }
   font-family: "v-mono", ui-monospace, monospace;
   font-size: 10px;
   text-align: center;
+}
+
+.password-change-form {
+  display: grid;
+  gap: 14px;
+}
+
+.password-change-notice {
+  margin: 0 0 2px;
+  color: var(--ui-text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.password-change-error {
+  margin: 0;
+  color: var(--ui-danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.password-change-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.password-change-actions :deep(.el-button) {
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  border-radius: 8px;
+}
+
+.password-change-actions :deep(.el-button:not(.el-button--primary)) {
+  border: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+  color: var(--ui-text);
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }

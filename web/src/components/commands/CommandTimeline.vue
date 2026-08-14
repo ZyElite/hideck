@@ -6,6 +6,7 @@ import type { BalanceQuery, CommandEvent } from '../../types/commands'
 import { formatDeviceDateTime } from '../../utils/deviceTime'
 import { countAddedTimelineRecords, isNearTimelineEnd } from '../../utils/timelineFollow'
 import {
+  commandSourceLabel,
   presentBalanceState,
   presentCommandEvent,
   type BalanceStatePresentation,
@@ -195,7 +196,12 @@ function audioAttachments(event: CommandEvent) {
 
           <div class="event-card">
             <header>
-              <strong>{{ item.kind === 'balance' ? '运营商余额' : item.presentation.title }}</strong>
+              <div class="event-heading">
+                <strong>{{ item.kind === 'balance' ? '运营商余额' : item.presentation.title }}</strong>
+                <span v-if="item.kind === 'command'" class="event-source">
+                  {{ commandSourceLabel(item.event.execution?.source) }}
+                </span>
+              </div>
               <time>{{ formatDeviceDateTime(item.createdAt) }}</time>
             </header>
             <template v-if="item.kind === 'command'">
@@ -272,6 +278,8 @@ function audioAttachments(event: CommandEvent) {
 }
 .event-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .event-card header strong { color: currentColor; font-size: 13px; font-weight: 700; }
+.event-heading { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.event-source { color: var(--ui-text-subtle); font-size: var(--ui-font-caption); }
 .event-card time { flex: 0 0 auto; color: var(--ui-text-subtle); font: var(--ui-font-caption) "v-mono", ui-monospace, monospace; }
 .event-card pre {
   margin: 3px 0 0;

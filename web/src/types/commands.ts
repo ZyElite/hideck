@@ -11,6 +11,7 @@ export type CommandExecution = {
   id: string
   input: string
   command: string
+  source: string
   state: 'running' | 'completed' | 'failed'
   error?: string
   started_at?: string

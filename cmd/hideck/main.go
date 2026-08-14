@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
+	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 	"github.com/yibaiba/hideck/internal/api"
 	"github.com/yibaiba/hideck/internal/audiotranscode"
 	"github.com/yibaiba/hideck/internal/config"
@@ -24,8 +26,6 @@ import (
 	proxyserver "github.com/yibaiba/hideck/internal/proxy/server"
 	"github.com/yibaiba/hideck/internal/proxy/traffic"
 	"github.com/yibaiba/hideck/internal/upstreamproxy"
-	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
-	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 
 	"github.com/yibaiba/hideck/internal/web"
 	"github.com/yibaiba/hideck/pkg/logger"
@@ -149,6 +149,9 @@ func main() {
 	notificationStateStore := notify.NewFileRuntimeStateStore(
 		filepath.Join(filepath.Dir(configPath), "notification-state.json"),
 	)
+	notificationManagerOptions := notify.ManagerOptions{
+		StateStore: notificationStateStore, DeferCommandReceiverStart: true,
+	}
 
 	if err := voiceGW.Start(context.Background()); err != nil {
 		logger.Error("语音网关启动失败", "err", err)
@@ -157,7 +160,7 @@ func main() {
 
 		// 通知管理器初始化
 		var err error
-		notifyMgr, err = notify.NewManagerWithOptions(cfg, pool, notify.ManagerOptions{StateStore: notificationStateStore})
+		notifyMgr, err = notify.NewManagerWithOptions(cfg, pool, notificationManagerOptions)
 		if err != nil {
 			logger.Warn("通知管理器初始化异常", "err", err)
 		} else {
@@ -190,7 +193,7 @@ func main() {
 	// 通知管理器如果在上方未初始化，在这里兜底（防止 VoiceGW 未配置/启动的场景）
 	if notifyMgr == nil {
 		var err error
-		notifyMgr, err = notify.NewManagerWithOptions(cfg, pool, notify.ManagerOptions{StateStore: notificationStateStore})
+		notifyMgr, err = notify.NewManagerWithOptions(cfg, pool, notificationManagerOptions)
 		if err != nil {
 			logger.Warn("通知管理器初始化异常", "err", err)
 		} else {
@@ -219,6 +222,9 @@ func main() {
 	}
 
 	apiServer := api.New(cfg, pool, staticFS, proxyMgr, voiceGW, notifyMgr, configPath)
+	if notifyMgr != nil {
+		notifyMgr.StartCommandReceivers()
+	}
 	apiServer.SetVoiceRecordingDirectory(voiceRecordingDirectory)
 	apiServer.SetPhoneService(phoneService)
 	apiServer.SetRealtimeTraffic(realtimeTraffic)
