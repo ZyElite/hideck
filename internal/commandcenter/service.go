@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/iniwex5/vohive/internal/db"
-	"github.com/iniwex5/vohive/internal/notify"
-	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/internal/notify"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 type Service struct {

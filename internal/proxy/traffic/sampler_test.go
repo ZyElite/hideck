@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/db"
+	"github.com/yibaiba/hideck/internal/db"
 )
 
 func TestStartPrimesInterfaceBaselineBeforeFirstMinute(t *testing.T) {

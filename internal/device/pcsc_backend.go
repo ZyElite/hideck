@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/iniwex5/vohive/internal/backend"
-	"github.com/iniwex5/vohive/internal/pcsc"
-	"github.com/iniwex5/vohive/internal/simaid"
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/internal/pcsc"
+	"github.com/yibaiba/hideck/internal/simaid"
 )
 
 var errPCSCOperationUnsupported = errors.New("PC/SC 读卡器不支持蜂窝网络操作")

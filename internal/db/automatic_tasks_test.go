@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/automation"
+	"github.com/yibaiba/hideck/internal/automation"
 )
 
 func TestAutomaticTaskStoreClaimsDueTaskOnce(t *testing.T) {

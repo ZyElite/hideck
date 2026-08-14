@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/carrierquery"
-	appdb "github.com/iniwex5/vohive/internal/db"
+	"github.com/yibaiba/hideck/internal/carrierquery"
+	appdb "github.com/yibaiba/hideck/internal/db"
 )
 
 type fakeGateway struct {

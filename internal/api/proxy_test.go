@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iniwex5/vohive/internal/config"
-	"github.com/iniwex5/vohive/internal/data/repo"
-	"github.com/iniwex5/vohive/internal/db"
-	"github.com/iniwex5/vohive/internal/device"
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/data/repo"
+	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/internal/device"
 
 	"github.com/gin-gonic/gin"
 )

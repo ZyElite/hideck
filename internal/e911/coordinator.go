@@ -5,9 +5,9 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/iniwex5/vohive/internal/device"
-	"github.com/iniwex5/vohive/internal/modem"
-	"github.com/iniwex5/vohive/internal/websheet"
+	"github.com/yibaiba/hideck/internal/device"
+	"github.com/yibaiba/hideck/internal/modem"
+	"github.com/yibaiba/hideck/internal/websheet"
 	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 	runtimee911 "github.com/iniwex5/vowifi-go/runtimehost/e911"
 )

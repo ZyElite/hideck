@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/backend"
-	"github.com/iniwex5/vohive/internal/pcsc"
-	"github.com/iniwex5/vohive/internal/simaid"
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/internal/pcsc"
+	"github.com/yibaiba/hideck/internal/simaid"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )

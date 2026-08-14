@@ -5,9 +5,9 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/iniwex5/vohive/internal/backend"
-	"github.com/iniwex5/vohive/pkg/logger"
-	"github.com/iniwex5/vohive/pkg/mbim"
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/pkg/logger"
+	"github.com/yibaiba/hideck/pkg/mbim"
 	swusim "github.com/iniwex5/vowifi-go/engine/sim"
 )
 

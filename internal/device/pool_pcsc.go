@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/damonto/euicc-go/driver"
-	"github.com/iniwex5/vohive/internal/apduarbiter"
-	"github.com/iniwex5/vohive/internal/config"
-	"github.com/iniwex5/vohive/internal/esim"
-	"github.com/iniwex5/vohive/internal/pcsc"
-	"github.com/iniwex5/vohive/pkg/logger"
-	"github.com/iniwex5/vohive/pkg/smscodec"
+	"github.com/yibaiba/hideck/internal/apduarbiter"
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/esim"
+	"github.com/yibaiba/hideck/internal/pcsc"
+	"github.com/yibaiba/hideck/pkg/logger"
+	"github.com/yibaiba/hideck/pkg/smscodec"
 )
 
 func pcscSelector(cfg config.DeviceConfig) pcsc.Selector {

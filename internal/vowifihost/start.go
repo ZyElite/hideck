@@ -3,7 +3,7 @@ package vowifihost
 import (
 	"strings"
 
-	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 )
 

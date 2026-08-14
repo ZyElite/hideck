@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/iniwex5/vohive/internal/automation"
+	"github.com/yibaiba/hideck/internal/automation"
 )
 
 func taskToRecord(task automation.Task) (AutomaticTaskRecord, error) {

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/apduarbiter"
-	"github.com/iniwex5/vohive/internal/config"
-	"github.com/iniwex5/vohive/internal/simaid"
+	"github.com/yibaiba/hideck/internal/apduarbiter"
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/simaid"
 )
 
 func newRunningTestManager(t *testing.T) *Manager {

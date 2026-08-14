@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/iniwex5/vohive/internal/modem"
+	"github.com/yibaiba/hideck/internal/modem"
 )
 
 type atRadioSnapshotTestQuerier struct {

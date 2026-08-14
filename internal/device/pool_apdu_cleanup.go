@@ -6,9 +6,9 @@ import (
 
 	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
-	qmipkg "github.com/iniwex5/vohive/internal/qmi"
-	"github.com/iniwex5/vohive/internal/backend"
-	"github.com/iniwex5/vohive/pkg/logger"
+	qmipkg "github.com/yibaiba/hideck/internal/qmi"
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 var startupSIMAuthLogicalChannelsToClose = []int{1, 2, 3, 4}

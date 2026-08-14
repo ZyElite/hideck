@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/config"
+	"github.com/yibaiba/hideck/internal/config"
 )
 
 type attachmentCandidate struct {

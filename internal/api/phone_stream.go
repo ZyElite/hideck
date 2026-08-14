@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/iniwex5/vohive/internal/phone"
+	"github.com/yibaiba/hideck/internal/phone"
 )
 
 const phoneEventHeartbeatInterval = 15 * time.Second

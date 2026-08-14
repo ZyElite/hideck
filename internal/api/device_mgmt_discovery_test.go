@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/iniwex5/vohive/internal/config"
-	"github.com/iniwex5/vohive/internal/device"
-	"github.com/iniwex5/vohive/internal/pcsc"
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/device"
+	"github.com/yibaiba/hideck/internal/pcsc"
 )
 
 func TestHandleDeviceMgmtDiscoveredIncludesPCSCCardReader(t *testing.T) {

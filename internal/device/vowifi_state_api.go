@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/iniwex5/vohive/pkg/smscodec"
+	"github.com/yibaiba/hideck/pkg/smscodec"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 )

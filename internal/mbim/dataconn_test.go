@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/config"
-	"github.com/iniwex5/vohive/pkg/mbim"
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/pkg/mbim"
 )
 
 type fakeNetcfg struct {

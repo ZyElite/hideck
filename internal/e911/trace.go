@@ -14,7 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/yibaiba/hideck/pkg/logger"
 	runtimee911 "github.com/iniwex5/vowifi-go/runtimehost/e911"
 )
 

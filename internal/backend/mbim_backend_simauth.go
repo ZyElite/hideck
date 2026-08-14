@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/iniwex5/vohive/internal/simaid"
+	"github.com/yibaiba/hideck/internal/simaid"
 )
 
 func (b *MBIMBackend) OpenLogicalChannel(ctx context.Context, aid string) (int, error) {

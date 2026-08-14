@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/iniwex5/vohive/internal/smsnotify"
-	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/yibaiba/hideck/internal/smsnotify"
+	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/iniwex5/vowifi-go/runtimehost/eventhost"
 )
 

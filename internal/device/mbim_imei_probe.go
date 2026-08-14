@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iniwex5/vohive/pkg/logger"
-	"github.com/iniwex5/vohive/pkg/mbim"
+	"github.com/yibaiba/hideck/pkg/logger"
+	"github.com/yibaiba/hideck/pkg/mbim"
 )
 
 const (

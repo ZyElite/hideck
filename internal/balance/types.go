@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/carrierquery"
+	"github.com/yibaiba/hideck/internal/carrierquery"
 )
 
 const DefaultQueryTimeout = 5 * time.Minute

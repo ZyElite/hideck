@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/iniwex5/vohive/internal/backend"
-	"github.com/iniwex5/vohive/internal/pcsc"
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/internal/pcsc"
 	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 

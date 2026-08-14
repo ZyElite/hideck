@@ -3,7 +3,7 @@ package mbimcore
 import (
 	"testing"
 
-	"github.com/iniwex5/vohive/internal/apduarbiter"
+	"github.com/yibaiba/hideck/internal/apduarbiter"
 )
 
 func TestManagerSetAPDUArbiterStores(t *testing.T) {

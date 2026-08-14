@@ -3,7 +3,7 @@ package device
 import (
 	"strings"
 
-	"github.com/iniwex5/vohive/internal/vowifihost"
+	"github.com/yibaiba/hideck/internal/vowifihost"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 )
 

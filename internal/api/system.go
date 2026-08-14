@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/iniwex5/vohive/internal/config"
-	"github.com/iniwex5/vohive/internal/updater"
-	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/updater"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 var errNotFound = errors.New("not found")

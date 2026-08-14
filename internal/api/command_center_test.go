@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
-	"github.com/iniwex5/vohive/internal/balance"
-	"github.com/iniwex5/vohive/internal/carrierquery"
-	"github.com/iniwex5/vohive/internal/commandcenter"
-	"github.com/iniwex5/vohive/internal/config"
-	"github.com/iniwex5/vohive/internal/db"
-	"github.com/iniwex5/vohive/internal/notify"
+	"github.com/yibaiba/hideck/internal/balance"
+	"github.com/yibaiba/hideck/internal/carrierquery"
+	"github.com/yibaiba/hideck/internal/commandcenter"
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/internal/notify"
 	"gorm.io/gorm"
 )
 

@@ -9,11 +9,11 @@ import (
 	"time"
 
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
-	"github.com/iniwex5/vohive/internal/config"
-	"github.com/iniwex5/vohive/internal/modem"
-	"github.com/iniwex5/vohive/internal/simaid"
-	"github.com/iniwex5/vohive/pkg/mbim"
-	"github.com/iniwex5/vohive/pkg/smscodec"
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/modem"
+	"github.com/yibaiba/hideck/internal/simaid"
+	"github.com/yibaiba/hideck/pkg/mbim"
+	"github.com/yibaiba/hideck/pkg/smscodec"
 )
 
 type fakeMBIMSource struct {

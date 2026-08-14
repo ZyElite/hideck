@@ -4,9 +4,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/backend"
-	"github.com/iniwex5/vohive/internal/cardpolicy"
-	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/internal/cardpolicy"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 // applyPolicyToWorker 把卡策略投影进 worker.Config 的运行时有效字段。
@@ -140,7 +140,7 @@ func (p *Pool) CurrentICCIDForDevice(deviceID string) string {
 	return w.CurrentICCID()
 }
 
-// SetPolicyResolver 注入卡策略解析器（cmd/vohive 启动时调用）。
+// SetPolicyResolver 注入卡策略解析器（cmd/hideck 启动时调用）。
 func (p *Pool) SetPolicyResolver(r cardpolicy.Resolver) {
 	if p == nil {
 		return

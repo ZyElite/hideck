@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/iniwex5/vohive/internal/carrierquery"
+	"github.com/yibaiba/hideck/internal/carrierquery"
 )
 
 type CustomRuleSource interface {

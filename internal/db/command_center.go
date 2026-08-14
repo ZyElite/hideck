@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/carrierquery"
+	"github.com/yibaiba/hideck/internal/carrierquery"
 	"gorm.io/gorm"
 )
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/iniwex5/vohive/pkg/smscodec"
+	"github.com/yibaiba/hideck/pkg/smscodec"
 )
 
 func (b *MBIMBackend) smsProvider() (SMSProvider, error) {

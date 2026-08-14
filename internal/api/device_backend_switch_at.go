@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/modem"
+	"github.com/yibaiba/hideck/internal/modem"
 )
 
 const backendSwitchATTimeout = 5 * time.Second

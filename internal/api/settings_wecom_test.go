@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/iniwex5/vohive/internal/config"
+	"github.com/yibaiba/hideck/internal/config"
 )
 
 func TestGetNotificationSettingsMasksWeComURLs(t *testing.T) {

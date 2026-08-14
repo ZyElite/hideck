@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/vohive/pkg/mbim"
+	"github.com/yibaiba/hideck/pkg/mbim"
 )
 
 func TestHealthProbeReportsSuspectAfterTwoConsecutiveFailures(t *testing.T) {

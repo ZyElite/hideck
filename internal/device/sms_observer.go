@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 type InboundSMS struct {

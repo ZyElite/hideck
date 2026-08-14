@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/iniwex5/vohive/internal/config"
+	"github.com/yibaiba/hideck/internal/config"
 )
 
 type systemTimeProviderStub struct {

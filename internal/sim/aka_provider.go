@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/yibaiba/hideck/pkg/logger"
 	swusim "github.com/iniwex5/vowifi-go/engine/sim"
 )
 

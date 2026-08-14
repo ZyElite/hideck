@@ -12,8 +12,8 @@ import (
 
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
 	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
-	"github.com/iniwex5/vohive/internal/modem"
-	"github.com/iniwex5/vohive/pkg/smscodec"
+	"github.com/yibaiba/hideck/internal/modem"
+	"github.com/yibaiba/hideck/pkg/smscodec"
 	"github.com/warthog618/sms/encoding/tpdu"
 )
 

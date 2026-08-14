@@ -9,8 +9,8 @@ import (
 	"time"
 	"encoding/hex"
 
-	dev "github.com/iniwex5/vohive/internal/device"
-	mbimcore "github.com/iniwex5/vohive/internal/mbim"
+	dev "github.com/yibaiba/hideck/internal/device"
+	mbimcore "github.com/yibaiba/hideck/internal/mbim"
 )
 
 func main() {

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/iniwex5/vohive/internal/carrierquery"
+	"github.com/yibaiba/hideck/internal/carrierquery"
 )
 
 func TestCommandCenterSchemaAndCustomRuleRoundTrip(t *testing.T) {

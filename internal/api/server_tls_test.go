@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/config"
+	"github.com/yibaiba/hideck/internal/config"
 )
 
 func TestServerRunsHTTPAndTrustedHTTPSAndExposesOnlyCACertificate(t *testing.T) {

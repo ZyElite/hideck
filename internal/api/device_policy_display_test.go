@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/iniwex5/vohive/internal/db"
+	"github.com/yibaiba/hideck/internal/db"
 )
 
 func initPolicyTestDB(t *testing.T) {

@@ -3,7 +3,7 @@ package e911
 import (
 	"strings"
 
-	"github.com/iniwex5/vohive/internal/modem"
+	"github.com/yibaiba/hideck/internal/modem"
 	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 )
 

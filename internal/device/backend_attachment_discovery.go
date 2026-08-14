@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/config"
+	"github.com/yibaiba/hideck/internal/config"
 )
 
 var errBackendAttachmentAmbiguous = errors.New("backend attachment is ambiguous")

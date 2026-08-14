@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/apduarbiter"
-	"github.com/iniwex5/vohive/internal/config"
+	"github.com/yibaiba/hideck/internal/apduarbiter"
+	"github.com/yibaiba/hideck/internal/config"
 )
 
 func TestManagerAPDUSessionRegistryClearsSession(t *testing.T) {

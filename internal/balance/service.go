@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/iniwex5/vohive/internal/carrierquery"
+	"github.com/yibaiba/hideck/internal/carrierquery"
 )
 
 type Service struct {

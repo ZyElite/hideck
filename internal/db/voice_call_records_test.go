@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
-	"github.com/iniwex5/vohive/internal/phone"
+	"github.com/yibaiba/hideck/internal/phone"
 	"gorm.io/gorm"
 )
 

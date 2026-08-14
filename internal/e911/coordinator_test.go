@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iniwex5/vohive/internal/modem"
+	"github.com/yibaiba/hideck/internal/modem"
 	runtimee911 "github.com/iniwex5/vowifi-go/runtimehost/e911"
 )
 

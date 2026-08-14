@@ -1,3 +1,3 @@
-module github.com/iniwex5/vohive/web
+module github.com/yibaiba/hideck/web
 
 go 1.26.4

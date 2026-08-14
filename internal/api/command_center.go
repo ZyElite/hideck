@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/iniwex5/vohive/internal/commandcenter"
+	"github.com/yibaiba/hideck/internal/commandcenter"
 )
 
 const maxCommandInputBytes = 4096

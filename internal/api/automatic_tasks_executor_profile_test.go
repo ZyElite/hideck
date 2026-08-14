@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iniwex5/vohive/internal/automation"
+	"github.com/yibaiba/hideck/internal/automation"
 )
 
 func TestResolveAutomaticTaskProfileUsesCurrentPhysicalSIM(t *testing.T) {

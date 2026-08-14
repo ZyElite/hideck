@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/backend"
-	"github.com/iniwex5/vohive/internal/pcsc"
-	"github.com/iniwex5/vohive/pkg/smscodec"
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/internal/pcsc"
+	"github.com/yibaiba/hideck/pkg/smscodec"
 	swusim "github.com/iniwex5/vowifi-go/engine/sim"
 )
 

@@ -10,8 +10,8 @@ import (
 
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
 	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
-	qmicore "github.com/iniwex5/vohive/internal/qmi"
-	"github.com/iniwex5/vohive/pkg/smscodec"
+	qmicore "github.com/yibaiba/hideck/internal/qmi"
+	"github.com/yibaiba/hideck/pkg/smscodec"
 )
 
 type qmiSMSCoreStub struct {

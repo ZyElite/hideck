@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 const (

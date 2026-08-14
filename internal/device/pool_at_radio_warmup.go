@@ -3,8 +3,8 @@ package device
 import (
 	"time"
 
-	"github.com/iniwex5/vohive/internal/backend"
-	"github.com/iniwex5/vohive/pkg/logger"
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 var atRadioWarmupDelays = []time.Duration{0, time.Second, 3 * time.Second, 8 * time.Second}

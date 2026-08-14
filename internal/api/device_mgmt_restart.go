@@ -1,6 +1,6 @@
 package api
 
-import "github.com/iniwex5/vohive/internal/config"
+import "github.com/yibaiba/hideck/internal/config"
 
 func deviceConfigRequiresRestart(old config.DeviceConfig, next config.DeviceConfig) bool {
 	if pcscRuntimeConfigChanged(old, next) {

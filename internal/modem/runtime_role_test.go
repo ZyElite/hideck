@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iniwex5/vohive/internal/config"
-	"github.com/iniwex5/vohive/pkg/smscodec"
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/pkg/smscodec"
 )
 
 func TestNewSMSAuxiliaryRequiresATPort(t *testing.T) {

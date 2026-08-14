@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/iniwex5/vohive/internal/backend"
-	"github.com/iniwex5/vohive/internal/config"
-	"github.com/iniwex5/vohive/internal/modem"
+	"github.com/yibaiba/hideck/internal/backend"
+	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/modem"
 )
 
 func newWorkerModem(cfg config.DeviceConfig, backendMode string) (*modem.Manager, error) {
