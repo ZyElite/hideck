@@ -43,6 +43,7 @@ test('presents every automatic task state without success fallback', () => {
   assert.deepEqual(automaticTaskStatus('running'), { label: '执行中', tone: 'warning' })
   assert.deepEqual(automaticTaskStatus('success'), { label: '成功', tone: 'success' })
   assert.deepEqual(automaticTaskStatus('failed'), { label: '失败', tone: 'danger' })
+  assert.deepEqual(automaticTaskStatus('unexpected'), { label: '状态不可用', tone: 'neutral' })
 })
 
 test('derives type environment schedule and payload only from API fields', () => {
@@ -58,6 +59,15 @@ test('derives type environment schedule and payload only from API fields', () =>
   assert.equal(automaticTaskTypeLabel(task({ task_type: 'call', payload: { phone: '888', hold_seconds: 15 } })), '通话 15 秒')
   assert.equal(automaticTaskPayloadSummary(task({ task_type: 'call', payload: {} })), '未提供呼叫号码')
   assert.equal(automaticTaskEnvironmentLabel(task({ environment: 'cellular' })), '蜂窝')
+})
+
+test('keeps missing or unknown API enumerations explicit', () => {
+  const malformedType = task({ task_type: 'unexpected' as AutomaticTask['task_type'] })
+  const malformedEnvironment = task({ environment: '' as AutomaticTask['environment'] })
+
+  assert.equal(automaticTaskTypeLabel(malformedType), '任务类型不可用')
+  assert.equal(automaticTaskPayloadSummary(malformedType), '任务内容不可用')
+  assert.equal(automaticTaskEnvironmentLabel(malformedEnvironment), '运行环境不可用')
 })
 
 test('keeps disabled, missing and invalid scheduling facts explicit', () => {

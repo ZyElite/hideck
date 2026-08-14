@@ -18,19 +18,26 @@ const STATUS_PRESENTATION: Readonly<Record<AutomaticTaskRunStatus, AutomaticTask
   failed: { label: '失败', tone: 'danger' }
 }
 
-export function automaticTaskStatus(status?: AutomaticTaskRunStatus): AutomaticTaskStatusPresentation {
-  return status ? STATUS_PRESENTATION[status] : { label: '未运行', tone: 'neutral' }
+export function automaticTaskStatus(status?: string): AutomaticTaskStatusPresentation {
+  if (!status) return { label: '未运行', tone: 'neutral' }
+  return STATUS_PRESENTATION[status as AutomaticTaskRunStatus]
+    ?? { label: '状态不可用', tone: 'neutral' }
 }
 
 export function automaticTaskTypeLabel(task: Readonly<AutomaticTask>): string {
   if (task.task_type === 'sms') return '短信'
   if (task.task_type === 'public_ip') return '公网 IP'
-  const seconds = task.payload.hold_seconds
-  return seconds ? `通话 ${seconds} 秒` : '通话'
+  if (task.task_type === 'call') {
+    const seconds = task.payload.hold_seconds
+    return seconds ? `通话 ${seconds} 秒` : '通话'
+  }
+  return '任务类型不可用'
 }
 
 export function automaticTaskEnvironmentLabel(task: Readonly<AutomaticTask>): string {
-  return task.environment === 'vowifi' ? 'VoWiFi' : '蜂窝'
+  if (task.environment === 'vowifi') return 'VoWiFi'
+  if (task.environment === 'cellular') return '蜂窝'
+  return '运行环境不可用'
 }
 
 export function automaticTaskScheduleLabel(task: Readonly<AutomaticTask>): string {
@@ -45,6 +52,7 @@ export function automaticTaskPayloadSummary(task: Readonly<AutomaticTask>): stri
   const message = task.payload.message?.trim()
   if (task.task_type === 'call') return phone || '未提供呼叫号码'
   if (task.task_type === 'public_ip') return '读取蜂窝公网 IP'
+  if (task.task_type !== 'sms') return '任务内容不可用'
   if (phone && message) return `${message} → ${phone}`
   return message || phone || '未提供短信内容'
 }
