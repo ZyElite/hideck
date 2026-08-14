@@ -80,26 +80,27 @@ docker compose logs -f hideck
 
 不要把 SIM PIN、Bot Token、API Key 或其他凭据直接提交到配置仓库。SIM PIN 配置只保存环境变量名，例如 `HIDECK_SIM_PIN_READER1`。
 
-### 微信、企业微信与 QQ 通知
+### Telegram、微信、企业微信与 QQ 通知
 
-设置页的“通知”区域把个人微信、企业微信长连接机器人、企业微信 Webhook 和 QQ Bot 分开管理：
+设置页的“通知”区域把 Telegram Bot、个人微信、企业微信长连接机器人、企业微信 Webhook 和 QQ Bot 分开管理：
 
+- Telegram：通过 `@BotFather` 的 `/newbot` 创建机器人并取得 Bot Token。填写管理员的 Telegram 数字用户 ID；通知 Chat ID 可留空，第一个已授权管理员私聊命令会自动绑定为默认通知目标。Telegram Bot API 使用 Token 接入，不提供机器人扫码注册。
 - 个人微信：在“个人微信”页签点击“扫码连接”。扫码确认后启用 iLink 通道；第一个合法私聊会成为默认通知目标。
 - 企业微信长连接：在“企微机器人”页签扫码创建机器人，也可以手工填写 Bot ID 和 Secret。第一个合法私聊会自动绑定，群聊不能抢占首次绑定。
 - QQ Bot：在“QQ Bot”页签扫码注册，也可以手工填写 App ID、App Secret 和目标 OpenID。扫码用户会自动成为管理员、私聊白名单和默认通知目标。
 - 企业微信 Webhook：继续在独立的“企微 Webhook”页签配置，只负责推送，不提供双向命令或扫码登录。
 
-扫码服务不可用时，页面会显示真实错误并保留手工配置入口，不会伪造连接成功。个人微信和企业微信可用 `allowed_user_ids`、`allowed_group_ids` 限制命令来源；QQ 使用 `group_ids`、`direct_ids`。扫码凭证和自动绑定状态涉及敏感数据，`config/config.yaml` 与同目录的 `notification-state.json` 都不应提交或共享。
+扫码服务不可用时，页面会显示真实错误并保留手工配置入口，不会伪造连接成功。Telegram 使用 `admin_id` 限制私聊命令来源；个人微信和企业微信可用 `allowed_user_ids`、`allowed_group_ids`；QQ 使用 `group_ids`、`direct_ids`。Bot Token、扫码凭证和自动绑定状态涉及敏感数据，`config/config.yaml` 与同目录的 `notification-state.json` 都不应提交或共享。
 
 连接后的人工验证步骤：
 
-1. 从已授权的私聊发送 `/help`，回复顶部应列出实时设备 ID；后续命令必须使用这里显示的 ID。
+1. Telegram 先从管理员私聊发送 `/start`，其他双向渠道发送 `/help`；回复顶部应列出实时设备 ID，后续命令必须使用这里显示的 ID。Telegram 未显式配置 Chat ID 时，设置页刷新后应显示这个私聊的数字 ID。
 2. 发送 `/status <设备ID>`，确认普通文本命令可以双向收发。
-3. 发送 `/vocall <设备ID> <号码> [保持秒数]`。个人微信和 QQ 应收到真实 MP3 录音；企业微信对不超过 2 MiB 的 AMR-NB 发送语音，AMR-WB、MP3 或超限录音会按文件发送并说明原因。
+3. 发送 `/vocall <设备ID> <号码> [保持秒数]`。Telegram、个人微信和 QQ 应收到真实 MP3 录音；企业微信对不超过 2 MiB 的 AMR-NB 发送语音，AMR-WB、MP3 或超限录音会按文件发送并说明原因。
 4. 触发一条短信或来电通知，确认已绑定的默认私聊能够收到通知。
-5. 从不在白名单中的私聊或群聊发送命令，确认请求被拒绝；企业微信群聊不能用于首次绑定。
+5. 从不在白名单中的私聊或群聊发送命令，确认请求被拒绝；Telegram、个人微信和企业微信群聊不能用于首次绑定。
 
-仓库自动测试覆盖扫码状态机、凭证加密/脱敏、配置持久化、长连接协议和本地媒体上传流程。真实微信、企业微信和 QQ 客户端仍需使用各自账号按上述步骤验收。
+仓库自动测试覆盖扫码状态机、凭证加密/脱敏、配置持久化、长连接协议和本地媒体上传流程。真实 Telegram、微信、企业微信和 QQ 客户端仍需使用各自账号按上述步骤验收。
 
 ## 源码构建
 

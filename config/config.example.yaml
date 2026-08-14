@@ -38,6 +38,17 @@ vowifi:
 webhook:
   enabled: false
 
+# Telegram 机器人通过 @BotFather 创建，不使用扫码注册。
+# admin_id 是允许执行命令的 Telegram 数字用户 ID；chat_id 留 0 时，首次授权私聊会自动绑定。
+# 自动绑定目标保存在同目录 notification-state.json。不要提交包含真实 Bot Token 的配置文件。
+telegram:
+  enabled: false
+  bot_token: ""
+  admin_id: 0
+  chat_id: 0
+  base_url: ""
+  proxy: ""
+
 # QQ Bot 可在设置页扫码注册，也可手工填写以下字段。
 qq:
   enabled: false

@@ -4279,16 +4279,30 @@ components:
           type: boolean
         bot_token:
           type: string
+          description: BotFather 签发的 Bot Token；读取已保存配置时返回脱敏值 ********，保存该占位时保留原值
         chat_id:
           type: integer
           format: int64
+          description: 可选的固定通知目标；为 0 时由授权管理员首次私聊自动绑定
         admin_id:
           type: integer
           format: int64
+          description: 允许执行私聊命令并触发首次绑定的 Telegram 数字用户 ID
+        bound_chat_id:
+          type: integer
+          format: int64
+          readOnly: true
+          description: 当前实际通知目标，优先返回固定 chat_id，否则返回持久化的私聊绑定
+        binding_error:
+          type: string
+          readOnly: true
+          description: 读取持久化绑定状态失败时的明确错误
         base_url:
           type: string
+          description: 可选 Bot API 反向代理模板
         proxy:
           type: string
+          description: 可选 HTTP 代理地址
 
     FeishuSettings:
       type: object
