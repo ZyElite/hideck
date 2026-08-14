@@ -63,6 +63,8 @@ test('automatic task workspace uses touch-safe cards and reduced motion', () => 
   assert.match(taskList, /\.task-toggle :deep\(\.el-switch\) \{ min-width: 44px; min-height: 44px;/)
   assert.match(taskDetail, /\.task-detail > header :deep\(\.el-button\) \{ width: 44px; height: 44px; flex: 0 0 44px; \}/)
   assert.match(taskEditor, /\.task-form :deep\(\.el-switch\) \{ min-width: 44px; min-height: 44px;/)
+  assert.match(taskEditor, /\.task-form :deep\(\.el-input-number__decrease\),[\s\S]*\.el-input-number__increase\) \{ width: 44px; height: 44px;/)
+  assert.match(taskEditor, /\.el-input-number \.el-input__wrapper\) \{ padding-inline: 44px; \}/)
   assert.match(taskRuns, /:pager-count="5"/)
   assert.match(taskRuns, /\.runs-pagination :deep\(\.el-pager li\) \{ min-width: 44px; height: 44px; \}/)
   assert.match(taskList, /@media \(prefers-reduced-motion: reduce\)/)

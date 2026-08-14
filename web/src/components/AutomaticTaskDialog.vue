@@ -352,6 +352,9 @@ function focusNameInput() {
   :global(.automatic-task-editor .el-drawer__footer) { padding-bottom: env(safe-area-inset-bottom); }
   .form-grid, .form-grid-schedule { grid-template-columns: minmax(0, 1fr); }
   .task-form :deep(.el-switch) { min-width: 44px; min-height: 44px; justify-content: center; }
+  .task-form :deep(.el-input-number__decrease),
+  .task-form :deep(.el-input-number__increase) { width: 44px; height: 44px; top: 0; bottom: auto; }
+  .task-form :deep(.el-input-number .el-input__wrapper) { padding-inline: 44px; }
   .editor-footer { padding: 10px 0; align-items: stretch; flex-direction: column; }
   .editor-footer > div { display: grid; grid-template-columns: 1fr 1fr; }
 }
