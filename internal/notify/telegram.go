@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -26,6 +27,7 @@ type TelegramChannel struct {
 	stateStore       RuntimeStateStore
 	stateMu          sync.RWMutex
 	stopOnce         sync.Once
+	commandsStopped  atomic.Bool
 	defaultTarget    int64
 	handlers         map[string]CommandHandler
 }
@@ -230,7 +232,7 @@ func (t *TelegramChannel) bindPrivateTarget(message *tgbotapi.Message) error {
 }
 
 func (t *TelegramChannel) handleMessage(message *tgbotapi.Message) {
-	if message == nil || !message.IsCommand() || !t.authorized(message) {
+	if t.commandsStopped.Load() || message == nil || !message.IsCommand() || !t.authorized(message) {
 		return
 	}
 	ctx := &tgCommandContext{channel: t, target: message.Chat.ID}
@@ -262,6 +264,9 @@ func (t *TelegramChannel) Start() error {
 	if t == nil || t.api == nil {
 		return nil
 	}
+	if t.commandsStopped.Load() {
+		return nil
+	}
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -287,5 +292,6 @@ func (t *TelegramChannel) StopReceivingCommands() {
 	if t == nil || t.api == nil {
 		return
 	}
+	t.commandsStopped.Store(true)
 	t.stopOnce.Do(t.api.StopReceivingUpdates)
 }

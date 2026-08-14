@@ -34,6 +34,85 @@ type telegramAPICapture struct {
 	rejectText  bool
 }
 
+type telegramRetirementFixture struct {
+	pollStarted chan struct{}
+	releasePoll chan struct{}
+	sendStarted chan struct{}
+	releaseSend chan struct{}
+	replies     atomic.Int32
+}
+
+func newTelegramRetirementFixture(t *testing.T) (*TelegramChannel, *telegramRetirementFixture) {
+	t.Helper()
+	fixture := &telegramRetirementFixture{
+		pollStarted: make(chan struct{}, 1), releasePoll: make(chan struct{}, 1),
+		sendStarted: make(chan struct{}, 1), releaseSend: make(chan struct{}, 1),
+	}
+	server := httptest.NewServer(http.HandlerFunc(fixture.handler))
+	t.Cleanup(server.Close)
+	channel, err := NewTelegramChannelWithOptions(TelegramChannelOptions{Config: config.TelegramConfig{
+		Enabled: true, BotToken: telegramTestToken, AdminID: 42, ChatID: 42,
+		BaseURL: server.URL + "/bot%s/%s",
+	}})
+	if err != nil {
+		t.Fatalf("NewTelegramChannelWithOptions() error = %v", err)
+	}
+	t.Cleanup(func() {
+		fixture.unblock()
+		_ = channel.Close()
+	})
+	return channel, fixture
+}
+
+func (f *telegramRetirementFixture) handler(w http.ResponseWriter, r *http.Request) {
+	switch filepath.Base(r.URL.Path) {
+	case "getMe":
+		writeTelegramResult(w, map[string]any{
+			"id": 999, "is_bot": true, "first_name": "VoHive", "username": "vohive_test_bot",
+		})
+	case "setMyCommands":
+		writeTelegramResult(w, true)
+	case "getUpdates":
+		f.pollStarted <- struct{}{}
+		<-f.releasePoll
+		writeTelegramResult(w, []any{telegramHelpUpdate()})
+	case "sendMessage":
+		f.sendStarted <- struct{}{}
+		<-f.releaseSend
+		f.replies.Add(1)
+		writeTelegramResult(w, map[string]any{
+			"message_id": 2, "date": 1, "chat": map[string]any{"id": 42, "type": "private"},
+		})
+	default:
+		http.Error(w, `{"ok":false,"description":"unsupported"}`, http.StatusBadRequest)
+	}
+}
+
+func telegramHelpUpdate() map[string]any {
+	return map[string]any{
+		"update_id": 1,
+		"message": map[string]any{
+			"message_id": 1, "date": 1, "text": "/help",
+			"from": map[string]any{"id": 42, "is_bot": false, "first_name": "Admin"},
+			"chat": map[string]any{"id": 42, "type": "private"},
+			"entities": []any{map[string]any{
+				"type": "bot_command", "offset": 0, "length": 5,
+			}},
+		},
+	}
+}
+
+func (f *telegramRetirementFixture) unblock() {
+	select {
+	case f.releasePoll <- struct{}{}:
+	default:
+	}
+	select {
+	case f.releaseSend <- struct{}{}:
+	default:
+	}
+}
+
 type telegramToggleStateStore struct {
 	mu         sync.Mutex
 	state      RuntimeState
@@ -337,6 +416,63 @@ func TestTelegramCommandMenuContainsSharedCommands(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "start,help,vocall" {
 		t.Fatalf("commands = %v", got)
+	}
+}
+
+func TestManagerRevokeTelegramRejectsUpdateReturnedByInflightLongPoll(t *testing.T) {
+	channel, fixture := newTelegramRetirementFixture(t)
+	var handlerCalls atomic.Int32
+	channel.RegisterCommand("help", func(CommandContext, []string) string {
+		handlerCalls.Add(1)
+		return "help"
+	})
+	manager := &Manager{channels: []Channel{channel}}
+	startResult := make(chan error, 1)
+	go func() { startResult <- channel.Start() }()
+	select {
+	case <-fixture.pollStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Telegram long poll did not start")
+	}
+
+	manager.NotifyRaw("in flight")
+	select {
+	case <-fixture.sendStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Telegram send did not start")
+	}
+	revoked := make(chan bool, 1)
+	go func() { revoked <- manager.RevokeChannel("telegram") }()
+	waitUntil(t, time.Second, channel.commandsStopped.Load)
+	fixture.releasePoll <- struct{}{}
+	select {
+	case <-revoked:
+		t.Fatal("Telegram revocation returned before its send completed")
+	case <-time.After(25 * time.Millisecond):
+	}
+	if handlerCalls.Load() != 0 {
+		t.Fatalf("stopped listener handled %d commands", handlerCalls.Load())
+	}
+
+	fixture.releaseSend <- struct{}{}
+	select {
+	case ok := <-revoked:
+		if !ok {
+			t.Fatal("RevokeChannel() = false, want true")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Telegram revocation did not finish")
+	}
+	select {
+	case err := <-startResult:
+		if err != nil {
+			t.Fatalf("Start() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Telegram listener did not stop")
+	}
+	if handlerCalls.Load() != 0 || fixture.replies.Load() != 1 {
+		t.Fatalf("stopped listener handled command: calls=%d replies=%d", handlerCalls.Load(), fixture.replies.Load())
 	}
 }
 
