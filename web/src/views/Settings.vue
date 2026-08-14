@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useSettingsStore } from '../stores/settings'
+import { useAuthStore } from '../stores/auth'
+import type { PasswordCredentialStatus } from '../types/credentials'
 import WorkspaceStage from '../components/WorkspaceStage.vue'
 import FieldRow from '../components/FieldRow.vue'
 import QQNotificationTab from '../components/settings/QQNotificationTab.vue'
@@ -21,11 +23,15 @@ import {
 import { formatDeviceDateTime } from '../utils/deviceTime'
 
 const settingsStore = useSettingsStore()
+const authStore = useAuthStore()
 const { systemInfo, loadingNotifications, savingNotifications, testingWebhook, testingBark, testingEmail, testingWeCom, changingPassword, passwordForm, telegramForm, feishuForm, qqForm, weixinForm, weComBotForm, webhookSettings, barkSettings, emailForm, pushplusForm, weComSettings } = storeToRefs(settingsStore)
 const activeNotifyTab = ref('telegram')
 const openWRTDynamicInterfaces = ref(false)
 const loadingSystemSettings = ref(false)
 const savingSystemSettings = ref(false)
+const passwordStatus = ref<PasswordCredentialStatus | null>(null)
+const loadingPasswordStatus = ref(false)
+const passwordManagedByEnvironment = computed(() => passwordStatus.value?.management === 'environment')
 
 const enabledNotificationCount = computed(() => [
   telegramForm.value.enabled,
@@ -76,19 +82,36 @@ const hasValidWeComConfig = computed(() => {
 
 
 async function changePassword() {
+  if (passwordManagedByEnvironment.value) {
+    ElMessage.warning(`当前密码由 ${passwordStatus.value?.environment_variable || 'PROXY_WEB_PASSWORD'} 管理，请修改部署环境并重启`)
+    return
+  }
   if (passwordForm.value.new_password !== passwordForm.value.confirm_password) {
     ElMessage.error('两次输入的新密码不一致')
     return
   }
   
-  try {
-     const result = await settingsStore.changePasswordFromForm()
-     if (!result.ok) throw new Error(result.error.message || '更新失败')
-     ElMessage.success('密码已更新')
-     settingsStore.resetPasswordForm()
-  } catch {
-     ElMessage.error('失败：后端尚未实现该功能或请求失败')
+  const result = await settingsStore.changePasswordFromForm()
+  if (!result.ok) {
+    ElMessage.error(result.error.message || '密码更新失败')
+    return
   }
+  authStore.applyToken(result.data.token)
+  passwordStatus.value = result.data.credential
+  ElMessage.success('密码已更新并安全写入配置文件')
+  settingsStore.resetPasswordForm()
+}
+
+async function loadPasswordStatus() {
+  loadingPasswordStatus.value = true
+  const result = await systemService.getPasswordStatus()
+  loadingPasswordStatus.value = false
+  if (!result.ok) {
+    passwordStatus.value = null
+    ElMessage.error(result.error.message || '密码管理状态加载失败')
+    return
+  }
+  passwordStatus.value = result.data
 }
 
 async function loadSystemInfo() {
@@ -400,6 +423,7 @@ onMounted(() => {
   loadNotifications()
   loadSystemInfo()
   loadSystemSettings()
+  loadPasswordStatus()
 })
 
 </script>
@@ -433,7 +457,7 @@ onMounted(() => {
 
     <div class="settings-workspace">
       <!-- Security Card -->
-      <section class="settings-security-card p-5 sm:p-6 relative overflow-hidden group">
+      <section id="password-settings" class="settings-security-card p-5 sm:p-6 relative overflow-hidden group">
          
          <div class="flex items-center gap-3 mb-6 relative z-10">
             <div class="section-icon section-icon-primary">
@@ -446,21 +470,33 @@ onMounted(() => {
          </div>
 
          <div class="space-y-4 relative z-10">
+             <div v-if="loadingPasswordStatus" class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-gray-50/80 dark:bg-white/[0.03] px-4 py-3 text-sm text-gray-500">
+               正在读取凭证管理状态…
+             </div>
+             <div v-else-if="!passwordStatus" class="rounded-xl border border-red-300/60 bg-red-50/80 dark:border-red-500/30 dark:bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+               无法确认密码来源，修改功能已暂时禁用。
+             </div>
+             <div v-else-if="passwordManagedByEnvironment" class="rounded-xl border border-amber-300/60 bg-amber-50/80 dark:border-amber-500/30 dark:bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-800 dark:text-amber-200">
+               当前密码由环境变量 <code>{{ passwordStatus.environment_variable || 'PROXY_WEB_PASSWORD' }}</code> 管理。请在部署环境中修改后重启 HiDeck；控制台不会覆盖它。
+             </div>
+             <div v-else class="rounded-xl border border-emerald-300/60 bg-emerald-50/70 dark:border-emerald-500/25 dark:bg-emerald-500/[0.08] px-4 py-3 text-sm leading-6 text-emerald-800 dark:text-emerald-200">
+               {{ passwordStatus.change_required ? '当前密码为初始明文凭证或强度不足，请尽快修改。' : '密码由配置文件管理，更新后会以 bcrypt 哈希安全写入。' }}
+             </div>
              <div class="space-y-1">
                 <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">当前密码</label>
-                <el-input v-model="passwordForm.old_password" type="password" show-password placeholder="••••••••" size="large" />
+                <el-input v-model="passwordForm.old_password" :disabled="!passwordStatus || passwordManagedByEnvironment" type="password" show-password placeholder="••••••••" size="large" />
              </div>
              <div class="space-y-1">
                 <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">新密码</label>
-                <el-input v-model="passwordForm.new_password" type="password" show-password placeholder="••••••••" size="large" />
+                <el-input v-model="passwordForm.new_password" :disabled="!passwordStatus || passwordManagedByEnvironment" type="password" show-password placeholder="至少 8 位，建议 12 位以上" size="large" />
              </div>
              <div class="space-y-1">
                 <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">确认新密码</label>
-                <el-input v-model="passwordForm.confirm_password" type="password" show-password placeholder="••••••••" size="large" />
+                <el-input v-model="passwordForm.confirm_password" :disabled="!passwordStatus || passwordManagedByEnvironment" type="password" show-password placeholder="再次输入新密码" size="large" />
              </div>
              
              <div class="pt-4">
-                 <el-button type="primary" :loading="changingPassword" @click="changePassword" size="large" class="w-full !border-0">
+                 <el-button type="primary" :loading="changingPassword" :disabled="!passwordStatus || passwordManagedByEnvironment" @click="changePassword" size="large" class="w-full !border-0">
                    <el-icon><Save24Regular /></el-icon>
                    更新凭证
                  </el-button>

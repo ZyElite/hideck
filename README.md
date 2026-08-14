@@ -11,7 +11,7 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 - 默认账号：`admin` / `admin`
 - 数据库：SQLite，默认路径 `data/hideck.db`
 
-> 首次登录后请立即修改默认密码。HiDeck 会把免责声明同意状态写入数据库；只要持久化 `data/` 目录，同一实例换浏览器后不会重复提示。
+> 首次使用默认、明文或弱密码登录后，HiDeck 会提醒立即修改。通过网页修改的密码会以 bcrypt 哈希写回 `config.yaml`。HiDeck 会把免责声明同意状态写入数据库；只要持久化 `data/` 目录，同一实例换浏览器后不会重复提示。
 
 ## 核心能力
 
@@ -79,6 +79,8 @@ docker compose logs -f hideck
 | `vowifi.enabled` | `false` | 全局 VoWiFi 开关 |
 
 不要把 SIM PIN、Bot Token、API Key 或其他凭据直接提交到配置仓库。SIM PIN 配置只保存环境变量名，例如 `HIDECK_SIM_PIN_READER1`。
+
+可以使用 `PROXY_WEB_PASSWORD` 注入 Web 密码。环境变量优先于 `config.yaml`，因此控制台不会尝试覆盖它：若注入的是弱密码，服务仍会启动，但启动日志和登录页都会明确警告；请在 Docker Compose、systemd 或启动脚本中修改该变量并重启服务。自定义强密码不会重复提示。
 
 ### Telegram、微信、企业微信与 QQ 通知
 

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useRoute, useRouter } from 'vue-router'
 import { Person24Regular, LockClosed24Regular, ArrowRight24Regular } from '@vicons/fluent'
+import type { PasswordCredentialStatus } from '../types/credentials'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -18,14 +19,46 @@ async function handleLogin() {
   }
 
   loading.value = true
-  const success = await auth.login(form.value.username, form.value.password)
+  const result = await auth.login(form.value.username, form.value.password)
   loading.value = false
-  if (!success) {
+  if (!result.ok) {
     ElMessage.error('登录失败，请检查凭证')
     return
   }
 
   ElMessage.success('欢迎回来')
+  if (await shouldOpenPasswordSettings(result.credential)) {
+    await router.push('/settings?focus=password')
+    return
+  }
+  await redirectAfterLogin()
+}
+
+async function shouldOpenPasswordSettings(status: PasswordCredentialStatus): Promise<boolean> {
+  if (!status.change_required) return false
+  const { ElMessageBox } = await import('element-plus')
+  if (status.management === 'environment') {
+    const variable = status.environment_variable || 'PROXY_WEB_PASSWORD'
+    await ElMessageBox.alert(
+      `当前登录密码强度不足，并由环境变量 ${variable} 管理。控制台不会覆盖环境变量，请在部署环境中修改后重启 HiDeck。`,
+      '请更换弱密码',
+      { confirmButtonText: '我知道了', showClose: false, closeOnClickModal: false, closeOnPressEscape: false, type: 'warning' }
+    )
+    return false
+  }
+  try {
+    await ElMessageBox.confirm(
+      '当前密码仍是初始明文凭证或强度不足。建议立即修改；新密码会以 bcrypt 哈希写入 config.yaml。',
+      '请修改登录密码',
+      { confirmButtonText: '立即修改', cancelButtonText: '稍后处理', closeOnClickModal: false, type: 'warning' }
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function redirectAfterLogin() {
   const queryRedirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
   let redirect = queryRedirect ? decodeURIComponent(queryRedirect) : ''
   if (!redirect) {

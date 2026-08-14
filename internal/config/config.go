@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -22,6 +23,15 @@ const (
     "content": {{message}}
   }
 }`
+	WebPasswordEnvironmentVariable = "PROXY_WEB_PASSWORD"
+)
+
+type WebPasswordSource string
+
+const (
+	WebPasswordSourceDefault     WebPasswordSource = "default"
+	WebPasswordSourceConfigFile  WebPasswordSource = "config_file"
+	WebPasswordSourceEnvironment WebPasswordSource = "environment"
 )
 
 func NormalizeESIMTransport(in string) string {
@@ -126,8 +136,9 @@ type ProxyInstance struct {
 }
 
 type WebConfig struct {
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
+	Username       string            `mapstructure:"username"`
+	Password       string            `mapstructure:"password"`
+	PasswordSource WebPasswordSource `mapstructure:"-"`
 }
 
 type ServerConfig struct {
@@ -349,6 +360,7 @@ func Load(path string) (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
+	cfg.Web.PasswordSource = resolveWebPasswordSource()
 
 	// 兼容旧版单值配置: feishu.chat_id
 	if len(cfg.Feishu.ChatIDs) == 0 && strings.TrimSpace(cfg.Feishu.ChatID) != "" {
@@ -363,4 +375,14 @@ func Load(path string) (*Config, error) {
 		cfg.Server.HTTPSPort = ":" + cfg.Server.HTTPSPort
 	}
 	return &cfg, nil
+}
+
+func resolveWebPasswordSource() WebPasswordSource {
+	if value, exists := os.LookupEnv(WebPasswordEnvironmentVariable); exists && value != "" {
+		return WebPasswordSourceEnvironment
+	}
+	if viper.InConfig("web.password") {
+		return WebPasswordSourceConfigFile
+	}
+	return WebPasswordSourceDefault
 }

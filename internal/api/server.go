@@ -107,8 +107,11 @@ type Server struct {
 	httpSrv   *http.Server
 	httpsSrv  *http.Server
 
-	loginMu       sync.Mutex
-	loginAttempts map[string]loginAttempt
+	loginMu                sync.Mutex
+	loginAttempts          map[string]loginAttempt
+	authMu                 sync.RWMutex
+	authChangeMu           sync.Mutex
+	passwordChangeRequired bool
 
 	smsLimiterMu sync.Mutex
 	smsLimiter   *smsRateLimiter
@@ -157,6 +160,9 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 	s.backendSwitch = newDeviceBackendSwitchService(pool, configPath)
 	s.initializeCommandCenter()
 	s.initializeAutomaticTasks()
+	if cfg.Web.PasswordSource == config.WebPasswordSourceEnvironment && s.passwordStatus("").ChangeRequired {
+		logger.Warn("Web 登录密码由环境变量注入且强度不足，请修改后重启服务", "environment_variable", config.WebPasswordEnvironmentVariable)
+	}
 
 	return s
 }
@@ -217,8 +223,7 @@ func (s *Server) smsRateLimiter() *smsRateLimiter {
 // checkPassword 验证密码，支持 bcrypt 哈希和明文（向后兼容）
 // stored 是存储的密码（可能是哈希或明文），input 是用户输入的明文密码
 func checkPassword(stored, input string) bool {
-	// 如果存储的密码以 $2a$ 或 $2b$ 开头，说明是 bcrypt 哈希
-	if strings.HasPrefix(stored, "$2a$") || strings.HasPrefix(stored, "$2b$") {
+	if isBcryptPassword(stored) {
 		err := bcrypt.CompareHashAndPassword([]byte(stored), []byte(input))
 		return err == nil
 	}
@@ -230,7 +235,7 @@ func (s *Server) issueSessionToken() (string, time.Time, error) {
 	exp := time.Now().Add(30 * 24 * time.Hour) // 有效期 30 天
 	expStr := strconv.FormatInt(exp.Unix(), 10)
 
-	h := hmac.New(sha256.New, []byte(s.auth.Password))
+	h := hmac.New(sha256.New, []byte(s.authSnapshot().Password))
 	h.Write([]byte(expStr))
 	sig := hex.EncodeToString(h.Sum(nil))
 
@@ -354,6 +359,7 @@ func (s *Server) newRouter() *gin.Engine {
 		api.PUT("/settings/system", s.handleUpdateSystemSettings)
 		api.GET("/settings/disclaimer", s.handleGetDisclaimerStatus)
 		api.PUT("/settings/disclaimer", s.handleAcceptDisclaimer)
+		api.GET("/settings/password", s.handleGetPasswordStatus)
 		api.POST("/settings/notifications/webhook/test", s.handleTestWebhookNotification)
 		api.POST("/settings/notifications/bark/test", s.handleTestBarkNotification)
 		api.POST("/settings/notifications/email/test", s.handleTestEmailNotification)
@@ -1611,8 +1617,8 @@ func (s *Server) handleLogin(c *gin.Context) {
 		return
 	}
 
-	if req.Username == s.auth.Username && checkPassword(s.auth.Password, req.Password) {
-		token, exp, err := s.issueSessionToken()
+	session, authenticated, err := s.createLoginSession(req.Username, req.Password)
+	if authenticated {
 		if err != nil {
 			logger.Error("生成登录 token 失败", "err", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -1627,8 +1633,9 @@ func (s *Server) handleLogin(c *gin.Context) {
 
 		c.JSON(http.StatusOK, gin.H{
 			"status":     "ok",
-			"token":      token,
-			"expires_at": exp.Format(time.RFC3339),
+			"token":      session.Token,
+			"expires_at": session.ExpiresAt.Format(time.RFC3339),
+			"credential": session.Credential,
 		})
 	} else {
 		logger.Warn("登录失败", "ip", clientIP, "username", req.Username)
@@ -1653,8 +1660,20 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 		return
 	}
 
+	s.authChangeMu.Lock()
+	defer s.authChangeMu.Unlock()
+	credentials := s.authSnapshot()
+	if credentials.PasswordSource == config.WebPasswordSourceEnvironment {
+		c.JSON(http.StatusConflict, gin.H{
+			"status":  "error",
+			"code":    "password_managed_by_environment",
+			"message": "当前密码由环境变量 " + config.WebPasswordEnvironmentVariable + " 管理，请修改部署环境并重启服务",
+		})
+		return
+	}
+
 	// 校验当前密码
-	if !checkPassword(s.auth.Password, req.OldPassword) {
+	if !checkPassword(credentials.Password, req.OldPassword) {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status":  "error",
 			"code":    "invalid_password",
@@ -1682,6 +1701,14 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 		})
 		return
 	}
+	if isWeakPassword(req.NewPassword, credentials.Username) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"code":    "weak_password",
+			"message": "新密码强度不足：至少 8 位；少于 12 位时需包含至少两类字符，且不能使用常见密码或与用户名相同",
+		})
+		return
+	}
 
 	// 生成 bcrypt 哈希
 	hashed, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
@@ -1696,7 +1723,7 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 	hashedPassword := string(hashed)
 
 	// 持久化到配置文件
-	if err := config.UpdateWebCredentialsInFile(s.configPath, s.auth.Username, hashedPassword); err != nil {
+	if err := config.UpdateWebCredentialsInFile(s.configPath, credentials.Username, hashedPassword); err != nil {
 		logger.Error("更新密码配置失败", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -1706,12 +1733,21 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 	}
 
 	// 更新内存中的密码（已哈希）
-	s.auth.Password = hashedPassword
+	s.setAuthPassword(hashedPassword)
+	token, exp, err := s.issueSessionToken()
+	if err != nil {
+		logger.Error("签发新登录 token 失败", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "密码已保存，但新会话签发失败，请重新登录"})
+		return
+	}
 
-	logger.Info("密码已更新", "username", s.auth.Username, "ip", c.ClientIP())
+	logger.Info("密码已更新", "username", credentials.Username, "ip", c.ClientIP())
 	c.JSON(http.StatusOK, gin.H{
-		"status":  "ok",
-		"message": "密码已更新",
+		"status":     "ok",
+		"message":    "密码已更新",
+		"token":      token,
+		"expires_at": exp.Format(time.RFC3339),
+		"credential": s.passwordStatus(req.NewPassword),
 	})
 }
 
@@ -1757,7 +1793,8 @@ func (s *Server) authorizeRotate(c *gin.Context, username string, password strin
 		return false
 	}
 
-	if username == s.auth.Username && checkPassword(s.auth.Password, password) {
+	credentials := s.authSnapshot()
+	if username == credentials.Username && checkPassword(credentials.Password, password) {
 		return true
 	}
 
@@ -1789,7 +1826,7 @@ func (s *Server) isSessionTokenValid(token string, now time.Time) bool {
 		return false
 	}
 
-	h := hmac.New(sha256.New, []byte(s.auth.Password))
+	h := hmac.New(sha256.New, []byte(s.authSnapshot().Password))
 	h.Write([]byte(expStr))
 	expectedSig := hex.EncodeToString(h.Sum(nil))
 

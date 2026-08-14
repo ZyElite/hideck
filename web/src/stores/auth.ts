@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import axios, { type AxiosInstance } from 'axios'
 import { debugCollector } from '../debug/collector'
+import type { PasswordCredentialStatus } from '../types/credentials'
 
 export const api: AxiosInstance = axios.create({
   baseURL: '/api'
@@ -20,6 +21,22 @@ type AuthState = {
   user: unknown | null
 }
 
+type LoginResult =
+  | { ok: true; credential: PasswordCredentialStatus }
+  | { ok: false }
+
+type LoginResponse = {
+  token?: string
+  credential?: PasswordCredentialStatus
+}
+
+function isCredentialStatus(value: unknown): value is PasswordCredentialStatus {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<PasswordCredentialStatus>
+  return typeof candidate.change_required === 'boolean' &&
+    (candidate.management === 'config_file' || candidate.management === 'environment')
+}
+
 export const useAuthStore = defineStore('auth', {
   state: (): AuthState => ({
     token: localStorage.getItem('token') || '',
@@ -29,17 +46,23 @@ export const useAuthStore = defineStore('auth', {
     isAuthenticated: (state: AuthState) => !!state.token
   },
   actions: {
-    async login(username: string, password: string) {
+    applyToken(token: string) {
+      this.token = token
+      localStorage.setItem('token', token)
+      api.defaults.headers.common.Authorization = `Bearer ${token}`
+    },
+    async login(username: string, password: string): Promise<LoginResult> {
       try {
-        const res = await api.post<{ token?: string }>('/auth/login', { username, password })
+        const res = await api.post<LoginResponse>('/auth/login', { username, password })
         const token = String(res.data?.token || '')
-        this.token = token
-        localStorage.setItem('token', token)
-        api.defaults.headers.common.Authorization = `Bearer ${token}`
-        return true
+        if (!token || !isCredentialStatus(res.data?.credential)) {
+          throw new Error('登录响应缺少会话或凭证管理状态')
+        }
+        this.applyToken(token)
+        return { ok: true, credential: res.data.credential }
       } catch (e) {
         console.error(e)
-        return false
+        return { ok: false }
       }
     },
     logout() {

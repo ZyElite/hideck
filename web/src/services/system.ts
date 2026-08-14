@@ -1,6 +1,7 @@
 import { api } from '../stores/auth'
 import { callService } from './http'
 import type { DeviceTimeInfo } from '../utils/deviceTime'
+import type { PasswordChangeResponse, PasswordCredentialStatus } from '../types/credentials'
 
 export type DocsLinks = {
   swagger_ui: string
@@ -285,10 +286,16 @@ export const systemService = {
       return true
     })
   },
+  getPasswordStatus() {
+    return callService(async () => {
+      const res = await api.get<PasswordCredentialStatus>('/settings/password')
+      return res.data
+    })
+  },
   changePassword(payload: { old_password: string; new_password: string; confirm_password: string }) {
     return callService(async () => {
-      await api.post('/settings/password', payload)
-      return true
+      const res = await api.post<PasswordChangeResponse>('/settings/password', payload)
+      return res.data
     })
   },
   getNotifications() {

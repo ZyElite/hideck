@@ -835,6 +835,18 @@ paths:
           $ref: '#/components/responses/ErrorMessage'
 
   /settings/password:
+    get:
+      tags: [settings]
+      summary: 获取登录密码管理状态
+      responses:
+        '200':
+          description: 密码来源与是否需要修改
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordCredentialStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     post:
       tags: [settings]
       summary: 修改登录密码
@@ -850,11 +862,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StatusResponse'
+                $ref: '#/components/schemas/ChangePasswordResponse'
         '400':
           $ref: '#/components/responses/ErrorMessage'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/ErrorMessage'
         '500':
           $ref: '#/components/responses/ErrorMessage'
 
@@ -3752,6 +3766,7 @@ components:
 
     LoginResponse:
       type: object
+      required: [status, token, expires_at, credential]
       properties:
         status:
           type: string
@@ -3761,6 +3776,8 @@ components:
         expires_at:
           type: string
           format: date-time
+        credential:
+          $ref: '#/components/schemas/PasswordCredentialStatus'
 
     RotateRequest:
       type: object
@@ -4596,6 +4613,38 @@ components:
           type: string
         confirm_password:
           type: string
+
+    PasswordCredentialStatus:
+      type: object
+      required: [change_required, management]
+      properties:
+        change_required:
+          type: boolean
+          description: 当前登录密码是否为初始明文凭证或弱密码
+        management:
+          type: string
+          enum: [config_file, environment]
+        environment_variable:
+          type: string
+          description: management=environment 时负责提供密码的环境变量名
+
+    ChangePasswordResponse:
+      type: object
+      required: [status, message, token, expires_at, credential]
+      properties:
+        status:
+          type: string
+          example: ok
+        message:
+          type: string
+        token:
+          type: string
+          description: 密码更新后签发的新会话 token，旧 token 立即失效
+        expires_at:
+          type: string
+          format: date-time
+        credential:
+          $ref: '#/components/schemas/PasswordCredentialStatus'
 
     DeviceConfigDTO:
       type: object
