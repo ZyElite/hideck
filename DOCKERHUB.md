@@ -21,7 +21,26 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | sh
 curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | HIDECK_DIR=/opt/hideck sh
 ```
 
-脚本会下载 `docker-compose.yml` 和配置模板，创建持久化目录并拉取 `latest`；不会覆盖已有的部署文件和 `config/config.yaml`。
+使用域名自动申请 HTTPS 证书，默认让 HTTPS 和 WebRTC 共用 `443` 端口：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
+  HIDECK_DOMAIN=hideck.example.com \
+  HIDECK_DIR=/opt/hideck sh
+```
+
+无法开放标准端口时，使用自定义端口和 Cloudflare DNS-01：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
+  HIDECK_DOMAIN=hideck.example.com HIDECK_HTTPS_PORT=8443 \
+  HIDECK_DNS_PROVIDER=cloudflare CLOUDFLARE_API_TOKEN=your_token \
+  HIDECK_DIR=/opt/hideck sh
+```
+
+部署完成后通过 `https://hideck.example.com:8443` 访问。
+
+脚本会下载 Compose、Caddy 和配置模板，创建持久化目录并拉取 `latest`；不会覆盖已有的部署文件和 `config/config.yaml`。启用 Caddy 时会生成权限为 `0600` 的 `caddy.env` 与 `hideck-caddy.env`，后续直接运行同一目录的 `deploy.sh` 仍会更新 Caddy。公网需要同时放行 `HIDECK_HTTPS_PORT` 的 TCP 和 UDP；普通证书验证还需要 `80/TCP` 或 `443/TCP`，DNS-01 不需要标准端口。
 
 ## 手工部署
 
@@ -37,6 +56,9 @@ server:
   port: 7575
   debug: false
   https_enabled: false
+  webrtc_udp_address: ":7580"
+  # NAT 后可复用 HTTPS 域名；同时将公网 7580/UDP 映射到本机同端口。
+  webrtc_public_host: "hideck.example.com"
 
 web:
   username: admin
@@ -85,6 +107,36 @@ docker compose up -d
 ```
 
 Web 入口：`http://YOUR_IP:7575`
+
+使用仓库提供的 Caddy Compose 文件时：
+
+```dotenv
+HIDECK_DOMAIN=hideck.example.com
+HIDECK_HTTPS_PORT=443
+```
+
+将以上内容保存为同目录的 `caddy.env`，并创建 `hideck-caddy.env`：
+
+```dotenv
+PROXY_SERVER_WEBRTC_PUBLIC_HOST=hideck.example.com
+PROXY_SERVER_WEBRTC_UDP_ADDRESS=:443
+```
+
+然后运行：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+```
+
+Web 入口为 `https://hideck.example.com`。Caddy 处理页面、API 和 WebRTC 信令；同端口 UDP 的 WebRTC 音频直接进入 HiDeck。
+
+DNS-01 使用预构建的 `yibaiba/hideck-caddy-dns:2.11.4`，同时支持 `cloudflare`、`alidns`、`tencentcloud` 和 `route53`。分别使用 `CLOUDFLARE_API_TOKEN`，阿里云 AccessKey，腾讯云 SecretId/SecretKey，或 AWS 标准凭证环境变量。
+
+维护该镜像时，进入仓库的 `caddy-dns-image/` 目录执行：
+
+```bash
+CADDY_VERSION=2.11.4 docker compose build --push
+```
 
 默认账号：`admin` / `admin`
 

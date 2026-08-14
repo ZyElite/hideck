@@ -5,6 +5,8 @@ server:
   https_enabled: false
   https_port: 7576
   webrtc_udp_address: ":7580"
+  # 服务器位于 NAT 后时填写直连本机的域名或公网 IP，并映射公网 7580/UDP。
+  webrtc_public_host: ""
   tls_data_dir: data/tls
   # tls_cert_file 与 tls_key_file 同时设置时覆盖自动本地 CA 证书。
   tls_cert_file: ""

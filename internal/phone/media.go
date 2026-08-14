@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/pion/ice/v4"
@@ -20,6 +21,7 @@ const (
 
 type MediaOptions struct {
 	UDPAddress       string
+	PublicHost       string
 	ICEServers       []webrtc.ICEServer
 	RealtimeCodecs   []string
 	NewRealtimeCodec RealtimeCodecFactory
@@ -63,7 +65,7 @@ func NewMediaManager(options MediaOptions) (*MediaManager, error) {
 		return nil, fmt.Errorf("phone: listen WebRTC UDP mux on %s: %w", address, err)
 	}
 	mux := webrtc.NewICEUDPMux(nil, connection)
-	api, err := newWebRTCAPI(mux)
+	api, err := newWebRTCAPI(mux, options.PublicHost)
 	if err != nil {
 		_ = mux.Close()
 		return nil, err
@@ -76,7 +78,7 @@ func NewMediaManager(options MediaOptions) (*MediaManager, error) {
 	}, nil
 }
 
-func newWebRTCAPI(mux ice.UDPMux) (*webrtc.API, error) {
+func newWebRTCAPI(mux ice.UDPMux, publicHost string) (*webrtc.API, error) {
 	mediaEngine := &webrtc.MediaEngine{}
 	err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
 		RTPCodecCapability: webrtc.RTPCodecCapability{
@@ -89,7 +91,58 @@ func newWebRTCAPI(mux ice.UDPMux) (*webrtc.API, error) {
 	}
 	settings := webrtc.SettingEngine{}
 	settings.SetICEUDPMux(mux)
+	if err := setWebRTCPublicHost(&settings, publicHost, net.DefaultResolver.LookupIPAddr); err != nil {
+		return nil, err
+	}
 	return webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithSettingEngine(settings)), nil
+}
+
+type publicIPLookup func(context.Context, string) ([]net.IPAddr, error)
+
+func setWebRTCPublicHost(settings *webrtc.SettingEngine, value string, lookup publicIPLookup) error {
+	publicHost := strings.TrimSpace(value)
+	if publicHost == "" {
+		return nil
+	}
+	publicIPs, err := resolveWebRTCPublicIPs(publicHost, lookup)
+	if err != nil {
+		return err
+	}
+	if err := settings.SetICEAddressRewriteRules(webrtc.ICEAddressRewriteRule{
+		External:        publicIPs,
+		AsCandidateType: webrtc.ICECandidateTypeSrflx,
+		Mode:            webrtc.ICEAddressRewriteAppend,
+	}); err != nil {
+		return fmt.Errorf("phone: configure WebRTC public host: %w", err)
+	}
+	return nil
+}
+
+func resolveWebRTCPublicIPs(host string, lookup publicIPLookup) ([]string, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		return []string{ip.String()}, nil
+	}
+	addresses, err := lookup(context.Background(), host)
+	if err != nil {
+		return nil, fmt.Errorf("phone: resolve WebRTC public host %q: %w", host, err)
+	}
+	unique := make(map[string]struct{}, len(addresses))
+	result := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		if address.IP == nil {
+			continue
+		}
+		ip := address.IP.String()
+		if _, exists := unique[ip]; exists {
+			continue
+		}
+		unique[ip] = struct{}{}
+		result = append(result, ip)
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("phone: WebRTC public host %q resolved without IP addresses", host)
+	}
+	return result, nil
 }
 
 func (m *MediaManager) Create(ctx context.Context, owner, offer string) (MediaAnswer, error) {

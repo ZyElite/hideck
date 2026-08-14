@@ -1,0 +1,6 @@
+services:
+  caddy:
+    image: yibaiba/hideck-caddy-dns:2.11.4
+    volumes:
+      - ./Caddyfile.dns:/etc/caddy/Caddyfile:ro
+      - ./caddy-dns:/etc/caddy/dns:ro

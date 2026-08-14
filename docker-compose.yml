@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
+    # host 网络让 HiDeck 直接监听配置的 UDP 端口，WebRTC 媒体不经过 Caddy。
     network_mode: host
     privileged: true
     volumes:

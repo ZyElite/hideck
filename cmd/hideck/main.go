@@ -210,7 +210,8 @@ func main() {
 	phoneService, err := phone.NewService(phone.ServiceOptions{
 		Gateway: voiceGW, Store: db.NewVoiceCallStore(db.DB), Transcoder: audioTranscoder,
 		Notifier: callResultNotifier, RecordingDir: voiceRecordingDirectory,
-		WebRTCUDPAddress: cfg.Server.WebRTCUDPAddress, ICEServers: cfg.Server.ICEServers,
+		WebRTCUDPAddress: cfg.Server.WebRTCUDPAddress, WebRTCPublicHost: cfg.Server.WebRTCPublicHost,
+		ICEServers:     cfg.Server.ICEServers,
 		RealtimeCodecs: availableRealtimeCodecs(audioTranscoder),
 		NewRealtimeCodec: func(codec, fmtp string) (phone.RealtimeCodec, error) {
 			return audioTranscoder.NewRealtimeCodec(codec, fmtp)

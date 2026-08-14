@@ -1,0 +1,10 @@
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
+https://{$HIDECK_DOMAIN}:{$HIDECK_HTTPS_PORT} {
+	import /etc/caddy/dns/{$HIDECK_DNS_PROVIDER}.caddy
+	reverse_proxy 127.0.0.1:7575
+}

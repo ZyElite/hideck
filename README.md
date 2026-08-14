@@ -43,6 +43,29 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | sh
 curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | HIDECK_DIR=/opt/hideck sh
 ```
 
+使用公网域名，默认让 HTTPS 和 WebRTC 共用 `443` 端口：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
+  HIDECK_DOMAIN=hideck.example.com \
+  HIDECK_DIR=/opt/hideck sh
+```
+
+`HIDECK_DOMAIN` 启用 `docker-compose.caddy.yml`。Caddy 使用 `443/TCP`，WebRTC 使用 `443/UDP`；Caddy 会关闭 HTTP/3，避免占用同一个 UDP 端口。部署脚本会把域名保存到权限为 `0600` 的 `caddy.env`，并让 WebRTC 从同一域名解析公网 ICE 地址；后续直接运行 `deploy.sh` 仍会更新两个容器。
+
+公网不能使用 `80/443` 时，可以改用自定义端口和 DNS-01。以下示例使用 Cloudflare，在 `8443/TCP` 提供 HTTPS，并在 `8443/UDP` 提供 WebRTC：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
+  HIDECK_DOMAIN=hideck.example.com \
+  HIDECK_HTTPS_PORT=8443 \
+  HIDECK_DNS_PROVIDER=cloudflare \
+  CLOUDFLARE_API_TOKEN=your_token \
+  HIDECK_DIR=/opt/hideck sh
+```
+
+部署完成后通过 `https://hideck.example.com:8443` 访问。
+
 `deploy.sh` 会下载部署所需的 Compose 和配置模板，在首次运行时生成 `config/config.yaml`，创建持久化目录，拉取 `latest` 并启动容器。已有文件和配置不会被覆盖。在源码项目目录内也可以直接执行 `./deploy.sh`。
 
 浏览器打开：
@@ -74,12 +97,164 @@ docker compose logs -f hideck
 | `server.port` | `7575` | HTTP 管理端口 |
 | `server.https_enabled` | `false` | 是否启用内置 HTTPS；使用 Nginx/Caddy 等反向代理时保持关闭 |
 | `server.https_port` | `7576` | 内置 HTTPS 启用时的监听端口 |
+| `server.webrtc_udp_address` | `:7580` | WebRTC 音频使用的 UDP 监听地址，不经过 HTTP 反向代理 |
+| `server.webrtc_public_host` | 空 | NAT 后直连 HiDeck 的域名或公网 IP，用于发布公网 ICE 候选 |
+| `server.ice_servers` | `[]` | 跨 NAT 时由服务端 WebRTC 使用的 STUN/ICE URL 列表 |
 | `web.username` | `admin` | Web 登录账号 |
 | `web.password` | `admin` | Web 登录密码，登录后应立即修改 |
 | `system.openwrt_dynamic_interfaces` | `false` | 仅在 OpenWrt 上启用动态接口映射 |
 | `vowifi.enabled` | `false` | 全局 VoWiFi 开关 |
 
 新配置默认关闭内置 HTTPS。使用 Nginx、Caddy 等反向代理时，让代理监听 `443` 并转发到 `server.port` 即可。如需直接使用 HiDeck 的本地证书，将 `server.https_enabled` 改为 `true`，重启后通过 `https://YOUR_IP:7576` 访问。旧配置未包含该字段时会继续启用 HTTPS，以保持升级前的访问方式。
+
+### HTTPS 反向代理与 WebRTC 端口
+
+使用内置 HTTPS 时不需要反向代理：启用 `server.https_enabled`，通过 `7576/TCP` 访问页面，并确保浏览器能够直接访问 `7580/UDP`。
+
+使用 Nginx 或 Caddy 时，HiDeck 保持 HTTP 模式，由反向代理负责公网证书和 `443/TCP`。建议配置：
+
+```yaml
+server:
+  port: 7575
+  https_enabled: false
+  webrtc_udp_address: ":7580"
+  # NAT 后可复用 HTTPS 域名，并将公网 7580/UDP 映射到本机同端口。
+  webrtc_public_host: "hideck.example.com"
+  # 跨 NAT 时按实际环境配置 STUN 服务。
+  ice_servers:
+    - "stun:stun.example.com:3478"
+```
+
+Nginx 示例：
+
+```nginx
+server {
+    listen 80;
+    server_name hideck.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name hideck.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/hideck.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/hideck.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:7575;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 命令、电话和日志页面使用 SSE 长连接。
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+}
+```
+
+Caddy 示例。HTTPS 使用 TCP，WebRTC 使用相同端口的 UDP，因此需要关闭 Caddy 的 HTTP/3：
+
+```caddyfile
+{
+    servers {
+        protocols h1 h2
+    }
+}
+
+https://hideck.example.com:8443 {
+    reverse_proxy 127.0.0.1:7575
+}
+```
+
+仓库已经提供等价的 Compose 配置，推荐通过 `deploy.sh` 生成两个权限为 `0600` 的环境文件。手工部署时，`caddy.env` 内容为：
+
+```dotenv
+HIDECK_DOMAIN=hideck.example.com
+HIDECK_HTTPS_PORT=8443
+```
+
+`hideck-caddy.env` 内容为：
+
+```dotenv
+PROXY_SERVER_WEBRTC_PUBLIC_HOST=hideck.example.com
+PROXY_SERVER_WEBRTC_UDP_ADDRESS=:8443
+```
+
+然后启动两个 Compose 文件：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+```
+
+域名需要提前创建 `A` 或 `AAAA` 记录，并直接指向运行 HiDeck 的服务器，不能启用只代理 HTTP 的 CDN 模式。普通 HTTP/TLS 验证不需要 DNS API Token，但公网 `80/TCP` 或 `443/TCP` 必须满足 ACME 验证条件。DNS-01 不需要开放这两个标准端口，只需开放实际业务端口的 TCP 和 UDP。Caddy 的证书状态保存在 Compose 的 `caddy_data` 卷中。
+
+反向代理只处理页面、API、SSE 和 WebRTC 信令，不承载 WebRTC 音频。网络入口必须分别配置：
+
+| 入口 | 转发目标 | 用途 |
+| --- | --- | --- |
+| `80/TCP` | Caddy | 普通 HTTP-01 验证时使用；DNS-01 不需要 |
+| `HIDECK_HTTPS_PORT/TCP` | Caddy，再到 HiDeck `7575/TCP` | HTTPS 页面、API 与信令 |
+| `HIDECK_HTTPS_PORT/UDP` | 直接到 HiDeck 所在主机 | WebRTC 音频媒体 |
+
+跨公网或存在 NAT 时，必须把 `HIDECK_HTTPS_PORT` 的 TCP 和 UDP 都映射到 HiDeck 主机的同一端口。Caddy 部署会自动复用 `HIDECK_DOMAIN`，无需重复填写公网 IP。普通 Nginx/Caddy HTTP `reverse_proxy` 不能代替 UDP 映射。Nginx 的流式响应配置可参考其 [`proxy_buffering`](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_buffering) 文档；Caddy 的验证方式见官方 [Automatic HTTPS](https://caddyserver.com/docs/automatic-https)，协议开关见 [`protocols`](https://caddyserver.com/docs/caddyfile/options#protocols)。
+
+#### DNS-01 服务商
+
+设置 `HIDECK_DNS_PROVIDER` 后，部署脚本会拉取预构建的 `yibaiba/hideck-caddy-dns:2.11.4`。该镜像同时包含四个 DNS 模块，实际使用哪个模块由 `HIDECK_DNS_PROVIDER` 决定。凭证仅写入 `caddy.env` 并注入 Caddy 容器，不会进入镜像或 HiDeck 容器。
+
+| `HIDECK_DNS_PROVIDER` | 必需环境变量 |
+| --- | --- |
+| `cloudflare` | `CLOUDFLARE_API_TOKEN` |
+| `alidns` | `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET` |
+| `tencentcloud` | `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY` |
+| `route53` | `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`，可选 `AWS_REGION`；EC2 实例角色可不填密钥 |
+
+阿里云示例：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
+  HIDECK_DOMAIN=hideck.example.com HIDECK_HTTPS_PORT=8443 \
+  HIDECK_DNS_PROVIDER=alidns \
+  ALIYUN_ACCESS_KEY_ID=your_id ALIYUN_ACCESS_KEY_SECRET=your_secret \
+  HIDECK_DIR=/opt/hideck sh
+```
+
+腾讯云 DNSPod 示例：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
+  HIDECK_DOMAIN=hideck.example.com HIDECK_HTTPS_PORT=8443 \
+  HIDECK_DNS_PROVIDER=tencentcloud \
+  TENCENTCLOUD_SECRET_ID=your_id TENCENTCLOUD_SECRET_KEY=your_key \
+  HIDECK_DIR=/opt/hideck sh
+```
+
+AWS Route 53 示例：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | \
+  HIDECK_DOMAIN=hideck.example.com HIDECK_HTTPS_PORT=8443 \
+  HIDECK_DNS_PROVIDER=route53 \
+  AWS_ACCESS_KEY_ID=your_id AWS_SECRET_ACCESS_KEY=your_secret AWS_REGION=us-east-1 \
+  HIDECK_DIR=/opt/hideck sh
+```
+
+Cloudflare Token 需要目标 Zone 的 `Zone:Read` 和 `DNS:Edit`；其他服务商也应限制为目标域名的 DNS 查询和 TXT 记录修改权限。不要使用账号主密钥。
+
+维护预构建镜像时，构建文件集中在 `caddy-dns-image/`。在该目录执行：
+
+```bash
+cd caddy-dns-image
+CADDY_VERSION=2.11.4 docker compose build --push
+```
+
+该命令会构建并推送 `linux/amd64`、`linux/arm64`，同时生成 `2.11.4` 和 `latest` 标签。需要保留其他默认标签名时，可通过 `CADDY_LATEST_TAG` 修改第二个标签。
 
 不要把 SIM PIN、Bot Token、API Key 或其他凭据直接提交到配置仓库。SIM PIN 配置只保存环境变量名，例如 `HIDECK_SIM_PIN_READER1`。
 

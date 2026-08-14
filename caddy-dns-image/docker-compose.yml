@@ -1,0 +1,18 @@
+name: hideck-caddy-dns-build
+
+services:
+  caddy:
+    image: yibaiba/hideck-caddy-dns:${CADDY_VERSION:-2.11.4}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      pull: true
+      platforms:
+        - linux/amd64
+        - linux/arm64
+      args:
+        CADDY_VERSION: ${CADDY_VERSION:-2.11.4}
+      tags:
+        - yibaiba/hideck-caddy-dns:${CADDY_LATEST_TAG:-latest}
+      provenance: false
+      sbom: false

@@ -1,0 +1,9 @@
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
+https://{$HIDECK_DOMAIN}:{$HIDECK_HTTPS_PORT} {
+	reverse_proxy 127.0.0.1:7575
+}

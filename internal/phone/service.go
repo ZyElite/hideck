@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 	"github.com/pion/webrtc/v4"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 const defaultRecoveryGrace = 15 * time.Second
@@ -59,7 +59,8 @@ func NewService(options ServiceOptions) (*Service, error) {
 		service.recoveryGrace = defaultRecoveryGrace
 	}
 	media, err := NewMediaManager(MediaOptions{
-		UDPAddress: options.WebRTCUDPAddress, ICEServers: buildICEServers(options.ICEServers),
+		UDPAddress: options.WebRTCUDPAddress, PublicHost: options.WebRTCPublicHost,
+		ICEServers:     buildICEServers(options.ICEServers),
 		RealtimeCodecs: options.RealtimeCodecs, NewRealtimeCodec: options.NewRealtimeCodec,
 		OnState: service.handleMediaState,
 	})

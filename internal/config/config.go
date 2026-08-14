@@ -165,6 +165,7 @@ type ServerConfig struct {
 	HTTPSEnabled         bool     `mapstructure:"https_enabled"`
 	HTTPSPort            string   `mapstructure:"https_port"`
 	WebRTCUDPAddress     string   `mapstructure:"webrtc_udp_address"`
+	WebRTCPublicHost     string   `mapstructure:"webrtc_public_host"`
 	TLSCertFile          string   `mapstructure:"tls_cert_file"`
 	TLSKeyFile           string   `mapstructure:"tls_key_file"`
 	TLSDataDir           string   `mapstructure:"tls_data_dir"`
@@ -367,6 +368,7 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("server.https_enabled", true)
 	viper.SetDefault("server.https_port", 7576)
 	viper.SetDefault("server.webrtc_udp_address", ":7580")
+	viper.SetDefault("server.webrtc_public_host", "")
 	viper.SetDefault("server.tls_data_dir", "data/tls")
 	viper.SetDefault("vowifi.enabled", false)
 	viper.SetDefault("vowifi.mode", "vowifi")

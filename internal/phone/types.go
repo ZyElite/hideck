@@ -60,6 +60,7 @@ type ServiceOptions struct {
 	Notifier         ResultNotifier
 	RecordingDir     string
 	WebRTCUDPAddress string
+	WebRTCPublicHost string
 	ICEServers       []string
 	RealtimeCodecs   []string
 	NewRealtimeCodec RealtimeCodecFactory

@@ -40,6 +40,8 @@ Thumbs.db
 /config/config.yaml
 /config/*.yaml
 !config/config.example.yaml
+/caddy.env
+/hideck-caddy.env
 
 # 测试覆盖率
 coverage.out
