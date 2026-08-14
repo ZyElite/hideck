@@ -219,6 +219,7 @@ func (t *TelegramChannel) handleMessage(message *tgbotapi.Message) {
 	ctx := &tgCommandContext{channel: t, target: message.Chat.ID}
 	if err := t.bindPrivateTarget(message); err != nil {
 		ctx.Reply("Telegram 绑定失败\n原因    " + err.Error())
+		ctx.release()
 		return
 	}
 	command := message.Command()
@@ -230,11 +231,13 @@ func (t *TelegramChannel) handleMessage(message *tgbotapi.Message) {
 	handler, ok := t.handlers[command]
 	if !ok {
 		ctx.Reply(unknownCommandReply(command))
+		ctx.release()
 		return
 	}
 	if response := handler(ctx, args); response != "" {
 		ctx.Reply(response)
 	}
+	ctx.release()
 }
 
 // Start 启动 Telegram long-polling 命令监听（阻塞式）

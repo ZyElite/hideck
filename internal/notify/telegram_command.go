@@ -1,7 +1,13 @@
 package notify
 
 import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
+	"sync"
 
 	"github.com/yibaiba/hideck/pkg/logger"
 
@@ -9,19 +15,107 @@ import (
 )
 
 type tgCommandContext struct {
-	channel *TelegramChannel
-	target  int64
+	channel  *TelegramChannel
+	target   int64
+	stateMu  sync.Mutex
+	sendMu   sync.Mutex
+	released bool
+	pending  []telegramCommandReply
+}
+
+type telegramCommandReply struct {
+	text        string
+	attachments []CommandAttachment
 }
 
 func (c *tgCommandContext) Reply(text string) {
 	if c == nil || c.channel == nil {
 		return
 	}
+	c.enqueueOrSend(telegramCommandReply{text: text})
+}
+
+func (c *tgCommandContext) ReplyWithAttachments(text string, attachments []CommandAttachment) {
+	if c == nil || c.channel == nil {
+		return
+	}
+	c.enqueueOrSend(telegramCommandReply{
+		text: text, attachments: append([]CommandAttachment(nil), attachments...),
+	})
+}
+
+func (c *tgCommandContext) enqueueOrSend(reply telegramCommandReply) {
+	c.stateMu.Lock()
+	if !c.released {
+		c.pending = append(c.pending, reply)
+		c.stateMu.Unlock()
+		return
+	}
+	c.stateMu.Unlock()
+	go c.respondAndReport(reply)
+}
+
+func (c *tgCommandContext) release() {
+	c.stateMu.Lock()
+	if c.released {
+		c.stateMu.Unlock()
+		return
+	}
+	c.released = true
+	pending := append([]telegramCommandReply(nil), c.pending...)
+	c.pending = nil
+	c.stateMu.Unlock()
 	go func() {
-		if err := c.channel.sendTo(c.target, text); err != nil {
-			logger.Warn("回复 Telegram 命令失败", "err", err)
+		for _, reply := range pending {
+			c.respondAndReport(reply)
 		}
 	}()
+}
+
+func (c *tgCommandContext) respond(reply telegramCommandReply) error {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	for _, attachment := range reply.attachments {
+		if err := c.channel.sendAudio(c.target, attachment); err != nil {
+			return fmt.Errorf("上传或发送 Telegram 录音附件失败: %w", err)
+		}
+	}
+	if strings.TrimSpace(reply.text) == "" {
+		return nil
+	}
+	return c.channel.sendTo(c.target, reply.text)
+}
+
+func (c *tgCommandContext) respondAndReport(reply telegramCommandReply) {
+	if err := c.respond(reply); err != nil {
+		logger.Warn("回复 Telegram 命令录音失败", "err", err)
+		failure := "录音发送失败\n原因    " + err.Error()
+		if sendErr := c.channel.sendTo(c.target, failure); sendErr != nil {
+			logger.Warn("发送 Telegram 录音失败说明失败", "err", sendErr)
+		}
+	}
+}
+
+func (t *TelegramChannel) sendAudio(chatID int64, attachment CommandAttachment) error {
+	path := strings.TrimSpace(attachment.Path)
+	if path == "" {
+		return errors.New("录音路径为空")
+	}
+	if !strings.EqualFold(strings.TrimSpace(attachment.Codec), "MP3") ||
+		!strings.EqualFold(filepath.Ext(path), ".mp3") {
+		return errors.New("Telegram 音频附件必须是 MP3")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("读取录音文件失败: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("录音路径不是普通文件")
+	}
+	audio := tgbotapi.NewAudio(chatID, tgbotapi.FilePath(path))
+	audio.Title = firstNonEmpty(strings.TrimSpace(attachment.Recording), filepath.Base(path))
+	_, err = t.api.Send(audio)
+	return t.redactAPIError(err)
 }
 
 var telegramCommandDescriptions = map[string]string{
