@@ -7,15 +7,18 @@ import ErrorState from './components/ErrorState.vue'
 import { ElMessage } from 'element-plus'
 import { systemService } from './services/system'
 import { configureDeviceTime, resetDeviceTime } from './utils/deviceTime'
+import {
+  canRenderShell as resolveCanRenderShell,
+  canShowDisclaimer,
+  type StartupState
+} from './utils/startupGate'
 import { Warning24Regular } from '@vicons/fluent'
-
-type StartupState = 'idle' | 'loading' | 'ready' | 'error'
 
 const route = useRoute()
 const auth = useAuthStore()
 
 const isDark = ref(localStorage.getItem('theme') === 'dark')
-const showDisclaimer = ref(false)
+const disclaimerAccepted = ref(false)
 const confirmText = ref('')
 const expectedConfirmText = '我同意并确认'
 const acceptingDisclaimer = ref(false)
@@ -82,7 +85,7 @@ async function loadDisclaimerStatus() {
     return
   }
   confirmText.value = ''
-  showDisclaimer.value = !result.data.accepted
+  disclaimerAccepted.value = result.data.accepted
   disclaimerState.value = 'ready'
 }
 
@@ -98,7 +101,7 @@ async function acceptDisclaimer() {
     return
   }
   confirmText.value = ''
-  showDisclaimer.value = false
+  disclaimerAccepted.value = true
 }
 
 watch(() => auth.isAuthenticated, (isAuthenticated) => {
@@ -115,7 +118,7 @@ watch(() => auth.isAuthenticated, (isAuthenticated) => {
   deviceTimeError.value = ''
   disclaimerError.value = ''
   disclaimerActionError.value = ''
-  showDisclaimer.value = false
+  disclaimerAccepted.value = false
 }, { immediate: true })
 
 function rejectDisclaimer() {
@@ -135,9 +138,16 @@ const UnauthenticatedShell = defineAsyncComponent(() => import('./layouts/Unauth
 const shell = computed(() =>
   auth.isAuthenticated && route.name !== 'Login' ? AuthenticatedShell : UnauthenticatedShell
 )
-const canRenderShell = computed(() => !auth.isAuthenticated || (
-  deviceTimeState.value === 'ready' && disclaimerState.value === 'ready'
-))
+const startupGateState = computed(() => ({
+  isAuthenticated: auth.isAuthenticated,
+  deviceTimeState: deviceTimeState.value,
+  disclaimerState: disclaimerState.value
+}))
+const canRenderShell = computed(() => resolveCanRenderShell(startupGateState.value))
+const showDisclaimer = computed(() => canShowDisclaimer({
+  ...startupGateState.value,
+  accepted: disclaimerAccepted.value
+}))
 const startupLoading = computed(() => auth.isAuthenticated && (
   deviceTimeState.value === 'loading' || disclaimerState.value === 'loading'
 ))
