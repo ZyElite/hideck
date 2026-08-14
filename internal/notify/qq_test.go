@@ -174,17 +174,25 @@ func TestQQChannelStartAndCloseDelegateToApp(t *testing.T) {
 	}
 }
 
-func TestQQChannelSendNoRecipientsNoError(t *testing.T) {
+func TestQQChannelSendNoRecipientsReturnsExplicitError(t *testing.T) {
 	t.Parallel()
 
-	// 没有白名单时不报错（静默跳过）
 	channel := &QQChannel{
 		app:               &fakeQQApp{},
 		allowedRecipients: make(map[string]qqbot.Recipient),
 	}
 
-	if err := channel.Send("hello"); err != nil {
-		t.Fatalf("expected no error when no allowed recipients, got %v", err)
+	if err := channel.Send("hello"); !errors.Is(err, ErrNoQQRecipients) {
+		t.Fatalf("Send() error = %v", err)
+	}
+}
+
+func TestQQLogIDIsStableAndDoesNotExposeOpenID(t *testing.T) {
+	t.Parallel()
+	const openID = "private-openid-123"
+	first := qqLogID(openID)
+	if first == "" || first != qqLogID(openID) || strings.Contains(first, openID) {
+		t.Fatalf("qqLogID() = %q", first)
 	}
 }
 

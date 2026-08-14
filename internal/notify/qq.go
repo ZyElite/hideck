@@ -2,6 +2,9 @@ package notify
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"strings"
 	"sync"
 
@@ -9,6 +12,8 @@ import (
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/pkg/logger"
 )
+
+var ErrNoQQRecipients = errors.New("QQ 渠道没有已授权的通知目标")
 
 type qqApp interface {
 	Send(ctx context.Context, delivery qqbot.Delivery) (qqbot.Receipt, error)
@@ -85,8 +90,7 @@ func (q *QQChannel) Send(text string) error {
 
 	recipients := q.snapshotAllowed()
 	if len(recipients) == 0 {
-		logger.Debug("QQ 渠道无白名单 recipient，跳过推送")
-		return nil
+		return ErrNoQQRecipients
 	}
 
 	var lastErr error
@@ -98,7 +102,7 @@ func (q *QQChannel) Send(text string) error {
 		})
 		if err != nil {
 			lastErr = err
-			logger.Warn("发送 QQ 消息失败", "recipient", recipient.ID, "kind", recipient.Kind, "err", err)
+			logger.Warn("发送 QQ 消息失败", "recipient_hash", qqLogID(recipient.ID), "kind", recipient.Kind, "err", err)
 		}
 	}
 	return lastErr
@@ -150,16 +154,24 @@ func (q *QQChannel) Close() error {
 	return q.app.Close()
 }
 
-// logIncoming 记录所有收到的消息到日志（无论是否在白名单中）
-// 用户可以从日志中获取 OpenID，然后配置到设置中
+// logIncoming 只记录排障元数据，不把消息正文或完整 OpenID 写入日志。
 func (q *QQChannel) logIncoming(incoming qqbot.Incoming) {
 	logger.Info("QQ Bot 收到消息",
 		"kind", string(incoming.Kind),
-		"from_openid", incoming.From,
-		"to_openid", incoming.To.ID,
+		"from_openid_hash", qqLogID(incoming.From),
+		"to_openid_hash", qqLogID(incoming.To.ID),
 		"to_kind", string(incoming.To.Kind),
-		"text", incoming.Text,
+		"text_length", len(incoming.Text),
 	)
+}
+
+func qqLogID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:4])
 }
 
 // isAllowed 检查消息的目标 OpenID 是否在白名单中
@@ -200,7 +212,7 @@ func parseAllowedRecipients(groupIDs, directIDs string) map[string]qqbot.Recipie
 			Kind: qqbot.GroupRecipient,
 			ID:   id,
 		}
-		logger.Info("QQ Bot 添加群组白名单", "openid", id)
+		logger.Info("QQ Bot 添加群组白名单", "openid_hash", qqLogID(id))
 	}
 
 	// 解析私聊 ID
@@ -214,7 +226,7 @@ func parseAllowedRecipients(groupIDs, directIDs string) map[string]qqbot.Recipie
 			Kind: qqbot.DirectRecipient,
 			ID:   id,
 		}
-		logger.Info("QQ Bot 添加私聊白名单", "openid", id)
+		logger.Info("QQ Bot 添加私聊白名单", "openid_hash", qqLogID(id))
 	}
 
 	return result
