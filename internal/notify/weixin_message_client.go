@@ -76,6 +76,13 @@ type weixinPostRequest struct {
 	Target      any
 }
 
+type weixinSendItemRequest struct {
+	Credentials  WeixinQRCredentials
+	Target       string
+	Item         map[string]any
+	ContextToken string
+}
+
 func newWeixinMessageClient(client *http.Client) *weixinMessageClient {
 	return &weixinMessageClient{httpClient: newWeixinILinkClient(client).httpClient}
 }
@@ -101,6 +108,32 @@ func (c *weixinMessageClient) sendText(ctx context.Context, input weixinSendText
 		"from_user_id": "", "to_user_id": input.Target, "client_id": "hideck-weixin-" + clientID,
 		"message_type": weixinMessageBot, "message_state": weixinMessageFinished,
 		"item_list": []any{map[string]any{"type": weixinItemText, "text_item": map[string]string{"text": input.Text}}},
+	}
+	if strings.TrimSpace(input.ContextToken) != "" {
+		message["context_token"] = input.ContextToken
+	}
+	var response weixinAPIResponse
+	if err := c.post(ctx, weixinPostRequest{
+		Credentials: input.Credentials, Endpoint: "/ilink/bot/sendmessage",
+		Payload: map[string]any{"msg": message}, Target: &response,
+	}); err != nil {
+		return err
+	}
+	if response.Ret != 0 || response.ErrCode != 0 {
+		return fmt.Errorf("iLink sendmessage 失败: ret=%d errcode=%d errmsg=%s", response.Ret, response.ErrCode, response.ErrMsg)
+	}
+	return nil
+}
+
+func (c *weixinMessageClient) sendItem(ctx context.Context, input weixinSendItemRequest) error {
+	clientID, err := randomHex(16)
+	if err != nil {
+		return err
+	}
+	message := map[string]any{
+		"from_user_id": "", "to_user_id": input.Target, "client_id": "hideck-weixin-" + clientID,
+		"message_type": weixinMessageBot, "message_state": weixinMessageFinished,
+		"item_list": []any{input.Item},
 	}
 	if strings.TrimSpace(input.ContextToken) != "" {
 		message["context_token"] = input.ContextToken

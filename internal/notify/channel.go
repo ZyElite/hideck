@@ -10,6 +10,9 @@ type CommandAttachment struct {
 	Type        string `json:"type"`
 	Recording   string `json:"recording"`
 	ContentType string `json:"content_type"`
+	Path        string `json:"-"`
+	Codec       string `json:"codec,omitempty"`
+	Size        int64  `json:"size,omitempty"`
 }
 
 type commandAttachmentContext interface {

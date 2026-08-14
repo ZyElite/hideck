@@ -234,6 +234,7 @@ type QQConfig struct {
 type WeixinConfig struct {
 	Enabled         bool     `mapstructure:"enabled"`
 	BaseURL         string   `mapstructure:"base_url"`
+	CDNBaseURL      string   `mapstructure:"cdn_base_url"`
 	AllowedUserIDs  []string `mapstructure:"allowed_user_ids"`
 	AllowedGroupIDs []string `mapstructure:"allowed_group_ids"`
 }
@@ -322,6 +323,7 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("wecom.payload_template", DefaultWeComPayloadTemplate)
 	viper.SetDefault("weixin.enabled", false)
 	viper.SetDefault("weixin.base_url", "https://ilinkai.weixin.qq.com")
+	viper.SetDefault("weixin.cdn_base_url", "https://novac2c.cdn.weixin.qq.com/c2c")
 	viper.SetDefault("wecom_bot.enabled", false)
 	viper.SetDefault("wecom_bot.websocket_url", "wss://openws.work.weixin.qq.com")
 	viper.SetDefault("web.username", "admin")

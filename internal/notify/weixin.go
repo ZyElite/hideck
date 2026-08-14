@@ -156,7 +156,7 @@ func (w *WeixinChannel) executeMessage(ctx context.Context, chatID, text string)
 	defer commandContext.release()
 	response := handler(commandContext, args)
 	if response != "" {
-		if err := commandContext.respond(ctx, response); err != nil {
+		if err := commandContext.respond(ctx, weixinCommandReply{text: response}); err != nil {
 			return err
 		}
 	}

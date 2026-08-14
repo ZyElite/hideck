@@ -46,6 +46,7 @@ func UpdateNotificationInFile(path string, notifications NotificationConfigs) er
 	root["weixin"] = map[string]any{
 		"enabled":           notifications.Weixin.Enabled,
 		"base_url":          notifications.Weixin.BaseURL,
+		"cdn_base_url":      notifications.Weixin.CDNBaseURL,
 		"allowed_user_ids":  notifications.Weixin.AllowedUserIDs,
 		"allowed_group_ids": notifications.Weixin.AllowedGroupIDs,
 	}

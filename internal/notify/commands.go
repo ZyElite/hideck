@@ -3,15 +3,16 @@ package notify
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/yibaiba/hideck/internal/db"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
+	"github.com/yibaiba/hideck/internal/db"
 )
 
 // ---------- 通用命令 handler（TG 和飞书共用） ----------
@@ -707,9 +708,17 @@ func voiceRecordingAttachment(result *voicehost.SimulateCallResult) (CommandAtta
 	if result == nil || !strings.EqualFold(strings.TrimSpace(result.AudioCodec), "MP3") {
 		return CommandAttachment{}, false
 	}
-	name := filepath.Base(strings.TrimSpace(result.AudioPath))
+	path := strings.TrimSpace(result.AudioPath)
+	name := filepath.Base(path)
 	if name == "." || !strings.EqualFold(filepath.Ext(name), ".mp3") {
 		return CommandAttachment{}, false
 	}
-	return CommandAttachment{Type: "audio", Recording: name, ContentType: "audio/mpeg"}, true
+	var size int64
+	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+		size = info.Size()
+	}
+	return CommandAttachment{
+		Type: "audio", Recording: name, ContentType: "audio/mpeg",
+		Path: path, Codec: strings.TrimSpace(result.AudioCodec), Size: size,
+	}, true
 }
