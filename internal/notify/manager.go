@@ -252,6 +252,10 @@ func (m *Manager) resolveDeviceName(deviceID string) string {
 	return strings.TrimSpace(m.pool.WorkerName(deviceID))
 }
 
+func (m *Manager) deviceLabel(deviceID string) string {
+	return (NotificationContext{DeviceID: deviceID, DeviceName: m.resolveDeviceName(deviceID)}).DeviceLabel()
+}
+
 func (m *Manager) broadcastWithContext(ctx NotificationContext) {
 	ctx.Text = strings.TrimSpace(ctx.Text)
 	if ctx.Text == "" {

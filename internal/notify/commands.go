@@ -66,10 +66,7 @@ func (m *Manager) handleCmdSendSMS(cmdCtx CommandContext, args []string) string 
 		return commandFailureBlock("发送短信", deviceID, "设备未找到")
 	}
 
-	displayName := worker.ID
-	if worker.Config.Name != "" {
-		displayName = fmt.Sprintf("%s (%s)", worker.Config.Name, worker.ID)
-	}
+	displayName := m.deviceLabel(worker.ID)
 	isVoWiFi := m.pool.IsVoWiFiActive(deviceID)
 
 	// /send 是用户的显式操作，不能因 notifyPool 满载被丢弃。
@@ -170,10 +167,7 @@ func (m *Manager) handleCmdStatus(cmdCtx CommandContext, args []string) string {
 		localPhone = strings.TrimSpace(phone)
 	}
 
-	displayName := worker.ID
-	if worker.Config.Name != "" {
-		displayName = fmt.Sprintf("%s (%s)", worker.Config.Name, worker.ID)
-	}
+	displayName := m.deviceLabel(worker.ID)
 
 	publicIP := worker.GetCachedIP()
 	if strings.TrimSpace(publicIP) == "" {
@@ -304,10 +298,7 @@ func (m *Manager) handleCmdList(cmdCtx CommandContext, args []string) string {
 		if !w.IsDeviceHealthy() {
 			healthy = "异常"
 		}
-		displayName := w.ID
-		if w.Config.Name != "" {
-			displayName = fmt.Sprintf("%s (%s)", w.Config.Name, w.ID)
-		}
+		displayName := m.deviceLabel(w.ID)
 
 		privateIP := "N/A"
 		if w.QMICore != nil {
@@ -467,10 +458,7 @@ func (m *Manager) handleCmdEsim(cmdCtx CommandContext, args []string) string {
 	}
 
 	var sb strings.Builder
-	displayName := deviceID
-	if worker.Config.Name != "" {
-		displayName = fmt.Sprintf("%s (%s)", worker.Config.Name, deviceID)
-	}
+	displayName := m.deviceLabel(deviceID)
 	sb.WriteString(fmt.Sprintf("eSIM 列表 / %s\n\n", displayName))
 
 	idx := 1
@@ -648,10 +636,7 @@ func (m *Manager) handleCmdCall(cmdCtx CommandContext, args []string) string {
 		return fmt.Sprintf("发起 VoWiFi 呼叫 / 失败\n设备    %s\n原因    VoWiFi 未就绪", deviceID)
 	}
 
-	displayName := worker.ID
-	if worker.Config.Name != "" {
-		displayName = fmt.Sprintf("%s (%s)", worker.Config.Name, worker.ID)
-	}
+	displayName := m.deviceLabel(worker.ID)
 	caller := "未知"
 	if worker.Modem != nil {
 		if imsi := strings.TrimSpace(worker.GetIMSI()); imsi != "" {
