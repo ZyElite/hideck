@@ -1,9 +1,9 @@
 # Third-party source notices
 
-This repository is a source-complete integration tree for local builds of VoHive.
+This repository is a source-complete integration tree for local builds of HiDeck.
 It keeps the visible project-level source dependencies in `third_party/` so the
 build no longer depends on the unavailable `github.com/iniwex5/vowifi-go`
-repository or on release-only VoHive binaries.
+repository or on unavailable upstream release binaries.
 
 ## Included source trees
 

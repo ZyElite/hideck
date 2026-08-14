@@ -1,6 +1,6 @@
-# VoHive Docker Hub 镜像
+# HiDeck Docker Hub 镜像
 
-镜像地址：`skyhotspur/vohive`
+镜像地址：`yibaiba/hideck`
 
 支持架构：
 
@@ -10,8 +10,8 @@
 ## 快速启动
 
 ```bash
-mkdir -p vohive/{config,data,logs}
-cd vohive
+mkdir -p hideck/{config,data,logs}
+cd hideck
 ```
 
 创建 `config/config.yaml`：
@@ -38,9 +38,9 @@ vowifi:
 
 ```yaml
 services:
-  vohive:
-    image: skyhotspur/vohive:${VOHIVE_TAG:-1.5.5}
-    container_name: vohive
+  hideck:
+    image: yibaiba/hideck:${HIDECK_TAG:-1.5.5}
+    container_name: hideck
     restart: unless-stopped
     network_mode: host
     privileged: true
@@ -69,7 +69,7 @@ Web 入口：`http://YOUR_IP:7575`
 ## 更新镜像
 
 ```bash
-docker pull "skyhotspur/vohive:${VOHIVE_TAG:-1.5.5}"
+docker pull "yibaiba/hideck:${HIDECK_TAG:-1.5.5}"
 docker compose up -d
 ```
 

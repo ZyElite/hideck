@@ -1,10 +1,12 @@
-# VoHive
+# HiDeck
 
-> Windloom source integration tree: this repository vendors the visible
-> project-level VoHive source dependencies under `third_party/` and builds
+> HiDeck source integration tree: this repository vendors the visible
+> project-level HiDeck source dependencies under `third_party/` and builds
 > without the unavailable upstream `github.com/iniwex5/vowifi-go` repository.
 > See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source origins,
 > license notes, and build-chain details.
+>
+> Project repository: [github.com/yibaiba/hideck](https://github.com/yibaiba/hideck)
 
 ## Local source build
 
@@ -17,28 +19,28 @@ cp -R web/dist internal/web/dist
 
 GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath -buildvcs=false -tags "with_utls nomsgpack" \
-  -o dist/vohive-open_linux_amd64 ./cmd/vohive
+  -o dist/hideck_linux_amd64 ./cmd/hideck
 
 GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
   go build -trimpath -buildvcs=false -tags "with_utls nomsgpack" \
-  -o dist/vohive-open_linux_arm64 ./cmd/vohive
+  -o dist/hideck_linux_arm64 ./cmd/hideck
 ```
 
 ## Docker
 
 ```bash
-mkdir -p vohive/{config,data,logs}
-cp config/config.example.yaml vohive/config/config.yaml
-cd vohive
+mkdir -p hideck/{config,data,logs}
+cp config/config.example.yaml hideck/config/config.yaml
+cd hideck
 ```
 
 Use the compose file from this repository, or create one with:
 
 ```yaml
 services:
-  vohive:
-    image: skyhotspur/vohive:${VOHIVE_TAG:-1.5.5}
-    container_name: vohive
+  hideck:
+    image: yibaiba/hideck:${HIDECK_TAG:-1.5.5}
+    container_name: hideck
     restart: unless-stopped
     network_mode: host
     privileged: true
@@ -53,7 +55,7 @@ services:
 ```
 
 Default login: `admin` / `admin`. Change the password after first login. Set
-`VOHIVE_TAG` before running Compose when you want a specific image tag.
+`HIDECK_TAG` before running Compose when you want a specific image tag.
 
 ## EC25 SIM 检测设置
 
@@ -132,7 +134,7 @@ lsusb
 | QMI | `/dev/cdc-wdm*` + `qmi_wwan` | 高通系模组的控制面、SIM、短信和蜂窝数据拨号 |
 | MBIM | `/dev/cdc-wdm*` + `cdc_mbim` | USB-IF 标准化的模组控制和蜂窝数据拨号 |
 
-同一块模组可以始终保留 AT 串口，同时将网络控制组合配置为 QMI 或 MBIM。VoHive
+同一块模组可以始终保留 AT 串口，同时将网络控制组合配置为 QMI 或 MBIM。HiDeck
 在 QMI 模式通过 QMI 管理控制面和数据面；在 MBIM 模式通过 MBIM 管理网络，短信和
 人工 AT 命令仍由同一个 AT 调度器串行执行。
 
@@ -144,7 +146,7 @@ lsusb
 3. `DeviceCaps` 能返回当前模组 IMEI。
 
 只出现 `cdc_mbim` 接口仍不足以证明协议可用。当前测试使用的大疆定制 EC25
-在 `usbnet=2` 时可以枚举 `cdc_mbim`，但标准 `OPEN` 无响应，因此 VoHive 会拒绝把
+在 `usbnet=2` 时可以枚举 `cdc_mbim`，但标准 `OPEN` 无响应，因此 HiDeck 会拒绝把
 该状态持久化为 MBIM，并保留/恢复 QMI 配置。其他 EC25 或其他型号必须按上述握手
 逐台验证，不能套用这一固件结论。
 
@@ -154,7 +156,7 @@ lsusb
 
 > 面向高通 4G/LTE/5G 模组（Quectel EC20/EC25/EC21/EG25/EM20 等）的综合管理与代理服务平台。
 
-VoHive 把模组热插拔管理、SOCKS5/HTTP 代理编排、短信收发、VoWiFi/IMS 通话、eSIM 全生命周期管理整合到一个服务里,并提供一套现代化的响应式 Web 管理后台。
+HiDeck 把模组热插拔管理、SOCKS5/HTTP 代理编排、短信收发、VoWiFi/IMS 通话、eSIM 全生命周期管理整合到一个服务里,并提供一套现代化的响应式 Web 管理后台。
 
 ## 核心特性
 
@@ -177,14 +179,14 @@ VoHive 把模组热插拔管理、SOCKS5/HTTP 代理编排、短信收发、VoWi
 
 - **Backend**:Go 1.26+(Gin、GORM、Viper、euicc-go)
 - **Frontend**:Vue 3 + Vite + TailwindCSS + Element Plus
-- **Database**:SQLite(`vohive.db`)
+- **Database**:SQLite(`hideck.db`)
 - **CI/CD**:GitHub Actions 自动化多架构 Docker 镜像构建与发布
 
 
 ## 免责声明
 
 - **用途定位**:本项目主要面向个人学习、技术研究与功能测试场景,不建议直接用于生产环境或关键业务系统;由此产生的部署及使用风险由使用者自行承担。
-- **非官方项目**:VoHive 为第三方独立开发的开源软件,与 Quectel(高通模组厂商)、高通公司及其他任何模组/芯片厂商均无官方关联、授权或合作关系,亦不对模组硬件本身的功能、质量或安全性负责。
+- **非官方项目**:HiDeck 为第三方独立开发的开源软件,与 Quectel(高通模组厂商)、高通公司及其他任何模组/芯片厂商均无官方关联、授权或合作关系,亦不对模组硬件本身的功能、质量或安全性负责。
 - **合规使用**:使用本项目搭建的服务时,请自行确保符合所在地区的法律法规及电信运营商的服务条款,不得用于任何违法违规用途。因违规使用造成的一切法律责任由使用者自行承担,与本项目作者及贡献者无关。
 - **无担保**:本软件按"现状"提供,不附带任何明示或暗示的担保,包括但不限于适销性、特定用途适用性及不侵权担保。因使用或无法使用本软件(含数据丢失、设备异常、业务中断等)造成的任何直接或间接损失,作者及贡献者不承担任何责任。
 
