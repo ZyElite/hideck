@@ -48,16 +48,10 @@ http://YOUR_IP:7575
 
 默认 Compose 配置使用：
 
-- 镜像：`yibaiba/hideck:${HIDECK_TAG:-2.0.0}`（同时发布 `2.0` 与 `latest` 标签）
+- 镜像：`yibaiba/hideck:latest`
 - 网络：`host`
 - 设备权限：`privileged: true` 并挂载 `/dev`
 - 持久化目录：`config/`、`data/`、`logs/`
-
-指定镜像版本后启动：
-
-```bash
-HIDECK_TAG=2.0.0 docker compose up -d
-```
 
 查看状态和日志：
 

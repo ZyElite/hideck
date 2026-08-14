@@ -1,6 +1,6 @@
 services:
   hideck:
-    image: yibaiba/hideck:${HIDECK_TAG:-2.0.0}
+    image: yibaiba/hideck:latest
     container_name: hideck
     restart: unless-stopped
     init: true

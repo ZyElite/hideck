@@ -39,7 +39,7 @@ vowifi:
 ```yaml
 services:
   hideck:
-    image: yibaiba/hideck:${HIDECK_TAG:-2.0.0}
+    image: yibaiba/hideck:latest
     container_name: hideck
     restart: unless-stopped
     init: true
@@ -94,7 +94,7 @@ docker buildx imagetools inspect "yibaiba/hideck:${HIDECK_VERSION}"
 ## 更新镜像
 
 ```bash
-docker pull "yibaiba/hideck:${HIDECK_TAG:-2.0.0}"
+docker compose pull
 docker compose up -d
 ```
 
