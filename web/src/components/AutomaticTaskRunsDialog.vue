@@ -152,6 +152,7 @@ function handleOpenChange(open: boolean) {
         v-model:current-page="page"
         :page-size="PAGE_SIZE"
         :total="total"
+        :pager-count="5"
         layout="prev, pager, next"
         @current-change="loadRuns(false)"
       />
@@ -204,6 +205,9 @@ function handleOpenChange(open: boolean) {
   .runs-toolbar :deep(.el-button) { min-height: 44px; }
   .run-content dl { grid-template-columns: auto minmax(0, 1fr); }
   .runs-pagination { justify-content: center; }
+  .runs-pagination :deep(.btn-prev),
+  .runs-pagination :deep(.btn-next),
+  .runs-pagination :deep(.el-pager li) { min-width: 44px; height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   :global(.automatic-task-runs), :global(.automatic-task-runs-scrim) { animation: none !important; transition-duration: 120ms !important; }
