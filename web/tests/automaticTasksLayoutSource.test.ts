@@ -6,6 +6,7 @@ const view = await readFile(new URL('../src/views/AutomaticTasks.vue', import.me
 const taskList = await readFile(new URL('../src/components/automation/AutomaticTaskList.vue', import.meta.url), 'utf8')
 const taskDetail = await readFile(new URL('../src/components/automation/AutomaticTaskDetail.vue', import.meta.url), 'utf8')
 const taskEditor = await readFile(new URL('../src/components/AutomaticTaskDialog.vue', import.meta.url), 'utf8')
+const taskRuns = await readFile(new URL('../src/components/AutomaticTaskRunsDialog.vue', import.meta.url), 'utf8')
 const service = await readFile(new URL('../src/services/automation.ts', import.meta.url), 'utf8')
 
 test('automatic tasks use the Studio workspace with real task selection and summary', () => {
@@ -86,4 +87,21 @@ test('automatic task editor is a guarded right-side management tray', () => {
   assert.match(taskEditor, /form\.notify/)
   assert.match(taskEditor, /role="alert"/)
   assert.match(taskEditor, /min-height: 44px/)
+})
+
+test('automatic task runs use the real paginated polling contract in a timeline tray', () => {
+  assert.match(taskRuns, /<el-drawer/)
+  assert.match(taskRuns, /direction="rtl"/)
+  assert.match(taskRuns, /size="min\(620px, 100vw\)"/)
+  assert.doesNotMatch(taskRuns, /<el-dialog|<el-table/)
+  assert.match(taskRuns, /RUN_REFRESH_INTERVAL_MS = 3_000/)
+  assert.match(taskRuns, /window\.setInterval\(\(\) => void loadRuns\(true\)/)
+  assert.match(taskRuns, /automationService\.runs\(\{[\s\S]*taskId: taskID,[\s\S]*limit: PAGE_SIZE,[\s\S]*offset: \(page\.value - 1\) \* PAGE_SIZE/)
+  assert.match(taskRuns, /requestID !== requestGeneration \|\| props\.task\?\.id !== taskID/)
+  assert.match(taskRuns, /@current-change="loadRuns\(false\)"/)
+  assert.match(taskRuns, /automaticTaskStatus\(run\.status\)/)
+  assert.match(taskRuns, /automaticTaskRunResult\(run\)/)
+  assert.match(taskRuns, /class="runs-error" role="alert"/)
+  assert.match(taskRuns, /暂无运行记录/)
+  assert.match(taskRuns, /white-space: pre-wrap; overflow-wrap: anywhere/)
 })
