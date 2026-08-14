@@ -48,6 +48,8 @@ type TelegramForm = {
   bot_token: string
   chat_id: number | null
   admin_id: number | null
+  bound_chat_id: number | null
+  binding_error: string
   base_url: string
   proxy: string
 }
@@ -96,6 +98,8 @@ const DEFAULT_TELEGRAM_FORM: TelegramForm = {
   bot_token: '',
   chat_id: null,
   admin_id: null,
+  bound_chat_id: null,
+  binding_error: '',
   base_url: '',
   proxy: ''
 }
@@ -202,6 +206,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   const loadingSystemInfo = ref(false)
   const loadingNotifications = ref(false)
+  const refreshingTelegramBinding = ref(false)
   const savingNotifications = ref(false)
   const testingWebhook = ref(false)
   const testingBark = ref(false)
@@ -240,6 +245,8 @@ export const useSettingsStore = defineStore('settings', () => {
         bot_token: tg.bot_token || '',
         chat_id: tg.chat_id ?? null,
         admin_id: tg.admin_id ?? null,
+        bound_chat_id: tg.bound_chat_id ?? null,
+        binding_error: tg.binding_error || '',
         base_url: tg.base_url || '',
         proxy: tg.proxy || ''
       }
@@ -317,6 +324,21 @@ export const useSettingsStore = defineStore('settings', () => {
     }
     savingNotifications.value = false
     return result as { ok: true; data: SaveNotificationsResponse } | { ok: false; error: AppError }
+  }
+
+  async function refreshTelegramBinding() {
+    refreshingTelegramBinding.value = true
+    const result = await systemService.getNotifications()
+    if (result.ok) {
+      const telegram = result.data.telegram || {}
+      telegramForm.value.bound_chat_id = telegram.bound_chat_id ?? null
+      telegramForm.value.binding_error = telegram.binding_error || ''
+      error.value = null
+    } else {
+      error.value = result.error
+    }
+    refreshingTelegramBinding.value = false
+    return result
   }
 
   function buildNotificationsPayload(): SaveNotificationsPayload {
@@ -505,6 +527,7 @@ export const useSettingsStore = defineStore('settings', () => {
     weComSettings,
     loadingSystemInfo,
     loadingNotifications,
+    refreshingTelegramBinding,
     savingNotifications,
     testingWebhook,
     testingBark,
@@ -514,6 +537,7 @@ export const useSettingsStore = defineStore('settings', () => {
     error,
     fetchSystemInfo,
     fetchNotifications,
+    refreshTelegramBinding,
     saveNotifications,
     saveNotificationsFromForms,
     testWebhookFromForm,

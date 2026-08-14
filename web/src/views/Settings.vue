@@ -6,6 +6,7 @@ import { useSettingsStore } from '../stores/settings'
 import WorkspaceStage from '../components/WorkspaceStage.vue'
 import FieldRow from '../components/FieldRow.vue'
 import QQNotificationTab from '../components/settings/QQNotificationTab.vue'
+import TelegramNotificationTab from '../components/settings/TelegramNotificationTab.vue'
 import WeComBotNotificationTab from '../components/settings/WeComBotNotificationTab.vue'
 import WeixinNotificationTab from '../components/settings/WeixinNotificationTab.vue'
 import { 
@@ -579,39 +580,7 @@ onMounted(() => {
             <el-tabs v-model="activeNotifyTab" class="settings-notify-tabs">
               <!-- Telegram -->
               <el-tab-pane label="Telegram Bot" name="telegram" class="pt-2">
-                <div class="flex items-center justify-between mb-4">
-                  <div class="flex items-center gap-2">
-                    <div class="font-bold text-gray-800 dark:text-gray-100">启用 Telegram 机器人</div>
-                  </div>
-                  <el-switch v-model="telegramForm.enabled" />
-                </div>
-
-                <div class="space-y-4">
-                  <div class="space-y-1">
-                    <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">Bot Token</label>
-                    <el-input v-model="telegramForm.bot_token" :disabled="!telegramForm.enabled" placeholder="xxxx:yyyy" />
-                  </div>
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div class="space-y-1">
-                      <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">Chat ID</label>
-                      <el-input v-model="telegramForm.chat_id" :disabled="!telegramForm.enabled" type="number" inputmode="numeric" placeholder="例如 123456" />
-                    </div>
-                    <div class="space-y-1">
-                      <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">Admin ID</label>
-                      <el-input v-model="telegramForm.admin_id" :disabled="!telegramForm.enabled" type="number" inputmode="numeric" placeholder="例如 123456" />
-                    </div>
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">TG API 反代（可选）</label>
-                    <el-input v-model="telegramForm.base_url" :disabled="!telegramForm.enabled" placeholder="留空直连 api.telegram.org；需要反代时填写" />
-                    <div class="text-[10px] text-gray-400 mt-1">反向代理地址 (例如 https://api.telegram.org/bot%s/%s)</div>
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">HTTP 代理（可选）</label>
-                    <el-input v-model="telegramForm.proxy" :disabled="!telegramForm.enabled" placeholder="例如 http://127.0.0.1:7890" />
-                    <div class="text-[10px] text-gray-400 mt-1">用于连接 API 服务器的 HTTP 代理</div>
-                  </div>
-                </div>
+                <TelegramNotificationTab />
               </el-tab-pane>
 
               <!-- 飞书 -->

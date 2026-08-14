@@ -38,6 +38,8 @@ export type TelegramSettings = {
   bot_token: string
   chat_id: number | null
   admin_id: number | null
+  bound_chat_id: number | null
+  binding_error: string
   base_url: string
   proxy: string
 }

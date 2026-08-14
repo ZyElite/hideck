@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/notify"
 	"github.com/yibaiba/hideck/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -13,12 +14,14 @@ import (
 
 type notificationSettingsResponse struct {
 	Telegram struct {
-		Enabled  bool   `json:"enabled"`
-		BotToken string `json:"bot_token"`
-		ChatID   int64  `json:"chat_id"`
-		AdminID  int64  `json:"admin_id"`
-		BaseURL  string `json:"base_url"`
-		Proxy    string `json:"proxy"`
+		Enabled      bool   `json:"enabled"`
+		BotToken     string `json:"bot_token"`
+		ChatID       int64  `json:"chat_id"`
+		AdminID      int64  `json:"admin_id"`
+		BoundChatID  int64  `json:"bound_chat_id"`
+		BindingError string `json:"binding_error,omitempty"`
+		BaseURL      string `json:"base_url"`
+		Proxy        string `json:"proxy"`
 	} `json:"telegram"`
 	Feishu struct {
 		Enabled   bool     `json:"enabled"`
@@ -136,9 +139,12 @@ func (s *Server) handleGetNotificationSettings(c *gin.Context) {
 
 	var resp notificationSettingsResponse
 	resp.Telegram.Enabled = s.fullCfg.Telegram.Enabled
-	resp.Telegram.BotToken = s.fullCfg.Telegram.BotToken
+	if s.fullCfg.Telegram.BotToken != "" {
+		resp.Telegram.BotToken = notificationSecretMask
+	}
 	resp.Telegram.ChatID = s.fullCfg.Telegram.ChatID
 	resp.Telegram.AdminID = s.fullCfg.Telegram.AdminID
+	resp.Telegram.BoundChatID, resp.Telegram.BindingError = s.telegramBindingStatus()
 	resp.Telegram.BaseURL = s.fullCfg.Telegram.BaseURL
 	resp.Telegram.Proxy = s.fullCfg.Telegram.Proxy
 
@@ -204,9 +210,17 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	s.notificationConfigMu.Lock()
 	defer s.notificationConfigMu.Unlock()
 
+	telegramToken, err := resolveMaskedNotificationSecret(
+		req.Telegram.BotToken, s.fullCfg.Telegram.BotToken, "Telegram Bot Token",
+	)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+		return
+	}
+	previousTelegram := s.fullCfg.Telegram
 	tg := config.TelegramConfig{
 		Enabled:  req.Telegram.Enabled,
-		BotToken: strings.TrimSpace(req.Telegram.BotToken),
+		BotToken: telegramToken,
 		ChatID:   req.Telegram.ChatID,
 		AdminID:  req.Telegram.AdminID,
 		BaseURL:  strings.TrimSpace(req.Telegram.BaseURL),
@@ -319,10 +333,16 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	}
 
 	if tg.Enabled {
-		if tg.BotToken == "" || tg.ChatID == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Telegram 启用时必须填写 bot_token 与 chat_id"})
+		if tg.BotToken == "" || (tg.AdminID == 0 && tg.ChatID == 0) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error", "message": "Telegram 启用时必须填写 Bot Token，并填写管理员 ID 或通知 Chat ID",
+			})
 			return
 		}
+	}
+	if tg.AdminID < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Telegram 管理员 ID 必须是正整数"})
+		return
 	}
 
 	if fs.Enabled {
@@ -366,6 +386,17 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	nextConfig.WeComBot = wecomBotCfg
 	nextConfig.Weixin = weixinCfg
 	notificationConfigs := notificationConfigsFrom(&nextConfig)
+	if telegramIdentityChanged(previousTelegram, tg) && s.notifyMgr != nil {
+		if err := s.notifyMgr.UpdateRuntimeState(func(state *notify.RuntimeState) error {
+			state.Telegram.DefaultTarget = 0
+			return nil
+		}); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error", "message": "清除旧 Telegram 绑定失败: " + err.Error(),
+			})
+			return
+		}
+	}
 	if err := config.UpdateNotificationInFile(s.configPath, notificationConfigs); err != nil {
 		logger.Error("写入通知配置失败", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "写入配置文件失败: " + err.Error()})
@@ -396,6 +427,25 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "applied": true})
+}
+
+func (s *Server) telegramBindingStatus() (int64, string) {
+	if s.fullCfg.Telegram.ChatID != 0 {
+		return s.fullCfg.Telegram.ChatID, ""
+	}
+	if s.notifyMgr == nil {
+		return 0, ""
+	}
+	state, err := s.notifyMgr.LoadRuntimeState()
+	if err != nil {
+		return 0, err.Error()
+	}
+	return state.Telegram.DefaultTarget, ""
+}
+
+func telegramIdentityChanged(previous, next config.TelegramConfig) bool {
+	return previous.BotToken != next.BotToken || previous.AdminID != next.AdminID ||
+		(previous.ChatID != 0 && next.ChatID == 0)
 }
 
 func notificationConfigsFrom(cfg *config.Config) config.NotificationConfigs {

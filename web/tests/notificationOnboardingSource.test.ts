@@ -8,6 +8,7 @@ function source(relativePath: string): string {
 
 const settings = source('../src/views/Settings.vue')
 const qrPanel = source('../src/components/settings/NotificationQrConnect.vue')
+const telegramPanel = source('../src/components/settings/TelegramNotificationTab.vue')
 const polling = source('../src/composables/useNotificationQR.ts')
 
 test('settings separates personal Weixin, WeCom Bot, WeCom Webhook, and QQ', () => {
@@ -15,6 +16,15 @@ test('settings separates personal Weixin, WeCom Bot, WeCom Webhook, and QQ', () 
   assert.match(settings, /label="企微机器人"/)
   assert.match(settings, /label="企微 Webhook"/)
   assert.match(settings, /label="QQ Bot"/)
+})
+
+test('Telegram uses token onboarding with an explicit private-chat binding state', () => {
+  assert.match(settings, /<TelegramNotificationTab/)
+  assert.match(telegramPanel, /@BotFather/)
+  assert.match(telegramPanel, /等待管理员首次私聊绑定/)
+  assert.match(telegramPanel, /通知 Chat ID（可选）/)
+  assert.match(telegramPanel, /grid-cols-1 gap-4 sm:grid-cols-2/)
+  assert.doesNotMatch(telegramPanel, /NotificationQrConnect|二维码/)
 })
 
 test('QR panel renders a stable code and accessible status and actions', () => {
