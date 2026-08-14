@@ -13,6 +13,8 @@ type CommandAttachment struct {
 	Path        string `json:"-"`
 	Codec       string `json:"codec,omitempty"`
 	Size        int64  `json:"size,omitempty"`
+	SourcePath  string `json:"-"`
+	SourceCodec string `json:"-"`
 }
 
 type commandAttachmentContext interface {

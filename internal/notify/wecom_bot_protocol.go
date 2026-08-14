@@ -10,14 +10,17 @@ import (
 )
 
 const (
-	weComCommandSubscribe = "aibot_subscribe"
-	weComCommandCallback  = "aibot_msg_callback"
-	weComCommandLegacy    = "aibot_callback"
-	weComCommandEvent     = "aibot_event_callback"
-	weComCommandSend      = "aibot_send_msg"
-	weComCommandRespond   = "aibot_respond_msg"
-	weComCommandPing      = "ping"
-	weComMaxMessageRunes  = 4000
+	weComCommandSubscribe    = "aibot_subscribe"
+	weComCommandCallback     = "aibot_msg_callback"
+	weComCommandLegacy       = "aibot_callback"
+	weComCommandEvent        = "aibot_event_callback"
+	weComCommandSend         = "aibot_send_msg"
+	weComCommandRespond      = "aibot_respond_msg"
+	weComCommandPing         = "ping"
+	weComCommandUploadInit   = "aibot_upload_media_init"
+	weComCommandUploadChunk  = "aibot_upload_media_chunk"
+	weComCommandUploadFinish = "aibot_upload_media_finish"
+	weComMaxMessageRunes     = 4000
 )
 
 var defaultWeComReconnectBackoff = []time.Duration{

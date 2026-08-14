@@ -115,15 +115,23 @@ func TestVoiceRecordingAttachmentCarriesPrivatePathAndMetadata(t *testing.T) {
 	if err := os.WriteFile(path, []byte("audio"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	attachment, ok := voiceRecordingAttachment(&voicehost.SimulateCallResult{AudioPath: path, AudioCodec: "MP3"})
-	if !ok || attachment.Path != path || attachment.Size != 5 || attachment.Codec != "MP3" {
+	sourcePath := filepath.Join(t.TempDir(), "call_test.amr")
+	if err := os.WriteFile(sourcePath, []byte("#!AMR\nvoice"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	attachment, ok := voiceRecordingAttachment(&voicehost.SimulateCallResult{
+		AudioPath: path, AudioCodec: "MP3", SourceAudioPath: sourcePath, SourceAudioCodec: "AMR",
+	})
+	if !ok || attachment.Path != path || attachment.Size != 5 || attachment.Codec != "MP3" ||
+		attachment.SourcePath != sourcePath || attachment.SourceCodec != "AMR" {
 		t.Fatalf("attachment = %+v, ok = %v", attachment, ok)
 	}
 	encoded, err := json.Marshal(attachment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), path) || !strings.Contains(string(encoded), `"recording":"call_test.mp3"`) {
+	if strings.Contains(string(encoded), path) || strings.Contains(string(encoded), sourcePath) ||
+		!strings.Contains(string(encoded), `"recording":"call_test.mp3"`) {
 		t.Fatalf("attachment JSON = %s", encoded)
 	}
 }

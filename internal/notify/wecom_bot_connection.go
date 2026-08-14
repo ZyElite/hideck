@@ -139,6 +139,9 @@ func (w *WeComBotChannel) sendRequest(
 	requestID string,
 	body map[string]any,
 ) (weComFrame, error) {
+	if err := ctx.Err(); err != nil {
+		return weComFrame{}, err
+	}
 	if strings.TrimSpace(requestID) == "" {
 		var err error
 		requestID, err = w.newRequestID(command)

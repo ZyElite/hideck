@@ -142,7 +142,7 @@ func (w *WeComBotChannel) executeMessage(ctx context.Context, chatID, requestID,
 	commandContext := &weComCommandContext{channel: w, target: chatID, requestID: requestID}
 	defer commandContext.release()
 	if response := handler(commandContext, args); response != "" {
-		return commandContext.respond(ctx, response)
+		return commandContext.respond(ctx, weComCommandReply{text: response})
 	}
 	return nil
 }

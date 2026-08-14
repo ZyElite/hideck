@@ -717,8 +717,10 @@ func voiceRecordingAttachment(result *voicehost.SimulateCallResult) (CommandAtta
 	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
 		size = info.Size()
 	}
+	sourcePath := strings.TrimSpace(result.SourceAudioPath)
 	return CommandAttachment{
 		Type: "audio", Recording: name, ContentType: "audio/mpeg",
 		Path: path, Codec: strings.TrimSpace(result.AudioCodec), Size: size,
+		SourcePath: sourcePath, SourceCodec: strings.TrimSpace(result.SourceAudioCodec),
 	}, true
 }
