@@ -35,8 +35,13 @@ type QQRuntimeState struct {
 	DefaultTarget string   `json:"default_target,omitempty"`
 }
 
+type TelegramRuntimeState struct {
+	DefaultTarget int64 `json:"default_target,omitempty"`
+}
+
 type RuntimeState struct {
 	Version  int                  `json:"version"`
+	Telegram TelegramRuntimeState `json:"telegram"`
 	Weixin   WeixinRuntimeState   `json:"weixin"`
 	WeComBot WeComBotRuntimeState `json:"wecom_bot"`
 	QQ       QQRuntimeState       `json:"qq"`

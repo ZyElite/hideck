@@ -49,7 +49,11 @@ func (m *Manager) buildChannels(cfg *config.Config) ([]Channel, error) {
 
 func (m *Manager) channelFactories(cfg *config.Config) []channelFactory {
 	return []channelFactory{
-		{name: "telegram", enabled: cfg.Telegram.Enabled, build: func() (Channel, error) { return NewTelegramChannel(cfg.Telegram) }},
+		{name: "telegram", enabled: cfg.Telegram.Enabled, build: func() (Channel, error) {
+			return NewTelegramChannelWithOptions(TelegramChannelOptions{
+				Config: cfg.Telegram, StateStore: m.stateStore,
+			})
+		}},
 		{name: "feishu", enabled: cfg.Feishu.Enabled, build: func() (Channel, error) { return NewFeishuChannel(cfg.Feishu) }},
 		{name: "qq", enabled: cfg.QQ.Enabled, build: func() (Channel, error) { return NewQQChannel(cfg.QQ) }},
 		{name: "weixin", enabled: cfg.Weixin.Enabled, build: func() (Channel, error) {

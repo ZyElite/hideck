@@ -14,6 +14,7 @@ func TestFileRuntimeStateStoreRoundTripAndPermissions(t *testing.T) {
 	state.Weixin.ContextTokens = map[string]string{"user-1": "context-1"}
 	state.WeComBot.AllowedUsers = []string{"wecom-user"}
 	state.QQ.AdminOpenID = "qq-user"
+	state.Telegram.DefaultTarget = 123456
 	if err := store.Save(state); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -23,7 +24,8 @@ func TestFileRuntimeStateStoreRoundTripAndPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded.Weixin.Token != "wx-secret" || loaded.Weixin.ContextTokens["user-1"] != "context-1" {
+	if loaded.Weixin.Token != "wx-secret" || loaded.Weixin.ContextTokens["user-1"] != "context-1" ||
+		loaded.Telegram.DefaultTarget != 123456 {
 		t.Fatalf("Load() = %+v", loaded)
 	}
 	info, err := os.Stat(path)
