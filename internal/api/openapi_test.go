@@ -34,6 +34,7 @@ func TestOpenAPIVoHiveYAMLValid(t *testing.T) {
 		"/commands/events/stream", "/commands/history", "/balance/queries",
 		"/balance/queries/{query_id}", "/balance/rules", "/balance/rules/{rule_id}",
 		"/devices/{device_id}/esim/actions/disable",
+		"/settings/notifications/wecom/test",
 	} {
 		if paths[path] == nil {
 			t.Fatalf("openapi.vohive.yaml missing %s", path)

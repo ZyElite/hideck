@@ -13,3 +13,6 @@ vowifi:
 
 webhook:
   enabled: false
+
+wecom:
+  enabled: false

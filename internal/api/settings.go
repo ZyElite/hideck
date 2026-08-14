@@ -69,6 +69,7 @@ type notificationSettingsResponse struct {
 		Topic   string `json:"topic"`
 		Channel string `json:"channel"`
 	} `json:"pushplus"`
+	WeCom weComNotificationSettings `json:"wecom"`
 }
 
 type updateNotificationSettingsRequest struct {
@@ -126,6 +127,7 @@ type updateNotificationSettingsRequest struct {
 		Topic   string `json:"topic"`
 		Channel string `json:"channel"`
 	} `json:"pushplus"`
+	WeCom *weComNotificationSettings `json:"wecom"`
 }
 
 func (s *Server) handleGetNotificationSettings(c *gin.Context) {
@@ -174,6 +176,11 @@ func (s *Server) handleGetNotificationSettings(c *gin.Context) {
 	resp.Pushplus.Token = s.fullCfg.Pushplus.Token
 	resp.Pushplus.Topic = s.fullCfg.Pushplus.Topic
 	resp.Pushplus.Channel = s.fullCfg.Pushplus.Channel
+	resp.WeCom = weComNotificationSettings{
+		Enabled:         s.fullCfg.WeCom.Enabled,
+		URLs:            maskedWeComURLs(s.fullCfg.WeCom.URLs),
+		PayloadTemplate: s.fullCfg.WeCom.PayloadTemplate,
+	}
 
 	c.JSON(http.StatusOK, resp)
 }
@@ -278,6 +285,12 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 		Channel: strings.TrimSpace(req.Pushplus.Channel),
 	}
 
+	wecomCfg, err := buildWeComConfig(req.WeCom, s.fullCfg.WeCom)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+		return
+	}
+
 	if tg.Enabled {
 		if tg.BotToken == "" || tg.ChatID == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Telegram 启用时必须填写 bot_token 与 chat_id"})
@@ -319,7 +332,17 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 		return
 	}
 
-	if err := config.UpdateNotificationInFile(s.configPath, tg, fs, qq, wh, barkCfg, em, pp); err != nil {
+	notificationConfigs := config.NotificationConfigs{
+		Telegram: tg,
+		Feishu:   fs,
+		QQ:       qq,
+		Webhook:  wh,
+		Bark:     barkCfg,
+		Email:    em,
+		Pushplus: pp,
+		WeCom:    wecomCfg,
+	}
+	if err := config.UpdateNotificationInFile(s.configPath, notificationConfigs); err != nil {
 		logger.Error("写入通知配置失败", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "写入配置文件失败: " + err.Error()})
 		return
@@ -332,6 +355,7 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 	s.fullCfg.Bark = barkCfg
 	s.fullCfg.Email = em
 	s.fullCfg.Pushplus = pp
+	s.fullCfg.WeCom = wecomCfg
 
 	if s.notifyMgr != nil {
 		if err := s.notifyMgr.UpdateConfig(s.fullCfg); err != nil {

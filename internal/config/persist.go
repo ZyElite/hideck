@@ -8,7 +8,7 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 )
 
-func UpdateNotificationInFile(path string, telegram TelegramConfig, feishu FeishuConfig, qq QQConfig, webhook WebhookConfig, bark BarkConfig, email EmailConfig, pushplus PushplusConfig) error {
+func UpdateNotificationInFile(path string, notifications NotificationConfigs) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("读取配置文件失败: %w", err)
@@ -20,62 +20,68 @@ func UpdateNotificationInFile(path string, telegram TelegramConfig, feishu Feish
 	}
 
 	root["telegram"] = map[string]any{
-		"enabled":   telegram.Enabled,
-		"bot_token": telegram.BotToken,
-		"chat_id":   telegram.ChatID,
-		"admin_id":  telegram.AdminID,
-		"base_url":  telegram.BaseURL,
-		"proxy":     telegram.Proxy,
+		"enabled":   notifications.Telegram.Enabled,
+		"bot_token": notifications.Telegram.BotToken,
+		"chat_id":   notifications.Telegram.ChatID,
+		"admin_id":  notifications.Telegram.AdminID,
+		"base_url":  notifications.Telegram.BaseURL,
+		"proxy":     notifications.Telegram.Proxy,
 	}
 
 	root["feishu"] = map[string]any{
-		"enabled":    feishu.Enabled,
-		"app_id":     feishu.AppID,
-		"app_secret": feishu.AppSecret,
-		"chat_ids":   feishu.ChatIDs,
+		"enabled":    notifications.Feishu.Enabled,
+		"app_id":     notifications.Feishu.AppID,
+		"app_secret": notifications.Feishu.AppSecret,
+		"chat_ids":   notifications.Feishu.ChatIDs,
 	}
 
 	root["qq"] = map[string]any{
-		"enabled":    qq.Enabled,
-		"app_id":     qq.AppID,
-		"app_secret": qq.AppSecret,
-		"group_ids":  qq.GroupIDs,
-		"direct_ids": qq.DirectIDs,
+		"enabled":    notifications.QQ.Enabled,
+		"app_id":     notifications.QQ.AppID,
+		"app_secret": notifications.QQ.AppSecret,
+		"group_ids":  notifications.QQ.GroupIDs,
+		"direct_ids": notifications.QQ.DirectIDs,
 	}
 
 	root["webhook"] = map[string]any{
-		"enabled":       webhook.Enabled,
-		"urls":          webhook.URLs,
-		"secret":        webhook.Secret,
-		"timeout_ms":    webhook.TimeoutMs,
-		"retry_max":     webhook.RetryMax,
-		"text_template": webhook.TextTemplate,
-		"headers":       webhook.Headers,
+		"enabled":       notifications.Webhook.Enabled,
+		"urls":          notifications.Webhook.URLs,
+		"secret":        notifications.Webhook.Secret,
+		"timeout_ms":    notifications.Webhook.TimeoutMs,
+		"retry_max":     notifications.Webhook.RetryMax,
+		"text_template": notifications.Webhook.TextTemplate,
+		"headers":       notifications.Webhook.Headers,
 	}
 
 	root["bark"] = map[string]any{
-		"enabled": bark.Enabled,
-		"urls":    bark.URLs,
-		"group":   bark.Group,
-		"icon":    bark.Icon,
-		"level":   bark.Level,
+		"enabled": notifications.Bark.Enabled,
+		"urls":    notifications.Bark.URLs,
+		"group":   notifications.Bark.Group,
+		"icon":    notifications.Bark.Icon,
+		"level":   notifications.Bark.Level,
 	}
 
 	root["email"] = map[string]any{
-		"enabled":      email.Enabled,
-		"smtp_host":    email.SMTPHost,
-		"smtp_port":    email.SMTPPort,
-		"username":     email.Username,
-		"password":     email.Password,
-		"from_address": email.FromAddress,
-		"to_addresses": email.ToAddresses,
+		"enabled":      notifications.Email.Enabled,
+		"smtp_host":    notifications.Email.SMTPHost,
+		"smtp_port":    notifications.Email.SMTPPort,
+		"username":     notifications.Email.Username,
+		"password":     notifications.Email.Password,
+		"from_address": notifications.Email.FromAddress,
+		"to_addresses": notifications.Email.ToAddresses,
 	}
 
 	root["pushplus"] = map[string]any{
-		"enabled": pushplus.Enabled,
-		"token":   pushplus.Token,
-		"topic":   pushplus.Topic,
-		"channel": pushplus.Channel,
+		"enabled": notifications.Pushplus.Enabled,
+		"token":   notifications.Pushplus.Token,
+		"topic":   notifications.Pushplus.Topic,
+		"channel": notifications.Pushplus.Channel,
+	}
+
+	root["wecom"] = map[string]any{
+		"enabled":          notifications.WeCom.Enabled,
+		"urls":             notifications.WeCom.URLs,
+		"payload_template": notifications.WeCom.PayloadTemplate,
 	}
 
 	out, err := yaml.Marshal(root)

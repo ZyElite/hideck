@@ -590,6 +590,28 @@ paths:
         '500':
           $ref: '#/components/responses/ErrorMessage'
 
+  /settings/notifications/wecom/test:
+    post:
+      tags: [settings]
+      summary: 使用当前企业微信配置发送测试通知（不落盘）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestWeComRequest'
+      responses:
+        '200':
+          description: 测试发送结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestWeComResponse'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '500':
+          $ref: '#/components/responses/ErrorMessage'
+
   /settings/notifications/weixin/qr/start:
     post:
       tags: [settings]
@@ -4126,6 +4148,20 @@ components:
           items:
             type: string
 
+    WeComSettings:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        urls:
+          type: array
+          description: 读取时每个已保存 URL 返回为脱敏值 ********
+          maxItems: 8
+          items:
+            type: string
+        payload_template:
+          type: string
+
     NotificationSettings:
       type: object
       properties:
@@ -4139,6 +4175,8 @@ components:
           $ref: '#/components/schemas/WebhookSettings'
         weixin:
           $ref: '#/components/schemas/WeixinSettings'
+        wecom:
+          $ref: '#/components/schemas/WeComSettings'
 
     UpdateNotificationSettingsRequest:
       allOf:
@@ -4174,6 +4212,20 @@ components:
           type: array
           items:
             type: string
+
+    TestWeComRequest:
+      allOf:
+        - $ref: '#/components/schemas/WeComSettings'
+
+    TestWeComResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        failed_count:
+          type: integer
 
     StartWeixinQRRequest:
       type: object

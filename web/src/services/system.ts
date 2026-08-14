@@ -87,6 +87,12 @@ export type PushplusSettings = {
   channel: string
 }
 
+export type WeComSettings = {
+  enabled: boolean
+  urls: string[]
+  payload_template: string
+}
+
 export type NotificationsSettingsResponse = {
   telegram?: Partial<TelegramSettings>
   feishu?: Partial<FeishuSettings>
@@ -95,6 +101,7 @@ export type NotificationsSettingsResponse = {
   pushplus?: Partial<PushplusSettings>
   webhook?: Partial<WebhookSettings>
   bark?: Partial<BarkSettings>
+  wecom?: Partial<WeComSettings>
 }
 
 export type SaveNotificationsPayload = {
@@ -151,6 +158,7 @@ export type SaveNotificationsPayload = {
     icon: string
     level: string
   }
+  wecom: WeComSettings
 }
 
 export type SaveNotificationsResponse = {
@@ -202,6 +210,14 @@ export type TestEmailPayload = {
 export type TestEmailResponse = {
   ok: boolean
   message: string
+}
+
+export type TestWeComPayload = WeComSettings
+
+export type TestWeComResponse = {
+  ok: boolean
+  message: string
+  failed_count?: number
 }
 
 export const systemService = {
@@ -265,6 +281,12 @@ export const systemService = {
   testEmail(payload: TestEmailPayload) {
     return callService(async () => {
       const res = await api.post<TestEmailResponse>('/settings/notifications/email/test', payload)
+      return res.data
+    })
+  },
+  testWeCom(payload: TestWeComPayload) {
+    return callService(async () => {
+      const res = await api.post<TestWeComResponse>('/settings/notifications/wecom/test', payload)
       return res.data
     })
   },

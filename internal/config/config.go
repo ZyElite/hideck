@@ -8,14 +8,20 @@ import (
 )
 
 const (
-	ESIMTransportAT            = "at"
-	ESIMTransportQMI           = "qmi"
-	ESIMTransportMBIM          = "mbim"
-	ESIMTransportPCSC          = "pcsc"
-	MBIMTransportAuto          = "auto"
-	MBIMTransportProxy         = "proxy"
-	MBIMTransportDirect        = "direct"
-	DefaultWebhookTextTemplate = "{{device_label}} {{text}}"
+	ESIMTransportAT             = "at"
+	ESIMTransportQMI            = "qmi"
+	ESIMTransportMBIM           = "mbim"
+	ESIMTransportPCSC           = "pcsc"
+	MBIMTransportAuto           = "auto"
+	MBIMTransportProxy          = "proxy"
+	MBIMTransportDirect         = "direct"
+	DefaultWebhookTextTemplate  = "{{device_label}} {{text}}"
+	DefaultWeComPayloadTemplate = `{
+  "msgtype": "text",
+  "text": {
+    "content": {{message}}
+  }
+}`
 )
 
 func NormalizeESIMTransport(in string) string {
@@ -82,6 +88,7 @@ type Config struct {
 	Bark     BarkConfig     `mapstructure:"bark"`
 	Email    EmailConfig    `mapstructure:"email"`
 	Pushplus PushplusConfig `mapstructure:"pushplus"`
+	WeCom    WeComConfig    `mapstructure:"wecom"`
 	Web      WebConfig      `mapstructure:"web"`
 	Proxy    ProxyConfig    `mapstructure:"proxy"`
 	VoWiFi   VoWiFiConfig   `mapstructure:"vowifi"`
@@ -258,6 +265,23 @@ type PushplusConfig struct {
 	Channel string `mapstructure:"channel"`
 }
 
+type WeComConfig struct {
+	Enabled         bool     `mapstructure:"enabled"`
+	URLs            []string `mapstructure:"urls"`
+	PayloadTemplate string   `mapstructure:"payload_template"`
+}
+
+type NotificationConfigs struct {
+	Telegram TelegramConfig
+	Feishu   FeishuConfig
+	QQ       QQConfig
+	Webhook  WebhookConfig
+	Bark     BarkConfig
+	Email    EmailConfig
+	Pushplus PushplusConfig
+	WeCom    WeComConfig
+}
+
 func Load(path string) (*Config, error) {
 	viper.SetConfigFile(path)
 	viper.SetConfigType("yaml")
@@ -275,6 +299,8 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("email.enabled", false)
 	viper.SetDefault("email.use_ssl", false)
 	viper.SetDefault("pushplus.enabled", false)
+	viper.SetDefault("wecom.enabled", false)
+	viper.SetDefault("wecom.payload_template", DefaultWeComPayloadTemplate)
 	viper.SetDefault("web.username", "admin")
 	viper.SetDefault("web.password", "admin")
 	viper.SetDefault("server.https_port", 7576)

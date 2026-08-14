@@ -343,6 +343,7 @@ func (s *Server) newRouter() *gin.Engine {
 		api.POST("/settings/notifications/webhook/test", s.handleTestWebhookNotification)
 		api.POST("/settings/notifications/bark/test", s.handleTestBarkNotification)
 		api.POST("/settings/notifications/email/test", s.handleTestEmailNotification)
+		api.POST("/settings/notifications/wecom/test", s.handleTestWeComNotification)
 		api.POST("/settings/password", s.handleChangePassword) // 修改登录密码
 		api.GET("/system/info", s.handleSystemInfo)            // 获取系统运行与版本信息
 		api.GET("/system/time", s.handleSystemTime)            // 获取设备时间和时区

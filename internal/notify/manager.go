@@ -25,6 +25,8 @@ type NotificationContext struct {
 	Text       string
 	DeviceID   string
 	DeviceName string
+	Number     string
+	Content    string
 	Timestamp  time.Time
 }
 
@@ -150,6 +152,18 @@ func (m *Manager) initChannels(cfg *config.Config) error {
 		}
 	}
 
+	// 企业微信消息推送渠道
+	if cfg.WeCom.Enabled {
+		wecom, err := NewWeComChannel(cfg.WeCom)
+		if err != nil {
+			logger.Error("初始化企业微信通知渠道失败", "err", err)
+			return err
+		}
+		if wecom != nil {
+			m.channels = append(m.channels, wecom)
+		}
+	}
+
 	// 向所有渠道注册命令
 	m.registerCommands()
 
@@ -244,6 +258,8 @@ func (m *Manager) NotifySMSWithSource(deviceID, sender, content, source string, 
 		Text:       msg,
 		DeviceID:   deviceID,
 		DeviceName: m.resolveDeviceName(deviceID),
+		Number:     sender,
+		Content:    content,
 		Timestamp:  timestamp,
 	})
 }

@@ -17,7 +17,7 @@ import {
 import { formatDeviceDateTime } from '../utils/deviceTime'
 
 const settingsStore = useSettingsStore()
-const { systemInfo, loadingNotifications, savingNotifications, testingWebhook, testingBark, testingEmail, changingPassword, passwordForm, telegramForm, feishuForm, qqForm, webhookSettings, barkSettings, emailForm, pushplusForm } = storeToRefs(settingsStore)
+const { systemInfo, loadingNotifications, savingNotifications, testingWebhook, testingBark, testingEmail, testingWeCom, changingPassword, passwordForm, telegramForm, feishuForm, qqForm, webhookSettings, barkSettings, emailForm, pushplusForm, weComSettings } = storeToRefs(settingsStore)
 const activeNotifyTab = ref('telegram')
 const openWRTDynamicInterfaces = ref(false)
 const loadingSystemSettings = ref(false)
@@ -30,7 +30,8 @@ const enabledNotificationCount = computed(() => [
   webhookSettings.value.enabled,
   barkSettings.value.enabled,
   emailForm.value.enabled,
-  pushplusForm.value.enabled
+  pushplusForm.value.enabled,
+  weComSettings.value.enabled
 ].filter(Boolean).length)
 
 
@@ -58,6 +59,13 @@ const hasValidEmailConfig = computed(() => {
     emailForm.value.from_address &&
     emailForm.value.to_addresses
   )
+})
+
+const MAX_WECOM_URLS = 8
+const hasValidWeComConfig = computed(() => {
+  return Array.isArray(weComSettings.value.urls) &&
+    weComSettings.value.urls.some(url => String(url || '').trim()) &&
+    !!String(weComSettings.value.payload_template || '').trim()
 })
 
 
@@ -278,6 +286,33 @@ async function testEmailNotification() {
   }
 }
 
+async function testWeComNotification() {
+  try {
+    const result = await settingsStore.testWeComFromForm()
+    if (!result.ok) {
+      throw new Error(result.error.message || '企业微信测试失败')
+    }
+    const data = result.data
+    if (data.ok) {
+      ElMessage.success(data.message || '企业微信测试通知已发送')
+      return
+    }
+    const failure = data.failed_count ? `（失败目标：${data.failed_count}）` : ''
+    ElMessage.error(`${data.message || '企业微信测试失败'}${failure}`)
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '企业微信测试失败')
+  }
+}
+
+function addWeComUrl() {
+  if (weComSettings.value.urls.length >= MAX_WECOM_URLS) return
+  weComSettings.value.urls.push('')
+}
+
+function removeWeComUrl(index: number) {
+  weComSettings.value.urls.splice(index, 1)
+}
+
 function addBarkUrl() {
   if (!barkSettings.value.urls) {
      barkSettings.value.urls = []
@@ -378,7 +413,7 @@ onBeforeUnmount(() => {
       tone="success"
     >
       <div class="workspace-stage-pills">
-        <span class="workspace-stage-pill">通知通道 <strong>{{ enabledNotificationCount }} / 7</strong></span>
+        <span class="workspace-stage-pill">通知通道 <strong>{{ enabledNotificationCount }} / 8</strong></span>
         <span class="workspace-stage-pill">接口映射 <strong>{{ openWRTDynamicInterfaces ? 'OPENWRT' : 'OFF' }}</strong></span>
         <span class="workspace-stage-pill">配置 <strong>{{ systemInfo.config ? 'LOADED' : 'WAITING' }}</strong></span>
       </div>
@@ -526,7 +561,7 @@ onBeforeUnmount(() => {
                </div>
                <div>
                   <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100">通知</h3>
-                  <p class="text-xs text-gray-500">Telegram / 飞书 / QQ / Webhook</p>
+                  <p class="text-xs text-gray-500">Telegram / 飞书 / QQ / 企业微信 / 更多</p>
                </div>
             </div>
             <el-button type="primary" :loading="savingNotifications" :disabled="loadingNotifications" @click="saveNotifications" class="!border-0">
@@ -918,6 +953,74 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </el-tab-pane>
+
+              <!-- 企业微信消息推送 -->
+              <el-tab-pane label="企业微信" name="wecom" class="pt-2">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                  <div class="font-bold text-gray-800 dark:text-gray-100">启用企业微信消息推送</div>
+                  <div class="flex items-center gap-2">
+                    <el-button
+                      size="small"
+                      type="primary"
+                      plain
+                      :loading="testingWeCom"
+                      :disabled="!weComSettings.enabled || !hasValidWeComConfig"
+                      @click="testWeComNotification"
+                    >
+                      测试通知
+                    </el-button>
+                    <el-switch v-model="weComSettings.enabled" />
+                  </div>
+                </div>
+
+                <div class="space-y-4">
+                  <div class="space-y-2">
+                    <div class="flex items-center justify-between gap-3">
+                      <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">Webhook URLs</label>
+                      <el-button
+                        size="small"
+                        type="primary"
+                        plain
+                        :disabled="!weComSettings.enabled || weComSettings.urls.length >= MAX_WECOM_URLS"
+                        @click="addWeComUrl"
+                      >
+                        <el-icon><Add20Regular /></el-icon>
+                        <span class="ml-1">添加 URL</span>
+                      </el-button>
+                    </div>
+                    <div v-if="weComSettings.urls.length === 0" class="text-xs text-gray-400 py-2 border border-dashed border-gray-200 dark:border-white/10 rounded-lg text-center bg-gray-50/30 dark:bg-white/5">
+                      尚未配置企业微信 Webhook URL
+                    </div>
+                    <div v-for="(_, index) in weComSettings.urls" :key="index" class="flex items-center gap-2">
+                      <el-input
+                        v-model="weComSettings.urls[index]"
+                        :disabled="!weComSettings.enabled"
+                        type="password"
+                        show-password
+                        placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
+                        class="flex-1"
+                      />
+                      <el-button type="danger" plain :disabled="!weComSettings.enabled" aria-label="删除 URL" @click="removeWeComUrl(index)">
+                        <el-icon><Delete20Regular /></el-icon>
+                      </el-button>
+                    </div>
+                  </div>
+
+                  <div class="space-y-1">
+                    <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">JSON 请求体模板</label>
+                    <el-input
+                      v-model="weComSettings.payload_template"
+                      :disabled="!weComSettings.enabled"
+                      type="textarea"
+                      :rows="12"
+                      class="wecom-template-input"
+                    />
+                    <div class="text-[10px] text-gray-400 mt-1">
+                      变量需直接作为 JSON 值使用。支持 <code v-pre>{{event}}</code>、<code v-pre>{{title}}</code>、<code v-pre>{{message}}</code>、<code v-pre>{{timestamp}}</code>、<code v-pre>{{content}}</code>、<code v-pre>{{number}}</code>、<code v-pre>{{device_id}}</code>、<code v-pre>{{device_name}}</code>、<code v-pre>{{device_label}}</code>、<code v-pre>{{time}}</code>。
+                    </div>
+                  </div>
+                </div>
+              </el-tab-pane>
             </el-tabs>
          </div>
       </section>
@@ -929,6 +1032,10 @@ onBeforeUnmount(() => {
 <style scoped>
 :deep(.notify-card .el-input-number) {
   width: 100%;
+}
+:deep(.wecom-template-input textarea) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
 }
 :deep(.settings-notify-tabs) {
   border: none;

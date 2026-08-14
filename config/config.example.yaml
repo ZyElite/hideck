@@ -37,3 +37,14 @@ vowifi:
 
 webhook:
   enabled: false
+
+wecom:
+  enabled: false
+  urls: []
+  payload_template: |-
+    {
+      "msgtype": "text",
+      "text": {
+        "content": {{message}}
+      }
+    }

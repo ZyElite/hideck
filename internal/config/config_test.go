@@ -151,25 +151,25 @@ webhook:
   enabled: false
 `)
 
-	err := UpdateNotificationInFile(path,
-		TelegramConfig{},
-		FeishuConfig{},
-		QQConfig{
+	err := UpdateNotificationInFile(path, NotificationConfigs{
+		QQ: QQConfig{
 			Enabled:   true,
 			AppID:     "app-id",
 			AppSecret: "secret",
 			GroupIDs:  "G123",
 			DirectIDs: "U456",
 		},
-		WebhookConfig{
+		Webhook: WebhookConfig{
 			Enabled:      true,
 			URLs:         []string{"https://example.com/webhook"},
 			TextTemplate: "{{device_label}} {{text}}",
 		},
-		BarkConfig{},
-		EmailConfig{},
-		PushplusConfig{},
-	)
+		WeCom: WeComConfig{
+			Enabled:         true,
+			URLs:            []string{"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=secret"},
+			PayloadTemplate: DefaultWeComPayloadTemplate,
+		},
+	})
 	if err != nil {
 		t.Fatalf("UpdateNotificationInFile() error = %v", err)
 	}
@@ -189,6 +189,9 @@ webhook:
 		"text_template:",
 		"{{device_label}}",
 		"{{text}}",
+		"wecom:",
+		"payload_template:",
+		"{{message}}",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected config to contain %q, got:\n%s", want, text)
