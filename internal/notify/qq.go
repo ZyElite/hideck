@@ -57,7 +57,7 @@ func NewQQChannel(cfg config.QQConfig) (*QQChannel, error) {
 				return nil
 			}
 			_, err := c.RespondText(ctx, "未知命令")
-			return err
+			return newQQConversationDeliveryError(err, c)
 		}))
 	if err != nil {
 		return nil, err
@@ -117,6 +117,9 @@ func (e *qqDeliveryError) Error() string { return e.message }
 func (e *qqDeliveryError) Unwrap() error { return e.cause }
 
 func newQQDeliveryError(err error, recipient qqbot.Recipient) error {
+	if err == nil {
+		return nil
+	}
 	message := err.Error()
 	if recipient.ID != "" {
 		message = strings.ReplaceAll(message, recipient.ID, "<redacted>")
@@ -124,6 +127,13 @@ func newQQDeliveryError(err error, recipient qqbot.Recipient) error {
 	return &qqDeliveryError{
 		cause: err, message: "QQ " + string(recipient.Kind) + " 消息发送失败: " + message,
 	}
+}
+
+func newQQConversationDeliveryError(err error, conversation qqbot.Conversation) error {
+	if err == nil || conversation == nil {
+		return err
+	}
+	return newQQDeliveryError(err, conversation.Incoming().To)
 }
 
 // RegisterCommand 注册命令处理器，内部自动添加白名单鉴权

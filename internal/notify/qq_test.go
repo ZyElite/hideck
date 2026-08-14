@@ -206,6 +206,42 @@ func TestQQChannelSendRedactsRecipientFromReturnedError(t *testing.T) {
 	}
 }
 
+func TestQQCommandTextReplyRedactsRecipientFromReturnedError(t *testing.T) {
+	t.Parallel()
+	const openID = "private-command-openid"
+	sourceErr := errors.New("Post https://api.sgroup.qq.com/v2/users/" + openID + "/messages: connection reset")
+	conversation := &fakeConversation{
+		incoming: qqbot.Incoming{To: qqbot.Recipient{Kind: qqbot.DirectRecipient, ID: openID}},
+		textErr:  sourceErr,
+	}
+	commandContext := &qqCommandContext{conversation: conversation, released: true}
+	err := commandContext.respond(context.Background(), qqCommandReply{text: "status"})
+	if err == nil || strings.Contains(err.Error(), openID) || !strings.Contains(err.Error(), "<redacted>") {
+		t.Fatalf("respond() error = %v", err)
+	}
+	if !errors.Is(err, sourceErr) {
+		t.Fatalf("respond() did not preserve cause: %v", err)
+	}
+}
+
+func TestQQCommandVoiceFailureReplyDoesNotExposeRecipient(t *testing.T) {
+	t.Parallel()
+	const openID = "private-voice-openid"
+	sourceErr := errors.New("Post https://api.sgroup.qq.com/v2/users/" + openID + "/messages: upload rejected")
+	conversation := &fakeConversation{
+		incoming:   qqbot.Incoming{To: qqbot.Recipient{Kind: qqbot.DirectRecipient, ID: openID}},
+		respondErr: sourceErr,
+	}
+	commandContext := &qqCommandContext{conversation: conversation, released: true}
+	commandContext.respondAndReport(qqCommandReply{attachments: []CommandAttachment{{
+		Type: "audio", Recording: "call.mp3", Path: "/recordings/call.mp3", Codec: "MP3",
+	}}})
+	if len(conversation.replies) != 1 || strings.Contains(conversation.replies[0], openID) ||
+		!strings.Contains(conversation.replies[0], "<redacted>") {
+		t.Fatalf("failure replies = %v", conversation.replies)
+	}
+}
+
 func TestQQLogIDIsStableAndDoesNotExposeOpenID(t *testing.T) {
 	t.Parallel()
 	const openID = "private-openid-123"

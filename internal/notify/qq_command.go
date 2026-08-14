@@ -87,14 +87,14 @@ func (c *qqCommandContext) respond(ctx context.Context, reply qqCommandReply) er
 			return fmt.Errorf("准备 QQ 录音附件失败: %w", err)
 		}
 		if _, err := c.conversation.Respond(ctx, delivery); err != nil {
-			return fmt.Errorf("上传或发送 QQ 录音附件失败: %w", err)
+			return fmt.Errorf("上传或发送 QQ 录音附件失败: %w", c.deliveryError(err))
 		}
 	}
 	if strings.TrimSpace(reply.text) == "" {
 		return nil
 	}
 	_, err := c.conversation.RespondText(ctx, reply.text)
-	return err
+	return c.deliveryError(err)
 }
 
 func (c *qqCommandContext) respondAndReport(reply qqCommandReply) {
@@ -102,9 +102,16 @@ func (c *qqCommandContext) respondAndReport(reply qqCommandReply) {
 		logger.Warn("回复 QQ 命令录音失败", "err", err)
 		failure := "录音发送失败\n原因    " + err.Error()
 		if _, sendErr := c.conversation.RespondText(context.Background(), failure); sendErr != nil {
-			logger.Warn("发送 QQ 录音失败说明失败", "err", sendErr)
+			logger.Warn("发送 QQ 录音失败说明失败", "err", c.deliveryError(sendErr))
 		}
 	}
+}
+
+func (c *qqCommandContext) deliveryError(err error) error {
+	if c == nil {
+		return err
+	}
+	return newQQConversationDeliveryError(err, c.conversation)
 }
 
 func qqVoiceDelivery(attachment CommandAttachment) (qqbot.Delivery, error) {
