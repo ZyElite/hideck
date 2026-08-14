@@ -42,12 +42,10 @@ func TestQQQRHandlersApplyCredentialsWithoutLeakingSecret(t *testing.T) {
 	}
 
 	start := requestQQQRStart(t, server)
-	statusRecorder := httptest.NewRecorder()
-	statusContext, _ := gin.CreateTestContext(statusRecorder)
-	statusContext.Request = httptest.NewRequest(
-		http.MethodGet, "/api/settings/notifications/qq/qr/status?session_id="+start.SessionID, nil,
-	)
-	server.handleQQQRStatus(statusContext)
+	statusRecorder := successfulQRStatus(t, requestQRStatusConcurrently(
+		"/api/settings/notifications/qq/qr/status?session_id="+start.SessionID,
+		server.handleQQQRStatus,
+	))
 	if statusRecorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", statusRecorder.Code, statusRecorder.Body.String())
 	}

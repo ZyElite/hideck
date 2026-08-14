@@ -51,10 +51,10 @@ func TestWeixinQRHandlersPersistConfirmedCredentialsWithoutLeakingToken(t *testi
 	if err := json.Unmarshal(startRecorder.Body.Bytes(), &startResponse); err != nil {
 		t.Fatal(err)
 	}
-	statusRecorder := httptest.NewRecorder()
-	statusContext, _ := gin.CreateTestContext(statusRecorder)
-	statusContext.Request = httptest.NewRequest(http.MethodGet, "/api/settings/notifications/weixin/qr/status?session_id="+startResponse.SessionID, nil)
-	server.handleWeixinQRStatus(statusContext)
+	statusRecorder := successfulQRStatus(t, requestQRStatusConcurrently(
+		"/api/settings/notifications/weixin/qr/status?session_id="+startResponse.SessionID,
+		server.handleWeixinQRStatus,
+	))
 	if statusRecorder.Code != http.StatusOK || strings.Contains(statusRecorder.Body.String(), "private-token") {
 		t.Fatalf("status = %d, body = %s", statusRecorder.Code, statusRecorder.Body.String())
 	}

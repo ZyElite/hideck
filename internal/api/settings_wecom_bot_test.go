@@ -50,10 +50,10 @@ func TestWeComQRHandlersPersistCredentialsWithoutLeakingSecret(t *testing.T) {
 	if err := json.Unmarshal(startRecorder.Body.Bytes(), &started); err != nil {
 		t.Fatal(err)
 	}
-	statusRecorder := httptest.NewRecorder()
-	statusContext, _ := gin.CreateTestContext(statusRecorder)
-	statusContext.Request = httptest.NewRequest(http.MethodGet, "/api/settings/notifications/wecom-bot/qr/status?session_id="+started.SessionID, nil)
-	server.handleWeComQRStatus(statusContext)
+	statusRecorder := successfulQRStatus(t, requestQRStatusConcurrently(
+		"/api/settings/notifications/wecom-bot/qr/status?session_id="+started.SessionID,
+		server.handleWeComQRStatus,
+	))
 	if statusRecorder.Code != http.StatusOK || strings.Contains(statusRecorder.Body.String(), "private-secret") {
 		t.Fatalf("status = %d, body = %s", statusRecorder.Code, statusRecorder.Body.String())
 	}
