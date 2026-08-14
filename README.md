@@ -1,14 +1,106 @@
 # HiDeck
 
-> HiDeck source integration tree: this repository vendors the visible
-> project-level HiDeck source dependencies under `third_party/` and builds
-> without the unavailable upstream `github.com/iniwex5/vowifi-go` repository.
-> See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source origins,
-> license notes, and build-chain details.
->
-> Project repository: [github.com/yibaiba/hideck](https://github.com/yibaiba/hideck)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm--Noncommercial--1.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0)
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](go.mod)
+[![Vue 3](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js)](web/package.json)
 
-## Local source build
+HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插拔、移动网络代理、短信、VoWiFi/IMS 通话、eSIM 和自动任务整合在一个响应式 Web 控制台中。
+
+- 项目仓库：[github.com/yibaiba/hideck](https://github.com/yibaiba/hideck)
+- 默认 Web 端口：`7575`
+- 默认账号：`admin` / `admin`
+- 数据库：SQLite，默认路径 `data/hideck.db`
+
+> 首次登录后请立即修改默认密码。HiDeck 会把免责声明同意状态写入数据库；只要持久化 `data/` 目录，同一实例换浏览器后不会重复提示。
+
+## 核心能力
+
+| 模块 | 能力 |
+| --- | --- |
+| 设备管理 | 自动发现 USB 模组，管理 QMI、MBIM、AT 与 PC/SC 后端，实时展示设备和网络状态 |
+| 移动代理 | 为指定数据网卡创建 SOCKS5 / HTTP 出口，并通过 `SO_BINDTODEVICE` 绑定流量 |
+| 短信与命令 | 收发短信、管理联系人和会话、执行 AT/USSD 命令、查询余额并保存历史 |
+| VoWiFi / IMS | 建立 SWu/IMS 连接，处理短信与通话，并保存通话记录和录音 |
+| eSIM | 下载、启用、停用、重命名和删除 eSIM Profile |
+| 自动任务 | 按设备、Profile、时区和计划执行任务，记录运行历史和错误 |
+| 通知 | 支持 Telegram、Email、PushPlus、Bark、飞书、企业微信、微信和 QQ 等渠道 |
+| 多架构交付 | 支持 Linux amd64、arm64 与 armv7 构建及 Docker 部署 |
+
+## Docker 快速部署
+
+运行环境需要 Linux、Docker Compose、host 网络和 USB 设备访问权限。
+
+```bash
+git clone https://github.com/yibaiba/hideck.git
+cd hideck
+
+cp config/config.example.yaml config/config.yaml
+mkdir -p data logs
+docker compose up -d
+```
+
+浏览器打开：
+
+```text
+http://YOUR_IP:7575
+```
+
+默认 Compose 配置使用：
+
+- 镜像：`yibaiba/hideck:${HIDECK_TAG:-1.5.5}`
+- 网络：`host`
+- 设备权限：`privileged: true` 并挂载 `/dev`
+- 持久化目录：`config/`、`data/`、`logs/`
+
+指定镜像版本后启动：
+
+```bash
+HIDECK_TAG=1.5.5 docker compose up -d
+```
+
+查看状态和日志：
+
+```bash
+docker compose ps
+docker compose logs -f hideck
+```
+
+## 配置
+
+主配置文件为 `config/config.yaml`，可从 [config/config.example.yaml](config/config.example.yaml) 复制。常用配置如下：
+
+| 配置 | 默认值 | 说明 |
+| --- | --- | --- |
+| `server.port` | `7575` | HTTP 管理端口 |
+| `server.https_port` | `7576` | HTTPS 管理端口 |
+| `web.username` | `admin` | Web 登录账号 |
+| `web.password` | `admin` | Web 登录密码，登录后应立即修改 |
+| `system.openwrt_dynamic_interfaces` | `false` | 仅在 OpenWrt 上启用动态接口映射 |
+| `vowifi.enabled` | `false` | 全局 VoWiFi 开关 |
+
+不要把 SIM PIN、Bot Token、API Key 或其他凭据直接提交到配置仓库。SIM PIN 配置只保存环境变量名，例如 `HIDECK_SIM_PIN_READER1`。
+
+## 源码构建
+
+### 依赖
+
+- Go `1.26.4` 或兼容的 `1.26+` 版本
+- Node.js 与 npm
+- UPX（使用 Makefile 构建压缩发布包时需要）
+
+### 使用 Makefile
+
+```bash
+make build-amd64
+make build-arm64
+make build-armv7
+# 或一次构建全部架构
+make build-all
+```
+
+Makefile 会先安装前端依赖、构建 Vue 应用并同步到 Go 嵌入目录，然后在 `dist/` 中生成 `hideck_*` 二进制。
+
+### 不使用 UPX 的直接构建
 
 ```bash
 npm ci --prefix web
@@ -26,49 +118,53 @@ GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
   -o dist/hideck_linux_arm64 ./cmd/hideck
 ```
 
-## Docker
+## 开发与验证
+
+前端：
 
 ```bash
-mkdir -p hideck/{config,data,logs}
-cp config/config.example.yaml hideck/config/config.yaml
-cd hideck
+npm ci --prefix web
+npm test --prefix web
+npm run typecheck --prefix web
+npm run lint --prefix web
+npm run build --prefix web
 ```
 
-Use the compose file from this repository, or create one with:
+后端：
 
-```yaml
-services:
-  hideck:
-    image: yibaiba/hideck:${HIDECK_TAG:-1.5.5}
-    container_name: hideck
-    restart: unless-stopped
-    network_mode: host
-    privileged: true
-    volumes:
-      - ./config:/app/config
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - /dev:/dev
-    environment:
-      TZ: Asia/Shanghai
-      CONFIG_PATH: /app/config/config.yaml
+```bash
+go test -timeout=60s ./cmd/... ./internal/... ./pkg/...
+go build ./cmd/hideck
 ```
 
-Default login: `admin` / `admin`. Change the password after first login. Set
-`HIDECK_TAG` before running Compose when you want a specific image tag.
+开发环境可以通过 `web/.env.local` 设置 Vite 代理目标：
 
-## EC25 SIM 检测设置
+```dotenv
+VITE_API_PROXY_TARGET=http://127.0.0.1:7575
+```
 
-EC25 的 USB/QMI 设备热插拔与实体 SIM 检测是两个独立功能。大疆定制
-模块实测应保持实体 SIM 热插拔检测关闭：
+服务启动后可访问 `/api/docs` 查看 OpenAPI 页面。
+
+## 架构与技术栈
+
+- 后端：Go、Gin、GORM、Viper
+- 前端：Vue 3、Vite、Pinia、Element Plus、ECharts
+- 数据库：SQLite
+- 实时通信：SSE、WebSocket、WebRTC
+- 交付：Docker、GitHub Actions、多架构 Linux 二进制
+
+生产入口位于 `cmd/hideck`，前端源码位于 `web/`，主要业务模块位于 `internal/`，本地整合的上游源码位于 `third_party/`。
+
+## EC25 与 SIM 检测
+
+EC25 的 USB/QMI 热插拔和实体 SIM 检测是两个独立功能。大疆定制模块实测应关闭实体 SIM 热插拔检测：
 
 ```text
 AT+QSIMDET=0,0
 AT+CFUN=1,1
 ```
 
-`QSIMDET=0,0` 会关闭基于 `SIM_DET` 引脚的实体 SIM 热插拔检测。请在模组断电时
-插好 SIM，再重新上电；也可在插卡后执行 `AT+CFUN=1,1` 软重启模组。
+`QSIMDET=0,0` 会关闭基于 `SIM_DET` 引脚的检测。请在模组断电时插好 SIM 后重新上电，也可以在插卡后执行 `AT+CFUN=1,1` 软重启。
 
 重启后通过 AT 端口验证：
 
@@ -78,118 +174,52 @@ AT+CPIN?
 AT+QCCID
 ```
 
-预期 `AT+QSIMDET?` 返回 `+QSIMDET: 0,0`，`AT+CPIN?` 返回 `+CPIN: READY`，
-并且 `AT+QCCID` 能读取 ICCID。具体参数含义参见
-[Quectel EC25 & EC21 AT Commands Manual](https://quectel.com/content/uploads/2021/03/Quectel_EC25EC21_AT_Commands_Manual_V1.3.pdf)。
+预期 `AT+QSIMDET?` 返回 `+QSIMDET: 0,0`，`AT+CPIN?` 返回 `+CPIN: READY`，并且 `AT+QCCID` 能读取 ICCID。参数说明参见 [Quectel EC25 & EC21 AT Commands Manual](https://quectel.com/content/uploads/2021/03/Quectel_EC25EC21_AT_Commands_Manual_V1.3.pdf)。
 
-### 大疆定制模块恢复为移远 EC25 USB 身份
+### 大疆定制模块恢复为移远 USB 身份
 
-以下步骤适用于 USB 当前识别为 `2ca3:4006`、且已确认底层为移远 EC25 的大疆定制
-模块。该操作只修改 USB VID/PID 与接口组合，不会修改 IMEI。`AT+QCFG="usbcfg"`
-会自动保存配置，并在模组重启后生效；错误的接口参数可能导致 AT 口或网络接口消失，
-不要用于其他型号的模组。
-
-在虚拟机中依次执行：
+以下步骤仅适用于 USB 当前识别为 `2ca3:4006`、且已经确认底层为移远 EC25 的大疆定制模块。该操作会持久化 USB VID/PID 和接口组合；错误参数可能导致 AT 口或网络接口消失，不要用于其他型号。
 
 ```bash
-# 0. 安装 socat（用于发送 AT 指令）
 sudo apt-get update && sudo apt-get install socat -y
-
-# 1. 临时加载 option 串口驱动
 sudo modprobe option
 
-# 2. 将大疆当前 USB ID 注册到 option 驱动，生成 /dev/ttyUSB* 串口
 echo 2ca3 4006 | sudo tee /sys/bus/usb-serial/drivers/option1/new_id
-
-# 3. 确认 /dev/ttyUSB2 是 AT 口后，将 USB 身份永久改为移远 2c7c:0125
 echo 'AT+QCFG="usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,0' | socat - /dev/ttyUSB2,crnl
-
-# 4. 软重启模组，使新 USB 配置生效
 echo 'AT+CFUN=1,1' | socat - /dev/ttyUSB2,crnl
 ```
 
-软重启会让 `/dev/ttyUSB*` 和网络接口暂时消失。等待模组重新枚举后检查：
-
-```bash
-lsusb
-```
-
-预期结果包含：
+等待重新枚举后运行 `lsusb`，预期包含：
 
 ```text
 2c7c:0125 Quectel Wireless Solutions Co., Ltd. EC25 LTE modem
 ```
 
-若 `/dev/ttyUSB2` 不存在或不是 AT 口，应先根据实际枚举结果确认端口，不能直接发送
-持久化配置。当前用户也必须拥有该串口的读写权限。`usbcfg` 参数含义参见
-[Quectel EC2x/EG2x/EG9x/EM05 QCFG AT Commands Manual](https://quectel.com/content/uploads/2024/02/Quectel_EC2xEG2xEG9xEM05_Series_QCFG_AT_Commands_Manual_V1.0.pdf)。
+如果 `/dev/ttyUSB2` 不存在或不是 AT 口，必须先确认实际端口，不能直接发送持久化配置。当前用户也必须拥有串口读写权限。参数说明参见 [Quectel EC2x/EG2x/EG9x/EM05 QCFG AT Commands Manual](https://quectel.com/content/uploads/2024/02/Quectel_EC2xEG2xEG9xEM05_Series_QCFG_AT_Commands_Manual_V1.0.pdf)。
 
 ## AT、QMI 与 MBIM
 
-三者不是互相替代的同一层协议：
-
 | 通道 | Linux 常见节点/驱动 | 用途 |
 | --- | --- | --- |
-| AT | `/dev/ttyUSB*`、`/dev/ttyACM*` | 模组配置、诊断、短信及人工命令 |
-| QMI | `/dev/cdc-wdm*` + `qmi_wwan` | 高通系模组的控制面、SIM、短信和蜂窝数据拨号 |
-| MBIM | `/dev/cdc-wdm*` + `cdc_mbim` | USB-IF 标准化的模组控制和蜂窝数据拨号 |
+| AT | `/dev/ttyUSB*`、`/dev/ttyACM*` | 模组配置、诊断、短信和人工命令 |
+| QMI | `/dev/cdc-wdm*` + `qmi_wwan` | 高通模组控制面、SIM、短信和蜂窝数据拨号 |
+| MBIM | `/dev/cdc-wdm*` + `cdc_mbim` | USB-IF 标准化控制面和蜂窝数据拨号 |
 
-同一块模组可以始终保留 AT 串口，同时将网络控制组合配置为 QMI 或 MBIM。HiDeck
-在 QMI 模式通过 QMI 管理控制面和数据面；在 MBIM 模式通过 MBIM 管理网络，短信和
-人工 AT 命令仍由同一个 AT 调度器串行执行。
+同一块模组可以保留 AT 串口，同时把网络控制组合配置为 QMI 或 MBIM。HiDeck 在 QMI 模式管理控制面和数据面；在 MBIM 模式管理网络，短信和人工 AT 命令仍由同一个 AT 调度器串行执行。
 
-是否支持 MBIM 由具体硬件和固件 USB 组合共同决定，不能只看产品系列或
-`AT+QCFG="usbnet"` 是否接受参数。切换后至少要同时确认：
+MBIM 支持取决于具体硬件和固件的 USB 组合，不能只看产品系列或 `AT+QCFG="usbnet"` 是否接受参数。切换后至少确认：
 
 1. 网卡由 `cdc_mbim` 驱动并出现 `/dev/cdc-wdm*`；
 2. 标准 MBIM `OPEN` 能收到 `OPEN_DONE`；
 3. `DeviceCaps` 能返回当前模组 IMEI。
 
-只出现 `cdc_mbim` 接口仍不足以证明协议可用。当前测试使用的大疆定制 EC25
-在 `usbnet=2` 时可以枚举 `cdc_mbim`，但标准 `OPEN` 无响应，因此 HiDeck 会拒绝把
-该状态持久化为 MBIM，并保留/恢复 QMI 配置。其他 EC25 或其他型号必须按上述握手
-逐台验证，不能套用这一固件结论。
+只出现 `cdc_mbim` 接口不足以证明协议可用。当前测试的大疆定制 EC25 在 `usbnet=2` 时可以枚举 `cdc_mbim`，但标准 `OPEN` 无响应，因此 HiDeck 会拒绝持久化 MBIM 并保留或恢复 QMI 配置。其他型号必须逐台验证。
 
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm--Noncommercial--1.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0)
-[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](go.mod)
-[![Vue 3](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js)](web/package.json)
+## 使用与许可
 
-> 面向高通 4G/LTE/5G 模组（Quectel EC20/EC25/EC21/EG25/EM20 等）的综合管理与代理服务平台。
+- HiDeck 仅用于个人学习、技术研究和功能测试，不建议直接用于生产或关键业务。
+- HiDeck 是第三方独立项目，与 Quectel、高通及其他模组或芯片厂商没有官方关联、授权或合作关系。
+- 使用者必须遵守所在地法律法规和电信运营商服务条款，不得用于违法违规用途。
+- 软件按“现状”提供，不附带明示或暗示担保；使用风险由使用者自行承担。
 
-HiDeck 把模组热插拔管理、SOCKS5/HTTP 代理编排、短信收发、VoWiFi/IMS 通话、eSIM 全生命周期管理整合到一个服务里,并提供一套现代化的响应式 Web 管理后台。
-
-## 核心特性
-
-| 模块 | 说明 |
-| --- | --- |
-| 多模组并发管理 | USB 热插拔自动发现(ttyUSB 等)、多设备实时状态监控 |
-| 轻量级代理引擎 | 内建 SOCKS5 / HTTP 代理内核,支持多实例并发;基于 `SO_BINDTODEVICE` 按设备网卡严格绑定出站流量 |
-| 通信与短信中心 | 统一界面/API 处理 AT 短信收发、会话与联系人管理、USSD 交互,短信落库可查 |
-| eSIM 管理 | 通过 AT 指令通道直接管理 eSIM 芯片,支持 Profile 下载、启用/停用、重命名、删除 |
-| 全渠道通知 | 重要短信及系统告警可推送至 Telegram、Email、PushPlus、Bark、飞书(Lark/Feishu)、QQ 等 |
-| 多架构构建 | 原生支持 amd64 / arm64 / arm7 跨平台编译,路由器到边缘节点均可部署 |
-
-## 典型应用场景
-
-- **私有 IP 代理池**:单主机挂载多张物理 SIM 卡或多张 eSIM,每张网卡对应独立的 SOCKS5/HTTP 实例,组建自己的移动网络代理。
-- **统一接码/验证码中心**:Web 界面或 API 并行收发多卡短信,并通过 Webhook/Bot 实时推送到个人终端。
-- **VoWiFi 零信号通信**:地下室、弱覆盖场景下,借助宽带网络隧道建立 IMS 连接,保证业务不掉线。
-
-## 架构与技术栈
-
-- **Backend**:Go 1.26+(Gin、GORM、Viper、euicc-go)
-- **Frontend**:Vue 3 + Vite + TailwindCSS + Element Plus
-- **Database**:SQLite(`hideck.db`)
-- **CI/CD**:GitHub Actions 自动化多架构 Docker 镜像构建与发布
-
-
-## 免责声明
-
-- **用途定位**:本项目主要面向个人学习、技术研究与功能测试场景,不建议直接用于生产环境或关键业务系统;由此产生的部署及使用风险由使用者自行承担。
-- **非官方项目**:HiDeck 为第三方独立开发的开源软件,与 Quectel(高通模组厂商)、高通公司及其他任何模组/芯片厂商均无官方关联、授权或合作关系,亦不对模组硬件本身的功能、质量或安全性负责。
-- **合规使用**:使用本项目搭建的服务时,请自行确保符合所在地区的法律法规及电信运营商的服务条款,不得用于任何违法违规用途。因违规使用造成的一切法律责任由使用者自行承担,与本项目作者及贡献者无关。
-- **无担保**:本软件按"现状"提供,不附带任何明示或暗示的担保,包括但不限于适销性、特定用途适用性及不侵权担保。因使用或无法使用本软件(含数据丢失、设备异常、业务中断等)造成的任何直接或间接损失,作者及贡献者不承担任何责任。
-
-## License
-
-本源码整合树不是单一许可项目。根项目基于 [PolyForm Noncommercial License 1.0.0](LICENSE)，`third_party/vowifi-go` 使用 AGPL-3.0，`third_party/quectel-qmi-go`、`third_party/netlink`、`third_party/qqbot` 等组件按各自许可证授权。发布公开二进制或 Docker 镜像前，请先确认组合分发的许可证义务；详情见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本仓库是源码整合树，不是单一许可项目。根项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)；`third_party/vowifi-go` 使用 AGPL-3.0；其他第三方组件按各自许可证授权。公开分发二进制或 Docker 镜像前，请先核对组合分发义务，详情见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
