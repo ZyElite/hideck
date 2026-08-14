@@ -65,6 +65,7 @@ type QQQRService struct {
 
 type qqQRSession struct {
 	mu           sync.Mutex
+	cleanup      *time.Timer
 	id           string
 	taskID       string
 	qrURL        string
@@ -113,6 +114,9 @@ func (s *QQQRService) Start(ctx context.Context) (QQQRView, error) {
 	s.mu.Lock()
 	s.sessions[sessionID] = session
 	s.mu.Unlock()
+	session.cleanup = time.AfterFunc(qqQRSessionTTL+qrSessionCleanupGrace, func() {
+		s.removeSession(sessionID, session)
+	})
 	return session.view(), nil
 }
 
@@ -122,33 +126,40 @@ func (s *QQQRService) Status(ctx context.Context, sessionID string) (QQQRView, e
 		return QQQRView{}, err
 	}
 	session.mu.Lock()
-	defer session.mu.Unlock()
 	if session.terminal() {
-		return session.viewLocked(), nil
+		view := session.viewLocked()
+		session.mu.Unlock()
+		s.removeSession(sessionID, session)
+		return view, nil
 	}
 	if !s.now().Before(session.expiresAt) {
 		session.status = QQQRExpired
-		return session.viewLocked(), nil
+		return s.finishStatus(sessionID, session)
 	}
 	result, err := s.client.poll(ctx, session.taskID)
 	if err != nil {
-		return session.viewLocked(), err
+		view := session.viewLocked()
+		session.mu.Unlock()
+		return view, err
 	}
 	if err := s.applyPollResult(ctx, session, result); err != nil {
 		session.status = QQQRError
 		session.errorText = err.Error()
 	}
-	return session.viewLocked(), nil
+	if session.status == QQQRExpired || session.status == QQQRError {
+		return s.finishStatus(sessionID, session)
+	}
+	view := session.viewLocked()
+	session.mu.Unlock()
+	return view, nil
 }
 
 func (s *QQQRService) Cancel(sessionID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sessionID = strings.TrimSpace(sessionID)
-	if _, exists := s.sessions[sessionID]; !exists {
-		return ErrQQQRSessionNotFound
+	session, err := s.session(sessionID)
+	if err != nil {
+		return err
 	}
-	delete(s.sessions, sessionID)
+	s.removeSession(sessionID, session)
 	return nil
 }
 
@@ -161,12 +172,35 @@ func (s *QQQRService) MarkApplied(sessionID, warning string) error {
 	defer session.mu.Unlock()
 	session.applied = strings.TrimSpace(warning) == ""
 	session.applyWarning = strings.TrimSpace(warning)
-	if session.applied {
-		clear(session.key)
-		session.key = nil
-		session.credentials.ClientSecret = ""
-	}
+	session.clearSensitiveLocked()
 	return nil
+}
+
+func (s *QQQRService) finishStatus(sessionID string, session *qqQRSession) (QQQRView, error) {
+	view := session.viewLocked()
+	session.mu.Unlock()
+	s.removeSession(sessionID, session)
+	return view, nil
+}
+
+func (s *QQQRService) removeSession(sessionID string, session *qqQRSession) {
+	s.mu.Lock()
+	removed := false
+	if s.sessions[strings.TrimSpace(sessionID)] == session {
+		delete(s.sessions, strings.TrimSpace(sessionID))
+		removed = true
+	}
+	s.mu.Unlock()
+	if !removed {
+		return
+	}
+	session.mu.Lock()
+	if session.cleanup != nil {
+		session.cleanup.Stop()
+		session.cleanup = nil
+	}
+	session.clearSensitiveLocked()
+	session.mu.Unlock()
 }
 
 func (s *QQQRService) createTask(ctx context.Context) (string, []byte, error) {
@@ -250,6 +284,12 @@ func (s *qqQRSession) viewLocked() QQQRView {
 		Status: s.status, Error: s.errorText, Credentials: s.credentials,
 		Applied: s.applied, ApplyWarning: s.applyWarning,
 	}
+}
+
+func (s *qqQRSession) clearSensitiveLocked() {
+	clear(s.key)
+	s.key = nil
+	s.credentials.ClientSecret = ""
 }
 
 func buildQQQRURL(baseURL, taskID string) string {

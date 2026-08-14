@@ -59,6 +59,16 @@ func TestWeixinQRServiceScansAndConfirms(t *testing.T) {
 	if confirmed.Credentials.AccountID != "bot-1" || confirmed.Credentials.Token != "secret-token" {
 		t.Fatalf("credentials = %+v", confirmed.Credentials)
 	}
+	if err := service.MarkApplied(started.SessionID, "保存失败"); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := service.Status(context.Background(), started.SessionID)
+	if err != nil || applied.Applied || applied.ApplyWarning != "保存失败" || applied.Credentials.Token != "" || applied.QRToken != "" {
+		t.Fatalf("applied = %+v, %v", applied, err)
+	}
+	if _, err := service.Status(context.Background(), started.SessionID); !errors.Is(err, ErrWeixinQRSessionNotFound) {
+		t.Fatalf("terminal Status() error = %v", err)
+	}
 }
 
 func TestWeixinQRServiceRefreshesAtMostThreeTimes(t *testing.T) {
@@ -89,6 +99,9 @@ func TestWeixinQRServiceRefreshesAtMostThreeTimes(t *testing.T) {
 	if view.Status != WeixinQRExpired || qrCalls != 4 {
 		t.Fatalf("view = %+v, qrCalls = %d", view, qrCalls)
 	}
+	if _, err := service.Status(context.Background(), view.SessionID); !errors.Is(err, ErrWeixinQRSessionNotFound) {
+		t.Fatalf("expired Status() error = %v", err)
+	}
 }
 
 func TestWeixinQRServiceCancelRemovesSession(t *testing.T) {
@@ -101,9 +114,18 @@ func TestWeixinQRServiceCancelRemovesSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	session, err := service.session(view.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Cancel(view.SessionID); err != nil {
 		t.Fatal(err)
 	}
+	session.mu.Lock()
+	if session.qrToken != "" {
+		t.Fatalf("cancelled QR token = %q", session.qrToken)
+	}
+	session.mu.Unlock()
 	if _, err := service.Status(context.Background(), view.SessionID); !errors.Is(err, ErrWeixinQRSessionNotFound) {
 		t.Fatalf("Status() error = %v", err)
 	}

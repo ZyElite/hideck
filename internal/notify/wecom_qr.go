@@ -68,6 +68,7 @@ type WeComQRService struct {
 
 type weComQRSession struct {
 	mu           sync.Mutex
+	cleanup      *time.Timer
 	id           string
 	scode        string
 	qrURL        string
@@ -127,6 +128,9 @@ func (s *WeComQRService) Start(ctx context.Context) (WeComQRView, error) {
 	s.mu.Lock()
 	s.sessions[sessionID] = session
 	s.mu.Unlock()
+	session.cleanup = time.AfterFunc(weComQRSessionTTL+qrSessionCleanupGrace, func() {
+		s.removeSession(sessionID, session)
+	})
 	return session.view(), nil
 }
 
@@ -136,29 +140,34 @@ func (s *WeComQRService) Status(ctx context.Context, sessionID string) (WeComQRV
 		return WeComQRView{}, err
 	}
 	session.mu.Lock()
-	defer session.mu.Unlock()
 	if session.terminal() {
-		return session.viewLocked(), nil
+		view := session.viewLocked()
+		session.mu.Unlock()
+		s.removeSession(sessionID, session)
+		return view, nil
 	}
 	if !s.now().Before(session.expiresAt) {
 		session.status = WeComQRExpired
-		return session.viewLocked(), nil
+		return s.finishStatus(sessionID, session)
 	}
 	if err := s.pollLocked(ctx, session); err != nil {
 		session.status = WeComQRError
 		session.errorText = err.Error()
 	}
-	return session.viewLocked(), nil
+	if session.status == WeComQRExpired || session.status == WeComQRError {
+		return s.finishStatus(sessionID, session)
+	}
+	view := session.viewLocked()
+	session.mu.Unlock()
+	return view, nil
 }
 
 func (s *WeComQRService) Cancel(sessionID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sessionID = strings.TrimSpace(sessionID)
-	if _, exists := s.sessions[sessionID]; !exists {
-		return ErrWeComQRSessionNotFound
+	session, err := s.session(sessionID)
+	if err != nil {
+		return err
 	}
-	delete(s.sessions, sessionID)
+	s.removeSession(sessionID, session)
 	return nil
 }
 
@@ -171,10 +180,35 @@ func (s *WeComQRService) MarkApplied(sessionID, warning string) error {
 	defer session.mu.Unlock()
 	session.applied = strings.TrimSpace(warning) == ""
 	session.applyWarning = strings.TrimSpace(warning)
-	if session.applied {
-		session.credentials.Secret = ""
-	}
+	session.clearSensitiveLocked()
 	return nil
+}
+
+func (s *WeComQRService) finishStatus(sessionID string, session *weComQRSession) (WeComQRView, error) {
+	view := session.viewLocked()
+	session.mu.Unlock()
+	s.removeSession(sessionID, session)
+	return view, nil
+}
+
+func (s *WeComQRService) removeSession(sessionID string, session *weComQRSession) {
+	s.mu.Lock()
+	removed := false
+	if s.sessions[strings.TrimSpace(sessionID)] == session {
+		delete(s.sessions, strings.TrimSpace(sessionID))
+		removed = true
+	}
+	s.mu.Unlock()
+	if !removed {
+		return
+	}
+	session.mu.Lock()
+	if session.cleanup != nil {
+		session.cleanup.Stop()
+		session.cleanup = nil
+	}
+	session.clearSensitiveLocked()
+	session.mu.Unlock()
 }
 
 func (s *WeComQRService) pollLocked(ctx context.Context, session *weComQRSession) error {
@@ -249,6 +283,11 @@ func (s *weComQRSession) viewLocked() WeComQRView {
 		Status: s.status, Error: s.errorText, Credentials: s.credentials,
 		Applied: s.applied, ApplyWarning: s.applyWarning,
 	}
+}
+
+func (s *weComQRSession) clearSensitiveLocked() {
+	s.scode = ""
+	s.credentials.Secret = ""
 }
 
 func valueOrDefault(value, fallback string) string {

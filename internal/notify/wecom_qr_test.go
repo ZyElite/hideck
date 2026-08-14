@@ -59,6 +59,9 @@ func TestWeComQRServiceConfirmsHermesCompatibleScan(t *testing.T) {
 	if err != nil || !applied.Applied || applied.Credentials.Secret != "" {
 		t.Fatalf("applied = %+v, %v", applied, err)
 	}
+	if _, err := service.Status(context.Background(), started.SessionID); !errors.Is(err, ErrWeComQRSessionNotFound) {
+		t.Fatalf("terminal Status() error = %v", err)
+	}
 }
 
 func TestWeComQRServiceReportsIncompleteCredentials(t *testing.T) {
@@ -72,6 +75,9 @@ func TestWeComQRServiceReportsIncompleteCredentials(t *testing.T) {
 	view, err := service.Status(context.Background(), started.SessionID)
 	if err != nil || view.Status != WeComQRError || !strings.Contains(view.Error, "手工填写") {
 		t.Fatalf("Status() = %+v, %v", view, err)
+	}
+	if _, err := service.Status(context.Background(), started.SessionID); !errors.Is(err, ErrWeComQRSessionNotFound) {
+		t.Fatalf("error Status() = %v", err)
 	}
 }
 
@@ -89,9 +95,26 @@ func TestWeComQRServiceExpiresAndCancelsSessions(t *testing.T) {
 	if err != nil || view.Status != WeComQRExpired {
 		t.Fatalf("Status() = %+v, %v", view, err)
 	}
+	if _, err := service.Status(context.Background(), started.SessionID); !errors.Is(err, ErrWeComQRSessionNotFound) {
+		t.Fatalf("expired Status() error = %v", err)
+	}
+
+	started, err = service.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := service.session(started.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Cancel(started.SessionID); err != nil {
 		t.Fatal(err)
 	}
+	session.mu.Lock()
+	if session.scode != "" {
+		t.Fatalf("cancelled scode = %q", session.scode)
+	}
+	session.mu.Unlock()
 	if _, err := service.Status(context.Background(), started.SessionID); !errors.Is(err, ErrWeComQRSessionNotFound) {
 		t.Fatalf("Status() error = %v", err)
 	}

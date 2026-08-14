@@ -62,6 +62,7 @@ type WeixinQRService struct {
 
 type weixinQRSession struct {
 	mu           sync.Mutex
+	cleanup      *time.Timer
 	id           string
 	baseURL      string
 	pollBaseURL  string
@@ -107,6 +108,9 @@ func (s *WeixinQRService) Start(ctx context.Context, baseURL string) (WeixinQRVi
 	s.mu.Lock()
 	s.sessions[sessionID] = session
 	s.mu.Unlock()
+	session.cleanup = time.AfterFunc(weixinQRSessionTTL+qrSessionCleanupGrace, func() {
+		s.removeSession(sessionID, session)
+	})
 	return session.view(), nil
 }
 
@@ -116,29 +120,34 @@ func (s *WeixinQRService) Status(ctx context.Context, sessionID string) (WeixinQ
 		return WeixinQRView{}, err
 	}
 	session.mu.Lock()
-	defer session.mu.Unlock()
 	if session.terminal() {
-		return session.viewLocked(), nil
+		view := session.viewLocked()
+		session.mu.Unlock()
+		s.removeSession(sessionID, session)
+		return view, nil
 	}
 	if !s.now().Before(session.expiresAt) {
 		session.status = WeixinQRExpired
-		return session.viewLocked(), nil
+		return s.finishStatus(sessionID, session)
 	}
 	if err := s.pollLocked(ctx, session); err != nil {
 		session.status = WeixinQRError
 		session.errorText = err.Error()
 	}
-	return session.viewLocked(), nil
+	if session.status == WeixinQRExpired || session.status == WeixinQRError {
+		return s.finishStatus(sessionID, session)
+	}
+	view := session.viewLocked()
+	session.mu.Unlock()
+	return view, nil
 }
 
 func (s *WeixinQRService) Cancel(sessionID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sessionID = strings.TrimSpace(sessionID)
-	if _, ok := s.sessions[sessionID]; !ok {
-		return ErrWeixinQRSessionNotFound
+	session, err := s.session(sessionID)
+	if err != nil {
+		return err
 	}
-	delete(s.sessions, sessionID)
+	s.removeSession(sessionID, session)
 	return nil
 }
 
@@ -151,7 +160,35 @@ func (s *WeixinQRService) MarkApplied(sessionID, warning string) error {
 	defer session.mu.Unlock()
 	session.applied = strings.TrimSpace(warning) == ""
 	session.applyWarning = strings.TrimSpace(warning)
+	session.clearSensitiveLocked()
 	return nil
+}
+
+func (s *WeixinQRService) finishStatus(sessionID string, session *weixinQRSession) (WeixinQRView, error) {
+	view := session.viewLocked()
+	session.mu.Unlock()
+	s.removeSession(sessionID, session)
+	return view, nil
+}
+
+func (s *WeixinQRService) removeSession(sessionID string, session *weixinQRSession) {
+	s.mu.Lock()
+	removed := false
+	if s.sessions[strings.TrimSpace(sessionID)] == session {
+		delete(s.sessions, strings.TrimSpace(sessionID))
+		removed = true
+	}
+	s.mu.Unlock()
+	if !removed {
+		return
+	}
+	session.mu.Lock()
+	if session.cleanup != nil {
+		session.cleanup.Stop()
+		session.cleanup = nil
+	}
+	session.clearSensitiveLocked()
+	session.mu.Unlock()
 }
 
 func (s *WeixinQRService) pollLocked(ctx context.Context, session *weixinQRSession) error {
@@ -257,4 +294,9 @@ func (s *weixinQRSession) viewLocked() WeixinQRView {
 		Status: s.status, Error: s.errorText, Credentials: s.credentials,
 		Applied: s.applied, ApplyWarning: s.applyWarning,
 	}
+}
+
+func (s *weixinQRSession) clearSensitiveLocked() {
+	s.qrToken = ""
+	s.credentials.Token = ""
 }

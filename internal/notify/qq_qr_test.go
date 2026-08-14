@@ -82,6 +82,9 @@ func TestQQQRServiceCompletesAndDecryptsCredentials(t *testing.T) {
 	if err != nil || !applied.Applied || applied.Credentials.ClientSecret != "" {
 		t.Fatalf("applied = %+v, %v", applied, err)
 	}
+	if _, err := service.Status(context.Background(), started.SessionID); !errors.Is(err, ErrQQQRSessionNotFound) {
+		t.Fatalf("terminal Status() error = %v", err)
+	}
 }
 
 func TestQQQRServiceRefreshesAtMostThreeTimes(t *testing.T) {
@@ -120,6 +123,9 @@ func TestQQQRServiceRefreshesAtMostThreeTimes(t *testing.T) {
 	if view.Status != QQQRExpired || calls != qqQRMaxRefreshes+1 {
 		t.Fatalf("view = %+v, create calls = %d", view, calls)
 	}
+	if _, err := service.Status(context.Background(), started.SessionID); !errors.Is(err, ErrQQQRSessionNotFound) {
+		t.Fatalf("expired Status() error = %v", err)
+	}
 }
 
 func TestQQQRServiceCancelRemovesSession(t *testing.T) {
@@ -132,9 +138,18 @@ func TestQQQRServiceCancelRemovesSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	session, err := service.session(started.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Cancel(started.SessionID); err != nil {
 		t.Fatal(err)
 	}
+	session.mu.Lock()
+	if len(session.key) != 0 {
+		t.Fatalf("cancelled AES key length = %d", len(session.key))
+	}
+	session.mu.Unlock()
 	if _, err := service.Status(context.Background(), started.SessionID); !errors.Is(err, ErrQQQRSessionNotFound) {
 		t.Fatalf("Status() error = %v", err)
 	}
@@ -186,5 +201,8 @@ func TestQQQRServiceExpiresByDeadline(t *testing.T) {
 	view, err := service.Status(context.Background(), started.SessionID)
 	if err != nil || view.Status != QQQRExpired {
 		t.Fatalf("Status() = %+v, %v", view, err)
+	}
+	if _, err := service.Status(context.Background(), started.SessionID); !errors.Is(err, ErrQQQRSessionNotFound) {
+		t.Fatalf("expired Status() error = %v", err)
 	}
 }
