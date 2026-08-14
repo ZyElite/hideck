@@ -232,9 +232,10 @@ type QQConfig struct {
 }
 
 type WeixinConfig struct {
-	Enabled        bool     `mapstructure:"enabled"`
-	BaseURL        string   `mapstructure:"base_url"`
-	AllowedUserIDs []string `mapstructure:"allowed_user_ids"`
+	Enabled         bool     `mapstructure:"enabled"`
+	BaseURL         string   `mapstructure:"base_url"`
+	AllowedUserIDs  []string `mapstructure:"allowed_user_ids"`
+	AllowedGroupIDs []string `mapstructure:"allowed_group_ids"`
 }
 
 type WeComBotConfig struct {

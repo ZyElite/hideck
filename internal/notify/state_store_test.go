@@ -51,3 +51,25 @@ func TestFileRuntimeStateStoreReturnsEmptyStateWhenMissing(t *testing.T) {
 		t.Fatalf("Load() = %+v, %v", state, err)
 	}
 }
+
+func TestFileRuntimeStateStoreUpdatePreservesOtherChannels(t *testing.T) {
+	store := NewFileRuntimeStateStore(filepath.Join(t.TempDir(), "state.json"))
+	state := newRuntimeState()
+	state.QQ.AdminOpenID = "qq-admin"
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(func(current *RuntimeState) error {
+		current.Weixin.DefaultTarget = "wx-user"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.QQ.AdminOpenID != "qq-admin" || loaded.Weixin.DefaultTarget != "wx-user" {
+		t.Fatalf("updated state = %+v", loaded)
+	}
+}

@@ -16,6 +16,7 @@ var ErrRuntimeStateStoreUnavailable = errors.New("通知渠道运行状态存储
 type WeixinRuntimeState struct {
 	AccountID     string            `json:"account_id,omitempty"`
 	Token         string            `json:"token,omitempty"`
+	BaseURL       string            `json:"base_url,omitempty"`
 	UserID        string            `json:"user_id,omitempty"`
 	SyncBuffer    string            `json:"sync_buffer,omitempty"`
 	ContextTokens map[string]string `json:"context_tokens,omitempty"`
@@ -44,6 +45,7 @@ type RuntimeState struct {
 type RuntimeStateStore interface {
 	Load() (RuntimeState, error)
 	Save(state RuntimeState) error
+	Update(update func(*RuntimeState) error) error
 }
 
 type FileRuntimeStateStore struct {
@@ -58,6 +60,10 @@ func NewFileRuntimeStateStore(path string) *FileRuntimeStateStore {
 func (s *FileRuntimeStateStore) Load() (RuntimeState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+func (s *FileRuntimeStateStore) loadLocked() (RuntimeState, error) {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return newRuntimeState(), nil
@@ -78,6 +84,26 @@ func (s *FileRuntimeStateStore) Load() (RuntimeState, error) {
 func (s *FileRuntimeStateStore) Save(state RuntimeState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveLocked(state)
+}
+
+func (s *FileRuntimeStateStore) Update(update func(*RuntimeState) error) error {
+	if update == nil {
+		return errors.New("通知渠道运行状态更新函数不能为空")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	if err := update(&state); err != nil {
+		return err
+	}
+	return s.saveLocked(state)
+}
+
+func (s *FileRuntimeStateStore) saveLocked(state RuntimeState) error {
 	state = cloneRuntimeState(state)
 	state.Version = runtimeStateVersion
 	data, err := json.MarshalIndent(state, "", "  ")

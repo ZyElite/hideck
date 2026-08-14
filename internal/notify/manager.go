@@ -88,6 +88,13 @@ func (m *Manager) SaveRuntimeState(state RuntimeState) error {
 	return m.stateStore.Save(state)
 }
 
+func (m *Manager) UpdateRuntimeState(update func(*RuntimeState) error) error {
+	if m == nil || m.stateStore == nil {
+		return ErrRuntimeStateStoreUnavailable
+	}
+	return m.stateStore.Update(update)
+}
+
 // initChannels 根据配置创建并启动所有通知渠道
 func (m *Manager) initChannels(cfg *config.Config) error {
 	m.channels = nil
@@ -125,6 +132,18 @@ func (m *Manager) initChannels(cfg *config.Config) error {
 		}
 		if qq != nil {
 			m.channels = append(m.channels, qq)
+		}
+	}
+
+	// 个人微信 iLink 渠道
+	if cfg.Weixin.Enabled {
+		weixin, err := NewWeixinChannel(WeixinChannelOptions{Config: cfg.Weixin, StateStore: m.stateStore})
+		if err != nil {
+			logger.Error("初始化个人微信通知渠道失败", "err", err)
+			return err
+		}
+		if weixin != nil {
+			m.channels = append(m.channels, weixin)
 		}
 	}
 

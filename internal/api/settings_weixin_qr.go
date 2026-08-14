@@ -93,14 +93,13 @@ func (s *Server) applyWeixinQRCredentials(credentials notify.WeixinQRCredentials
 	if s.notifyMgr == nil {
 		return "通知管理器不可用，凭证尚未保存"
 	}
-	state, err := s.notifyMgr.LoadRuntimeState()
-	if err != nil {
-		return err.Error()
-	}
-	state.Weixin.AccountID = credentials.AccountID
-	state.Weixin.Token = credentials.Token
-	state.Weixin.UserID = credentials.UserID
-	if err := s.notifyMgr.SaveRuntimeState(state); err != nil {
+	if err := s.notifyMgr.UpdateRuntimeState(func(state *notify.RuntimeState) error {
+		state.Weixin.AccountID = credentials.AccountID
+		state.Weixin.Token = credentials.Token
+		state.Weixin.BaseURL = credentials.BaseURL
+		state.Weixin.UserID = credentials.UserID
+		return nil
+	}); err != nil {
 		return err.Error()
 	}
 	nextConfig := *s.fullCfg
