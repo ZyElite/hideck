@@ -18,7 +18,7 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
-// feishuLogger 将飞书 SDK 日志转发到 vohive 的 logger
+// feishuLogger 将飞书 SDK 日志转发到 hideck 的 logger
 type feishuLogger struct{}
 
 func (l *feishuLogger) Debug(ctx context.Context, args ...interface{}) {

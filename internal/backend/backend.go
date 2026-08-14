@@ -1,4 +1,4 @@
-// Package backend 定义 VoHive 设备后端的统一抽象层。
+// Package backend 定义 HiDeck 设备后端的统一抽象层。
 // AT、QMI、MBIM 和 PC/SC 通过配置开关 device_backend 选择。
 package backend
 

@@ -19,7 +19,7 @@ func TestCoordinatorDoesNotRunEntitlementProbes(t *testing.T) {
 	for _, forbidden := range []string{
 		"runATTBootstrapProbe",
 		"runTS43Probe",
-		"VOHIVE_E911_ATT_CACHED_TOKEN",
+		"HIDECK_E911_ATT_CACHED_TOKEN",
 		"debugATTCachedToken",
 	} {
 		if strings.Contains(source, forbidden) {
@@ -75,13 +75,13 @@ func TestHTTPClientAdapterUsesConfiguredEntitlementClient(t *testing.T) {
 }
 
 func TestBuildRuntimeE911IdentityIgnoresDebugCachedTokenEnv(t *testing.T) {
-	t.Setenv("VOHIVE_E911_ATT_CACHED_TOKEN", " cached-token-value ")
+	t.Setenv("HIDECK_E911_ATT_CACHED_TOKEN", " cached-token-value ")
 
 	got := buildRuntimeE911Identity(modem.DeviceStatus{
 		IMSI:  "310280233641503",
 		ICCID: "89014103212345678901",
 		IMEI:  "356306952701762",
-	}, "310", "280", "VoHive")
+	}, "310", "280", "HiDeck")
 
 	if got.CachedToken != "" {
 		t.Fatalf("cached token=%q", got.CachedToken)

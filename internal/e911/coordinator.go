@@ -100,13 +100,13 @@ func (c *Coordinator) StartWebsheet(ctx context.Context, deviceID string) (websh
 
 func displayName(w *device.Worker) string {
 	if w == nil {
-		return "VoHive"
+		return "HiDeck"
 	}
 	cfg := w.Config
 	if cfg.Name != "" {
 		return cfg.Name
 	}
-	return "VoHive " + w.ID
+	return "HiDeck " + w.ID
 }
 
 func buildATTSIPUsername(imsi string) string {

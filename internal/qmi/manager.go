@@ -1656,7 +1656,7 @@ func (m *Manager) Disconnect() error {
 }
 
 // ResetExistingDataConnection tears down a data call that may have been left
-// active before VoHive took ownership of this QMI device.
+// active before HiDeck took ownership of this QMI device.
 func (m *Manager) ResetExistingDataConnection(ctx context.Context) (bool, error) {
 	if m == nil {
 		return false, fmt.Errorf("qmi_manager_not_available")

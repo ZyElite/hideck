@@ -889,7 +889,7 @@ onBeforeUnmount(() => {
                   <div class="space-y-1">
                     <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">数字签名密钥 (Secret)</label>
                     <el-input v-model="webhookSettings.secret" :disabled="!webhookSettings.enabled" placeholder="用于 HMAC-SHA256 签名，选填" />
-                    <div class="text-[10px] text-gray-400 mt-1">若配置，将通过请求头 X-Vohive-Signature 提供 payload 验证。</div>
+                    <div class="text-[10px] text-gray-400 mt-1">若配置，将通过请求头 X-HiDeck-Signature 提供 payload 验证。</div>
                   </div>
 
                   <div class="space-y-2">
@@ -923,7 +923,7 @@ onBeforeUnmount(() => {
                       </el-button>
                     </div>
                     <div class="text-[10px] text-gray-400 mt-1">
-                      Content-Type 与 X-Vohive-Signature 为系统保留头，自定义同名头会被忽略。
+                      Content-Type 与 X-HiDeck-Signature 为系统保留头，自定义同名头会被忽略。
                     </div>
                   </div>
 

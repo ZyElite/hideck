@@ -181,7 +181,7 @@ func TestEnrichDiscoveredQMIDevicePassesQMIClientOptions(t *testing.T) {
 		QMIClientOptions: qmiq.ClientOptions{
 			UseProxy:        true,
 			ProxyPath:       "custom-qmi-proxy",
-			ProxyExecutable: "/opt/vohive/bin/qmi-proxy",
+			ProxyExecutable: "/opt/hideck/bin/qmi-proxy",
 		},
 	})
 
@@ -197,8 +197,8 @@ func TestEnrichDiscoveredQMIDevicePassesQMIClientOptions(t *testing.T) {
 	if gotOpts.ProxyPath != "custom-qmi-proxy" {
 		t.Fatalf("ProxyPath=%q, want custom-qmi-proxy", gotOpts.ProxyPath)
 	}
-	if gotOpts.ProxyExecutable != "/opt/vohive/bin/qmi-proxy" {
-		t.Fatalf("ProxyExecutable=%q, want /opt/vohive/bin/qmi-proxy", gotOpts.ProxyExecutable)
+	if gotOpts.ProxyExecutable != "/opt/hideck/bin/qmi-proxy" {
+		t.Fatalf("ProxyExecutable=%q, want /opt/hideck/bin/qmi-proxy", gotOpts.ProxyExecutable)
 	}
 }
 

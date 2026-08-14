@@ -104,7 +104,7 @@ func (s *Server) handleTestWeComNotification(c *gin.Context) {
 
 	result, sendErr := channel.SendWithContextDetailed(notify.NotificationContext{
 		Event:      "wecom_test",
-		Text:       "这是一条来自 VoHive 的企业微信测试通知",
+		Text:       "这是一条来自 HiDeck 的企业微信测试通知",
 		DeviceID:   "test_device_001",
 		DeviceName: "测试设备",
 		Timestamp:  time.Now(),

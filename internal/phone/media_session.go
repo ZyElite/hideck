@@ -76,7 +76,7 @@ func newMediaSession(ctx context.Context, options mediaSessionOptions) (*MediaSe
 func (s *MediaSession) negotiate(ctx context.Context, offer string) (string, error) {
 	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypePCMU, ClockRate: 8000, Channels: 1,
-	}, "audio", "vohive-phone")
+	}, "audio", "hideck-phone")
 	if err != nil {
 		return "", fmt.Errorf("phone: create browser audio track: %w", err)
 	}

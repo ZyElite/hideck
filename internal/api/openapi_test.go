@@ -8,21 +8,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestOpenAPIVoHiveYAMLValid(t *testing.T) {
-	data, err := os.ReadFile("openapi.vohive.yaml")
+func TestOpenAPIHiDeckYAMLValid(t *testing.T) {
+	data, err := os.ReadFile("openapi.hideck.yaml")
 	if err != nil {
-		t.Fatalf("read openapi.vohive.yaml: %v", err)
+		t.Fatalf("read openapi.hideck.yaml: %v", err)
 	}
 	var doc map[string]any
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("openapi.vohive.yaml is invalid YAML: %v", err)
+		t.Fatalf("openapi.hideck.yaml is invalid YAML: %v", err)
 	}
 	if doc["openapi"] == "" {
-		t.Fatalf("openapi.vohive.yaml missing openapi version")
+		t.Fatalf("openapi.hideck.yaml missing openapi version")
 	}
 	paths, ok := doc["paths"].(map[string]any)
 	if !ok || paths["/system/time"] == nil {
-		t.Fatal("openapi.vohive.yaml missing /system/time")
+		t.Fatal("openapi.hideck.yaml missing /system/time")
 	}
 	for _, path := range []string{
 		"/command-center/commands", "/command-center/executions", "/command-center/events",
@@ -37,10 +37,10 @@ func TestOpenAPIVoHiveYAMLValid(t *testing.T) {
 		"/settings/notifications/wecom/test",
 	} {
 		if paths[path] == nil {
-			t.Fatalf("openapi.vohive.yaml missing %s", path)
+			t.Fatalf("openapi.hideck.yaml missing %s", path)
 		}
 	}
 	if !strings.Contains(string(data), "enum: [at, qmi, mbim, pcsc]") {
-		t.Fatal("openapi.vohive.yaml missing MBIM/PCSC device and eSIM transport contract")
+		t.Fatal("openapi.hideck.yaml missing MBIM/PCSC device and eSIM transport contract")
 	}
 }

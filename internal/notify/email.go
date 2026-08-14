@@ -34,9 +34,9 @@ func (c *EmailChannel) SendWithContext(ctx NotificationContext) error {
 	auth := smtp.PlainAuth("", c.cfg.Username, c.cfg.Password, c.cfg.SMTPHost)
 	addr := fmt.Sprintf("%s:%d", c.cfg.SMTPHost, c.cfg.SMTPPort)
 
-	subject := fmt.Sprintf("[Vohive] %s", ctx.Event)
+	subject := fmt.Sprintf("[HiDeck] %s", ctx.Event)
 	if label := ctx.DeviceLabel(); label != "未知设备" {
-		subject = fmt.Sprintf("[Vohive] %s - %s", ctx.Event, label)
+		subject = fmt.Sprintf("[HiDeck] %s - %s", ctx.Event, label)
 	}
 
 	to := strings.Join(c.cfg.ToAddresses, ",")

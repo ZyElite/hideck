@@ -15,7 +15,7 @@ var (
 )
 
 // IsGoRun 返回当前进程是否大概率由 `go run` 启动。
-// 也支持通过 VOHIVE_FORCE_GO_RUN_LOG=true/false 手动覆盖判定结果。
+// 也支持通过 HIDECK_FORCE_GO_RUN_LOG=true/false 手动覆盖判定结果。
 func IsGoRun() bool {
 	goRunOnce.Do(func() {
 		goRunMode = detectGoRunMode()
@@ -24,7 +24,7 @@ func IsGoRun() bool {
 }
 
 func detectGoRunMode() bool {
-	if raw := strings.TrimSpace(os.Getenv("VOHIVE_FORCE_GO_RUN_LOG")); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv("HIDECK_FORCE_GO_RUN_LOG")); raw != "" {
 		if v, err := strconv.ParseBool(raw); err == nil {
 			return v
 		}

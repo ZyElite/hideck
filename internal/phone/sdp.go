@@ -53,7 +53,7 @@ func plainSelectedAudioSDP(port int, endpoint rtpEndpoint) string {
 
 func renderPlainAudioSDP(port int, payloads, attributes []string) string {
 	return fmt.Sprintf(
-		"v=0\r\no=vohive 0 0 IN IP4 127.0.0.1\r\ns=VoHive Phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP %s\r\n%s\r\na=rtpmap:%d telephone-event/8000\r\na=fmtp:%d 0-15\r\na=ptime:20\r\na=sendrecv\r\n",
+		"v=0\r\no=hideck 0 0 IN IP4 127.0.0.1\r\ns=HiDeck Phone\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP %s\r\n%s\r\na=rtpmap:%d telephone-event/8000\r\na=fmtp:%d 0-15\r\na=ptime:20\r\na=sendrecv\r\n",
 		port, strings.Join(payloads, " "), strings.Join(attributes, "\r\n"), dtmfPayloadType, dtmfPayloadType,
 	)
 }

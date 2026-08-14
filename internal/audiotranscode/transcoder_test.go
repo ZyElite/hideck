@@ -91,9 +91,9 @@ func TestReplaceAudioExtension(t *testing.T) {
 }
 
 func TestNativeTranscodeWhenConfigured(t *testing.T) {
-	inputPath := strings.TrimSpace(os.Getenv("VOHIVE_AUDIO_TRANSCODE_TEST_INPUT"))
+	inputPath := strings.TrimSpace(os.Getenv("HIDECK_AUDIO_TRANSCODE_TEST_INPUT"))
 	if inputPath == "" {
-		t.Skip("VOHIVE_AUDIO_TRANSCODE_TEST_INPUT is not set")
+		t.Skip("HIDECK_AUDIO_TRANSCODE_TEST_INPUT is not set")
 	}
 	outputPath, err := New().ToMP3(context.Background(), inputPath)
 	if err != nil {

@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	caCertificateName = "vohive-local-ca.crt"
-	caPrivateKeyName  = "vohive-local-ca.key"
-	serverCertName    = "vohive-server.crt"
-	serverKeyName     = "vohive-server.key"
+	caCertificateName = "hideck-local-ca.crt"
+	caPrivateKeyName  = "hideck-local-ca.key"
+	serverCertName    = "hideck-server.crt"
+	serverKeyName     = "hideck-server.key"
 )
 
 type Config struct {
@@ -132,7 +132,7 @@ func createCA(certificatePath, keyPath string) (*x509.Certificate, *ecdsa.Privat
 		return nil, nil, err
 	}
 	template := &x509.Certificate{
-		SerialNumber: serial, Subject: pkix.Name{CommonName: "VoHive Local CA"},
+		SerialNumber: serial, Subject: pkix.Name{CommonName: "HiDeck Local CA"},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(10, 0, 0), IsCA: true,
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 	}

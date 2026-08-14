@@ -98,7 +98,7 @@ func (c *weixinMessageClient) sendText(ctx context.Context, input weixinSendText
 		return err
 	}
 	message := map[string]any{
-		"from_user_id": "", "to_user_id": input.Target, "client_id": "vohive-weixin-" + clientID,
+		"from_user_id": "", "to_user_id": input.Target, "client_id": "hideck-weixin-" + clientID,
 		"message_type": weixinMessageBot, "message_state": weixinMessageFinished,
 		"item_list": []any{map[string]any{"type": weixinItemText, "text_item": map[string]string{"text": input.Text}}},
 	}

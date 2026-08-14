@@ -17,7 +17,7 @@ func TestNewQMIUIMTransportWithOptionsStoresClientOptions(t *testing.T) {
 	transport := NewQMIUIMTransportWithOptions("/dev/cdc-wdm0", qmiq.ClientOptions{
 		UseProxy:        true,
 		ProxyPath:       "custom-qmi-proxy",
-		ProxyExecutable: "/opt/vohive/bin/qmi-proxy",
+		ProxyExecutable: "/opt/hideck/bin/qmi-proxy",
 	})
 
 	if !transport.clientOptions.UseProxy {
@@ -26,8 +26,8 @@ func TestNewQMIUIMTransportWithOptionsStoresClientOptions(t *testing.T) {
 	if transport.clientOptions.ProxyPath != "custom-qmi-proxy" {
 		t.Fatalf("ProxyPath=%q, want custom-qmi-proxy", transport.clientOptions.ProxyPath)
 	}
-	if transport.clientOptions.ProxyExecutable != "/opt/vohive/bin/qmi-proxy" {
-		t.Fatalf("ProxyExecutable=%q, want /opt/vohive/bin/qmi-proxy", transport.clientOptions.ProxyExecutable)
+	if transport.clientOptions.ProxyExecutable != "/opt/hideck/bin/qmi-proxy" {
+		t.Fatalf("ProxyExecutable=%q, want /opt/hideck/bin/qmi-proxy", transport.clientOptions.ProxyExecutable)
 	}
 	if got := transport.ControlDevice(); got != "/dev/cdc-wdm0" {
 		t.Fatalf("ControlDevice()=%q, want /dev/cdc-wdm0", got)

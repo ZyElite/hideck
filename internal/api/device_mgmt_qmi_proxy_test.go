@@ -11,7 +11,7 @@ func TestDeviceConfigDTOPreservesQMIProxyFields(t *testing.T) {
 		ID:                 "dev-qmi",
 		QMIUseProxy:        true,
 		QMIProxyPath:       "custom-qmi-proxy",
-		QMIProxyExecutable: "/opt/vohive/bin/qmi-proxy",
+		QMIProxyExecutable: "/opt/hideck/bin/qmi-proxy",
 	}
 
 	dto := deviceConfigToDTO(cfg)

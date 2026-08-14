@@ -76,7 +76,7 @@ devices: []
 		ControlDevice:      "/dev/cdc-wdm0",
 		QMIUseProxy:        true,
 		QMIProxyPath:       "custom-qmi-proxy",
-		QMIProxyExecutable: "/opt/vohive/bin/qmi-proxy",
+		QMIProxyExecutable: "/opt/hideck/bin/qmi-proxy",
 	})
 	if err != nil {
 		t.Fatalf("AddDeviceInFile() error = %v", err)
@@ -96,8 +96,8 @@ devices: []
 	if dev.QMIProxyPath != "custom-qmi-proxy" {
 		t.Fatalf("QMIProxyPath=%q, want custom-qmi-proxy", dev.QMIProxyPath)
 	}
-	if dev.QMIProxyExecutable != "/opt/vohive/bin/qmi-proxy" {
-		t.Fatalf("QMIProxyExecutable=%q, want /opt/vohive/bin/qmi-proxy", dev.QMIProxyExecutable)
+	if dev.QMIProxyExecutable != "/opt/hideck/bin/qmi-proxy" {
+		t.Fatalf("QMIProxyExecutable=%q, want /opt/hideck/bin/qmi-proxy", dev.QMIProxyExecutable)
 	}
 }
 

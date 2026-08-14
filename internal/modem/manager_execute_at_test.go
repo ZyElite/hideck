@@ -73,7 +73,7 @@ func TestManagerStartSkipsATManagerForPureQMIBackend(t *testing.T) {
 	m, err := New(config.DeviceConfig{
 		ID:            "dev-qmi",
 		DeviceBackend: "qmi",
-		ATPort:        "/dev/vohive-test-at-port-that-must-not-open",
+		ATPort:        "/dev/hideck-test-at-port-that-must-not-open",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -97,7 +97,7 @@ func TestManagerStartSkipsATManagerForResolvedQMIBackend(t *testing.T) {
 	m, err := New(config.DeviceConfig{
 		ID:            "dev-qmi-resolved",
 		ControlDevice: "/dev/cdc-wdm0",
-		ATPort:        "/dev/vohive-test-at-port-that-must-not-open",
+		ATPort:        "/dev/hideck-test-at-port-that-must-not-open",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

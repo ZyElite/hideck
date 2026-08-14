@@ -61,7 +61,7 @@ func TestMapperUsesStructuredUbusArguments(t *testing.T) {
 	if err := json.Unmarshal([]byte(call.args[3]), &payload); err != nil {
 		t.Fatalf("payload is not JSON: %v", err)
 	}
-	if payload["name"] != "vohive_wwan-0" || payload["device"] != "qmimux0" || payload["proto"] != "none" {
+	if payload["name"] != "hideck_wwan-0" || payload["device"] != "qmimux0" || payload["proto"] != "none" {
 		t.Fatalf("payload = %#v", payload)
 	}
 }
@@ -115,7 +115,7 @@ func TestMapperRebindsChangedQMAPInterfaceAndCleansUpIdempotently(t *testing.T) 
 		t.Fatalf("calls = %d, want add/remove/add/remove", len(executor.calls))
 	}
 	for _, index := range []int{1, 3} {
-		want := []string{"call", "network.interface.vohive_wwan0", "remove", "{}"}
+		want := []string{"call", "network.interface.hideck_wwan0", "remove", "{}"}
 		if !reflect.DeepEqual(executor.calls[index].args, want) {
 			t.Fatalf("remove call %d = %v", index, executor.calls[index].args)
 		}

@@ -114,7 +114,7 @@ func validateWeComURL(rawURL string) (string, error) {
 func ValidateWeComPayloadTemplate(template string) error {
 	_, err := renderWeComPayload(template, NotificationContext{
 		Event:     "test",
-		Text:      "VoHive notification test",
+		Text:      "HiDeck notification test",
 		Timestamp: time.Unix(0, 0),
 	})
 	return err
@@ -173,7 +173,7 @@ func weComNotificationTitle(event string) string {
 	case "ip_rotated":
 		return "公网切换"
 	default:
-		return "VoHive 通知"
+		return "HiDeck 通知"
 	}
 }
 
@@ -235,7 +235,7 @@ func (w *WeComChannel) post(destination string, payload []byte) error {
 		return errors.New("创建企业微信通知请求失败")
 	}
 	request.Header.Set("Content-Type", "application/json; charset=utf-8")
-	request.Header.Set("User-Agent", "vohive-wecom-notification/1")
+	request.Header.Set("User-Agent", "hideck-wecom-notification/1")
 	response, err := w.client.Do(request)
 	if err != nil {
 		return redactWeComTransportError(err)

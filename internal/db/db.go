@@ -116,7 +116,7 @@ func Init(dbPath string) error {
 	if dsn == "" {
 		dsn = dbPath
 	}
-	driverName := strings.TrimSpace(os.Getenv("VOHIVE_SQLITE_DRIVER"))
+	driverName := strings.TrimSpace(os.Getenv("HIDECK_SQLITE_DRIVER"))
 	if driverName == "" {
 		driverName = "modernc"
 	}

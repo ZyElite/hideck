@@ -4,8 +4,8 @@
   const websheetToken = {{WEBSHEET_TOKEN}};
   const odsaStorageKey = "ts43-go.odsa.callbacks";
   const vowifiStorageKey = "vowifi-go.vowifi.callbacks";
-  const shellBroadcastName = "vohive-websheet";
-  const shellStorageKey = "vohive-websheet-complete";
+  const shellBroadcastName = "hideck-websheet";
+  const shellStorageKey = "hideck-websheet-complete";
   let attAddressCompletionPosted = false;
 
   function appendWebsheetToken(value) {
@@ -30,8 +30,8 @@
       if (originalOpen) {
         window.XMLHttpRequest.prototype.open = function(method, url) {
           const args = Array.prototype.slice.call(arguments);
-          this.__vohiveMethod = String(method || "GET").toUpperCase();
-          this.__vohiveURL = String(url || "");
+          this.__hideckMethod = String(method || "GET").toUpperCase();
+          this.__hideckURL = String(url || "");
           args[1] = rewriteCarrierPath(url);
           return originalOpen.apply(this, args);
         };
@@ -41,7 +41,7 @@
         window.XMLHttpRequest.prototype.send = function() {
           try {
             this.addEventListener("load", function() {
-              inspectATTAddressResponse(this.__vohiveMethod || "GET", this.__vohiveURL || "", this.responseText || "");
+              inspectATTAddressResponse(this.__hideckMethod || "GET", this.__hideckURL || "", this.responseText || "");
             });
           } catch (_) {}
           return originalSend.apply(this, arguments);
@@ -104,7 +104,7 @@
   }
 
   function shellMessage(payload) {
-    return {type:"vohive-websheet-callback", token:websheetToken || "", callback: payload};
+    return {type:"hideck-websheet-callback", token:websheetToken || "", callback: payload};
   }
 
   function notifyShell(payload) {

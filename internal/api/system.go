@@ -18,7 +18,7 @@ var errNotFound = errors.New("not found")
 // resolveUninstallTargets 计算自毁流程需要清理的数据目录和配置文件路径。
 // 配置文件路径必须来自运行时实际加载的路径（config.GetConfigPath()），
 // 不能假定其固定位于进程工作目录下的 "config" 子目录——
-// OpenWrt 部署通过 -c 显式传入 /etc/vohive/config.yaml，与工作目录无关，
+// OpenWrt 部署通过 -c 显式传入 /etc/hideck/config.yaml，与工作目录无关，
 // 用硬编码相对路径删除会删错地方（实际等于什么都没删）。
 // configPath 为空（配置管理器未初始化）时不返回任何配置文件路径，避免误删。
 func resolveUninstallTargets(configPath string) (dataDir string, configFile string) {
@@ -32,13 +32,13 @@ func resolveUninstallTargets(configPath string) (dataDir string, configFile stri
 // 仅靠"删掉自己导致 exec 失败"这种副作用来阻止重启是不可靠的。
 func detectServiceStopCommands(lookPath func(string) (string, error), statFile func(string) bool) [][]string {
 	var cmds [][]string
-	if statFile("/etc/init.d/vohive") {
-		cmds = append(cmds, []string{"/etc/init.d/vohive", "disable"})
-		cmds = append(cmds, []string{"/etc/init.d/vohive", "stop"})
+	if statFile("/etc/init.d/hideck") {
+		cmds = append(cmds, []string{"/etc/init.d/hideck", "disable"})
+		cmds = append(cmds, []string{"/etc/init.d/hideck", "stop"})
 		return cmds
 	}
 	if _, err := lookPath("systemctl"); err == nil {
-		cmds = append(cmds, []string{"systemctl", "disable", "--now", "vohive"})
+		cmds = append(cmds, []string{"systemctl", "disable", "--now", "hideck"})
 	}
 	return cmds
 }

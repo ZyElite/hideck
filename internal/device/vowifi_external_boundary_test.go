@@ -49,8 +49,8 @@ func TestVoWiFiHostImportsExternalRuntimehostOnly(t *testing.T) {
 				if strings.HasPrefix(importPath, "github.com/iniwex5/"+"vowifi-go/") && !allowedVoWiFiImports[importPath] {
 					offenders = append(offenders, rel+": imports non-public VoWiFi package "+importPath)
 				}
-				if importPath == "github.com/iniwex5/"+"vohive/internal/vowifi" ||
-					strings.HasPrefix(importPath, "github.com/iniwex5/"+"vohive/internal/vowifi/") {
+				if importPath == "github.com/yibaiba/"+"hideck/internal/vowifi" ||
+					strings.HasPrefix(importPath, "github.com/yibaiba/"+"hideck/internal/vowifi/") {
 					offenders = append(offenders, rel+": imports old internal VoWiFi")
 				}
 			}
@@ -62,7 +62,7 @@ func TestVoWiFiHostImportsExternalRuntimehostOnly(t *testing.T) {
 	}
 
 	if len(offenders) > 0 {
-		t.Fatalf("VoHive must import only approved vowifi-go runtimehost public packages:\n%s", strings.Join(offenders, "\n"))
+		t.Fatalf("HiDeck must import only approved vowifi-go runtimehost public packages:\n%s", strings.Join(offenders, "\n"))
 	}
 }
 

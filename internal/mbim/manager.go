@@ -1,4 +1,4 @@
-// Package mbimcore adapts the pure-Go pkg/mbim protocol stack to vohive's
+// Package mbimcore adapts the pure-Go pkg/mbim protocol stack to hideck's
 // backend layer.
 package mbimcore
 

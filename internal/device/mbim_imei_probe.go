@@ -23,7 +23,7 @@ const (
 // 适用于 cdc_mbim 驱动的设备，替代 QMI 协议探测。
 //
 // 经 mbim-proxy 打开(transport=auto，proxy 优先),而不是 direct:direct 直接抢占
-// 控制口的单一 OPEN 会话,与已持有该口的一方(ModemManager / vohive 自身 worker)
+// 控制口的单一 OPEN 会话,与已持有该口的一方(ModemManager / hideck 自身 worker)
 // 串话,读回垃圾(EM7430 上表现为 934 字节乱码)。mbim-proxy 独占并串行化该会话,
 // 等价于 `mbimcli -p`,能稳定取到 DeviceCaps。
 func ProbeIMEIViaMBIM(controlPath string) (string, error) {

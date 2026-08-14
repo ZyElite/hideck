@@ -86,7 +86,7 @@ func (b *BarkChannel) SendWithContextDetailed(ctx NotificationContext) (SendBark
 
 	title := ctx.DeviceLabel()
 	if strings.TrimSpace(title) == "" || title == "未知设备" {
-		title = "Vohive Notification"
+		title = "HiDeck Notification"
 	}
 
 	// 如果是特殊的事件类型，可以在这里定制 title

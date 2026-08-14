@@ -32,9 +32,9 @@ func (c *PushplusChannel) Send(text string) error {
 }
 
 func (c *PushplusChannel) SendWithContext(ctx NotificationContext) error {
-	title := fmt.Sprintf("[Vohive] %s", ctx.Event)
+	title := fmt.Sprintf("[HiDeck] %s", ctx.Event)
 	if label := ctx.DeviceLabel(); label != "未知设备" {
-		title = fmt.Sprintf("[Vohive] %s - %s", ctx.Event, label)
+		title = fmt.Sprintf("[HiDeck] %s - %s", ctx.Event, label)
 	}
 
 	payload := map[string]interface{}{

@@ -112,7 +112,7 @@ func TestClientOptionsFromDeviceConfigUsesProxyWhenHolderScanUnknown(t *testing.
 
 func TestDiscoveryClientOptionsForControlDeviceSkipsWhenHeldByNonProxyProcess(t *testing.T) {
 	restore := stubQMIControlDeviceHolders(t, qmiControlDeviceHolders{
-		Holders: []qmiControlDeviceHolder{{PID: 4321, Command: "vohive"}},
+		Holders: []qmiControlDeviceHolder{{PID: 4321, Command: "hideck"}},
 	})
 	defer restore()
 

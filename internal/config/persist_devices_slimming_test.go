@@ -85,7 +85,7 @@ func TestAddDeviceInFilePersistsPCSCBindingAndPINReference(t *testing.T) {
 	device := DeviceConfig{
 		ID: "reader1", DeviceBackend: ESIMTransportPCSC, ESIMTransport: ESIMTransportPCSC,
 		PCSCReaderName: "Example Reader 00 00", PCSCUSBPath: "/sys/bus/usb/devices/1-2",
-		SIMPINEnv: "VOHIVE_SIM_PIN_READER1",
+		SIMPINEnv: "HIDECK_SIM_PIN_READER1",
 	}
 	if err := AddDeviceInFile(path, device); err != nil {
 		t.Fatalf("AddDeviceInFile() error = %v", err)
@@ -110,7 +110,7 @@ func TestUpdateDeviceInFilePersistsPCSCBindingAndPINReference(t *testing.T) {
 	updated := DeviceConfig{
 		ID: "reader1", DeviceBackend: ESIMTransportPCSC,
 		PCSCReaderName: "New Reader 00 00", PCSCUSBPath: "/sys/bus/usb/devices/2-3",
-		SIMPINEnv: "VOHIVE_SIM_PIN_READER1",
+		SIMPINEnv: "HIDECK_SIM_PIN_READER1",
 	}
 	if err := UpdateDeviceInFile(path, "reader1", updated); err != nil {
 		t.Fatalf("UpdateDeviceInFile() error = %v", err)

@@ -8,7 +8,7 @@ import (
 )
 
 func TestOpenAPIDocumentsPersistentSMSReadState(t *testing.T) {
-	data, err := os.ReadFile("openapi.vohive.yaml")
+	data, err := os.ReadFile("openapi.hideck.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

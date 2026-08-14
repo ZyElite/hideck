@@ -14,7 +14,7 @@ import (
 
 const (
 	openWRTReleasePath = "/etc/openwrt_release"
-	logicalNamePrefix  = "vohive_"
+	logicalNamePrefix  = "hideck_"
 	maxCommandOutput   = 512
 )
 

@@ -65,7 +65,7 @@ func (s *Server) handleTestEmailNotification(c *gin.Context) {
 	now := time.Now()
 	ctx := notify.NotificationContext{
 		Event:      "测试",
-		Text:       "这是一条来自 Vohive 的邮件测试通知，收到说明您的邮件配置正确！",
+		Text:       "这是一条来自 HiDeck 的邮件测试通知，收到说明您的邮件配置正确！",
 		DeviceID:   "test_device_001",
 		DeviceName: "测试设备",
 		Timestamp:  now,

@@ -28,6 +28,6 @@ func (s *Server) handlePhoneCACertificate(c *gin.Context) {
 		return
 	}
 	c.Header("Content-Type", "application/x-x509-ca-cert")
-	c.Header("Content-Disposition", `attachment; filename="vohive-local-ca.crt"`)
-	http.ServeContent(c.Writer, c.Request, "vohive-local-ca.crt", stat.ModTime(), file)
+	c.Header("Content-Disposition", `attachment; filename="hideck-local-ca.crt"`)
+	http.ServeContent(c.Writer, c.Request, "hideck-local-ca.crt", stat.ModTime(), file)
 }

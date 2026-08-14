@@ -8,7 +8,7 @@ import (
 func TestE911BranchHasNoTmpATTArtifacts(t *testing.T) {
 	for _, path := range []string{
 		"../../tmp/test_att.go",
-		"../../tmp/vohive",
+		"../../tmp/hideck",
 	} {
 		if _, err := os.Stat(path); err == nil {
 			t.Fatalf("remove local artifact from branch: %s", path)

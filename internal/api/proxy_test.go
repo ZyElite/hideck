@@ -237,7 +237,7 @@ func TestBuildProxyConfigsAllowsInterfaceWithoutGlobalIPv4(t *testing.T) {
 }
 
 func TestBuildProxyConfigsAllowsMissingRuntimeInterface(t *testing.T) {
-	const missingIface = "vohive-missing-proxy-iface"
+	const missingIface = "hideck-missing-proxy-iface"
 	initProxyTestConfig(t, `devices:
   - id: dev-missing
     name: Missing Interface

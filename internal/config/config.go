@@ -313,7 +313,7 @@ func Load(path string) (*Config, error) {
 	viper.SetDefault("webhook.text_template", DefaultWebhookTextTemplate)
 
 	viper.SetDefault("bark.enabled", false)
-	viper.SetDefault("bark.group", "vohive")
+	viper.SetDefault("bark.group", "hideck")
 	viper.SetDefault("bark.level", "active")
 	viper.SetDefault("email.enabled", false)
 	viper.SetDefault("email.use_ssl", false)
