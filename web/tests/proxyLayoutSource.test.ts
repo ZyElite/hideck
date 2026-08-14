@@ -26,7 +26,7 @@ const emptyState = await readFile(
 
 test('proxy page uses the compact production inventory workspace', () => {
   assert.match(proxyView, /<PageHeader title="代理管理"/)
-  assert.match(proxyView, /<section class="proxy-workspace ui-card">/)
+  assert.match(proxyView, /<section class="proxy-workspace ui-card ui-workspace-glow">/)
   assert.match(proxyView, /<ProxyModeSwitch/)
   assert.match(proxyView, /<ProxyUpstreamInventory/)
   assert.match(proxyView, /<ProxyOutboundInventory/)

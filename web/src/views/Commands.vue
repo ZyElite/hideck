@@ -428,7 +428,7 @@ function updateRulesOpen(open: boolean) {
 
 <template>
   <div class="app-page commands-page">
-    <div class="commands-layout ui-card">
+    <div class="commands-layout ui-card ui-workspace-glow">
       <CommandChat
         v-model:selected-device="selectedDevice"
         :events="events"

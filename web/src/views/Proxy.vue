@@ -518,7 +518,7 @@ usePollingScheduler(() => fetchUpstream({ silent: true }), 10000, {
   <div class="app-page proxy-page">
     <PageHeader title="代理管理" subtitle="配置 VoWiFi 漫游路由与绑定物理网络接口的本地出口" />
 
-    <section class="proxy-workspace ui-card">
+    <section class="proxy-workspace ui-card ui-workspace-glow">
       <ProxyModeSwitch
         v-model="activeTab"
         :enabled-upstream-count="enabledUpstreamCount"

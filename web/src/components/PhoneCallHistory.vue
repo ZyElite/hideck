@@ -67,7 +67,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="history-panel ui-panel" aria-labelledby="phone-history-title">
+  <section class="history-panel" aria-labelledby="phone-history-title">
     <header>
       <div>
         <span>CALL LOG</span>
@@ -109,7 +109,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.history-panel { min-height: 320px; overflow: hidden; }
+.history-panel { min-height: 320px; overflow: hidden; background: transparent; }
 .history-panel > header { min-height: 68px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--ui-border); }
 .history-panel header span { color: var(--ui-primary); font-family: "v-mono", monospace; font-size: 9px; font-weight: 700; letter-spacing: .12em; }
 .history-panel h2 { margin: 2px 0 0; font-size: 16px; }

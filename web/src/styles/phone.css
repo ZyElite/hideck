@@ -7,8 +7,9 @@
 .notice-actions a { min-height: 44px; padding: 0 12px; display: inline-flex; align-items: center; border: 1px solid var(--ui-border); border-radius: 6px; background: var(--ui-surface); color: var(--ui-primary); font-size: 12px; font-weight: 600; text-decoration: none; }
 .phone-error { margin-bottom: 16px; padding: 10px 12px; display: flex; justify-content: space-between; gap: 16px; border: 1px solid color-mix(in srgb, var(--ui-danger) 38%, var(--ui-border)); border-radius: 8px; background: color-mix(in srgb, var(--ui-danger) 8%, var(--ui-surface)); color: var(--ui-danger); font-size: 12px; }
 .phone-error button { width: 44px; height: 44px; margin: -7px -8px -7px 0; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 20px; }
-.phone-grid { display: grid; grid-template-columns: minmax(460px, .95fr) minmax(360px, 1.05fr); gap: 18px; align-items: start; }
-.phone-console { min-height: 680px; overflow: hidden; }
+.phone-workspace { min-width: 0; overflow: hidden; animation: phone-workspace-enter 240ms var(--ui-ease-out) both; }
+.phone-grid { display: grid; grid-template-columns: minmax(460px, .95fr) minmax(360px, 1.05fr); align-items: start; }
+.phone-console { min-height: 680px; overflow: hidden; border-right: 1px solid var(--ui-border); }
 .console-header { min-height: 82px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--ui-border); }
 .console-header > div:first-child > span { color: var(--ui-primary); font-family: "v-mono", monospace; font-size: 9px; font-weight: 700; letter-spacing: .12em; }
 .console-header h2 { margin: 3px 0 0; font-size: 18px; }
@@ -71,9 +72,23 @@
 .control-button:disabled { cursor: not-allowed; opacity: .38; }
 .phone-page button:focus-visible, .phone-page a:focus-visible, .phone-page input:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
 
+@keyframes phone-workspace-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phone-workspace { animation-name: phone-workspace-fade; }
+
+  @keyframes phone-workspace-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
 @media (max-width: 900px) {
   .phone-grid { grid-template-columns: 1fr; }
-  .phone-console { min-height: auto; }
+  .phone-console { min-height: auto; border-right: 0; border-bottom: 1px solid var(--ui-border); }
 }
 
 @media (max-width: 640px) {

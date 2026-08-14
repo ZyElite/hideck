@@ -713,7 +713,7 @@ async function confirmDeleteThread(thread: SmsThread) {
       @retry="refreshAll"
     />
 
-    <div class="flex-1 sms-workspace ui-card overflow-hidden relative">
+    <div class="flex-1 sms-workspace ui-card ui-workspace-glow overflow-hidden relative">
       <div v-if="loading && threads.length === 0" class="absolute inset-0 z-20 flex items-center justify-center bg-white/70 dark:bg-black/40">
         <el-icon class="is-loading" size="28"><Loading /></el-icon>
       </div>

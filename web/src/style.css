@@ -210,6 +210,33 @@ html.dark .ui-panel {
     var(--ui-surface);
 }
 
+.ui-workspace-glow {
+  position: relative;
+  isolation: isolate;
+}
+
+.ui-workspace-glow::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--ui-primary) 6%, transparent), transparent 31%),
+    linear-gradient(112deg, color-mix(in srgb, var(--ui-primary) 3%, transparent), transparent 42%);
+  content: "";
+}
+
+html.dark .ui-workspace-glow::before {
+  background:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--ui-primary) 11%, transparent), transparent 31%),
+    linear-gradient(112deg, color-mix(in srgb, var(--ui-primary) 5%, transparent), transparent 42%);
+}
+
+.ui-workspace-glow > * {
+  position: relative;
+  z-index: 1;
+}
+
 .ui-card-hover {
   transition: border-color 180ms ease, box-shadow 180ms ease, transform 140ms var(--ui-ease-out);
 }

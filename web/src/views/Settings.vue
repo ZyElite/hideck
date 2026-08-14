@@ -367,6 +367,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-page settings-page max-w-[1440px] mx-auto">
+    <section class="settings-workspace-shell ui-card ui-workspace-glow">
     <WorkspaceStage
       class="settings-workspace-stage"
       compact
@@ -393,7 +394,7 @@ onBeforeUnmount(() => {
 
     <div class="settings-workspace">
       <!-- Security Card -->
-      <section class="settings-security-card ui-card p-5 sm:p-6 relative overflow-hidden group">
+      <section class="settings-security-card p-5 sm:p-6 relative overflow-hidden group">
          
          <div class="flex items-center gap-3 mb-6 relative z-10">
             <div class="section-icon section-icon-primary">
@@ -429,7 +430,7 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- System Info Card -->
-      <section class="settings-system-card ui-card p-5 sm:p-6 relative overflow-hidden group">
+      <section class="settings-system-card p-5 sm:p-6 relative overflow-hidden group">
 
          <div class="flex items-center gap-3 mb-6 relative z-10">
             <div class="section-icon section-icon-success">
@@ -517,7 +518,7 @@ onBeforeUnmount(() => {
          </div>
       </section>
 
-      <section class="notify-card ui-card p-8">
+      <section class="notify-card p-8">
          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
             <div class="flex items-center gap-3">
                <div class="w-12 h-12 rounded-md bg-teal-50 dark:bg-teal-500/10 flex items-center justify-center text-teal-700 dark:text-teal-300">
@@ -921,6 +922,7 @@ onBeforeUnmount(() => {
          </div>
       </section>
     </div>
+    </section>
   </div>
 </template>
 
@@ -975,16 +977,34 @@ onBeforeUnmount(() => {
   letter-spacing: 0;
 }
 
+.settings-workspace-shell {
+  min-width: 0;
+  overflow: hidden;
+  animation: settings-panel-enter 240ms var(--ui-ease-out) both;
+}
+
+.settings-workspace-stage {
+  margin-bottom: 0;
+  border: 0;
+  border-bottom: 1px solid var(--ui-border);
+  border-radius: 0;
+  animation: none;
+}
+
 .settings-workspace {
   display: grid;
   grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
   align-items: start;
-  gap: 12px;
 }
 
-.settings-workspace > .ui-card {
-  border-radius: 18px;
+.settings-workspace > section {
+  min-width: 0;
+  background: transparent;
   animation: settings-panel-enter 240ms var(--ui-ease-out) both;
+}
+
+.settings-security-card {
+  border-right: 1px solid var(--ui-border);
 }
 
 .settings-system-card {
@@ -993,10 +1013,10 @@ onBeforeUnmount(() => {
 
 .settings-page .notify-card {
   grid-column: 1 / -1;
-  border-radius: 20px;
+  border-top: 1px solid var(--ui-border);
   background:
     radial-gradient(circle at 84% 8%, color-mix(in srgb, var(--ui-primary) 7%, transparent), transparent 28%),
-    var(--ui-surface);
+    transparent;
   animation-delay: 80ms;
 }
 
@@ -1013,10 +1033,16 @@ onBeforeUnmount(() => {
   .settings-page .notify-card {
     grid-column: auto;
   }
+
+  .settings-security-card {
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-border);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-workspace > .ui-card {
+  .settings-workspace-shell,
+  .settings-workspace > section {
     animation-name: settings-panel-fade;
   }
 

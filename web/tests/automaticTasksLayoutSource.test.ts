@@ -122,7 +122,7 @@ test('automatic task workspace keeps the responsive theme and safe-area contract
 
 test('automatic task backgrounds follow the device management canvas and surface hierarchy', () => {
   assert.doesNotMatch(view, /class="ui-panel automation-shell"/)
-  assert.match(view, /class="automation-shell ui-card"/)
+  assert.match(view, /class="automation-shell ui-card ui-workspace-glow"/)
   assert.match(view, /\.automation-shell \{[^}]*overflow: hidden;[^}]*display: grid;/)
   assert.match(taskList, /class="task-list-region"/)
   assert.doesNotMatch(taskList, /class="task-list-region ui-card"/)

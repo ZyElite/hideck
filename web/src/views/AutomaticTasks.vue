@@ -198,7 +198,7 @@ function taskToInput(task: AutomaticTask, overrides: Partial<AutomaticTaskInput>
       </div>
     </header>
 
-    <section class="automation-shell ui-card" :class="{ 'detail-open': selectedTask }">
+    <section class="automation-shell ui-card ui-workspace-glow" :class="{ 'detail-open': selectedTask }">
       <AutomaticTaskList
         :tasks="tasks"
         :selected-task-id="selectedTaskId"

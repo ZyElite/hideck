@@ -180,8 +180,9 @@ async function sendDTMF(digit: string) {
       <button type="button" aria-label="关闭错误提示" @click="phone.clearError(); phone.eventError = ''">×</button>
     </div>
 
-    <div class="phone-grid">
-      <section class="phone-console ui-panel" aria-labelledby="phone-console-title">
+    <section class="phone-workspace ui-card ui-workspace-glow">
+      <div class="phone-grid">
+      <section class="phone-console" aria-labelledby="phone-console-title">
         <header class="console-header">
           <div>
             <span>WEBRTC HANDSET</span>
@@ -386,8 +387,9 @@ async function sendDTMF(digit: string) {
         </div>
       </section>
 
-      <PhoneCallHistory :records="phone.history" />
-    </div>
+        <PhoneCallHistory :records="phone.history" />
+      </div>
+    </section>
   </div>
 </template>
 

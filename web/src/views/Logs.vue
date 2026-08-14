@@ -158,8 +158,8 @@ watch(levelFilter, () => {
 
 <template>
   <div class="app-page logs-page">
-    <div class="logs-workspace">
-      <aside class="logs-control-rail ui-card">
+    <div class="logs-workspace ui-card ui-workspace-glow">
+      <aside class="logs-control-rail">
         <div class="logs-rail-status">
           <span class="logs-connection-dot" :class="connected ? 'is-connected' : 'is-disconnected'" />
           <div>
@@ -193,7 +193,7 @@ watch(levelFilter, () => {
         </div>
       </aside>
 
-      <section class="log-frame ui-card overflow-hidden">
+      <section class="log-frame overflow-hidden">
         <header class="log-console-header">
           <div><span>SYSTEM OUTPUT</span><strong>运行时输出</strong></div>
           <div class="log-console-actions">
@@ -241,7 +241,8 @@ watch(levelFilter, () => {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);
   align-items: stretch;
-  gap: 12px;
+  overflow: hidden;
+  animation: logs-workspace-enter 240ms var(--ui-ease-out) both;
 }
 
 .logs-control-rail {
@@ -249,7 +250,7 @@ watch(levelFilter, () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: logs-workspace-enter 240ms var(--ui-ease-out) both;
+  border-right: 1px solid var(--ui-border);
 }
 
 .logs-rail-status {
@@ -356,9 +357,7 @@ watch(levelFilter, () => {
 }
 
 .log-frame {
-  border-color: #263a40;
-  border-radius: 18px;
-  animation: logs-workspace-enter 260ms var(--ui-ease-out) 45ms both;
+  min-width: 0;
 }
 
 .log-console {
@@ -385,8 +384,7 @@ watch(levelFilter, () => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .logs-control-rail,
-  .log-frame {
+  .logs-workspace {
     animation-name: logs-workspace-fade;
   }
 
@@ -403,6 +401,8 @@ watch(levelFilter, () => {
 
   .logs-control-rail {
     min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-border);
   }
 
   .log-console {
