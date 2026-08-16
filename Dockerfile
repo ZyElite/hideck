@@ -1,17 +1,15 @@
-# syntax=docker/dockerfile:1.10
-
-# HiDeck multi-platform image for local Buildx and CI builds.
+# GitHub Actions 多架构构建专用 Dockerfile
 
 # 构建阶段 1: 前端构建 (Frontend)
 # 使用 --platform=$BUILDPLATFORM 强制在构建机本地架构（通常是amd64）运行
 # 避免在 arm64 构建时使用 QEMU 模拟，大幅提升速度且产物跨平台通用
-FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
 ARG BUILDPLATFORM
 WORKDIR /app/web
 COPY web/package*.json ./
 # 挂载 npm 缓存，加速依赖安装
 RUN --mount=type=cache,target=/root/.npm,id=npm-${BUILDPLATFORM},sharing=locked \
-    npm ci --no-audit --no-fund
+    npm ci
 COPY web/ .
 RUN npm run build
 
@@ -55,12 +53,13 @@ RUN ls -la internal/web/dist/ && echo "Frontend assets copied successfully"
 # 挂载 Go 构建缓存和模块缓存，加速重复构建
 RUN --mount=type=cache,target=/root/.cache/go-build,id=gobuild-${TARGETOS}-${TARGETARCH},sharing=locked \
     --mount=type=cache,target=/go/pkg/mod,id=gomod-${TARGETOS}-${TARGETARCH},sharing=locked \
+    go mod tidy && \
     BUILD_TIME="${BUILDTIME}" && \
     if [ -z "${BUILD_TIME}" ] || [ "${BUILD_TIME}" = "unknown" ]; then \
       BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"; \
     fi && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -mod=readonly -trimpath -buildvcs=false -tags "with_utls nomsgpack" -ldflags "-s -w -X 'github.com/yibaiba/hideck/internal/global.Version=${VERSION}' -X 'github.com/yibaiba/hideck/internal/global.BuildTime=${BUILD_TIME}'" -o hideck ./cmd/hideck && \
+    go build -trimpath -buildvcs=false -tags "with_utls nomsgpack" -ldflags "-s -w -X 'github.com/yibaiba/hideck/internal/global.Version=${VERSION}' -X 'github.com/yibaiba/hideck/internal/global.BuildTime=${BUILD_TIME}'" -o hideck ./cmd/hideck && \
     if [ "${ENABLE_UPX}" = "1" ] || [ "${ENABLE_UPX}" = "true" ]; then \
       echo "UPX enabled, compressing binary..."; \
       (apk add --no-cache upx >/dev/null 2>&1 || apk add --no-cache upx-ucl >/dev/null 2>&1 || true); \
@@ -74,54 +73,29 @@ RUN --mount=type=cache,target=/root/.cache/go-build,id=gobuild-${TARGETOS}-${TAR
     fi && \
     ls -lh /app/hideck
 
-# 运行时基础层
-FROM alpine:3.24 AS runtime-base
-ARG VERSION=unknown
-ARG BUILDTIME=unknown
+# 运行阶段 (Runtime)
+FROM alpine:latest AS runtime
 ARG REVISION=unknown
 WORKDIR /app
-LABEL org.opencontainers.image.title="HiDeck" \
-      org.opencontainers.image.description="Qualcomm modem management platform" \
-      org.opencontainers.image.source="https://github.com/yibaiba/hideck" \
-      org.opencontainers.image.version=${VERSION} \
-      org.opencontainers.image.created=${BUILDTIME} \
-      org.opencontainers.image.revision=${REVISION}
+LABEL org.opencontainers.image.revision=${REVISION}
 
+# 运行时依赖
 # - ca-certificates / tzdata: 基础 HTTPS 与时区支持
-# - opencore-amr / vo-amrwbenc: AMR 与 AMR-WB 实时编解码
-# - lame-libs: 双向混音录音的 MP3 编码
-# - psmisc: 提供 fuser，用于安全释放串口占用
-RUN apk add --no-cache \
-      ca-certificates \
-      lame-libs \
-      opencore-amr \
-      psmisc \
-      tzdata \
-      vo-amrwbenc && \
-    test -e /usr/lib/libopencore-amrnb.so.0 && \
-    test -e /usr/lib/libopencore-amrwb.so.0 && \
-    test -e /usr/lib/libvo-amrwbenc.so.0 && \
-    test -e /usr/lib/libmp3lame.so.0
-
-# 管理 HTTP、电话 HTTPS、WebRTC UDP mux
-EXPOSE 7575/tcp 7576/tcp 7580/udp
-
-# 运行阶段 (Runtime)
-FROM runtime-base AS runtime
+RUN apk add --no-cache ca-certificates tzdata
 
 # 复制二进制文件
-COPY --from=backend-builder /app/hideck /usr/local/bin/hideck
+COPY --from=backend-builder /app/hideck .
 
 # 创建配置和数据目录
 RUN mkdir -p config data logs
+
+# 暴露端口
+EXPOSE 7575
 
 # 默认配置路径环境变量
 ENV CONFIG_PATH=/app/config/config.yaml
 ENV TZ=Asia/Shanghai
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget -q -T 3 -O /dev/null http://127.0.0.1:7575/ping || exit 1
-
-STOPSIGNAL SIGTERM
-ENTRYPOINT ["/usr/local/bin/hideck"]
+# 入口点
+ENTRYPOINT ["./hideck"]
 CMD ["-c", "/app/config/config.yaml"]
