@@ -182,7 +182,8 @@ func (c *feishuCommandContext) Reply(text string) {
 }
 
 func (c *feishuCommandContext) Confirm(prompt string) bool {
-	return defaultConfirm(c, prompt)
+	c.channel.replyToMessage(c.msg, prompt)
+	return false
 }
 
 func (c *feishuCommandContext) UserKey() string {

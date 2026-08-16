@@ -658,7 +658,7 @@ func (m *Manager) handleCmdCall(cmdCtx CommandContext, args []string) string {
 			},
 		}
 
-		res, err := voiceGW.SimulateCall(ctx, deviceID, req)
+		res, err := m.pool.SimulateCallWithCellularData(ctx, deviceID, req)
 		if err != nil {
 			cmdCtx.Reply(fmt.Sprintf("发起 VoWiFi 呼叫 / 失败\n设备    %s\n主叫    %s\n被叫    %s\n原因    %v", displayName, caller, callee, err))
 			return
@@ -762,12 +762,22 @@ func (m *Manager) handleCmdCellCall(cmdCtx CommandContext, args []string) string
 	}
 
 	if userKey != "" && m.confirmRegistry != nil {
+		// Supported channel: block and wait for /y or /n.
 		prompt := fmt.Sprintf(
 			"即将使用蜂窝数据流量拨号\n设备    %s\n主叫    %s\n被叫    %s\n保持    %d 秒\n将消耗少量数据流量，回复 /y 确认或 /n 取消",
 			displayName, caller, callee, holdSeconds,
 		)
 		if !m.confirmRegistry.register(userKey, prompt, cmdCtx.Reply, 30*time.Second) {
 			return "蜂窝通话 / 已取消"
+		}
+	} else {
+		// Unsupported channel: ask the context to confirm.
+		prompt := fmt.Sprintf(
+			"即将使用蜂窝数据流量拨号\n设备    %s\n主叫    %s\n被叫    %s\n保持    %d 秒\n将消耗少量数据流量",
+			displayName, caller, callee, holdSeconds,
+		)
+		if !cmdCtx.Confirm(prompt) {
+			return "蜂窝通话 / 已取消（当前渠道不支持交互确认）"
 		}
 	}
 
@@ -783,7 +793,7 @@ func (m *Manager) handleCmdCellCall(cmdCtx CommandContext, args []string) string
 			},
 		}
 
-		res, err := voiceGW.SimulateCall(ctx, deviceID, req)
+		res, err := m.pool.SimulateCallWithCellularData(ctx, deviceID, req)
 		if err != nil {
 			cmdCtx.Reply(fmt.Sprintf("发起蜂窝通话 / 失败\n设备    %s\n主叫    %s\n被叫    %s\n原因    %v", displayName, caller, callee, err))
 			return

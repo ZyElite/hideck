@@ -38,7 +38,9 @@ func (c *tgCommandContext) Reply(text string) {
 }
 
 func (c *tgCommandContext) Confirm(prompt string) bool {
-	return defaultConfirm(c, prompt)
+	// Send the prompt and rely on the Manager's confirmRegistry to wait
+	// for /y or /n. The registry blocks until the user replies or timeout.
+	return true // actual blocking is handled via UserKey in handleCmdCellCall
 }
 
 func (c *tgCommandContext) UserKey() string {

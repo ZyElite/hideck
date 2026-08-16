@@ -40,7 +40,7 @@ func (s *Server) handleDeviceVoWiFiCall(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(holdSeconds)*time.Second+voWiFiCallSetupGrace)
 	defer cancel()
 	logger.Info("VoWiFi 外呼请求开始", "device", deviceID, "callee_suffix", maskedCallee(req.Callee), "hold_seconds", holdSeconds, "trace_id", traceID)
-	result, err := s.voiceGW.SimulateCall(ctx, deviceID, voicehost.SimulateCallRequest{
+	result, err := s.simulateCall(ctx, deviceID, voicehost.SimulateCallRequest{
 		Callee: req.Callee, HoldSeconds: holdSeconds,
 		OnConnected: func() { logger.Info("VoWiFi 外呼已接通并启动 RTP", "device", deviceID, "trace_id", traceID) },
 	})
@@ -95,4 +95,14 @@ func maskedCallee(callee string) string {
 		return callee
 	}
 	return "***" + callee[len(callee)-4:]
+}
+
+// simulateCall routes through pool.SimulateCallWithCellularData when available
+// (enables on_demand data hook for cellular mode), falling back to direct
+// voiceGW.SimulateCall for tests and setups without a pool.
+func (s *Server) simulateCall(ctx context.Context, deviceID string, req voicehost.SimulateCallRequest) (*voicehost.SimulateCallResult, error) {
+	if s.pool != nil {
+		return s.pool.SimulateCallWithCellularData(ctx, deviceID, req)
+	}
+	return s.voiceGW.SimulateCall(ctx, deviceID, req)
 }
