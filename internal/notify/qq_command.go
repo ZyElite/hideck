@@ -36,6 +36,18 @@ func (c *qqCommandContext) Reply(text string) {
 	go c.respondAndReport(reply)
 }
 
+func (c *qqCommandContext) Confirm(prompt string) bool {
+	return defaultConfirm(c, prompt)
+}
+
+func (c *qqCommandContext) UserKey() string {
+	if c == nil || c.conversation == nil {
+		return ""
+	}
+	to := c.conversation.Incoming().To
+	return fmt.Sprintf("qq:%s:%s", to.Kind, to.ID)
+}
+
 func (c *qqCommandContext) ReplyWithAttachments(text string, attachments []CommandAttachment) {
 	if c == nil || c.conversation == nil {
 		return

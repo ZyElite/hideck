@@ -41,6 +41,17 @@ func (c *weixinCommandContext) Reply(text string) {
 	}()
 }
 
+func (c *weixinCommandContext) Confirm(prompt string) bool {
+	return defaultConfirm(c, prompt)
+}
+
+func (c *weixinCommandContext) UserKey() string {
+	if c == nil {
+		return ""
+	}
+	return fmt.Sprintf("weixin:%s", c.target)
+}
+
 func (c *weixinCommandContext) ReplyWithAttachments(text string, attachments []CommandAttachment) {
 	if c == nil || c.channel == nil {
 		return

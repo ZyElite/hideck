@@ -3,6 +3,16 @@ package notify
 // CommandContext 传递命令上下文，使得异步操作可以精准回复本会话
 type CommandContext interface {
 	Reply(text string)
+	// Confirm sends a confirmation prompt and blocks until the user replies y/yes.
+	// Channels that don't support interactive replies should return true (skip).
+	Confirm(prompt string) bool
+}
+
+// UserKeyedContext is implemented by command contexts that can identify the
+// originating user for pending-confirmation tracking.
+type UserKeyedContext interface {
+	CommandContext
+	UserKey() string
 }
 
 // CommandAttachment carries non-text output to command surfaces that support it.

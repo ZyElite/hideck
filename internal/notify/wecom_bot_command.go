@@ -42,6 +42,17 @@ func (c *weComCommandContext) Reply(text string) {
 	}()
 }
 
+func (c *weComCommandContext) Confirm(prompt string) bool {
+	return defaultConfirm(c, prompt)
+}
+
+func (c *weComCommandContext) UserKey() string {
+	if c == nil {
+		return ""
+	}
+	return fmt.Sprintf("wecom:%s", c.target)
+}
+
 func (c *weComCommandContext) ReplyWithAttachments(text string, attachments []CommandAttachment) {
 	if c == nil || c.channel == nil {
 		return

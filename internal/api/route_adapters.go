@@ -9,7 +9,9 @@ import (
 )
 
 type enabledPatchRequest struct {
-	Enabled *bool `json:"enabled"`
+	Enabled      *bool   `json:"enabled"`
+	Mode         *string `json:"mode"`          // "wifi" | "cellular"
+	DataStrategy *string `json:"data_strategy"`  // "always" | "on_demand"
 }
 
 type networkPatchRequest struct {
@@ -75,13 +77,31 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 	deviceID := deviceIDParam(c)
 
 	if *req.Enabled {
-		// 落库：仅置 vowifi_enabled=true。不碰 airplane_enabled——它是用户的纯飞行
-		// 意图，作为关闭 VoWiFi 后的回退依据；VoWiFi 接管射频由运行时投影派生。
-		if _, _, err := s.patchCardPolicyForDevice(deviceID, vowifiEnablePolicyMutation); err != nil {
+		// 落库：置 vowifi_enabled=true。若带 mode/data_strategy 则一并落库。
+		mode := normalizePhoneMode(req.Mode)
+		strategy := normalizeDataStrategy(req.DataStrategy)
+		if _, _, err := s.patchCardPolicyForDevice(deviceID, func(p *db.CardPolicy) {
+			p.VoWiFiEnabled = true
+			if req.Mode != nil {
+				p.PhoneMode = mode
+			}
+			if req.DataStrategy != nil {
+				p.DataStrategy = strategy
+			}
+		}); err != nil {
 			writeCardPolicyMutationError(c, err)
 			return
 		}
 		// 同步 w.Config，使概览即时切到 VoWiFi 模式面板（EnableVoWiFi 不碰 Config）。
+		w := s.pool.GetWorker(deviceID)
+		if w != nil {
+			if req.Mode != nil {
+				w.Config.PhoneMode = mode
+			}
+			if req.DataStrategy != nil {
+				w.Config.DataStrategy = strategy
+			}
+		}
 		s.pool.SetWorkerVoWiFiPolicy(deviceID, true)
 		s.handleVoWiFiEnable(c)
 		return
@@ -102,6 +122,30 @@ func vowifiEnablePolicyMutation(p *db.CardPolicy) { p.VoWiFiEnabled = true }
 
 // vowifiDisablePolicyMutation 关 VoWiFi 的落库副作用：只清 vowifi，保留用户飞行意图以便回退。
 func vowifiDisablePolicyMutation(p *db.CardPolicy) { p.VoWiFiEnabled = false }
+
+func normalizePhoneMode(v *string) string {
+	if v == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(*v)) {
+	case "cellular":
+		return "cellular"
+	default:
+		return "wifi"
+	}
+}
+
+func normalizeDataStrategy(v *string) string {
+	if v == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(*v)) {
+	case "always":
+		return "always"
+	default:
+		return "on_demand"
+	}
+}
 
 func normalizedOptionalIPVersion(value *string) (string, error) {
 	if value == nil {

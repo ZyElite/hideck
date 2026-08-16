@@ -287,6 +287,19 @@ func initialState(req StartRequest) State {
 	}
 }
 
+// NewDefaultTunnel creates the default SWu tunnel adapter, allowing external
+// callers to wrap or pre-configure the swu.Config before using the standard
+// adapter. This is used by cellular mode to inject a TransportFactory that
+// binds the tunnel socket to a specific network interface.
+func NewDefaultTunnel(deviceID string, cfg *swu.Config) (Tunnel, error) {
+	return newSWUTunnelAdapter(swuTunnelAdapterConfig{
+		Manager:              epdg.New(),
+		DeviceID:             deviceID,
+		SessionConfig:        cfg,
+		EstablishmentTimeout: epdgEstablishmentTimeout,
+	}), nil
+}
+
 func newTunnel(req StartRequest, inst *Instance) (Tunnel, error) {
 	prepared := preparedForRuntimeCore(req.Prepared)
 	provider := req.SIM.runtimeSIMAdapter().EPDGSIMProvider(runtimeAuthPlan(req.Prepared))

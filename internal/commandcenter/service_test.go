@@ -16,6 +16,8 @@ type commandReplyCapture struct{}
 
 func (commandReplyCapture) Reply(string) {}
 
+func (commandReplyCapture) Confirm(string) bool { return true }
+
 type channelReplyCapture struct {
 	replies     []string
 	attachments [][]notify.CommandAttachment
@@ -24,6 +26,8 @@ type channelReplyCapture struct {
 func (c *channelReplyCapture) Reply(text string) {
 	c.replies = append(c.replies, text)
 }
+
+func (c *channelReplyCapture) Confirm(string) bool { return true }
 
 func (c *channelReplyCapture) ReplyWithAttachments(text string, attachments []notify.CommandAttachment) {
 	c.replies = append(c.replies, text)

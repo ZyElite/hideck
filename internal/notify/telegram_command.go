@@ -33,7 +33,19 @@ func (c *tgCommandContext) Reply(text string) {
 	if c == nil || c.channel == nil {
 		return
 	}
+
 	c.enqueueOrSend(telegramCommandReply{text: text})
+}
+
+func (c *tgCommandContext) Confirm(prompt string) bool {
+	return defaultConfirm(c, prompt)
+}
+
+func (c *tgCommandContext) UserKey() string {
+	if c == nil {
+		return ""
+	}
+	return fmt.Sprintf("tg:%d", c.target)
 }
 
 func (c *tgCommandContext) ReplyWithAttachments(text string, attachments []CommandAttachment) {
@@ -147,7 +159,7 @@ func (t *TelegramChannel) sendAudio(chatID int64, path string, attachment Comman
 var telegramCommandDescriptions = map[string]string{
 	"help": "查看命令与设备 ID", "list": "查看设备列表", "status": "查看设备状态",
 	"send": "发送短信", "sms": "查看短信", "esim": "管理 eSIM", "switch": "切换 eSIM",
-	"rotate": "切换公网 IP", "vocall": "发起 VoWiFi 呼叫", "balance": "查询余额",
+	"rotate": "切换公网 IP", "vocall": "发起 VoWiFi 呼叫", "cellcall": "发起蜂窝通话", "balance": "查询余额",
 }
 
 func (t *TelegramChannel) registerCommandMenu() error {

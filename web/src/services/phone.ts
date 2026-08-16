@@ -6,6 +6,8 @@ export type PhoneDevice = {
   name: string
   iccid: string
   voice: { ready?: boolean; registered?: boolean; active_call?: boolean }
+  phone_mode?: string      // "wifi" | "cellular"
+  data_strategy?: string   // "always" | "on_demand"
 }
 
 export type PhoneCall = {

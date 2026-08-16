@@ -193,6 +193,13 @@ func (c *replyContext) Reply(text string) {
 	c.forward(content)
 }
 
+func (c *replyContext) Confirm(prompt string) bool {
+	if c.downstream != nil {
+		return c.downstream.Confirm(prompt)
+	}
+	return true
+}
+
 func (c *replyContext) ReplyWithAttachments(text string, attachments []notify.CommandAttachment) {
 	content := eventContent{kind: EventProgress, text: text, attachments: attachments}
 	c.reply(content)

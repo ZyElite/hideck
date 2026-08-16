@@ -1916,6 +1916,16 @@ func (p *Pool) SetWorkerVoWiFiPolicy(deviceID string, vowifiEnabled bool) *Worke
 	}
 	w.Config.VoWiFiEnabled = vowifiEnabled
 	if vowifiEnabled {
+		if w.Config.PhoneMode == "cellular" {
+			w.Config.AirplaneEnabled = false
+			if w.Config.DataStrategy == "always" {
+				w.Config.NetworkEnabled = true
+			} else {
+				w.Config.NetworkEnabled = false
+			}
+			w.setCellularRadioSuppressed(false)
+			return w
+		}
 		w.Config.AirplaneEnabled = true
 		w.Config.NetworkEnabled = false
 	}

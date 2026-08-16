@@ -1222,6 +1222,28 @@ func (m *Manager) createVOICEService(ctx context.Context) (*qmi.VOICEService, er
 	return qmi.NewVOICEServiceWithContext(ctx, m.client)
 }
 
+// SetIMSServiceEnabled enables or disables the modem's native IMS service
+// (including VoLTE). This is used by cellular mode to suppress native IMS
+// so that the software IMS stack can take over without conflict.
+func (m *Manager) SetIMSServiceEnabled(ctx context.Context, enabled bool) error {
+	if m == nil || m.client == nil {
+		return fmt.Errorf("manager not initialized")
+	}
+	ims := m.ims
+	if ims == nil {
+		svc, err := qmi.NewIMSService(m.client)
+		if err != nil {
+			return fmt.Errorf("allocate IMS service: %w", err)
+		}
+		ims = svc
+	}
+	v := enabled
+	return ims.SetServicesEnabledSetting(ctx, qmi.IMSServicesEnabledSettingsUpdate{
+		IMSServiceEnabled:   &v,
+		VoiceOverLTEEnabled: &v,
+	})
+}
+
 func (m *Manager) shouldAllocateWDA() bool {
 	dataCfg := m.dataConfig()
 	return strings.TrimSpace(m.cfg.Device.NetInterface) != "" && (dataCfg.EnableIPv4 || dataCfg.EnableIPv6)

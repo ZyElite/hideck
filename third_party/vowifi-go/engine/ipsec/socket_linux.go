@@ -142,3 +142,11 @@ func (r *SocketManager) sendNetEvent(ev NetEvent) {
 
 // soReusePort is SO_REUSEPORT on Linux (not exposed by the syscall package).
 const soReusePort = 15
+
+// soBindToDevice is SO_BINDTODEVICE on Linux.
+const soBindToDevice = syscall.SO_BINDTODEVICE
+
+// setSockBindToDevice binds the socket to a specific network interface.
+func setSockBindToDevice(fd int, device string) error {
+	return syscall.SetsockoptString(fd, syscall.SOL_SOCKET, soBindToDevice, device)
+}

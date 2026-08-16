@@ -709,3 +709,123 @@ func voiceRecordingAttachment(result *voicehost.SimulateCallResult) (CommandAtta
 		SourcePath: sourcePath, SourceCodec: strings.TrimSpace(result.SourceAudioCodec),
 	}, true
 }
+
+// handleCmdCellCall 处理 /cellcall 命令，用于发起蜂窝数据模拟呼叫
+// 命令格式: /cellcall <设备ID> <号码> [保持秒数]
+func (m *Manager) handleCmdCellCall(cmdCtx CommandContext, args []string) string {
+	if len(args) < 2 || len(args) > 3 {
+		return commandUsageBlock("发起蜂窝通话", "/cellcall [设备ID] [接收号码] [保持秒数(可选)]", "/cellcall ec20_1 888 15")
+	}
+
+	deviceID := args[0]
+	callee := args[1]
+	holdSeconds := voicehost.DefaultSimulateCallHoldSeconds
+	if len(args) == 3 {
+		parsedHold, err := strconv.Atoi(strings.TrimSpace(args[2]))
+		if err != nil || parsedHold <= 0 {
+			return fmt.Sprintf("发起蜂窝通话 / 参数错误\n保持秒数  %s\n要求      正整数", args[2])
+		}
+		if parsedHold > voicehost.MaxSimulateCallHoldSeconds {
+			parsedHold = voicehost.MaxSimulateCallHoldSeconds
+		}
+		holdSeconds = parsedHold
+	}
+
+	worker := m.pool.GetWorker(deviceID)
+	if worker == nil {
+		return commandFailureBlock("发起蜂窝通话", deviceID, "设备未找到")
+	}
+
+	if worker.Config.PhoneMode != "cellular" {
+		return commandFailureBlock("发起蜂窝通话", deviceID, "设备未处于蜂窝模式，请先切换到蜂窝模式")
+	}
+
+	voiceGW := m.pool.GetVoiceGateway()
+	if voiceGW == nil || voiceGW.GetAgentCurrent(deviceID) == nil {
+		return commandFailureBlock("发起蜂窝通话", deviceID, "蜂窝模式未就绪，请先启用蜂窝模式")
+	}
+
+	displayName := m.deviceLabel(worker.ID)
+	caller := "未知"
+	if worker.Modem != nil {
+		if imsi := strings.TrimSpace(worker.GetIMSI()); imsi != "" {
+			if phone, err := db.GetSIMCardPhoneNumberByIMSI(imsi); err == nil && strings.TrimSpace(phone) != "" {
+				caller = strings.TrimSpace(phone)
+			}
+		}
+	}
+
+	// Two-step confirmation: send prompt, wait for /y or /n.
+	userKey := ""
+	if keyed, ok := cmdCtx.(UserKeyedContext); ok {
+		userKey = keyed.UserKey()
+	}
+
+	if userKey != "" && m.confirmRegistry != nil {
+		prompt := fmt.Sprintf(
+			"即将使用蜂窝数据流量拨号\n设备    %s\n主叫    %s\n被叫    %s\n保持    %d 秒\n将消耗少量数据流量，回复 /y 确认或 /n 取消",
+			displayName, caller, callee, holdSeconds,
+		)
+		if !m.confirmRegistry.register(userKey, prompt, cmdCtx.Reply, 30*time.Second) {
+			return "蜂窝通话 / 已取消"
+		}
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		req := voicehost.SimulateCallRequest{
+			Callee:      callee,
+			HoldSeconds: holdSeconds,
+			OnConnected: func() {
+				reportProgress(cmdCtx, fmt.Sprintf("发起蜂窝通话 / 已接通\n设备    %s\n主叫    %s\n被叫    %s\n保持    %d 秒", displayName, caller, callee, holdSeconds))
+			},
+		}
+
+		res, err := voiceGW.SimulateCall(ctx, deviceID, req)
+		if err != nil {
+			cmdCtx.Reply(fmt.Sprintf("发起蜂窝通话 / 失败\n设备    %s\n主叫    %s\n被叫    %s\n原因    %v", displayName, caller, callee, err))
+			return
+		}
+
+		if res.Success {
+			durationSeconds := res.DurationMs / 1000
+			if res.DurationMs > 0 && durationSeconds == 0 {
+				durationSeconds = 1
+			}
+			message := fmt.Sprintf("发起蜂窝通话 / 完成\n设备    %s\n主叫    %s\n被叫    %s\n时长    %d 秒", displayName, caller, callee, durationSeconds)
+			replyVoiceCallCompletion(cmdCtx, message, res)
+		} else {
+			cmdCtx.Reply(fmt.Sprintf("发起蜂窝通话 / 未接通\n设备    %s\n主叫    %s\n被叫    %s\n原因    %s", displayName, caller, callee, res.Reason))
+		}
+	}()
+
+	return fmt.Sprintf("发起蜂窝通话 / 已受理\n设备    %s\n主叫    %s\n被叫    %s\n保持    %d 秒", displayName, caller, callee, holdSeconds)
+}
+
+// handleCmdConfirmYes handles /y to resolve a pending confirmation as confirmed.
+func (m *Manager) handleCmdConfirmYes(cmdCtx CommandContext, _ []string) string {
+	userKey := ""
+	if keyed, ok := cmdCtx.(UserKeyedContext); ok {
+		userKey = keyed.UserKey()
+	}
+	if userKey == "" || m.confirmRegistry == nil {
+		return ""
+	}
+	m.confirmRegistry.resolve(userKey, true)
+	return ""
+}
+
+// handleCmdConfirmNo handles /n to resolve a pending confirmation as cancelled.
+func (m *Manager) handleCmdConfirmNo(cmdCtx CommandContext, _ []string) string {
+	userKey := ""
+	if keyed, ok := cmdCtx.(UserKeyedContext); ok {
+		userKey = keyed.UserKey()
+	}
+	if userKey == "" || m.confirmRegistry == nil {
+		return ""
+	}
+	m.confirmRegistry.resolve(userKey, false)
+	return ""
+}

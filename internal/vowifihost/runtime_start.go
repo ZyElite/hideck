@@ -32,6 +32,7 @@ type RuntimeStartRequest struct {
 	DeliveryStore messaging.DeliveryStore
 	Dispatch      eventhost.Dispatcher
 	BeforeStart   func(context.Context, runtimehost.SessionConfig) error
+	TunnelFactory runtimehost.TunnelFactory
 }
 
 type RuntimeStartResult struct {
@@ -112,6 +113,7 @@ func (m *Manager) StartRuntime(ctx context.Context, req RuntimeStartRequest) (Ru
 		DeliveryStore: req.DeliveryStore,
 		Dispatch:      req.Dispatch,
 		BeforeStart:   req.BeforeStart,
+		TunnelFactory: req.TunnelFactory,
 		ShouldRun: func() bool {
 			return ctx.Err() == nil && m.ShouldRun(deviceID, req.Epoch)
 		},

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Backspace24Regular,
   Call24Regular,
@@ -103,11 +103,33 @@ function enableListenOnlyMedia() {
 
 function startListenOnlyCall() {
   if (!canPlaceCall.value) return
+  if (selected.value?.phone_mode === 'cellular') {
+    return runAction('仅听呼叫', async () => {
+      const confirmed = await ElMessageBox.confirm(
+        '当前设备使用蜂窝数据流量打电话，将消耗少量数据流量。是否继续？',
+        '数据流量通话提醒',
+        { confirmButtonText: '继续拨号', cancelButtonText: '取消', type: 'warning' }
+      ).then(() => true).catch(() => false)
+      if (!confirmed) return
+      return phone.startListenOnlyCall(selectedDevice.value, callee.value)
+    })
+  }
   return runAction('仅听呼叫', () => phone.startListenOnlyCall(selectedDevice.value, callee.value))
 }
 
 function startTwoWayCall() {
   if (!canPlaceCall.value || !phone.secureContext) return
+  if (selected.value?.phone_mode === 'cellular') {
+    return runAction('双向呼叫', async () => {
+      const confirmed = await ElMessageBox.confirm(
+        '当前设备使用蜂窝数据流量打电话，将消耗少量数据流量。是否继续？',
+        '数据流量通话提醒',
+        { confirmButtonText: '继续拨号', cancelButtonText: '取消', type: 'warning' }
+      ).then(() => true).catch(() => false)
+      if (!confirmed) return
+      return phone.startCall(selectedDevice.value, callee.value)
+    })
+  }
   return runAction('双向呼叫', () => phone.startCall(selectedDevice.value, callee.value))
 }
 

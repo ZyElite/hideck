@@ -116,6 +116,7 @@ func (m *Manager) enableRuntime(ctx context.Context, req runtimeEnableRequest) (
 		DeliveryStore: m.deliveryStore,
 		Dispatch:      m.dispatcher,
 		BeforeStart:   m.BeforeStart(deviceID, modemIface, preparedStart.Proxy),
+		TunnelFactory: preparedStart.TunnelFactory,
 	})
 	if err != nil {
 		state, ok := m.State(deviceID)

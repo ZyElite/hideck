@@ -8,6 +8,8 @@ type Policy struct {
 	AirplaneEnabled bool
 	IPVersion       string
 	APN             string
+	PhoneMode       string // wifi | cellular
+	DataStrategy    string // always | on_demand
 }
 
 // Resolver 把 ICCID 解析为策略；缺失实现方负责按默认模板自动建档。

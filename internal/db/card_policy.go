@@ -17,7 +17,9 @@ type CardPolicy struct {
 	AirplaneEnabled bool      `gorm:"column:airplane_enabled" json:"airplane_enabled"`
 	IPVersion       string    `gorm:"column:ip_version" json:"ip_version"`
 	APN             string    `gorm:"column:apn" json:"apn"`
-	Source          string    `gorm:"column:source" json:"source"` // auto | user
+	PhoneMode       string    `gorm:"column:phone_mode;default:wifi" json:"phone_mode"`         // wifi | cellular
+	DataStrategy    string    `gorm:"column:data_strategy;default:on_demand" json:"data_strategy"` // always | on_demand
+	Source          string    `gorm:"column:source" json:"source"`                              // auto | user
 	CreatedAt       time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt       time.Time `gorm:"column:updated_at" json:"updated_at"`
 }
@@ -43,6 +45,8 @@ func DefaultCardPolicy(iccid string) CardPolicy {
 		AirplaneEnabled: false,
 		IPVersion:       "v4",
 		APN:             "",
+		PhoneMode:       "wifi",
+		DataStrategy:    "on_demand",
 		Source:          "auto",
 	}
 }
@@ -62,6 +66,18 @@ func NormalizeCardPolicy(p *CardPolicy) {
 		p.IPVersion = strings.TrimSpace(p.IPVersion)
 	default:
 		p.IPVersion = "v4"
+	}
+	switch strings.TrimSpace(p.PhoneMode) {
+	case "wifi", "cellular":
+		p.PhoneMode = strings.TrimSpace(p.PhoneMode)
+	default:
+		p.PhoneMode = "wifi"
+	}
+	switch strings.TrimSpace(p.DataStrategy) {
+	case "always", "on_demand":
+		p.DataStrategy = strings.TrimSpace(p.DataStrategy)
+	default:
+		p.DataStrategy = "on_demand"
 	}
 }
 
@@ -104,6 +120,8 @@ func UpsertCardPolicy(p CardPolicy) error {
 			"airplane_enabled": p.AirplaneEnabled,
 			"ip_version":       p.IPVersion,
 			"apn":              p.APN,
+			"phone_mode":       p.PhoneMode,
+			"data_strategy":    p.DataStrategy,
 			"source":           p.Source,
 			"updated_at":       p.UpdatedAt,
 		}),

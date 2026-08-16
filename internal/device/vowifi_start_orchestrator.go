@@ -14,6 +14,7 @@ import (
 	"github.com/yibaiba/hideck/internal/vowifihost"
 	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/yibaiba/hideck/pkg/mbim"
+	"github.com/iniwex5/vowifi-go/engine/ipsec"
 	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
@@ -126,7 +127,11 @@ func (p *Pool) MarkRuntimeStarted(req vowifihost.RuntimeStartedRequest) {
 	if w == nil {
 		return
 	}
-	w.setCellularRadioSuppressed(true)
+	if w.Config.PhoneMode == "cellular" {
+		w.setCellularRadioSuppressed(false)
+	} else {
+		w.setCellularRadioSuppressed(true)
+	}
 	w.smsMode = smsModeVoWiFi
 	if w.Modem != nil {
 		w.Modem.SetNewSMSHandler(nil)
@@ -146,6 +151,11 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 	}
 	startCtx.worker = w
 	w.restoreNetworkAfterVoWiFi = w.Config.NetworkEnabled
+
+	if w.Config.PhoneMode == "cellular" {
+		return p.prepareCellularStartContext(startCtx, w, deviceID, traceID, runtimeEPDGOverride)
+	}
+
 	if err := w.suppressCellularRegistration(p.Context(), "vowifi_start"); err != nil {
 		return startCtx, fmt.Errorf("VoWiFi 启动前停止蜂窝驻网协调失败: %w", err)
 	}
@@ -270,6 +280,119 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 	startCtx.StartupState = newVoWiFiSIMReadyStartupState(deviceID, swu.DataplaneModeUserspace, startCtx.NetworkMode, time.Now())
 	p.recordVoWiFiStartupState(deviceID, startCtx.StartupState)
 	return startCtx, nil
+}
+
+// prepareCellularStartContext prepares the VoWiFi start context for cellular
+// mode: keeps radio on, keeps data connected (always) or defers (on_demand),
+// suppresses native IMS via QMI, and sets a TunnelFactory that binds the SWu
+// tunnel socket to the cellular interface via SO_BINDTODEVICE.
+func (p *Pool) prepareCellularStartContext(
+	startCtx voWiFiStartContext,
+	w *Worker,
+	deviceID, traceID, runtimeEPDGOverride string,
+) (voWiFiStartContext, error) {
+	// Suppress native IMS so the software IMS stack can take over.
+	if w.QMICore != nil {
+		if err := w.QMICore.SetIMSServiceEnabled(p.Context(), false); err != nil {
+			logger.Warn("蜂窝模式抑制原生 IMS 失败，继续启动", "trace_id", traceID, "device", deviceID, "err", err)
+		} else {
+			logger.Info("蜂窝模式已抑制原生 IMS", "trace_id", traceID, "device", deviceID)
+		}
+	}
+
+	// always: ensure data connection is online. on_demand: leave data off.
+	if w.Config.DataStrategy != "always" {
+		logger.Info("蜂窝模式 on_demand 策略：待机不连数据，拨号时再开", "trace_id", traceID, "device", deviceID)
+	} else if nc := w.NetworkController(); nc != nil && !nc.IsConnected() {
+		logger.Info("蜂窝模式 always 策略：确保数据连接在线", "trace_id", traceID, "device", deviceID)
+		if err := w.StartNetwork(); err != nil {
+			logger.Warn("蜂窝模式启动数据连接失败，继续启动", "trace_id", traceID, "device", deviceID, "err", err)
+		}
+	}
+
+	// Set TunnelFactory to bind the SWu tunnel to the cellular interface.
+	ifaceName := strings.TrimSpace(w.Config.Interface)
+	if ifaceName != "" {
+		startCtx.TunnelFactory = buildCellularTunnelFactory(deviceID, ifaceName)
+		logger.Info("蜂窝模式隧道绑定接口", "trace_id", traceID, "device", deviceID, "interface", ifaceName)
+	} else {
+		logger.Warn("蜂窝模式未解析到设备接口名，隧道将跟随默认路由", "trace_id", traceID, "device", deviceID)
+	}
+
+	// Reuse the common identity/modem preparation from the WiFi calling path.
+	// We skip suppressCellularRegistration, StopNetwork, and enterVoWiFiRFOff.
+
+	modemIface, errModemIface := newVoWiFiModemInterface(w, deviceID)
+	if errModemIface != nil {
+		return startCtx, errModemIface
+	}
+	startCtx.modem = modemIface
+
+	w.cacheMu.RLock()
+	identityReady := w.state.Identity.Ready
+	w.cacheMu.RUnlock()
+	if !identityReady {
+		if err := w.RefreshIdentityLive(nil, "enable_cellular"); err != nil {
+			logger.Error("蜂窝模式启动前刷新设备身份失败", "trace_id", traceID, "device", deviceID, "err", err)
+			return startCtx, err
+		}
+		p.PersistIdentityState(w)
+	}
+
+	startProfile, errProfile := p.buildVoWiFiStartProfile(w, traceID)
+	if errProfile != nil {
+		logger.Error("蜂窝模式构建启动画像失败", "trace_id", traceID, "device", deviceID, "err", errProfile)
+		return startCtx, errProfile
+	}
+	startCtx.Profile = startProfile
+
+	akaProvider := buildWorkerAKAProvider(w, deviceID, modemIface)
+	if akaProvider == nil {
+		return startCtx, fmt.Errorf("设备 %s 无可用 AKA provider", deviceID)
+	}
+
+	runtimehost.SetLogger(slog.Default())
+	prepared, errPrepare := identity.PrepareStart(identity.PrepareStartInput{
+		DeviceID:            deviceID,
+		Profile:             startProfile,
+		RuntimeEPDGOverride: runtimeEPDGOverride,
+		Access:              runtimehost.NewModemAccessAdapter(modemIface),
+	})
+	if errPrepare != nil {
+		logger.Warn("蜂窝模式启动画像准备失败", "trace_id", traceID, "device", deviceID, "err", errPrepare)
+		return startCtx, errPrepare
+	}
+	startCtx.Prepared = prepared
+	startCtx.Mode = runtimehost.StartModeMain
+	if strings.EqualFold(w.Backend.Mode(), backend.BackendPCSC) {
+		startCtx.Mode = runtimehost.StartModeReader
+	}
+	if preferred, ok := akaProvider.(innersim.AKAWithPreferenceProvider); ok {
+		akaProvider = innersim.WrapPreferredAKAProvider(preferred, string(prepared.IMSIdentity.AKAAppPreference))
+	}
+	startCtx.SIM = runtimehost.NewReaderSIMAdapter(akaProvider)
+
+	startCtx.Proxy = resolveVoWiFiCountryProxy(startProfile.MCC, traceID, deviceID)
+	startCtx.NetworkMode = modemIface.GetNetworkMode()
+	startCtx.StartupState = newVoWiFiSIMReadyStartupState(deviceID, swu.DataplaneModeUserspace, startCtx.NetworkMode, time.Now())
+	p.recordVoWiFiStartupState(deviceID, startCtx.StartupState)
+	return startCtx, nil
+}
+
+// buildCellularTunnelFactory returns a TunnelFactory that wraps the default
+// SWu tunnel adapter after injecting a TransportFactory that binds the UDP
+// socket to a specific network interface (SO_BINDTODEVICE).
+func buildCellularTunnelFactory(deviceID, interfaceName string) runtimehost.TunnelFactory {
+	return func(cfg *swu.Config) (runtimehost.Tunnel, error) {
+		if cfg.TransportFactory == nil {
+			cfg.TransportFactory = func(local, remote string) (ipsec.Transport, error) {
+				return ipsec.NewSocketManagerWithOptions(deviceID, local, remote, "", ipsec.SocketOptions{
+					BindToDevice: interfaceName,
+				})
+			}
+		}
+		return runtimehost.NewDefaultTunnel(deviceID, cfg)
+	}
 }
 
 func enterVoWiFiRFOff(ctx context.Context, w *Worker, traceID string) error {

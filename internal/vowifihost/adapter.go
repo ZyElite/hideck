@@ -11,14 +11,16 @@ import (
 )
 
 type PreparedStart struct {
-	Mode         string
-	Profile      identity.Profile
-	Prepared     identity.PreparedSession
-	Modem        runtimehost.Modem
-	SIM          runtimehost.SIMAdapter // required production AKA provider
-	Proxy        *runtimehost.ProxyConfig
-	NetworkMode  string
-	StartupState runtimehost.State
+	Mode          string
+	Profile       identity.Profile
+	Prepared      identity.PreparedSession
+	Modem         runtimehost.Modem
+	SIM           runtimehost.SIMAdapter // required production AKA provider
+	Proxy         *runtimehost.ProxyConfig
+	NetworkMode   string
+	StartupState  runtimehost.State
+	PhoneMode     string                  // wifi | cellular
+	TunnelFactory runtimehost.TunnelFactory // cellular mode: non-nil
 }
 
 type Adapter interface {

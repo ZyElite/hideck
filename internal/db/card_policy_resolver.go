@@ -17,5 +17,7 @@ func (CardPolicyResolver) Resolve(iccid string) (cardpolicy.Policy, error) {
 		AirplaneEnabled: p.AirplaneEnabled,
 		IPVersion:       p.IPVersion,
 		APN:             p.APN,
+		PhoneMode:       p.PhoneMode,
+		DataStrategy:    p.DataStrategy,
 	}, nil
 }

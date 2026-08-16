@@ -181,6 +181,17 @@ func (c *feishuCommandContext) Reply(text string) {
 	c.channel.replyToMessage(c.msg, text)
 }
 
+func (c *feishuCommandContext) Confirm(prompt string) bool {
+	return defaultConfirm(c, prompt)
+}
+
+func (c *feishuCommandContext) UserKey() string {
+	if c == nil || c.msg == nil || c.msg.ChatId == nil {
+		return ""
+	}
+	return fmt.Sprintf("feishu:%s", *c.msg.ChatId)
+}
+
 // handleMessageEvent 处理飞书消息事件，解析命令并调用 handler
 func (f *FeishuChannel) handleMessageEvent(event *larkim.P2MessageReceiveV1) {
 	if event == nil || event.Event == nil || event.Event.Message == nil {

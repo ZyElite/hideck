@@ -2081,6 +2081,16 @@ func (m *Manager) VOICEDialCall(ctx context.Context, number string) (uint8, erro
 	return m.qmiMgr.VOICEDialCall(ctx, number)
 }
 
+// SetIMSServiceEnabled enables or disables the modem's native IMS service.
+// Used by cellular mode to suppress native IMS so the software IMS stack can
+// take over without conflict.
+func (m *Manager) SetIMSServiceEnabled(ctx context.Context, enabled bool) error {
+	if m == nil || m.qmiMgr == nil {
+		return qmimanager.ErrServiceNotReady("IMS")
+	}
+	return m.qmiMgr.SetIMSServiceEnabled(ctx, enabled)
+}
+
 func (m *Manager) VOICEAnswerCall(ctx context.Context, callID uint8) (uint8, error) {
 	if m == nil || m.qmiMgr == nil {
 		return 0, qmimanager.ErrServiceNotReady("VOICE")

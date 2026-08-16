@@ -66,6 +66,8 @@ func (s *Server) handlePhoneDevices(c *gin.Context) {
 			devices = append(devices, gin.H{
 				"id": worker.ID, "name": worker.Config.Name, "iccid": worker.CurrentICCID(),
 				"voice": voice,
+				"phone_mode":    worker.Config.PhoneMode,
+				"data_strategy": worker.Config.DataStrategy,
 			})
 		}
 	}

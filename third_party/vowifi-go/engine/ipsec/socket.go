@@ -57,6 +57,16 @@ type SocketManager struct {
 
 // NewSocketManager resolves remote, binds local, and prepares a transport.
 func NewSocketManager(deviceID, local, remote, dnsServer string) (*SocketManager, error) {
+	return NewSocketManagerWithOptions(deviceID, local, remote, dnsServer, SocketOptions{})
+}
+
+// SocketOptions carries optional socket-level settings (e.g. SO_BINDTODEVICE).
+type SocketOptions struct {
+	BindToDevice string // Linux only: bind socket to this interface name
+}
+
+// NewSocketManagerWithOptions is like NewSocketManager but accepts extra socket options.
+func NewSocketManagerWithOptions(deviceID, local, remote, dnsServer string, opts SocketOptions) (*SocketManager, error) {
 	remoteAddr, remoteIPs, err := ResolveUDPAddrAll(remote, dnsServer)
 	if err != nil {
 		return nil, fmt.Errorf("resolve remote address %q: %w", remote, err)
@@ -72,7 +82,10 @@ func NewSocketManager(deviceID, local, remote, dnsServer string) (*SocketManager
 	if err != nil {
 		return nil, fmt.Errorf("resolve local address %q: %w", local, err)
 	}
-	listenConfig := net.ListenConfig{Control: reuseSocketOptions}
+	bindToDevice := strings.TrimSpace(opts.BindToDevice)
+	listenConfig := net.ListenConfig{Control: func(network, address string, raw syscall.RawConn) error {
+		return reuseSocketOptionsWithBind(network, address, raw, bindToDevice)
+	}}
 	packetConn, err := listenConfig.ListenPacket(
 		context.Background(), network, localAddr.String(),
 	)
@@ -98,11 +111,18 @@ func NewSocketManager(deviceID, local, remote, dnsServer string) (*SocketManager
 }
 
 func reuseSocketOptions(_, _ string, raw syscall.RawConn) error {
+	return reuseSocketOptionsWithBind("", "", raw, "")
+}
+
+func reuseSocketOptionsWithBind(_, _ string, raw syscall.RawConn, bindToDevice string) error {
 	var optionErr error
 	err := raw.Control(func(fd uintptr) {
 		optionErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
 		if optionErr == nil {
 			optionErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, soReusePort, 1)
+		}
+		if optionErr == nil && bindToDevice != "" {
+			optionErr = setSockBindToDevice(int(fd), bindToDevice)
 		}
 	})
 	if err != nil {

@@ -18,8 +18,14 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	w.Config.NetworkEnabled = p.NetworkEnabled
 	w.Config.VoWiFiEnabled = p.VoWiFiEnabled
 	w.Config.AirplaneEnabled = p.AirplaneEnabled
+	w.Config.PhoneMode = p.PhoneMode
+	w.Config.DataStrategy = p.DataStrategy
 	if p.VoWiFiEnabled {
-		w.Config.AirplaneEnabled = true
+		if p.PhoneMode == "cellular" {
+			w.Config.AirplaneEnabled = false
+		} else {
+			w.Config.AirplaneEnabled = true
+		}
 	}
 	w.Config.IPVersion = strings.TrimSpace(p.IPVersion)
 	if w.Config.IPVersion == "" {
@@ -28,7 +34,11 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	w.Config.APN = strings.TrimSpace(p.APN)
 	w.Config.SMSEnabled = true // SMS 恒开
 	w.restoreNetworkAfterVoWiFi = p.NetworkEnabled
-	w.setCellularRadioSuppressed(w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled)
+	if w.Config.PhoneMode == "cellular" && w.Config.VoWiFiEnabled {
+		w.setCellularRadioSuppressed(false)
+	} else {
+		w.setCellularRadioSuppressed(w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled)
+	}
 }
 
 type policyApplyResult struct {
@@ -60,8 +70,15 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	// 三态分支：VoWiFi / 纯飞行 / 在线(含连网)。射频模式按策略真正切换，
 	// 补齐此前“airplane 字段被投影但从不执行”的缺口。
 	switch {
+	case pol.VoWiFiEnabled && pol.PhoneMode == "cellular":
+		// 蜂窝模式：保持数据、不关射频。on_demand 时数据可能未连，拨号时再开。
+		if pol.DataStrategy == "always" {
+			if err := p.applyNetworkPreference(worker); err != nil {
+				logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
+			}
+		}
 	case pol.VoWiFiEnabled:
-		// 原有路径：网络偏好按 false 走(停数据网)，射频由 VoWiFi 恢复流程切 RFOff。
+		// WiFi calling 原有路径：网络偏好按 false 走(停数据网)，射频由 VoWiFi 恢复流程切 RFOff。
 		if err := p.applyNetworkPreference(worker); err != nil {
 			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
 		}

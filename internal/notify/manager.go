@@ -26,6 +26,7 @@ type Manager struct {
 	commandExecutorMu       sync.RWMutex
 	commandExecutor         ChannelCommandExecutor
 	commandReceiversStarted bool
+	confirmRegistry         *confirmRegistry
 }
 
 type ManagerOptions struct {
@@ -107,15 +108,19 @@ func (m *Manager) UpdateRuntimeState(update func(*RuntimeState) error) error {
 }
 
 func (m *Manager) baseCommandHandlers() map[string]CommandHandler {
+	m.confirmRegistry = newConfirmRegistry()
 	return map[string]CommandHandler{
-		"send":   m.handleCmdSendSMS,
-		"status": m.handleCmdStatus,
-		"rotate": m.handleCmdRotate,
-		"list":   m.handleCmdList,
-		"sms":    m.handleCmdSMSInbox,
-		"esim":   m.handleCmdEsim,
-		"switch": m.handleCmdSwitch,
-		"vocall": m.handleCmdCall,
+		"send":     m.handleCmdSendSMS,
+		"status":   m.handleCmdStatus,
+		"rotate":   m.handleCmdRotate,
+		"list":     m.handleCmdList,
+		"sms":      m.handleCmdSMSInbox,
+		"esim":     m.handleCmdEsim,
+		"switch":   m.handleCmdSwitch,
+		"vocall":   m.handleCmdCall,
+		"cellcall": m.handleCmdCellCall,
+		"y":        m.handleCmdConfirmYes,
+		"n":        m.handleCmdConfirmNo,
 	}
 }
 

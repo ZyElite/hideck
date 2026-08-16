@@ -232,6 +232,8 @@ type DeviceConfig struct {
 	VoWiFiEnabled   bool   `mapstructure:"-"`
 	AirplaneEnabled bool   `mapstructure:"-"`
 	SMSEnabled      bool   `mapstructure:"-"` // SMS 恒开，运行时强制 true
+	PhoneMode       string `mapstructure:"-"` // wifi | cellular
+	DataStrategy    string `mapstructure:"-"` // always | on_demand
 
 	// USB Audio (自动发现，无需手动配置)
 	AudioDevice string `mapstructure:"-"` // Deprecated: 运行时解析,绝不从文件读取

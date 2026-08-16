@@ -5,6 +5,8 @@ export type PolicyMirror = {
   network_enabled: boolean
   vowifi_enabled: boolean
   airplane_enabled: boolean
+  phone_mode?: string       // "wifi" | "cellular"
+  data_strategy?: string    // "always" | "on_demand"
 }
 
 export type ToggleResult = { ok: boolean }
@@ -30,17 +32,25 @@ function nextMirror(
 ): PolicyMirror {
   if (field === 'network_enabled') {
     return val
-      ? { network_enabled: true, vowifi_enabled: false, airplane_enabled: false }
+      ? { network_enabled: true, vowifi_enabled: false, airplane_enabled: false, phone_mode: cur.phone_mode ?? 'wifi', data_strategy: cur.data_strategy ?? 'on_demand' }
       : { ...cur, network_enabled: false }
   }
   if (field === 'vowifi_enabled') {
-    return val
-      ? { ...cur, network_enabled: false, vowifi_enabled: true }
-      : { ...cur, vowifi_enabled: false }
+    if (val) {
+      const isCellular = (cur.phone_mode ?? 'wifi') === 'cellular'
+      return {
+        network_enabled: isCellular ? (cur.data_strategy === 'always') : false,
+        vowifi_enabled: true,
+        airplane_enabled: isCellular ? false : true,
+        phone_mode: cur.phone_mode ?? 'wifi',
+        data_strategy: cur.data_strategy ?? 'on_demand',
+      }
+    }
+    return { ...cur, vowifi_enabled: false }
   }
   // airplane_enabled
   return val
-    ? { network_enabled: false, vowifi_enabled: false, airplane_enabled: true }
+    ? { network_enabled: false, vowifi_enabled: false, airplane_enabled: true, phone_mode: cur.phone_mode ?? 'wifi', data_strategy: cur.data_strategy ?? 'on_demand' }
     : { ...cur, airplane_enabled: false }
 }
 
@@ -69,6 +79,8 @@ export function useCardPolicyToggles(
       local.value.network_enabled = p.network_enabled
       local.value.vowifi_enabled = p.vowifi_enabled
       local.value.airplane_enabled = p.airplane_enabled
+      local.value.phone_mode = p.phone_mode ?? 'wifi'
+      local.value.data_strategy = p.data_strategy ?? 'on_demand'
       networkFailed.value = false
       vowifiFailed.value = false
       airplaneFailed.value = false

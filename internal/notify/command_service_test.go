@@ -16,6 +16,11 @@ func (c *commandCapture) Reply(text string) {
 	c.replies = append(c.replies, text)
 }
 
+func (c *commandCapture) Confirm(prompt string) bool {
+	c.replies = append(c.replies, prompt)
+	return true
+}
+
 func TestCommandServiceCatalogAndExecution(t *testing.T) {
 	service := NewCommandService(map[string]CommandHandler{
 		"list": func(_ CommandContext, args []string) string { return "list:" + joinArgs(args) },
@@ -25,7 +30,7 @@ func TestCommandServiceCatalogAndExecution(t *testing.T) {
 	for _, definition := range definitions {
 		names = append(names, definition.Name)
 	}
-	want := []string{"balance", "esim", "help", "list", "rotate", "send", "sms", "status", "switch", "vocall"}
+	want := []string{"balance", "cellcall", "esim", "help", "list", "rotate", "send", "sms", "status", "switch", "vocall"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("Definitions() names = %v, want %v", names, want)
 	}
@@ -68,7 +73,7 @@ func TestDangerousCommandMetadata(t *testing.T) {
 		}
 	}
 	sort.Strings(dangerous)
-	want := []string{"rotate", "switch", "vocall"}
+	want := []string{"cellcall", "rotate", "switch", "vocall"}
 	if !reflect.DeepEqual(dangerous, want) {
 		t.Fatalf("dangerous commands = %v, want %v", dangerous, want)
 	}

@@ -36,3 +36,8 @@ func ParseSockExtError(b []byte) (*SockExtendedErr, error) {
 
 // soReusePort is SO_REUSEPORT on non-Linux platforms.
 const soReusePort = syscall.SO_REUSEPORT
+
+// setSockBindToDevice is a no-op on non-Linux platforms (SO_BINDTODEVICE is Linux-only).
+func setSockBindToDevice(fd int, device string) error {
+	return errors.New("SO_BINDTODEVICE is not supported on this platform")
+}

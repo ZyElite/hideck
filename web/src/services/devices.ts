@@ -181,9 +181,9 @@ export const devicesService = {
       }
     })
   },
-  enableVoWiFi(id: string) {
+  enableVoWiFi(id: string, opts?: { mode?: string; data_strategy?: string }) {
     return callService(async () => {
-      await api.patch(`/devices/${id}/vowifi`, { enabled: true })
+      await api.patch(`/devices/${id}/vowifi`, { enabled: true, ...opts })
       return true
     })
   },

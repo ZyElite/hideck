@@ -207,6 +207,7 @@ func commandDefinitions() map[string]CommandDefinition {
 		{Name: "esim", Usage: "/esim [设备ID]", Summary: "查看 eSIM", DeviceArgument: true},
 		{Name: "switch", Usage: "/switch [设备ID] [序号或ICCID]", Summary: "切换 eSIM", Dangerous: true, Async: true, DeviceArgument: true},
 		{Name: "vocall", Usage: "/vocall [设备ID] [号码] [秒数]", Summary: "发起 VoWiFi 通话", Dangerous: true, Async: true, DeviceArgument: true},
+		{Name: "cellcall", Usage: "/cellcall [设备ID] [号码] [秒数]", Summary: "发起蜂窝通话", Dangerous: true, Async: true, DeviceArgument: true},
 		{Name: "rotate", Usage: "/rotate [设备ID]", Summary: "切换公网 IP", Dangerous: true, Async: true, DeviceArgument: true},
 		{Name: "balance", Usage: "/balance [设备ID]", Summary: "查询运营商余额", DeviceArgument: true},
 	}
