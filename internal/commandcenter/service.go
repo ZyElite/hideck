@@ -200,6 +200,16 @@ func (c *replyContext) Confirm(prompt string) bool {
 	return true
 }
 
+func (c *replyContext) UserKey() string {
+	if c.downstream == nil {
+		return ""
+	}
+	if keyed, ok := c.downstream.(notify.UserKeyedContext); ok {
+		return keyed.UserKey()
+	}
+	return ""
+}
+
 func (c *replyContext) ReplyWithAttachments(text string, attachments []notify.CommandAttachment) {
 	content := eventContent{kind: EventProgress, text: text, attachments: attachments}
 	c.reply(content)
