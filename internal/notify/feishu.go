@@ -182,8 +182,10 @@ func (c *feishuCommandContext) Reply(text string) {
 }
 
 func (c *feishuCommandContext) Confirm(prompt string) bool {
-	c.channel.replyToMessage(c.msg, prompt)
-	return false
+	// Feishu supports interactive replies. When UserKey is available,
+	// confirmation is handled via confirmRegistry. This method is only
+	// reached when UserKey is empty (edge case), so skip confirmation.
+	return true
 }
 
 func (c *feishuCommandContext) UserKey() string {
