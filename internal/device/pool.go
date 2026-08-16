@@ -2234,7 +2234,9 @@ func (w *Worker) RotateWithNotify() (oldIP, newIP string, err error) {
 				if imei := w.getIMEI(); imei != "" {
 					internalIP := nc.GetPrivateIP()
 					internalIPv6 := nc.GetPrivateIPv6()
-					_ = db.UpdateDeviceIPsV6(imei, publicV4, publicV6, internalIP, internalIPv6)
+					if err := db.UpdateDeviceIPsV6(imei, publicV4, publicV6, internalIP, internalIPv6); err != nil {
+						logger.Warn(fmt.Sprintf("[%s] 更新设备 IP 失败", w.ID), "err", err)
+					}
 				}
 
 				if app := w.Pool.voWiFiHost().Instance(w.ID); app != nil {
@@ -2263,7 +2265,9 @@ func (w *Worker) RotateWithNotify() (oldIP, newIP string, err error) {
 			// 立即刷新数据库中的私网 IP；公网 IP 先沿用缓存值。
 			cachedPublic := w.GetCachedIP()
 			if imei := w.getIMEI(); imei != "" {
-				_ = db.UpdateDeviceIPsV6(imei, cachedPublic, w.GetCachedIPv6(), newPrivateIP, nc.GetPrivateIPv6())
+				if err := db.UpdateDeviceIPsV6(imei, cachedPublic, w.GetCachedIPv6(), newPrivateIP, nc.GetPrivateIPv6()); err != nil {
+					logger.Warn(fmt.Sprintf("[%s] 更新设备 IP 失败", w.ID), "err", err)
+				}
 			}
 
 			// 异步继续探测公网 IP，避免阻塞 rotate 接口。

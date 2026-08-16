@@ -13,6 +13,7 @@ import (
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
 	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 // ---------- 通用命令 handler（TG 和飞书共用） ----------
@@ -88,7 +89,9 @@ func (m *Manager) handleCmdSendSMS(cmdCtx CommandContext, args []string) string 
 				cmdCtx.Reply(fmt.Sprintf("发送短信 / 失败\n设备    %s\n号码    %s\n通道    蜂窝\n原因    %v", displayName, phone, sendErr))
 				return
 			}
-			_ = db.SaveSMS(worker.GetIMSI(), worker.ID, phone, message, 2, 2, time.Now())
+			if err := db.SaveSMS(worker.GetIMSI(), worker.ID, phone, message, 2, 2, time.Now()); err != nil {
+				logger.Warn("短信发送成功但入库失败", "device", deviceID, "err", err)
+			}
 		}
 
 		channel := "蜂窝"

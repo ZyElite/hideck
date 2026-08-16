@@ -591,7 +591,9 @@ func (p *Pool) refreshIPs(worker *Worker, checkPublic bool) {
 				}
 
 				if imei := worker.getIMEI(); imei != "" {
-					_ = db.UpdateDeviceIPsV6(imei, publicV4, publicV6, privateIP, privateIPv6)
+					if err := db.UpdateDeviceIPsV6(imei, publicV4, publicV6, privateIP, privateIPv6); err != nil {
+						logger.Warn(fmt.Sprintf("[%s] 更新设备 IP 失败", worker.ID), "err", err)
+					}
 				}
 			} else {
 				p.schedulePublicIPRetry(worker)
@@ -600,7 +602,9 @@ func (p *Pool) refreshIPs(worker *Worker, checkPublic bool) {
 			if imei := worker.getIMEI(); imei != "" {
 				cachedPublic := worker.GetCachedIP()
 				cachedPublicIPv6 := worker.GetCachedIPv6()
-				_ = db.UpdateDeviceIPsV6(imei, cachedPublic, cachedPublicIPv6, privateIP, privateIPv6)
+				if err := db.UpdateDeviceIPsV6(imei, cachedPublic, cachedPublicIPv6, privateIP, privateIPv6); err != nil {
+					logger.Warn(fmt.Sprintf("[%s] 更新设备 IP 失败", worker.ID), "err", err)
+				}
 			}
 		}
 	}()

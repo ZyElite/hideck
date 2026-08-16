@@ -1191,7 +1191,9 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 		if err := worker.SendSMSWithOptions(req.Phone, req.Message, sendOpts); err != nil {
 			// 发送失败，入库记录（status=3）
 			if imsi != "" {
-				_ = db.SaveSMS(imsi, worker.ID, req.Phone, req.Message, 2, 3, time.Now())
+				if err := db.SaveSMS(imsi, worker.ID, req.Phone, req.Message, 2, 3, time.Now()); err != nil {
+					logger.Warn("短信发送失败记录入库失败", "device", deviceID, "err", err)
+				}
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":  "error",
@@ -1203,7 +1205,9 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 		}
 		// 发送成功，入库记录（status=2）
 		if imsi != "" {
-			_ = db.SaveSMS(imsi, worker.ID, req.Phone, req.Message, 2, 2, time.Now())
+			if err := db.SaveSMS(imsi, worker.ID, req.Phone, req.Message, 2, 2, time.Now()); err != nil {
+				logger.Warn("短信发送成功但入库失败", "device", deviceID, "err", err)
+			}
 		}
 	}
 

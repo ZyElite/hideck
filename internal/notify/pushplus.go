@@ -7,20 +7,28 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/pkg/logger"
 )
 
+const pushplusRequestTimeout = 10 * time.Second
+const pushplusSendURL = "https://www.pushplus.plus/send"
+
 type PushplusChannel struct {
-	cfg config.PushplusConfig
+	cfg    config.PushplusConfig
+	client *http.Client
 }
 
 func NewPushplusChannel(cfg config.PushplusConfig) (*PushplusChannel, error) {
 	if strings.TrimSpace(cfg.Token) == "" {
 		return nil, errors.New("pushplus token is required")
 	}
-	return &PushplusChannel{cfg: cfg}, nil
+	return &PushplusChannel{
+		cfg:    cfg,
+		client: &http.Client{Timeout: pushplusRequestTimeout},
+	}, nil
 }
 
 func (c *PushplusChannel) Name() string {
@@ -59,7 +67,16 @@ func (c *PushplusChannel) SendWithContext(ctx NotificationContext) error {
 		return err
 	}
 
-	resp, err := http.Post("http://www.pushplus.plus/send", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, pushplusSendURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := c.client
+	if client == nil {
+		client = &http.Client{Timeout: pushplusRequestTimeout}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		logger.Warn("Pushplus 发送失败", "err", err)
 		return err

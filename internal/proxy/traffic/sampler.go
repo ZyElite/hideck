@@ -166,30 +166,40 @@ func (s *Sampler) sample(periodStart time.Time) {
 	now := periodStart.Add(time.Minute)
 	if now.Minute() == 0 {
 		prevHour := now.Truncate(time.Hour).Add(-time.Hour)
-		_ = db.RollupToHour(prevHour)
+		if err := db.RollupToHour(prevHour); err != nil {
+			logger.Warn("流量小时聚合失败", "period", prevHour, "err", err)
+		}
 	}
 	if now.Hour() == 0 && now.Minute() == 0 {
 		prevDay := now.Truncate(24 * time.Hour).Add(-24 * time.Hour)
-		_ = db.RollupToDay(prevDay)
+		if err := db.RollupToDay(prevDay); err != nil {
+			logger.Warn("流量日聚合失败", "period", prevDay, "err", err)
+		}
 	}
 	if now.Weekday() == time.Monday && now.Hour() == 0 && now.Minute() == 0 {
 		weekStart := startOfWeek(now).Add(-7 * 24 * time.Hour)
-		_ = db.RollupToWeek(weekStart)
+		if err := db.RollupToWeek(weekStart); err != nil {
+			logger.Warn("流量周聚合失败", "period", weekStart, "err", err)
+		}
 	}
 	if now.Day() == 1 && now.Hour() == 0 && now.Minute() == 0 {
 		monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).AddDate(0, -1, 0)
-		_ = db.RollupToMonth(monthStart)
+		if err := db.RollupToMonth(monthStart); err != nil {
+			logger.Warn("流量月聚合失败", "period", monthStart, "err", err)
+		}
 	}
 
 	if now.Minute() == 0 {
-		_ = db.CleanupBefore(
+		if err := db.CleanupBefore(
 			now,
 			24*time.Hour,
 			7*24*time.Hour,
 			31*24*time.Hour,
 			12*7*24*time.Hour,
 			24*31*24*time.Hour,
-		)
+		); err != nil {
+			logger.Warn("流量历史清理失败", "err", err)
+		}
 	}
 }
 
