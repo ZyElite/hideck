@@ -163,9 +163,13 @@ const {
             />
           </div>
         </div>
+        <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
+          <span class="text-sm text-gray-700 dark:text-gray-200">驻网<small class="block text-[11px] text-gray-400 font-normal">关飞行即注册运营商</small></span>
+          <strong class="text-sm">{{ local.airplane_enabled ? '关闭' : '开启' }}</strong>
+        </div>
         <!-- 飞行 -->
         <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
-          <span class="text-sm text-gray-700 dark:text-gray-200">飞行</span>
+          <span class="text-sm text-gray-700 dark:text-gray-200">飞行<small class="block text-[11px] text-gray-400 font-normal">{{ local.vowifi_enabled && local.phone_mode !== 'cellular' ? 'WiFi calling 开着时不可用' : '蜂窝下可直接开' }}</small></span>
           <div class="flex items-center gap-2">
             <span v-if="airplaneFailed" class="text-xs text-orange-500">未生效</span>
             <el-icon v-if="airplanePending" class="animate-spin text-gray-400"><Loading /></el-icon>

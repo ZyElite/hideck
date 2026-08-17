@@ -269,11 +269,20 @@ const policyProjection = computed(() => [
           </div>
         </div>
 
+        <div class="policy-setting-row" :class="{ 'is-active': !local.airplane_enabled }">
+          <span><strong>驻网</strong><small>关飞行就会注册运营商；开飞行则停止注册。和「网络」无关，网络只开流量</small></span>
+          <strong class="policy-inline-status">{{ local.airplane_enabled ? '关闭' : '开启' }}</strong>
+        </div>
+
         <div
           class="policy-setting-row"
           :class="{ 'is-active': local.airplane_enabled }"
         >
-          <span><strong>飞行模式</strong><small>关闭射频和移动网络；VoWiFi 开启时由其接管</small></span>
+          <span>
+            <strong>飞行模式</strong>
+            <small v-if="local.vowifi_enabled && local.phone_mode !== 'cellular'">WiFi calling 开着时由软件电话接管射频，请先关掉软件电话或改成蜂窝</small>
+            <small v-else>蜂窝模式下可直接开启。开启后关射频、停止驻网</small>
+          </span>
             <div class="flex items-center gap-2">
               <span v-if="airplaneFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
               <el-icon v-if="airplanePending" class="animate-spin text-gray-400"><Loading /></el-icon>
@@ -327,6 +336,7 @@ const policyProjection = computed(() => [
 .policy-setting-row > span strong { color: var(--ui-text); font-size: 13px; }
 .policy-setting-row > span small { margin-top: 3px; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 .policy-field-control { width: min(360px, 52%); }
+.policy-inline-status { color: var(--ui-text); font-size: 13px; font-weight: 650; }
 .policy-notice { margin: 0 0 10px; padding: 10px 12px; border-radius: 8px; font-size: var(--ui-font-body-sm); line-height: 1.45; }
 .policy-notice.is-warn { background: color-mix(in srgb, var(--ui-warning) 12%, var(--ui-surface)); color: var(--ui-warning); }
 .policy-notice.is-info { background: color-mix(in srgb, var(--ui-primary) 8%, var(--ui-surface)); color: var(--ui-text); }
