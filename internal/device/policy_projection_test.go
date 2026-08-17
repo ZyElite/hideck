@@ -11,20 +11,20 @@ import (
 	"github.com/yibaiba/hideck/internal/vowifihost"
 )
 
-func TestApplyPolicyCellularIdleKeepsAirplane(t *testing.T) {
+func TestApplyPolicyCellularIdleKeepsCamped(t *testing.T) {
 	w := &Worker{ID: "wwan0"}
 	applyPolicyToWorker(w, cardpolicy.Policy{
 		ICCID: "x", VoWiFiEnabled: true, PhoneMode: "cellular", DataStrategy: "on_demand",
 	})
-	if !w.Config.AirplaneEnabled || w.Config.NetworkEnabled || !w.cellularRadioIsSuppressed() {
-		t.Fatalf("蜂窝未开网络应飞行并抑制驻网: %+v suppressed=%v", w.Config, w.cellularRadioIsSuppressed())
+	if w.Config.AirplaneEnabled || w.Config.NetworkEnabled || w.cellularRadioIsSuppressed() {
+		t.Fatalf("蜂窝未开流量应保持驻网: %+v suppressed=%v", w.Config, w.cellularRadioIsSuppressed())
 	}
 
 	applyPolicyToWorker(w, cardpolicy.Policy{
 		ICCID: "x", VoWiFiEnabled: true, PhoneMode: "cellular", DataStrategy: "on_demand", NetworkEnabled: true,
 	})
 	if w.Config.AirplaneEnabled || !w.Config.NetworkEnabled || w.cellularRadioIsSuppressed() {
-		t.Fatalf("打开网络后应退出飞行并允许驻网: %+v suppressed=%v", w.Config, w.cellularRadioIsSuppressed())
+		t.Fatalf("打开网络后应保持在线并允许数据: %+v suppressed=%v", w.Config, w.cellularRadioIsSuppressed())
 	}
 }
 
@@ -149,7 +149,7 @@ func TestResolveAndApplyPolicy_EmptyICCID(t *testing.T) {
 	}
 }
 
-func TestResolveAndApplyPolicyNetworkOffDoesNotCamp(t *testing.T) {
+func TestResolveAndApplyPolicyNetworkOffKeepsCamped(t *testing.T) {
 	p := &Pool{ctx: context.Background()}
 	p.SetPolicyResolver(&stubPolicyResolver{
 		pol: cardpolicy.Policy{ICCID: "123", VoWiFiEnabled: false, AirplaneEnabled: false, NetworkEnabled: false},
@@ -162,11 +162,13 @@ func TestResolveAndApplyPolicyNetworkOffDoesNotCamp(t *testing.T) {
 	if !res.Applied {
 		t.Fatalf("应成功应用: %+v", res)
 	}
-	if len(stub.setOpModeCalls) != 1 || stub.setOpModeCalls[0] != backend.ModeRFOff {
-		t.Fatalf("网络关闭应切入飞行: %+v", stub.setOpModeCalls)
+	for _, mode := range stub.setOpModeCalls {
+		if mode == backend.ModeRFOff {
+			t.Fatalf("网络关闭应保持驻网，不应切入飞行: %+v", stub.setOpModeCalls)
+		}
 	}
-	if !w.cellularRadioIsSuppressed() {
-		t.Fatal("网络关闭应抑制驻网")
+	if w.cellularRadioIsSuppressed() {
+		t.Fatal("网络关闭仍应允许驻网")
 	}
 }
 
@@ -242,11 +244,11 @@ func TestResolveAndApplyPolicyDoesNotRecoverCellularOnDemand(t *testing.T) {
 	if !res.Applied {
 		t.Fatalf("应成功应用: %+v", res)
 	}
-	if w.Config.PhoneMode != "cellular" || !w.Config.AirplaneEnabled {
-		t.Fatalf("蜂窝 on_demand 未开网络应保持飞行: %+v", w.Config)
+	if w.Config.PhoneMode != "cellular" || w.Config.AirplaneEnabled {
+		t.Fatalf("蜂窝 on_demand 未开流量应保持驻网: %+v", w.Config)
 	}
-	if !w.cellularRadioIsSuppressed() {
-		t.Fatal("蜂窝 on_demand 未开网络应抑制驻网")
+	if w.cellularRadioIsSuppressed() {
+		t.Fatal("蜂窝 on_demand 未开流量仍应允许驻网")
 	}
 
 	select {

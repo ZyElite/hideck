@@ -48,11 +48,10 @@ function nextMirror(
   if (field === 'vowifi_enabled') {
     if (val) {
       const isCellular = (cur.phone_mode ?? 'wifi') === 'cellular'
-      const cellularLive = isCellular && (cur.data_strategy === 'always' || cur.network_enabled)
       return {
         network_enabled: isCellular ? (cur.data_strategy === 'always' || cur.network_enabled) : false,
         vowifi_enabled: true,
-        airplane_enabled: !cellularLive,
+        airplane_enabled: isCellular ? false : true,
         phone_mode: cur.phone_mode ?? 'wifi',
         data_strategy: cur.data_strategy ?? 'on_demand',
       }
@@ -165,7 +164,7 @@ export function useCardPolicyToggles(
     }
     if (mode === 'cellular') {
       next.network_enabled = strategy === 'always' || next.network_enabled
-      next.airplane_enabled = !(strategy === 'always' || next.network_enabled)
+      next.airplane_enabled = false
     } else {
       next.airplane_enabled = true
       next.network_enabled = false

@@ -72,22 +72,9 @@ func (p *Pool) RestoreRadioAfterVoWiFi(deviceID string) error {
 		return nil
 	}
 
-	if shouldSuppressCellularRadio(w.Config) {
-		w.setCellularRadioSuppressed(true)
-		_ = w.cancelRadioRegistrationReconcile(p.ctx, "vowifi_teardown")
-		logger.Info("蜂窝收尾：网络未开，保持飞行不驻网", "device", deviceID)
-		if err := w.Backend.SetOperatingMode(p.ctx, backend.ModeRFOff); err != nil {
-			logger.Warn("蜂窝收尾切入飞行失败", "device", deviceID, "err", err)
-		}
-		if nc := w.NetworkController(); nc != nil && nc.IsConnected() {
-			_ = w.StopNetwork()
-		}
-		return nil
-	}
+	w.setCellularRadioSuppressed(shouldSuppressCellularRadio(w.Config))
 
-	w.setCellularRadioSuppressed(false)
-
-	// Cellular mode with Network on: radio stays online for data / on_demand camp.
+	// Cellular mode: keep radio online so the card stays camped even without data.
 	if w.Config.PhoneMode == "cellular" {
 		logger.Info("蜂窝模式收尾：保持射频在线", "device", deviceID)
 		if err := w.Backend.SetOperatingMode(p.ctx, backend.ModeOnline); err != nil {

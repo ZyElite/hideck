@@ -10,8 +10,8 @@ import (
 	"github.com/yibaiba/hideck/pkg/logger"
 )
 
-// cellularDataAllowed reports whether cellular radio/data may leave airplane.
-// 蜂窝流量以「网络」为准：always 或用户打开网络后，on_demand/always 才真正驻网。
+// cellularDataAllowed reports whether the software IMS path may bring up data.
+// 驻网和流量分开：飞行关射频；网络只控制数据。
 func cellularDataAllowed(phoneMode, dataStrategy string, networkEnabled bool) bool {
 	if strings.TrimSpace(phoneMode) != "cellular" {
 		return false
@@ -20,14 +20,11 @@ func cellularDataAllowed(phoneMode, dataStrategy string, networkEnabled bool) bo
 }
 
 func shouldSuppressCellularRadio(cfg config.DeviceConfig) bool {
-	if cfg.PhoneMode == "cellular" && cfg.VoWiFiEnabled {
-		return !cellularDataAllowed(cfg.PhoneMode, cfg.DataStrategy, cfg.NetworkEnabled)
-	}
-	if cfg.VoWiFiEnabled || cfg.AirplaneEnabled {
+	if cfg.AirplaneEnabled {
 		return true
 	}
-	// 软件电话和网络都关时不驻网，避免空闲搜网循环。
-	return !cfg.NetworkEnabled
+	// WiFi calling 关射频。蜂窝软件电话要保持驻网，即使还没开流量。
+	return cfg.VoWiFiEnabled && cfg.PhoneMode != "cellular"
 }
 
 // applyPolicyToWorker 把卡策略投影进 worker.Config 的运行时有效字段。
@@ -43,8 +40,7 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	w.Config.DataStrategy = p.DataStrategy
 	if p.VoWiFiEnabled {
 		if p.PhoneMode == "cellular" {
-			live := cellularDataAllowed(p.PhoneMode, p.DataStrategy, p.NetworkEnabled)
-			w.Config.AirplaneEnabled = !live
+			w.Config.AirplaneEnabled = false
 			if p.DataStrategy == "always" {
 				w.Config.NetworkEnabled = true
 			}
@@ -92,16 +88,10 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	// 补齐此前“airplane 字段被投影但从不执行”的缺口。
 	switch {
 	case pol.VoWiFiEnabled && pol.PhoneMode == "cellular":
-		// 蜂窝：没开网络且不是 always 时保持飞行，避免空闲搜网。
-		// 打开网络后才驻网；always 同时拉起数据，on_demand 拨号时再开数据。
-		if cellularDataAllowed(pol.PhoneMode, pol.DataStrategy, pol.NetworkEnabled) {
-			p.exitAirplaneModeIfNeeded(worker, reason)
-			if err := p.applyNetworkPreference(worker); err != nil {
-				logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
-			}
-		} else {
-			_ = worker.suppressCellularRegistration(p.ctx, reason)
-			p.enterAirplaneModeFromPolicy(worker, reason)
+		// 蜂窝：射频保持在线以驻网。网络开着才连数据；on_demand 拨号时再开数据。
+		p.exitAirplaneModeIfNeeded(worker, reason)
+		if err := p.applyNetworkPreference(worker); err != nil {
+			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
 		}
 	case pol.VoWiFiEnabled:
 		// WiFi calling 原有路径：网络偏好按 false 走(停数据网)，射频由 VoWiFi 恢复流程切 RFOff。
@@ -111,12 +101,8 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	case pol.AirplaneEnabled:
 		// 纯飞行：停数据网 + 切 RFOff，不做注册偏好/重连。
 		p.enterAirplaneModeFromPolicy(worker, reason)
-	case !pol.NetworkEnabled:
-		// 网络关着就不驻网。旧卡 airplane=false 也会走到这里，避免空闲搜网。
-		_ = worker.suppressCellularRegistration(p.ctx, reason)
-		p.enterAirplaneModeFromPolicy(worker, reason)
 	default:
-		// 在线连网：若当前在飞行先退出飞行，再按 network 偏好。
+		// 在线待机或连网：飞行关着就驻网；网络开关只决定是否拉起数据。
 		p.exitAirplaneModeIfNeeded(worker, reason)
 		if err := p.applyNetworkPreference(worker); err != nil {
 			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)

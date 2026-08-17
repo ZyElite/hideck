@@ -72,7 +72,7 @@ function deviceStatus(device?: PhoneDevice) {
   const mode = deviceModeLabel(device)
   if (isDeviceReady(device) || device.vowifi_active) return `${mode} · 就绪`
   if (device.phone_mode === 'cellular' && device.vowifi_enabled) {
-    if (!device.network_enabled && device.data_strategy !== 'always') return `${mode} · 未开网络`
+    if (!device.network_enabled && device.data_strategy !== 'always') return `${mode} · 驻网（未开流量）`
     return device.data_strategy === 'always' ? `${mode} · 连接中` : `${mode} · 仅打电话时开`
   }
   if (device.vowifi_enabled) return `${mode} · 连接中`
@@ -102,7 +102,7 @@ async function changePhoneMode(mode: string) {
     if (!result.ok) throw new Error(result.error?.message || '切换通话方式失败')
     await phone.refresh()
     if (mode === 'cellular') {
-      ElMessage.success('已切到蜂窝。请先到卡策略打开「网络」，仅打电话时开 / 长时间开启才会驻网')
+      ElMessage.success('已切到蜂窝。会正常驻网；要走流量再到卡策略打开「网络」')
     } else {
       ElMessage.success('已切换到 WiFi calling')
     }
@@ -125,8 +125,8 @@ async function changeDataStrategy(strategy: string) {
     if (!result.ok) throw new Error(result.error?.message || '切换数据策略失败')
     await phone.refresh()
     ElMessage.success(strategy === 'always'
-      ? '已改为长时间开启。打开卡策略里的「网络」后才会一直走流量'
-      : '已改为仅打电话时开。打开卡策略里的「网络」后，拨号才会连数据')
+      ? '已改为长时间开启数据。打开「网络」后会一直走流量'
+      : '已改为仅打电话时开数据。打开「网络」后，拨号才会连流量')
   } catch (error) {
     phone.error = phoneErrorMessage(error, '切换数据策略失败')
   } finally {
@@ -173,7 +173,9 @@ function startListenOnlyCall() {
   if (selected.value?.phone_mode === 'cellular') {
     return runAction('仅听呼叫', async () => {
       const confirmed = await ElMessageBox.confirm(
-        '当前设备使用蜂窝数据流量打电话，将消耗少量数据流量。是否继续？',
+        selected.value?.network_enabled
+          ? '当前用蜂窝数据打电话，会消耗少量流量。是否继续？'
+          : '当前未开流量。打这个电话会临时打开数据，挂断后关闭。是否继续？',
         '数据流量通话提醒',
         { confirmButtonText: '继续拨号', cancelButtonText: '取消', type: 'warning' }
       ).then(() => true).catch(() => false)
@@ -189,7 +191,9 @@ function startTwoWayCall() {
   if (selected.value?.phone_mode === 'cellular') {
     return runAction('双向呼叫', async () => {
       const confirmed = await ElMessageBox.confirm(
-        '当前设备使用蜂窝数据流量打电话，将消耗少量数据流量。是否继续？',
+        selected.value?.network_enabled
+          ? '当前用蜂窝数据打电话，会消耗少量流量。是否继续？'
+          : '当前未开流量。打这个电话会临时打开数据，挂断后关闭。是否继续？',
         '数据流量通话提醒',
         { confirmButtonText: '继续拨号', cancelButtonText: '取消', type: 'warning' }
       ).then(() => true).catch(() => false)
@@ -303,10 +307,10 @@ async function sendDTMF(digit: string) {
                 <el-option label="仅打电话时开" value="on_demand" />
                 <el-option label="长时间开启" value="always" />
               </el-select>
-              <p v-if="selectedMode === 'cellular'" class="phone-mode-hint" :class="{ 'is-warn': !selected?.network_enabled }">
+              <p v-if="selectedMode === 'cellular'" class="phone-mode-hint">
                 {{ selected?.network_enabled
                   ? (selectedStrategy === 'always' ? '网络已开，数据会保持连接。' : '网络已开，只有拨号时才连数据，挂断后关闭。')
-                  : '蜂窝流量必须先到卡策略打开「网络」。打开后，仅打电话时开 / 长时间开启才会驻网和走流量。' }}
+                  : '会正常驻网，待机不走流量。打蜂窝电话会临时打开数据。' }}
               </p>
               <p v-else-if="selected && !isDeviceReady(selected) && !selected.vowifi_active" class="phone-mode-hint">
                 软件电话未开启，点 WiFi calling 即可拉起

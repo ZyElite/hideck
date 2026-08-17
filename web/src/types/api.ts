@@ -93,6 +93,7 @@ export type DeviceOverviewItem = {
   e911_setup_available?: boolean
   active_esim_profile_name?: string
   network_enabled: boolean
+  phone_mode?: string
   vowifi_enabled?: boolean
   vowifi_active?: boolean
   vowifi_runtime?: VoWiFiRuntimeState
@@ -124,6 +125,7 @@ export type DeviceMgmtListItem = {
   esim_transport?: string
   sms_enabled: boolean
   network_enabled: boolean
+  phone_mode?: string
   vowifi_enabled?: boolean
   vowifi_runtime?: VoWiFiRuntimeState
   modem?: Pick<ModemStatus, 'operator' | 'native_spn' | 'native_mcc' | 'native_mnc' | 'network_mode' | 'network_duplex' | 'radio_band' | 'radio_channel' | 'signal_dbm' | 'signal_sinr' | 'imei' | 'iccid' | 'reg_status'>

@@ -1247,9 +1247,8 @@ func (p *Pool) applyNetworkPreference(worker *Worker) error {
 		return nil
 	}
 
-	if !worker.Config.NetworkEnabled || worker.shouldAbortCellularRegistration() {
-		logger.Debug("网络关闭，跳过空闲驻网", "device", worker.ID)
-		_ = worker.suppressCellularRegistration(p.ctx, "network_disabled_preference")
+	if worker.shouldAbortCellularRegistration() {
+		logger.Debug("射频被飞行/WiFi calling 抑制，跳过空闲驻网", "device", worker.ID)
 	} else if worker.MBIMCore != nil {
 		worker.StartMBIMRegistrationReconcile(p.ctx, "network_disabled_preference")
 	} else {
@@ -1905,9 +1904,6 @@ func (p *Pool) SetWorkerNetworkPolicy(deviceID string, networkEnabled bool, ipVe
 		w.Config.IPVersion = strings.TrimSpace(ipVersion)
 	}
 	w.Config.APN = strings.TrimSpace(apn)
-	if !networkEnabled && w.Config.PhoneMode == "cellular" && w.Config.DataStrategy != "always" {
-		w.Config.AirplaneEnabled = true
-	}
 	w.setCellularRadioSuppressed(shouldSuppressCellularRadio(w.Config))
 	return w
 }
@@ -1926,11 +1922,9 @@ func (p *Pool) SetWorkerVoWiFiPolicy(deviceID string, vowifiEnabled bool) *Worke
 	w.Config.VoWiFiEnabled = vowifiEnabled
 	if vowifiEnabled {
 		if w.Config.PhoneMode == "cellular" {
-			live := cellularDataAllowed(w.Config.PhoneMode, w.Config.DataStrategy, w.Config.NetworkEnabled)
-			w.Config.AirplaneEnabled = !live
+			w.Config.AirplaneEnabled = false
 			if w.Config.DataStrategy == "always" {
 				w.Config.NetworkEnabled = true
-				w.Config.AirplaneEnabled = false
 			}
 			w.setCellularRadioSuppressed(shouldSuppressCellularRadio(w.Config))
 			return w

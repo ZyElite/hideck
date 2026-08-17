@@ -765,7 +765,7 @@ func TestShouldRecoverQMIRegistration(t *testing.T) {
 		{name: "registered attached", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateRegistered, PSAttached: true}, want: false},
 		{name: "roaming attached", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateRoaming, PSAttached: true}, want: false},
 		{name: "registered detached", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateRegistered}, want: true},
-		{name: "searching", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateSearching}, want: true},
+		{name: "searching", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateSearching}, want: false},
 		{name: "not registered", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateNotRegistered}, want: true},
 		{name: "unknown", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateUnknown}, want: true},
 		{name: "denied", info: &qmi.ServingSystem{RegistrationState: qmi.RegStateDenied}, want: false},

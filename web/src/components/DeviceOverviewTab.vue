@@ -114,9 +114,13 @@ const cellularStatusText = computed(() => {
   return '未驻网'
 })
 
+const isWifiCalling = computed(() =>
+  !!props.device?.vowifi_enabled && props.device?.phone_mode !== 'cellular'
+)
+
 const networkPanelMessage = computed(() => {
-  if (props.device?.vowifi_enabled) return 'VoWiFi 模式不使用蜂窝数据地址'
-  if (!props.device?.network_enabled) return '数据未开启'
+  if (isWifiCalling.value) return 'WiFi calling 不使用蜂窝数据地址'
+  if (!props.device?.network_enabled) return '数据未开启（仍可驻网）'
   if (!props.device?.network_connected) return '数据网络未连接'
   return ''
 })
@@ -130,7 +134,7 @@ const networkPanelMessage = computed(() => {
     <div class="device-overview-facts">
 
     <!-- ===== 蜂窝运行状态面板；VoWiFi 诊断已合并到主舞台 ===== -->
-    <section v-if="!device?.vowifi_enabled" class="overview-fact-panel ui-panel-muted p-4">
+    <section v-if="!isWifiCalling" class="overview-fact-panel ui-panel-muted p-4">
       <div class="overview-panel-title">蜂窝运行时</div>
         <!-- 运营商 hero（与 VoWiFi pill 统一样式） -->
         <div class="flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 mb-3 border"
@@ -206,7 +210,7 @@ const networkPanelMessage = computed(() => {
     </section>
 
     <DeviceOverviewIdentityPanel
-      :class="{ 'is-wide': device?.vowifi_enabled }"
+      :class="{ 'is-wide': isWifiCalling }"
       :device="device"
       :sim-operator-display="simOperatorDisplay"
       :sim-operator-country-code="simOperatorCountryCode"

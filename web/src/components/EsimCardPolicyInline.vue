@@ -139,7 +139,7 @@ const {
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <!-- 网络 -->
         <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
-          <span class="text-sm text-gray-700 dark:text-gray-200">网络</span>
+          <span class="text-sm text-gray-700 dark:text-gray-200">网络<small class="block text-[11px] text-gray-400 font-normal">只开流量，关掉仍驻网</small></span>
           <div class="flex items-center gap-2">
             <span v-if="networkFailed" class="text-xs text-orange-500">未生效</span>
             <el-icon v-if="networkPending" class="animate-spin text-gray-400"><Loading /></el-icon>
@@ -171,7 +171,7 @@ const {
             <el-icon v-if="airplanePending" class="animate-spin text-gray-400"><Loading /></el-icon>
             <el-switch
               v-model="local.airplane_enabled"
-              :disabled="local.vowifi_enabled || airplanePending"
+              :disabled="(local.vowifi_enabled && local.phone_mode !== 'cellular') || airplanePending"
               @change="onAirplaneToggle"
             />
           </div>
@@ -210,12 +210,11 @@ const {
       </div>
       <div
         v-if="(local.phone_mode ?? 'wifi') === 'cellular'"
-        class="text-xs leading-5"
-        :class="local.network_enabled ? 'text-gray-500 dark:text-gray-400' : 'text-amber-600 dark:text-amber-400'"
+        class="text-xs leading-5 text-gray-500 dark:text-gray-400"
       >
         {{ local.network_enabled
-          ? '网络已开，数据策略生效：仅打电话时开 = 拨号才连数据；长时间开启 = 一直开着数据。'
-          : '蜂窝流量必须先打开「网络」。网络关着时，仅打电话时开 / 长时间开启都不会驻网。' }}
+          ? '网络已开，会走流量。仅打电话时开 = 拨号才连数据；长时间开启 = 一直开着数据。'
+          : '网络关着仍会注册运营商，只是不走流量。打开网络后才按策略连数据。' }}
       </div>
       <div v-if="phoneModeFailed" class="text-xs text-orange-500">通话方式未生效</div>
     </template>

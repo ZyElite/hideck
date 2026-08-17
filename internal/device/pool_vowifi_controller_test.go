@@ -535,11 +535,13 @@ func TestDisableVoWiFiWithoutNetworkDoesNotCamp(t *testing.T) {
 	if err := p.DisableVoWiFi(deviceID); err != nil {
 		t.Fatalf("DisableVoWiFi() error = %v", err)
 	}
-	if len(backendStub.setOpModeCalls) != 1 || backendStub.setOpModeCalls[0] != backend.ModeRFOff {
-		t.Fatalf("网络关闭时关软件电话应切入飞行，不搜网: %+v", backendStub.setOpModeCalls)
+	for _, mode := range backendStub.setOpModeCalls {
+		if mode == backend.ModeRFOff {
+			t.Fatalf("网络关闭时关软件电话应保持驻网: %+v", backendStub.setOpModeCalls)
+		}
 	}
-	if !w.cellularRadioIsSuppressed() {
-		t.Fatal("网络关闭时应抑制驻网")
+	if w.cellularRadioIsSuppressed() {
+		t.Fatal("网络关闭时关软件电话仍应允许驻网")
 	}
 }
 

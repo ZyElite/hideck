@@ -62,16 +62,20 @@ const registrationText = (d: DeviceMgmtListItem) => {
   return '未驻网'
 }
 
+const softwarePhoneText = (d: DeviceMgmtListItem) => {
+  if (!d?.vowifi_enabled) return ''
+  return d.phone_mode === 'cellular' ? '蜂窝电话' : 'WiFi calling'
+}
+
 const dataNetworkText = (d: DeviceMgmtListItem) => {
-  if (d?.vowifi_enabled) return ''
+  if (d?.phone_mode !== 'cellular' && d?.vowifi_enabled) return ''
   if (!d?.network_enabled) return '数据未开启'
   if (!d?.network_connected) return '数据网络未连接'
   return ''
 }
 
 const secondaryStatus = (d: DeviceMgmtListItem) => {
-  if (d?.vowifi_enabled) return 'WiFi-Calling'
-  return [registrationText(d), dataNetworkText(d)].filter(Boolean).join(' · ')
+  return [softwarePhoneText(d), registrationText(d), dataNetworkText(d)].filter(Boolean).join(' · ')
 }
 </script>
 

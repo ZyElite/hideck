@@ -223,6 +223,13 @@ func registrationStateLabel(regStatus int) string {
 // 零路径持久化后持久化侧已不含这些路径,必须用运行时真实值展示,否则在线设备会被
 // 误判为“未探测到数据控制端”、流量按空接口名也统计不到。
 // cardPolicyVoWiFiEnabled 从卡策略读取用户意图，ICCID 为空或查不到时降级用 fallback。
+func overviewPhoneMode(mode string) string {
+	if strings.TrimSpace(mode) == "cellular" {
+		return "cellular"
+	}
+	return "wifi"
+}
+
 func cardPolicyVoWiFiEnabled(iccid string, fallback bool) bool {
 	if iccid == "" {
 		return fallback
@@ -384,6 +391,7 @@ type deviceMgmtOverviewLiteItem struct {
 	ActiveESIMProfileName  string             `json:"active_esim_profile_name,omitempty"`
 	SMSEnabled             bool               `json:"sms_enabled"`
 	NetworkEnabled         bool               `json:"network_enabled"`
+	PhoneMode              string             `json:"phone_mode,omitempty"`
 	VoWiFiEnabled          bool               `json:"vowifi_enabled"`
 	VoWiFiActive           bool               `json:"vowifi_active"`
 	VoWiFiRuntime          *voWiFiRuntimeDTO  `json:"vowifi_runtime,omitempty"`
@@ -432,6 +440,7 @@ type deviceMgmtListItem struct {
 	ESIMTransport          string              `json:"esim_transport,omitempty"`
 	SMSEnabled             bool                `json:"sms_enabled"`
 	NetworkEnabled         bool                `json:"network_enabled"`
+	PhoneMode              string              `json:"phone_mode,omitempty"`
 	VoWiFiEnabled          bool                `json:"vowifi_enabled"`
 	VoWiFiRuntime          *voWiFiRuntimeDTO   `json:"vowifi_runtime,omitempty"`
 	Modem                  deviceMgmtListModem `json:"modem"`
@@ -617,6 +626,7 @@ func (s *Server) buildOverviewLiteItemFromWorkerWithModem(w *device.Worker, cfg 
 		E911SetupAvailable:     e911.SetupAvailable(modemStatus),
 		SMSEnabled:             cfg.SMSEnabled,
 		NetworkEnabled:         cfg.NetworkEnabled,
+		PhoneMode:              overviewPhoneMode(cfg.PhoneMode),
 		VoWiFiEnabled:          cardPolicyVoWiFiEnabled(strings.TrimSpace(status.ICCID), cfg.VoWiFiEnabled),
 		VoWiFiActive:           s.pool.IsVoWiFiActive(w.ID),
 		VoWiFiRuntime:          s.getVoWiFiRuntimeDTO(w.ID),
@@ -751,6 +761,7 @@ func (s *Server) handleDeviceMgmtList(c *gin.Context) {
 			ESIMTransport:          config.NormalizeESIMTransport(cfg.ESIMTransport),
 			SMSEnabled:             cfg.SMSEnabled,
 			NetworkEnabled:         cfg.NetworkEnabled,
+			PhoneMode:              overviewPhoneMode(cfg.PhoneMode),
 			VoWiFiEnabled:          s.pool.IsVoWiFiActive(w.ID), // 使用多设备状态查询
 			VoWiFiRuntime:          s.getVoWiFiRuntimeDTO(w.ID),
 			NetworkConnected:       w.NetworkConnected(),
@@ -791,6 +802,7 @@ func (s *Server) handleDeviceMgmtList(c *gin.Context) {
 			ESIMTransport:          config.NormalizeESIMTransport(dc.ESIMTransport),
 			SMSEnabled:             true, // SMS 恒开（系统不变量）
 			NetworkEnabled:         dc.NetworkEnabled,
+			PhoneMode:              overviewPhoneMode(dc.PhoneMode),
 			VoWiFiEnabled:          false, // 非运行设备无活跃 VoWiFi
 			NetworkConnected:       false,
 			RegistrationStateLabel: registrationStateLabel(0),

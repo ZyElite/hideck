@@ -1276,7 +1276,7 @@ func (s *Server) handleVoWiFiEnable(c *gin.Context) {
 		if worker.Config.NetworkEnabled || worker.Config.DataStrategy == "always" {
 			message = "蜂窝数据通话已启用"
 		} else {
-			message = "蜂窝模式已设置。请先打开「网络」，仅打电话时开 / 长时间开启才会驻网"
+			message = "蜂窝模式已设置，会正常驻网。打开「网络」后才会走流量"
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{

@@ -116,6 +116,7 @@ const policyStatus = computed(() => {
 const policyProjection = computed(() => [
   `网络 ${local.value.network_enabled ? '开启' : '关闭'}`,
   `通话 ${local.value.phone_mode === 'cellular' ? '蜂窝数据' : 'WiFi calling'}${local.value.vowifi_enabled ? '开启' : '关闭'}`,
+  `驻网 ${local.value.airplane_enabled ? '关闭' : '开启'}`,
   `飞行模式 ${local.value.airplane_enabled ? '开启' : '关闭'}`,
   `IP ${ipVersion.value.toUpperCase()}`
 ].join(' · '))
@@ -202,7 +203,7 @@ const policyProjection = computed(() => [
           class="policy-setting-row"
           :class="{ 'is-active': local.network_enabled }"
         >
-          <span><strong>网络</strong><small>蜂窝流量必须打开此项；WiFi calling 开启时不可用</small></span>
+          <span><strong>网络</strong><small>只开数据流量。关掉也能正常驻网；WiFi calling 开启时不可用</small></span>
             <div class="flex items-center gap-2">
               <span v-if="networkFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
               <el-icon v-if="networkPending" class="animate-spin text-gray-400"><Loading /></el-icon>
@@ -231,7 +232,7 @@ const policyProjection = computed(() => [
         </div>
 
         <div class="policy-setting-row" :class="{ 'is-active': local.phone_mode === 'cellular' }">
-          <span><strong>通话方式</strong><small>切换即开启软件电话。WiFi calling 走 WiFi；蜂窝必须先开网络才走 SIM 流量</small></span>
+          <span><strong>通话方式</strong><small>切换即开启软件电话。WiFi calling 走 WiFi；蜂窝走 SIM，流量由上面的网络开关控制</small></span>
           <div class="policy-field-control">
             <el-select
               :model-value="local.phone_mode ?? 'wifi'"
@@ -247,14 +248,14 @@ const policyProjection = computed(() => [
           </div>
         </div>
 
-        <div v-if="(local.phone_mode ?? 'wifi') === 'cellular'" class="policy-notice" :class="local.network_enabled ? 'is-info' : 'is-warn'">
+        <div v-if="(local.phone_mode ?? 'wifi') === 'cellular'" class="policy-notice is-info">
           {{ local.network_enabled
-            ? '网络已开，下方策略生效：仅打电话时开 = 拨号才连数据；长时间开启 = 一直开着数据。'
-            : '蜂窝流量必须先打开「网络」。网络关着时，仅打电话时开 / 长时间开启都不会驻网，也不会走流量。' }}
+            ? '网络已开，会走流量。仅打电话时开 = 拨号才连数据；长时间开启 = 一直开着数据。'
+            : '网络关着仍会注册运营商，只是不走流量。打开网络后才按下面策略连数据。' }}
         </div>
 
         <div v-if="(local.phone_mode ?? 'wifi') === 'cellular'" class="policy-setting-row">
-          <span><strong>蜂窝数据策略</strong><small>打开网络后才生效。仅打电话时开：挂断后关数据，待机不能被叫</small></span>
+          <span><strong>蜂窝数据策略</strong><small>只影响流量。仅打电话时开：挂断后关数据，待机不能被叫</small></span>
           <div class="policy-field-control">
             <el-select
               :model-value="local.data_strategy ?? 'on_demand'"
@@ -278,7 +279,7 @@ const policyProjection = computed(() => [
               <el-icon v-if="airplanePending" class="animate-spin text-gray-400"><Loading /></el-icon>
               <el-switch
                 v-model="local.airplane_enabled"
-                :disabled="!canToggle || local.vowifi_enabled || airplanePending"
+                :disabled="!canToggle || (local.vowifi_enabled && local.phone_mode !== 'cellular') || airplanePending"
                 @change="onAirplaneToggle"
               />
           </div>

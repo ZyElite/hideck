@@ -73,6 +73,7 @@ type qmiRegistrationController interface {
 type qmiRegistrationOptions struct {
 	PollInterval       time.Duration
 	MaxAttempts        int
+	Gentle             bool // 只驻网、不开流量：不强制搜网、不要求 PS attach
 	SuppressRadioCycle func() bool
 	ShouldAbort        func() bool
 }
@@ -163,6 +164,9 @@ func shouldRecoverQMIRegistration(info *qmi.ServingSystem) bool {
 	switch info.RegistrationState {
 	case qmi.RegStateRegistered, qmi.RegStateRoaming:
 		return !info.PSAttached
+	case qmi.RegStateSearching:
+		// 已经在搜网，不要再强制唤醒/循环恢复。
+		return false
 	case qmi.RegStateDenied:
 		return false
 	default:
@@ -253,7 +257,7 @@ func ensureQMIRegistration(ctx context.Context, deviceID string, cfg config.Devi
 
 		switch ss.RegStatus {
 		case 1, 5:
-			if ss.PSAttached {
+			if ss.PSAttached || opts.Gentle {
 				logger.Debug("QMI 驻网协调完成", "device", deviceID, "attempt", attempt, "elapsed_ms", time.Since(startedAt).Milliseconds(), "reg_status", ss.RegStatus, "radio_cycle_used", radioCycleIssued, "force_network_search_unsupported", forceNetworkSearchUnsupported)
 				return nil
 			}
@@ -276,7 +280,7 @@ func ensureQMIRegistration(ctx context.Context, deviceID string, cfg config.Devi
 				registerIssued = true
 			}
 			// logger.Debug("QMI 正在搜网，等待驻网完成", "device", deviceID, "attempt", attempt)
-			if shouldForceNetworkSearchForQMIRegistration(attempt, registerIssued, forceNetworkSearchIssued, forceNetworkSearchUnsupported) {
+			if !opts.Gentle && shouldForceNetworkSearchForQMIRegistration(attempt, registerIssued, forceNetworkSearchIssued, forceNetworkSearchUnsupported) {
 				if err := ensureCellularRegistrationAllowed(opts.ShouldAbort); err != nil {
 					return err
 				}
@@ -304,7 +308,7 @@ func ensureQMIRegistration(ctx context.Context, deviceID string, cfg config.Devi
 		}
 
 		isUnregistered := ss.RegStatus != 1 && ss.RegStatus != 5
-		if isUnregistered && shouldRadioCycleForQMIRegistration(attempt, registerIssued, radioCycleIssued, forceNetworkSearchUnsupported, radioRestoredOnline) {
+		if isUnregistered && !opts.Gentle && shouldRadioCycleForQMIRegistration(attempt, registerIssued, radioCycleIssued, forceNetworkSearchUnsupported, radioRestoredOnline) {
 			if opts.SuppressRadioCycle != nil && opts.SuppressRadioCycle() {
 				logger.Info("QMI 驻网恢复暂缓 radio cycle：运营商扫描进行中", "device", deviceID, "attempt", attempt)
 			} else {
@@ -548,6 +552,7 @@ func (w *Worker) ensureQMIRegistration(ctx context.Context, requiredForData bool
 	defer cancel()
 
 	return ensureQMIRegistration(ctx, w.ID, w.Config, w.QMICore, ctrl, qmiRegistrationOptions{
+		Gentle:             !requiredForData,
 		SuppressRadioCycle: w.IsOperatorScanActive,
 		ShouldAbort:        w.shouldAbortCellularRegistration,
 	})
@@ -566,11 +571,11 @@ func (w *Worker) StartQMIRegistrationReconcile(ctx context.Context, reason strin
 		return runQMIRegistrationRecovery(runCtx, qmiRegistrationRecoveryOptions{
 			Attempt: func(attemptCtx context.Context) error {
 				recoveryAttempt++
-				extended := shouldUseExtendedQMIRegistrationRecovery(recoveryAttempt)
-				if extended {
+				needData := w.Config.NetworkEnabled
+				if needData && shouldUseExtendedQMIRegistrationRecovery(recoveryAttempt) {
 					logger.Info("QMI 后台驻网协调进入扩展恢复", "device", w.ID, "reason", reason, "recovery_attempt", recoveryAttempt, "timeout", qmiRegistrationTimeoutDataRequired)
 				}
-				return w.ensureQMIRegistration(attemptCtx, extended)
+				return w.ensureQMIRegistration(attemptCtx, needData)
 			},
 			OnRetry: func(err error, delay time.Duration) {
 				logger.Warn("QMI 后台驻网协调未收敛，等待后重试", "device", w.ID, "reason", reason, "retry_in", delay, "err", err)

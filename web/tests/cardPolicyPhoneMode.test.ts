@@ -56,7 +56,7 @@ test('switching to cellular on_demand arms software phone without forcing data o
   assert.equal(applied?.vowifi_enabled, true)
   assert.equal(applied?.phone_mode, 'cellular')
   assert.equal(applied?.network_enabled, false)
-  assert.equal(applied?.airplane_enabled, true)
+  assert.equal(applied?.airplane_enabled, false)
 })
 
 test('switching to cellular keeps airplane off when network is already on', async () => {

@@ -54,11 +54,11 @@ func TestSetWorkerVoWiFiPolicyCellularIdleStaysAirplane(t *testing.T) {
 	})
 
 	p.SetWorkerVoWiFiPolicy("wwan0", true)
-	if !w.Config.VoWiFiEnabled || !w.Config.AirplaneEnabled || w.Config.NetworkEnabled {
-		t.Fatalf("蜂窝未开网络应保持飞行: %+v", w.Config)
+	if !w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled || w.Config.NetworkEnabled {
+		t.Fatalf("蜂窝未开流量应保持驻网: %+v", w.Config)
 	}
-	if !w.cellularRadioIsSuppressed() {
-		t.Fatal("蜂窝未开网络应抑制驻网")
+	if w.cellularRadioIsSuppressed() {
+		t.Fatal("蜂窝未开流量仍应允许驻网")
 	}
 }
 
