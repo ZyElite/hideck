@@ -6,6 +6,7 @@ import (
 	"time"
 
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 func waitForCondition(ctx context.Context, interval time.Duration, check func() bool) error {
@@ -157,6 +158,16 @@ func (p *Pool) enableVoWiFiWhenReady(deviceID string, timeout time.Duration, rea
 func (p *Pool) EnableVoWiFi(deviceID string) error {
 	if p.IsESIMSwitching(deviceID) {
 		return fmt.Errorf("设备 %s 正在切卡，暂不允许启动 VoWiFi", deviceID)
+	}
+	if w := p.GetWorker(deviceID); w != nil && w.Config.PhoneMode == "cellular" {
+		if w.Config.DataStrategy != "always" {
+			if nc := w.NetworkController(); nc == nil || !nc.IsConnected() {
+				logger.Info("蜂窝 on_demand：待机不建 SWu 隧道，拨号时再连数据", "device", deviceID)
+				return p.StopVoWiFiRuntimeForCellularIdle(deviceID)
+			}
+		} else if err := p.EnsureCellularData(p.ctx, deviceID); err != nil {
+			return err
+		}
 	}
 	return p.voWiFiHost().Enable(p.ctx, deviceID)
 }

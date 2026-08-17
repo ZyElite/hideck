@@ -112,6 +112,22 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 			}
 		}
 		s.pool.SetWorkerVoWiFiPolicy(deviceID, true)
+		if w := s.pool.GetWorker(deviceID); w != nil && w.Config.PhoneMode == "cellular" && w.Config.DataStrategy != "always" {
+			if err := s.pool.StopVoWiFiRuntimeForCellularIdle(deviceID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status":  "error",
+					"message": "切换蜂窝模式失败: " + err.Error(),
+					"device":  deviceID,
+				})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "ok",
+				"message": "蜂窝模式已设置，拨号时再连接数据",
+				"device":  deviceID,
+			})
+			return
+		}
 		modeChanged := req.Mode != nil && mode != prevMode
 		strategyChanged := req.DataStrategy != nil && strategy != prevStrategy
 		if s.pool.IsVoWiFiActive(deviceID) && (modeChanged || strategyChanged) {

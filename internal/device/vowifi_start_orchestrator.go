@@ -300,14 +300,14 @@ func (p *Pool) prepareCellularStartContext(
 		}
 	}
 
-	// always: ensure data connection is online. on_demand: leave data off.
+	// always: data must be up before SWu. on_demand: do not start without a bearer
+	// (EnableVoWiFi skips tunnel setup until dial time).
 	if w.Config.DataStrategy != "always" {
-		logger.Info("蜂窝模式 on_demand 策略：待机不连数据，拨号时再开", "trace_id", traceID, "device", deviceID)
-	} else if nc := w.NetworkController(); nc != nil && !nc.IsConnected() {
-		logger.Info("蜂窝模式 always 策略：确保数据连接在线", "trace_id", traceID, "device", deviceID)
-		if err := w.StartNetwork(); err != nil {
-			logger.Warn("蜂窝模式启动数据连接失败，继续启动", "trace_id", traceID, "device", deviceID, "err", err)
+		if nc := w.NetworkController(); nc == nil || !nc.IsConnected() {
+			return startCtx, fmt.Errorf("蜂窝 on_demand 待机不建隧道")
 		}
+	} else if err := p.EnsureCellularData(p.Context(), deviceID); err != nil {
+		return startCtx, err
 	}
 
 	// Set TunnelFactory to bind the SWu tunnel to the cellular interface.

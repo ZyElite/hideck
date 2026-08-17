@@ -93,7 +93,11 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		}
 	}
 	if pol.VoWiFiEnabled {
-		p.scheduleDesiredVoWiFiRecover(worker.ID, reason, time.Now())
+		if pol.PhoneMode == "cellular" && pol.DataStrategy != "always" {
+			p.clearDesiredVoWiFiRecoverState(worker.ID)
+		} else {
+			p.scheduleDesiredVoWiFiRecover(worker.ID, reason, time.Now())
+		}
 	} else {
 		p.clearDesiredVoWiFiRecoverState(worker.ID)
 	}

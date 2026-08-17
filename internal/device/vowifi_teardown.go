@@ -77,7 +77,10 @@ func (p *Pool) RestoreRadioAfterVoWiFi(deviceID string) error {
 	// Cellular mode: radio was never turned off, so skip flight-mode recovery.
 	// Restore native IMS and handle data per strategy.
 	if w.Config.PhoneMode == "cellular" {
-		logger.Info("蜂窝模式收尾：恢复原生 IMS", "device", deviceID)
+		logger.Info("蜂窝模式收尾：保持射频在线", "device", deviceID)
+		if err := w.Backend.SetOperatingMode(p.ctx, backend.ModeOnline); err != nil {
+			logger.Warn("蜂窝模式恢复射频失败", "device", deviceID, "err", err)
+		}
 		if w.QMICore != nil {
 			if err := w.QMICore.SetIMSServiceEnabled(p.ctx, true); err != nil {
 				logger.Warn("蜂窝模式恢复原生 IMS 失败", "device", deviceID, "err", err)

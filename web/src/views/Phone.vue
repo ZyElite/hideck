@@ -38,7 +38,7 @@ const incoming = computed(() => call.value?.direction === 'inbound'
 const selected = computed(() => phone.devices.find((device) => device.id === selectedDevice.value))
 const canPlaceCall = computed(() => CALLEE_PATTERN.test(callee.value)
   && !!selected.value
-  && isDeviceReady(selected.value)
+  && (isDeviceReady(selected.value) || selected.value.phone_mode === 'cellular')
   && !isDeviceBusy(selected.value))
 watch(() => phone.devices, (devices) => selectFirstAvailableDevice(devices), { immediate: true })
 watch(call, (current) => {

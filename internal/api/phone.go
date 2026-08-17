@@ -98,6 +98,12 @@ func (s *Server) handlePhoneStartCall(c *gin.Context) {
 	if !decodePhoneJSON(c, &request) {
 		return
 	}
+	if s.pool != nil {
+		if err := s.pool.PrepareCellularCall(c.Request.Context(), request.DeviceID); err != nil {
+			s.respondPhoneError(c, err)
+			return
+		}
+	}
 	call, err := s.phone.StartCall(phone.StartCallRequest{
 		Owner: s.auth.Username, DeviceID: request.DeviceID, Callee: request.Callee,
 		MediaID: request.MediaID, Lease: phoneLease(c),
