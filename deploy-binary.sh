@@ -98,7 +98,7 @@ resolve_latest_version() {
     return
   fi
 
-  printf '无法从 GitHub Releases 读取最新版本。\n可设置 HIDECK_VERSION=v2.0.5 后重试。\n' >&2
+  printf '无法从 GitHub Releases 读取最新版本。\n可设置 HIDECK_VERSION=v2.0.6 后重试。\n' >&2
   exit 1
 }
 
