@@ -209,13 +209,13 @@ const policyProjection = computed(() => [
           class="policy-setting-row"
           :class="{ 'is-active': local.network_enabled }"
         >
-          <span><strong>网络</strong><small>VoWiFi 或飞行模式开启时不可用</small></span>
+          <span><strong>网络</strong><small>蜂窝模式下可与软件电话同时开；WiFi calling 开启时不可用</small></span>
             <div class="flex items-center gap-2">
               <span v-if="networkFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
               <el-icon v-if="networkPending" class="animate-spin text-gray-400"><Loading /></el-icon>
               <el-switch
                 v-model="local.network_enabled"
-                :disabled="!canToggle || local.vowifi_enabled || local.airplane_enabled || networkPending"
+                :disabled="!canToggle || local.airplane_enabled || networkPending || (local.vowifi_enabled && local.phone_mode !== 'cellular')"
                 @change="onNetworkToggle"
               />
           </div>

@@ -1014,8 +1014,10 @@ func (s *Server) handleDeviceMgmtStartNetwork(c *gin.Context) {
 		return
 	}
 	if s.pool.IsVoWiFiActive(deviceID) {
-		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "VoWiFi 运行中，无法启动数据网络"})
-		return
+		if worker.Config.PhoneMode != "cellular" {
+			c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "VoWiFi 运行中，无法启动数据网络"})
+			return
+		}
 	}
 	if err := worker.StartNetwork(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "启动数据网络失败: " + err.Error()})

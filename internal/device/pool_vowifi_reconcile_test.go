@@ -3,6 +3,7 @@ package device
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -301,6 +302,30 @@ func TestDesiredVoWiFiRecoverUsesCachedHomeMCCMNCForPolicy(t *testing.T) {
 	}
 }
 
+func TestCellularOnDemandIdleHelpers(t *testing.T) {
+	if !isCellularOnDemandIdle(&Worker{Config: config.DeviceConfig{PhoneMode: "cellular", DataStrategy: "on_demand"}}, cardpolicy.Policy{}) {
+		t.Fatal("worker cellular/on_demand should be idle")
+	}
+	if !isCellularOnDemandIdle(&Worker{}, cardpolicy.Policy{PhoneMode: "cellular"}) {
+		t.Fatal("empty data strategy defaults to on_demand idle")
+	}
+	if isCellularOnDemandIdle(&Worker{Config: config.DeviceConfig{PhoneMode: "cellular", DataStrategy: "always"}}, cardpolicy.Policy{}) {
+		t.Fatal("cellular always should not be idle-skipped")
+	}
+	if isCellularOnDemandIdle(&Worker{Config: config.DeviceConfig{PhoneMode: "wifi", DataStrategy: "on_demand"}}, cardpolicy.Policy{}) {
+		t.Fatal("wifi calling should not be treated as cellular idle")
+	}
+	if !isCellularOnDemandIdleError(fmt.Errorf("恢复 VoWiFi 失败(desired_reconcile): %w", errCellularOnDemandIdle)) {
+		t.Fatal("wrapped idle error should match")
+	}
+	if !isQMIServiceUnsupported(errors.New("allocate IMS service: qmi service not supported by hardware")) {
+		t.Fatal("QMI IMS unsupported should match")
+	}
+	if isQMIServiceUnsupported(errors.New("timeout waiting for IMS")) {
+		t.Fatal("unrelated IMS error should not match")
+	}
+}
+
 func TestDesiredVoWiFiDoesNotRecoverWhenDisabled(t *testing.T) {
 	p := newDesiredVoWiFiTestPool(t, "dev-1", false, "001010000000001")
 	commands := make(chan vowifihost.LifecycleCommand, 1)
@@ -312,6 +337,74 @@ func TestDesiredVoWiFiDoesNotRecoverWhenDisabled(t *testing.T) {
 	p.reconcileDesiredVoWiFiOnce(time.Now())
 
 	assertNoRecoverCommand(t, commands)
+}
+
+func TestDesiredVoWiFiDoesNotRecoverCellularOnDemandIdle(t *testing.T) {
+	p := newDesiredVoWiFiTestPool(t, "wwan0", true, "001010000000001")
+	w := p.GetWorker("wwan0")
+	w.Config.PhoneMode = "cellular"
+	w.Config.DataStrategy = "on_demand"
+	p.SetPolicyResolver(&stubPolicyResolver{
+		pol: cardpolicy.Policy{
+			ICCID:         w.state.Identity.ICCID,
+			VoWiFiEnabled: true,
+			PhoneMode:     "cellular",
+			DataStrategy:  "on_demand",
+		},
+	})
+	commands := make(chan vowifihost.LifecycleCommand, 1)
+	p.voWiFiHost().LifecycleControllerForTest().TestRun = func(ctx context.Context, cmd vowifihost.LifecycleCommand) error {
+		commands <- cmd
+		return nil
+	}
+
+	p.reconcileDesiredVoWiFiOnce(time.Now())
+
+	assertNoRecoverCommand(t, commands)
+	if p.voWiFiHost().HasDesiredRecoverState("wwan0") {
+		t.Fatal("cellular on_demand idle should not keep recover state")
+	}
+}
+
+func TestDesiredVoWiFiStillRecoversCellularAlways(t *testing.T) {
+	p := newDesiredVoWiFiTestPool(t, "wwan0", true, "001010000000001")
+	w := p.GetWorker("wwan0")
+	w.Config.PhoneMode = "cellular"
+	w.Config.DataStrategy = "always"
+	p.SetPolicyResolver(&stubPolicyResolver{
+		pol: cardpolicy.Policy{
+			ICCID:         w.state.Identity.ICCID,
+			VoWiFiEnabled: true,
+			PhoneMode:     "cellular",
+			DataStrategy:  "always",
+		},
+	})
+	commands := make(chan vowifihost.LifecycleCommand, 1)
+	p.voWiFiHost().LifecycleControllerForTest().TestRun = func(ctx context.Context, cmd vowifihost.LifecycleCommand) error {
+		commands <- cmd
+		return nil
+	}
+
+	p.reconcileDesiredVoWiFiOnce(time.Now())
+
+	cmd := waitForRecoverCommand(t, commands)
+	if cmd.Kind != vowifihost.LifecycleCommandRecover {
+		t.Fatalf("kind = %s, want recover", cmd.Kind.String())
+	}
+}
+
+func TestDesiredVoWiFiIdleErrorDoesNotRetry(t *testing.T) {
+	p := newDesiredVoWiFiTestPool(t, "wwan0", true, "001010000000001")
+	now := time.Now().Add(-time.Minute)
+	if !p.voWiFiHost().BeginDesiredRecover("wwan0", now) {
+		t.Fatal("expected recover state setup to begin")
+	}
+
+	p.markDesiredVoWiFiRecoverResult("wwan0", fmt.Errorf("恢复 VoWiFi 失败(desired_reconcile): %w", errCellularOnDemandIdle))
+
+	if p.voWiFiHost().HasDesiredRecoverState("wwan0") {
+		t.Fatal("cellular on_demand idle skip should clear recover state")
+	}
 }
 
 func TestDesiredVoWiFiDoesNotRecoverWhenCurrentCardPolicyDisabled(t *testing.T) {

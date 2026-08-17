@@ -23,6 +23,9 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	if p.VoWiFiEnabled {
 		if p.PhoneMode == "cellular" {
 			w.Config.AirplaneEnabled = false
+			if p.DataStrategy == "always" {
+				w.Config.NetworkEnabled = true
+			}
 		} else {
 			w.Config.AirplaneEnabled = true
 		}
@@ -71,8 +74,9 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	// 补齐此前“airplane 字段被投影但从不执行”的缺口。
 	switch {
 	case pol.VoWiFiEnabled && pol.PhoneMode == "cellular":
-		// 蜂窝模式：保持数据、不关射频。on_demand 时数据可能未连，拨号时再开。
-		if pol.DataStrategy == "always" {
+		// 蜂窝模式：射频保持在线。用户开了网络或 always 策略时拉起数据；
+		// 否则 on_demand 待机不连，拨号时再开。
+		if pol.DataStrategy == "always" || pol.NetworkEnabled {
 			if err := p.applyNetworkPreference(worker); err != nil {
 				logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
 			}

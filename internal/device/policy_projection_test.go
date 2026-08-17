@@ -180,6 +180,41 @@ func TestResolveAndApplyPolicyDoesNotRecoverVoWiFiWhenCardPolicyDisabled(t *test
 	}
 }
 
+func TestResolveAndApplyPolicyDoesNotRecoverCellularOnDemand(t *testing.T) {
+	p := NewPool(nil)
+	defer p.cancel()
+	p.SetPolicyResolver(&stubPolicyResolver{
+		pol: cardpolicy.Policy{
+			ICCID:         "123",
+			VoWiFiEnabled: true,
+			PhoneMode:     "cellular",
+			DataStrategy:  "on_demand",
+		},
+	})
+	commands := make(chan vowifihost.LifecycleCommand, 1)
+	p.voWiFiHost().LifecycleControllerForTest().TestRun = func(ctx context.Context, cmd vowifihost.LifecycleCommand) error {
+		commands <- cmd
+		return nil
+	}
+	w := &Worker{ID: "wwan0"}
+	w.state.Identity.ICCID = "123"
+	w.state.Identity.IMSI = "001010000000001"
+
+	res := p.resolveAndApplyPolicy(w, "startup_post_apply")
+	if !res.Applied {
+		t.Fatalf("应成功应用: %+v", res)
+	}
+	if w.Config.PhoneMode != "cellular" || w.Config.AirplaneEnabled {
+		t.Fatalf("蜂窝策略投影错误: %+v", w.Config)
+	}
+
+	select {
+	case cmd := <-commands:
+		t.Fatalf("蜂窝 on_demand 待机不应调度 VoWiFi 恢复: %+v", cmd)
+	case <-time.After(120 * time.Millisecond):
+	}
+}
+
 func TestRefreshIdentityAndApplyCardPolicyDoesNotFallbackToConfiguredNetworkWithoutResolver(t *testing.T) {
 	p := NewPool(nil)
 	defer p.cancel()

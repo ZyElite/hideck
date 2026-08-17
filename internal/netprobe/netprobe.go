@@ -126,6 +126,43 @@ func (p *Prober) lookupHost(ctx context.Context, host string) ([]string, error) 
 	return out, nil
 }
 
+// HasDirectIPConnectivity reports whether the interface can complete a TCP
+// handshake to a well-known literal address. Hostnames are avoided so a
+// broken on-interface DNS resolver does not hide a working data plane.
+func HasDirectIPConnectivity(ctx context.Context, iface string, timeout time.Duration) bool {
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	p := New(Config{Interface: strings.TrimSpace(iface), Timeout: timeout})
+	targets := []string{"1.1.1.1:443", "8.8.8.8:53", "9.9.9.9:53"}
+	results := make(chan bool, 1)
+	for _, target := range targets {
+		go func(address string) {
+			d := p.boundDialer()
+			conn, err := d.DialContext(probeCtx, "tcp", address)
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+			select {
+			case results <- true:
+			default:
+			}
+		}(target)
+	}
+	select {
+	case <-results:
+		return true
+	case <-probeCtx.Done():
+		return false
+	}
+}
+
 func (p *Prober) boundDialer() *net.Dialer {
 	d := &net.Dialer{Timeout: p.cfg.Timeout}
 	if strings.TrimSpace(p.cfg.Interface) == "" {

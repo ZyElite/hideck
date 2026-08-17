@@ -186,6 +186,15 @@ func (p *Pool) currentCardPolicyAllowsVoWiFi(w *Worker, statusICCID, reason stri
 		// 	"reason", strings.TrimSpace(reason))
 		return false
 	}
+	if isCellularOnDemandIdle(w, pol) {
+		p.clearDesiredVoWiFiRecoverState(deviceID)
+		logger.Debug("VoWiFi 目标态恢复跳过：蜂窝 on_demand 待机不建隧道",
+			"event", "VOWIFI_DESIRED_RECOVER_SKIPPED_CELLULAR_IDLE",
+			"device", deviceID,
+			"iccid", iccid,
+			"reason", strings.TrimSpace(reason))
+		return false
+	}
 	return true
 }
 
@@ -227,6 +236,13 @@ func (p *Pool) markDesiredVoWiFiRecoverResult(deviceID string, err error) {
 	if err == nil {
 		p.clearDesiredVoWiFiRecoverState(deviceID)
 		logger.Info("VoWiFi 目标态恢复成功", "event", "VOWIFI_DESIRED_RECOVER_SUCCESS", "device", deviceID)
+		return
+	}
+	if isCellularOnDemandIdleError(err) {
+		p.clearDesiredVoWiFiRecoverState(deviceID)
+		logger.Info("VoWiFi 目标态恢复跳过：蜂窝 on_demand 待机不建隧道",
+			"event", "VOWIFI_DESIRED_RECOVER_SKIPPED_CELLULAR_IDLE",
+			"device", deviceID)
 		return
 	}
 	if carrier.IsVoWiFiPolicyBlockedError(err) {

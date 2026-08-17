@@ -21,9 +21,10 @@ export type CardPolicyExecutors = {
   onChanged?: () => void
 }
 
-// 互斥规则（照搬现有面板语义）：
-// 开网络 ⇒ 关 VoWiFi、关飞行
-// 开 VoWiFi ⇒ 关网络（不动飞行意图，飞行意图独立存储）
+// 互斥规则：
+// 开网络 + WiFi calling ⇒ 关软件电话、关飞行
+// 开网络 + 蜂窝 ⇒ 保留软件电话，只关飞行（蜂窝本来就要用 SIM 数据）
+// 开 VoWiFi ⇒ WiFi calling 关网络；蜂窝则按数据策略决定网络
 // 开飞行 ⇒ 关网络、关 VoWiFi
 // 关任一项 ⇒ 不动其它项
 function nextMirror(
@@ -32,9 +33,17 @@ function nextMirror(
   val: boolean
 ): PolicyMirror {
   if (field === 'network_enabled') {
-    return val
-      ? { network_enabled: true, vowifi_enabled: false, airplane_enabled: false, phone_mode: cur.phone_mode ?? 'wifi', data_strategy: cur.data_strategy ?? 'on_demand' }
-      : { ...cur, network_enabled: false }
+    if (!val) {
+      return { ...cur, network_enabled: false }
+    }
+    const isCellular = (cur.phone_mode ?? 'wifi') === 'cellular'
+    return {
+      network_enabled: true,
+      vowifi_enabled: isCellular ? cur.vowifi_enabled : false,
+      airplane_enabled: false,
+      phone_mode: cur.phone_mode ?? 'wifi',
+      data_strategy: cur.data_strategy ?? 'on_demand'
+    }
   }
   if (field === 'vowifi_enabled') {
     if (val) {

@@ -28,6 +28,20 @@ func TestProberReturnsEmptyOnTimeout(t *testing.T) {
 	}
 }
 
+func TestHasDirectIPConnectivityTimesOut(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if HasDirectIPConnectivity(ctx, "", 200*time.Millisecond) && false {
+		t.Fatal("unreachable")
+	}
+	start := time.Now()
+	ok := HasDirectIPConnectivity(context.Background(), "lo", 200*time.Millisecond)
+	if time.Since(start) > time.Second {
+		t.Fatalf("probe took too long")
+	}
+	_ = ok
+}
+
 func TestExtractIP(t *testing.T) {
 	if got := extractIP("2001:db8::abcd"); got != "2001:db8::abcd" {
 		t.Fatalf("v6 plain = %q", got)

@@ -2,12 +2,37 @@ package device
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/iniwex5/vowifi-go/runtimehost/voicehost"
+	"github.com/yibaiba/hideck/internal/cardpolicy"
 	"github.com/yibaiba/hideck/pkg/logger"
 )
+
+// errCellularOnDemandIdle means the software IMS/SWu stack must stay down until
+// a call actually needs it. Recover must treat this as a skip, not a failure.
+var errCellularOnDemandIdle = errors.New("蜂窝 on_demand 待机不建隧道")
+
+func isCellularOnDemandIdleError(err error) bool {
+	return errors.Is(err, errCellularOnDemandIdle)
+}
+
+func isCellularOnDemandIdle(w *Worker, pol cardpolicy.Policy) bool {
+	mode := strings.TrimSpace(pol.PhoneMode)
+	strategy := strings.TrimSpace(pol.DataStrategy)
+	if w != nil {
+		if m := strings.TrimSpace(w.Config.PhoneMode); m != "" {
+			mode = m
+		}
+		if s := strings.TrimSpace(w.Config.DataStrategy); s != "" {
+			strategy = s
+		}
+	}
+	return mode == "cellular" && strategy != "always"
+}
 
 // SetVoiceGateway 注入 VoWiFi 语音网关，用于优先走 IMS 外呼/挂断路径。
 func (p *Pool) SetVoiceGateway(g *voicehost.Gateway) {
@@ -67,7 +92,7 @@ func (p *Pool) PrepareCellularCall(ctx context.Context, deviceID string) error {
 	}
 	logger.Info("蜂窝模式：拨号前启动软件 IMS", "device", deviceID)
 	if err := p.EnableVoWiFi(deviceID); err != nil {
-		return fmt.Errorf("蜂窝模式启动软件 IMS 失败: %w", err)
+		return fmt.Errorf("蜂窝模式启动软件 IMS 失败: %w", classifyCellularIMSError(err))
 	}
 	waitCtx := ctx
 	var cancel context.CancelFunc
@@ -124,7 +149,7 @@ func (p *Pool) SimulateCallWithCellularData(
 		if !p.IsVoWiFiActive(deviceID) {
 			logger.Info("蜂窝模式：数据已连通，启动软件 IMS", "device", deviceID)
 			if err := p.EnableVoWiFi(deviceID); err != nil {
-				return nil, fmt.Errorf("蜂窝模式启动软件 IMS 失败: %w", err)
+				return nil, fmt.Errorf("蜂窝模式启动软件 IMS 失败: %w", classifyCellularIMSError(err))
 			}
 			waitCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 			defer cancel()

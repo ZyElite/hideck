@@ -9,6 +9,7 @@ import (
 
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/internal/netprobe"
 	innersim "github.com/yibaiba/hideck/internal/sim"
 	"github.com/yibaiba/hideck/internal/upstreamproxy"
 	"github.com/yibaiba/hideck/internal/vowifihost"
@@ -291,32 +292,41 @@ func (p *Pool) prepareCellularStartContext(
 	w *Worker,
 	deviceID, traceID, runtimeEPDGOverride string,
 ) (voWiFiStartContext, error) {
-	// Suppress native IMS so the software IMS stack can take over.
-	if w.QMICore != nil {
-		if err := w.QMICore.SetIMSServiceEnabled(p.Context(), false); err != nil {
-			logger.Warn("蜂窝模式抑制原生 IMS 失败，继续启动", "trace_id", traceID, "device", deviceID, "err", err)
-		} else {
-			logger.Info("蜂窝模式已抑制原生 IMS", "trace_id", traceID, "device", deviceID)
-		}
-	}
-
 	// always: data must be up before SWu. on_demand: do not start without a bearer
-	// (EnableVoWiFi skips tunnel setup until dial time).
+	// (EnableVoWiFi and desired-reconcile skip tunnel setup until dial time).
 	if w.Config.DataStrategy != "always" {
 		if nc := w.NetworkController(); nc == nil || !nc.IsConnected() {
-			return startCtx, fmt.Errorf("蜂窝 on_demand 待机不建隧道")
+			return startCtx, errCellularOnDemandIdle
 		}
 	} else if err := p.EnsureCellularData(p.Context(), deviceID); err != nil {
 		return startCtx, err
 	}
 
-	// Set TunnelFactory to bind the SWu tunnel to the cellular interface.
+	// Suppress native IMS so the software IMS stack can take over.
+	// Some Qualcomm SKUs have no QMI IMS service; that is expected, not a start loop.
+	if w.QMICore != nil {
+		if err := w.QMICore.SetIMSServiceEnabled(p.Context(), false); err != nil {
+			if isQMIServiceUnsupported(err) {
+				logger.Debug("蜂窝模式跳过原生 IMS 抑制：硬件不支持 QMI IMS", "trace_id", traceID, "device", deviceID, "err", err)
+			} else {
+				logger.Warn("蜂窝模式抑制原生 IMS 失败，继续启动", "trace_id", traceID, "device", deviceID, "err", err)
+			}
+		} else {
+			logger.Info("蜂窝模式已抑制原生 IMS", "trace_id", traceID, "device", deviceID)
+		}
+	}
+
 	ifaceName := strings.TrimSpace(w.Config.Interface)
+	hasInternet := false
 	if ifaceName != "" {
-		startCtx.TunnelFactory = buildCellularTunnelFactory(deviceID, ifaceName)
-		logger.Info("蜂窝模式隧道绑定接口", "trace_id", traceID, "device", deviceID, "interface", ifaceName)
+		probeCtx, cancel := context.WithTimeout(p.Context(), 3*time.Second)
+		hasInternet = netprobe.HasDirectIPConnectivity(probeCtx, ifaceName, 3*time.Second)
+		cancel()
+	}
+	if hasInternet {
+		logger.Info("蜂窝模式外网探测成功，SWu 绑定蜂窝接口", "trace_id", traceID, "device", deviceID, "interface", ifaceName)
 	} else {
-		logger.Warn("蜂窝模式未解析到设备接口名，隧道将跟随默认路由", "trace_id", traceID, "device", deviceID)
+		logger.Warn("蜂窝模式外网探测失败", "trace_id", traceID, "device", deviceID, "interface", ifaceName)
 	}
 
 	// Reuse the common identity/modem preparation from the WiFi calling path.
@@ -372,7 +382,36 @@ func (p *Pool) prepareCellularStartContext(
 	}
 	startCtx.SIM = runtimehost.NewReaderSIMAdapter(akaProvider)
 
-	startCtx.Proxy = resolveVoWiFiCountryProxy(startProfile.MCC, traceID, deviceID)
+	countryProxy := resolveVoWiFiCountryProxy(startProfile.MCC, traceID, deviceID)
+	transport, errTransport := selectCellularIMSTransport(hasInternet, ifaceName, countryProxy)
+	if errTransport != nil {
+		return startCtx, errTransport
+	}
+	if transport.ViaProxy {
+		startCtx.Proxy = transport.Proxy
+		startCtx.TunnelFactory = nil
+		logger.Warn("蜂窝数据无外网，改走国家前置代理建立 IMS",
+			"trace_id", traceID,
+			"device", deviceID,
+			"interface", ifaceName,
+			"proxy_id", transport.Proxy.ID,
+			"proxy_addr", transport.Proxy.Addr)
+		if w.Config.DataStrategy != "always" {
+			if nc := w.NetworkController(); nc != nil && nc.IsConnected() {
+				if err := w.StopNetwork(); err != nil {
+					logger.Warn("蜂窝 on_demand 回退代理后关闭数据失败", "trace_id", traceID, "device", deviceID, "err", err)
+				} else {
+					logger.Info("蜂窝 on_demand 已关闭无外网数据连接", "trace_id", traceID, "device", deviceID)
+				}
+			}
+		}
+	} else if transport.BindInterface != "" {
+		startCtx.Proxy = nil
+		startCtx.TunnelFactory = buildCellularTunnelFactory(deviceID, transport.BindInterface)
+		logger.Info("蜂窝模式隧道绑定接口", "trace_id", traceID, "device", deviceID, "interface", transport.BindInterface)
+	} else {
+		startCtx.Proxy = countryProxy
+	}
 	startCtx.NetworkMode = modemIface.GetNetworkMode()
 	startCtx.StartupState = newVoWiFiSIMReadyStartupState(deviceID, swu.DataplaneModeUserspace, startCtx.NetworkMode, time.Now())
 	p.recordVoWiFiStartupState(deviceID, startCtx.StartupState)
@@ -382,6 +421,14 @@ func (p *Pool) prepareCellularStartContext(
 // buildCellularTunnelFactory returns a TunnelFactory that wraps the default
 // SWu tunnel adapter after injecting a TransportFactory that binds the UDP
 // socket to a specific network interface (SO_BINDTODEVICE).
+func isQMIServiceUnsupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not supported")
+}
+
 func buildCellularTunnelFactory(deviceID, interfaceName string) runtimehost.TunnelFactory {
 	return func(cfg *swu.Config) (runtimehost.Tunnel, error) {
 		if cfg.TransportFactory == nil {

@@ -1891,15 +1891,22 @@ func (p *Pool) SetWorkerNetworkPolicy(deviceID string, networkEnabled bool, ipVe
 	}
 	w.Config.NetworkEnabled = networkEnabled
 	if networkEnabled {
-		// 开网络与 VoWiFi/飞行互斥（与后端落库互斥保持一致），否则概览仍显示旧模式面板。
-		w.Config.VoWiFiEnabled = false
 		w.Config.AirplaneEnabled = false
+		// 蜂窝软件电话本身就要走 SIM 数据，允许和网络同时开。
+		// WiFi calling 仍与数据互斥，避免射频/默认路由被两边抢。
+		if w.Config.PhoneMode != "cellular" {
+			w.Config.VoWiFiEnabled = false
+		}
 	}
 	if strings.TrimSpace(ipVersion) != "" {
 		w.Config.IPVersion = strings.TrimSpace(ipVersion)
 	}
 	w.Config.APN = strings.TrimSpace(apn)
-	w.setCellularRadioSuppressed(w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled)
+	if w.Config.PhoneMode == "cellular" && w.Config.VoWiFiEnabled {
+		w.setCellularRadioSuppressed(false)
+	} else {
+		w.setCellularRadioSuppressed(w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled)
+	}
 	return w
 }
 
@@ -1920,8 +1927,6 @@ func (p *Pool) SetWorkerVoWiFiPolicy(deviceID string, vowifiEnabled bool) *Worke
 			w.Config.AirplaneEnabled = false
 			if w.Config.DataStrategy == "always" {
 				w.Config.NetworkEnabled = true
-			} else {
-				w.Config.NetworkEnabled = false
 			}
 			w.setCellularRadioSuppressed(false)
 			return w

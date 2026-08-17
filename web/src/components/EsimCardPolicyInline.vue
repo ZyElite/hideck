@@ -148,7 +148,7 @@ const {
             <el-icon v-if="networkPending" class="animate-spin text-gray-400"><Loading /></el-icon>
             <el-switch
               v-model="local.network_enabled"
-              :disabled="local.vowifi_enabled || local.airplane_enabled || networkPending"
+              :disabled="local.airplane_enabled || networkPending || (local.vowifi_enabled && local.phone_mode !== 'cellular')"
               @change="onNetworkToggle"
             />
           </div>

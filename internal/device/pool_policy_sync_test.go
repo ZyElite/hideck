@@ -21,7 +21,7 @@ func TestSetWorkerVoWiFiPolicySyncsConfig(t *testing.T) {
 
 	p.SetWorkerVoWiFiPolicy("wwan0", true)
 	if !w.Config.VoWiFiEnabled || !w.Config.AirplaneEnabled || w.Config.NetworkEnabled {
-		t.Fatalf("开 vowifi 应 vowifi=T airplane=T network=F: %+v", w.Config)
+		t.Fatalf("开 WiFi calling 应 vowifi=T airplane=T network=F: %+v", w.Config)
 	}
 	if !w.cellularRadioIsSuppressed() {
 		t.Fatal("开 vowifi 应抑制蜂窝射频协调")
@@ -34,6 +34,19 @@ func TestSetWorkerVoWiFiPolicySyncsConfig(t *testing.T) {
 }
 
 // 开飞行：同步 airplane=T、vowifi=F、network=F；关飞行仅清 airplane。
+func TestSetWorkerVoWiFiPolicyCellularKeepsExistingNetwork(t *testing.T) {
+	p, w := newPoolWithWorkerForSync("wwan0", config.DeviceConfig{
+		NetworkEnabled: true,
+		PhoneMode:      "cellular",
+		DataStrategy:   "on_demand",
+	})
+
+	p.SetWorkerVoWiFiPolicy("wwan0", true)
+	if !w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled || !w.Config.NetworkEnabled {
+		t.Fatalf("蜂窝开软件电话应保留已开的数据: %+v", w.Config)
+	}
+}
+
 func TestSetWorkerAirplanePolicySyncsConfig(t *testing.T) {
 	p, w := newPoolWithWorkerForSync("wwan0", config.DeviceConfig{VoWiFiEnabled: true, NetworkEnabled: true})
 
@@ -61,5 +74,21 @@ func TestSetWorkerNetworkPolicyMutualExclusion(t *testing.T) {
 	}
 	if w.Config.IPVersion != "v4v6" || w.Config.APN != "ims" {
 		t.Fatalf("ip/apn 应同步: %+v", w.Config)
+	}
+}
+
+func TestSetWorkerNetworkPolicyKeepsCellularSoftwarePhone(t *testing.T) {
+	p, w := newPoolWithWorkerForSync("wwan0", config.DeviceConfig{
+		VoWiFiEnabled: true,
+		PhoneMode:     "cellular",
+		DataStrategy:  "on_demand",
+	})
+
+	p.SetWorkerNetworkPolicy("wwan0", true, "v4", "")
+	if !w.Config.NetworkEnabled || !w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled {
+		t.Fatalf("蜂窝开网络应保留软件电话: %+v", w.Config)
+	}
+	if w.cellularRadioIsSuppressed() {
+		t.Fatal("蜂窝开网络不应抑制射频")
 	}
 }
