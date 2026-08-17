@@ -5,7 +5,9 @@ set -eu
 REPO="yibaiba/hideck"
 SOURCE_BASE_URL="https://raw.githubusercontent.com/yibaiba/hideck/main"
 RELEASES_API_URL="https://api.github.com/repos/${REPO}/releases/latest"
+RELEASES_LATEST_URL="https://github.com/${REPO}/releases/latest"
 RELEASES_DOWNLOAD_URL="https://github.com/${REPO}/releases/download"
+USER_AGENT="hideck-deploy-binary/1.0 (+https://github.com/${REPO})"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -66,6 +68,10 @@ detect_arch() {
   esac
 }
 
+curl_github() {
+  curl -fL --retry 3 --retry-delay 1 -A "$USER_AGENT" "$@"
+}
+
 normalize_version() {
   version=$1
   case "$version" in
@@ -75,19 +81,34 @@ normalize_version() {
   esac
 }
 
+extract_tag_name() {
+  printf '%s\n' "$1" | sed -n 's#.*/releases/tag/\([^/?#]*\).*#\1#p' | head -n 1
+}
+
+resolve_latest_version() {
+  latest=$( { curl_github -sS "$RELEASES_API_URL" || true; } | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+  if [ -n "$latest" ]; then
+    printf '%s\n' "$latest"
+    return
+  fi
+
+  latest=$(extract_tag_name "$(curl_github -sS -o /dev/null -w '%{url_effective}' "$RELEASES_LATEST_URL" || true)")
+  if [ -n "$latest" ]; then
+    printf '%s\n' "$latest"
+    return
+  fi
+
+  printf '无法从 GitHub Releases 读取最新版本。\n可设置 HIDECK_VERSION=v2.0.4 后重试。\n' >&2
+  exit 1
+}
+
 resolve_version() {
   requested=$(normalize_version "${HIDECK_VERSION:-latest}")
   if [ "$requested" != "latest" ]; then
     printf '%s\n' "$requested"
     return
   fi
-
-  latest=$(curl -fsSL "$RELEASES_API_URL" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-  if [ -z "$latest" ]; then
-    printf '无法从 GitHub Releases 读取最新版本。\n可设置 HIDECK_VERSION=v2.0.4 后重试。\n' >&2
-    exit 1
-  fi
-  printf '%s\n' "$latest"
+  resolve_latest_version
 }
 
 download_file() {
@@ -97,13 +118,28 @@ download_file() {
 
   require_command curl
   temporary_file=$(mktemp "${target_file}.tmp.XXXXXX")
-  if ! curl -fL --retry 3 --retry-delay 1 "$source_url" -o "$temporary_file"; then
+  if ! curl_github "$source_url" -o "$temporary_file"; then
     rm -f "$temporary_file"
     printf '下载失败：%s\n' "$source_url" >&2
     exit 1
   fi
   chmod "$file_mode" "$temporary_file"
   mv "$temporary_file" "$target_file"
+}
+
+try_download_file() {
+  source_url=$1
+  target_file=$2
+  file_mode=$3
+
+  temporary_file=$(mktemp "${target_file}.tmp.XXXXXX")
+  if curl_github "$source_url" -o "$temporary_file"; then
+    chmod "$file_mode" "$temporary_file"
+    mv "$temporary_file" "$target_file"
+    return 0
+  fi
+  rm -f "$temporary_file"
+  return 1
 }
 
 download_if_missing() {
@@ -132,22 +168,49 @@ file_sha256() {
   exit 1
 }
 
-verify_checksum() {
+checksum_for_asset() {
   sums_file=$1
   asset_name=$2
-  binary_file=$3
+  awk -v name="$asset_name" '
+    NF >= 2 {
+      n = $NF
+      sub(/^.*\//, "", n)
+      if (n == name) {
+        print $1
+        exit
+      }
+    }
+  ' "$sums_file"
+}
 
-  expected=$(awk -v name="$asset_name" '$2 == name { print $1; exit }' "$sums_file")
-  if [ -z "$expected" ]; then
-    printf 'SHA256SUMS 中没有 %s。\n' "$asset_name" >&2
-    exit 1
-  fi
+verify_checksum() {
+  sums_file=$1
+  sidecar_file=$2
+  asset_name=$3
+  binary_file=$4
+
   actual=$(file_sha256 "$binary_file")
-  if [ "$expected" != "$actual" ]; then
-    printf '校验失败：%s\n期望 %s\n实际 %s\n' "$asset_name" "$expected" "$actual" >&2
+  expected=""
+  source_name=""
+
+  if [ -f "$sidecar_file" ]; then
+    expected=$(checksum_for_asset "$sidecar_file" "$asset_name")
+    source_name="${asset_name}.sha256"
+  fi
+  if [ -z "$expected" ] && [ -f "$sums_file" ]; then
+    expected=$(checksum_for_asset "$sums_file" "$asset_name")
+    source_name="SHA256SUMS"
+  fi
+  if [ -z "$expected" ]; then
+    printf '找不到 %s 的校验文件（SHA256SUMS 或 %s.sha256）。\n' "$asset_name" "$asset_name" >&2
     exit 1
   fi
-  printf '校验通过：%s\n' "$asset_name"
+  if [ "$expected" != "$actual" ]; then
+    printf '校验失败：%s\n来源 %s\n期望 %s\n实际 %s\n文件可能还在上传，或校验清单和二进制不是同一批。请稍后重试，或设置 HIDECK_VERSION 指定版本。\n' \
+      "$asset_name" "$source_name" "$expected" "$actual" >&2
+    exit 1
+  fi
+  printf '校验通过：%s（%s）\n' "$asset_name" "$source_name"
 }
 
 write_systemd_unit() {
@@ -228,6 +291,7 @@ VERSION=$(resolve_version)
 ASSET_NAME="hideck_${VERSION}_${ARCH}"
 ASSET_URL="${RELEASES_DOWNLOAD_URL}/${VERSION}/${ASSET_NAME}"
 SUMS_URL="${RELEASES_DOWNLOAD_URL}/${VERSION}/SHA256SUMS"
+SIDECAR_URL="${RELEASES_DOWNLOAD_URL}/${VERSION}/${ASSET_NAME}.sha256"
 
 printf '部署目录：%s\n版本：%s\n架构：%s\n' "$PROJECT_DIR" "$VERSION" "$ARCH"
 
@@ -249,9 +313,14 @@ fi
 
 DOWNLOAD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/hideck-binary.XXXXXX")
 trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
-download_file "$SUMS_URL" "$DOWNLOAD_DIR/SHA256SUMS" 644
 download_file "$ASSET_URL" "$DOWNLOAD_DIR/$ASSET_NAME" 755
-verify_checksum "$DOWNLOAD_DIR/SHA256SUMS" "$ASSET_NAME" "$DOWNLOAD_DIR/$ASSET_NAME"
+if ! try_download_file "$SIDECAR_URL" "$DOWNLOAD_DIR/${ASSET_NAME}.sha256" 644; then
+  printf '未找到 %s.sha256，改用 SHA256SUMS。\n' "$ASSET_NAME"
+fi
+if ! try_download_file "$SUMS_URL" "$DOWNLOAD_DIR/SHA256SUMS" 644; then
+  printf '未找到 SHA256SUMS。\n'
+fi
+verify_checksum "$DOWNLOAD_DIR/SHA256SUMS" "$DOWNLOAD_DIR/${ASSET_NAME}.sha256" "$ASSET_NAME" "$DOWNLOAD_DIR/$ASSET_NAME"
 
 install -m 755 "$DOWNLOAD_DIR/$ASSET_NAME" "$BINARY_PATH"
 printf '已安装二进制：%s\n' "$BINARY_PATH"

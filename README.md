@@ -77,7 +77,7 @@ curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.s
   HIDECK_ARCH=linux_amd64 sh
 ```
 
-脚本会创建 `config/`、`data/`、`logs/`，首次运行从模板生成 `config/config.yaml`，校验 `SHA256SUMS` 后安装 `hideck`。已有配置不会覆盖。有 systemd 权限时会安装并启动 `hideck.service`。
+脚本会创建 `config/`、`data/`、`logs/`，首次运行从模板生成 `config/config.yaml`，用 Release 里的 `SHA256SUMS` 或同名 `.sha256` 校验后再安装 `hideck`。已有配置不会覆盖。有 systemd 权限时会安装并启动 `hideck.service`。
 
 也可以只从 [GitHub Releases](https://github.com/yibaiba/hideck/releases) 手工下载：
 

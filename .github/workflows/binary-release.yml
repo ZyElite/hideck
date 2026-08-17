@@ -139,7 +139,7 @@ jobs:
           OUT="hideck_${{ steps.vars.outputs.version }}_linux_${{ matrix.artifact_arch }}"
           mkdir -p out
           cp dist/hideck "out/${OUT}"
-          sha256sum "out/${OUT}" > "out/${OUT}.sha256"
+          (cd out && sha256sum "${OUT}" > "${OUT}.sha256")
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -171,6 +171,26 @@ jobs:
           pattern: binaries-*
           merge-multiple: true
           path: dist
+
+      - name: Write SHA256SUMS from uploaded binaries
+        shell: bash
+        run: |
+          cd dist
+          : > SHA256SUMS
+          for f in hideck_*; do
+            [ -f "$f" ] || continue
+            case "$f" in
+              *.sha256) continue ;;
+            esac
+            sha256sum "$f" >> SHA256SUMS
+          done
+          if [ ! -s SHA256SUMS ]; then
+            echo "SHA256SUMS is empty; no binaries found in dist/" >&2
+            ls -la
+            exit 1
+          fi
+          echo "SHA256SUMS:"
+          cat SHA256SUMS
 
       - name: Publish to this GitHub Release
         uses: softprops/action-gh-release@v2
