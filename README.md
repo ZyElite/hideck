@@ -33,6 +33,7 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 
 - [界面预览](#界面预览)
 - [核心能力](#核心能力)
+- [二进制部署](#二进制部署)
 - [Docker 快速部署](#docker-快速部署)
 - [配置](#配置)
 - [源码构建](#源码构建)
@@ -52,6 +53,32 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 | 自动任务 | 按设备、Profile、时区和计划执行任务，记录运行历史和错误 |
 | 通知 | 支持 Telegram、Email、PushPlus、Bark、飞书、企业微信、微信和 QQ 等渠道 |
 | 多架构交付 | 支持 Linux amd64、arm64 与 armv7 构建及 Docker 部署 |
+
+## 二进制部署
+
+不使用 Docker 时，从 [GitHub Releases](https://github.com/yibaiba/hideck/releases) 下载对应架构的预编译文件：
+
+| 文件 | 适用平台 |
+| --- | --- |
+| `hideck_v2.0.4_linux_amd64` | x86_64 服务器、多数 NAS / 工控机 |
+| `hideck_v2.0.4_linux_arm64` | ARM64 板卡、树莓派 64 位 |
+| `hideck_v2.0.4_linux_armv7` | 32 位 ARM |
+
+```bash
+curl -fL -o hideck https://github.com/yibaiba/hideck/releases/download/v2.0.4/hideck_v2.0.4_linux_amd64
+chmod +x hideck
+cp config/config.example.yaml config/config.yaml
+./hideck -c config/config.yaml
+```
+
+校验下载文件：
+
+```bash
+curl -fL -O https://github.com/yibaiba/hideck/releases/download/v2.0.4/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+systemd 可直接把 `ExecStart` 指到这个二进制，工作目录放配置、`data/` 和 `logs/`。需要 USB 模组访问权限的用户加入 `dialout`，并以 root 或具备设备节点权限的账号运行。
 
 ## Docker 快速部署
 
