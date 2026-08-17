@@ -149,6 +149,27 @@ func TestResolveAndApplyPolicy_EmptyICCID(t *testing.T) {
 	}
 }
 
+func TestResolveAndApplyPolicyNetworkOffDoesNotCamp(t *testing.T) {
+	p := &Pool{ctx: context.Background()}
+	p.SetPolicyResolver(&stubPolicyResolver{
+		pol: cardpolicy.Policy{ICCID: "123", VoWiFiEnabled: false, AirplaneEnabled: false, NetworkEnabled: false},
+	})
+	stub := &workerStatusBackendStub{opMode: backend.ModeOnline}
+	w := &Worker{ID: "wwan0", Backend: stub}
+	w.state.Identity.ICCID = "123"
+
+	res := p.resolveAndApplyPolicy(w, "vowifi_disabled")
+	if !res.Applied {
+		t.Fatalf("应成功应用: %+v", res)
+	}
+	if len(stub.setOpModeCalls) != 1 || stub.setOpModeCalls[0] != backend.ModeRFOff {
+		t.Fatalf("网络关闭应切入飞行: %+v", stub.setOpModeCalls)
+	}
+	if !w.cellularRadioIsSuppressed() {
+		t.Fatal("网络关闭应抑制驻网")
+	}
+}
+
 func TestResolveAndApplyPolicy_ResolvesAndProjects(t *testing.T) {
 	p := &Pool{ctx: context.Background()}
 	p.SetPolicyResolver(&stubPolicyResolver{

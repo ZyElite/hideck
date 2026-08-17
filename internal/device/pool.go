@@ -1247,8 +1247,9 @@ func (p *Pool) applyNetworkPreference(worker *Worker) error {
 		return nil
 	}
 
-	if worker.shouldAbortCellularRegistration() {
-		logger.Debug("网络关闭且射频被策略抑制，跳过空闲驻网", "device", worker.ID)
+	if !worker.Config.NetworkEnabled || worker.shouldAbortCellularRegistration() {
+		logger.Debug("网络关闭，跳过空闲驻网", "device", worker.ID)
+		_ = worker.suppressCellularRegistration(p.ctx, "network_disabled_preference")
 	} else if worker.MBIMCore != nil {
 		worker.StartMBIMRegistrationReconcile(p.ctx, "network_disabled_preference")
 	} else {

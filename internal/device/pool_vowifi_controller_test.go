@@ -491,7 +491,7 @@ func TestDisableVoWiFiAppliesCurrentCardPolicyAfterRuntimeStops(t *testing.T) {
 	w.state.Identity.IMSI = "001010000000001"
 	p.workers[deviceID] = w
 	p.SetPolicyResolver(&stubPolicyResolver{
-		pol: cardpolicy.Policy{ICCID: "iccid-disable-policy", VoWiFiEnabled: false, AirplaneEnabled: false},
+		pol: cardpolicy.Policy{ICCID: "iccid-disable-policy", VoWiFiEnabled: false, AirplaneEnabled: false, NetworkEnabled: true},
 	})
 	p.voWiFiHost().LifecycleControllerForTest().TestRun = func(ctx context.Context, cmd vowifihost.LifecycleCommand) error {
 		if cmd.Kind != vowifihost.LifecycleCommandDisable {
@@ -507,8 +507,39 @@ func TestDisableVoWiFiAppliesCurrentCardPolicyAfterRuntimeStops(t *testing.T) {
 	if len(backendStub.setOpModeCalls) != 1 || backendStub.setOpModeCalls[0] != backend.ModeOnline {
 		t.Fatalf("DisableVoWiFi 后应按当前卡策略退出飞行模式: %+v", backendStub.setOpModeCalls)
 	}
-	if w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled {
+	if w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled || !w.Config.NetworkEnabled {
 		t.Fatalf("worker config 未投影当前卡策略: %+v", w.Config)
+	}
+}
+
+func TestDisableVoWiFiWithoutNetworkDoesNotCamp(t *testing.T) {
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+	deviceID := "dev-disable-nocamp"
+	backendStub := &workerStatusBackendStub{opMode: backend.ModeOnline}
+	w := &Worker{
+		ID:      deviceID,
+		Config:  config.DeviceConfig{ID: deviceID, VoWiFiEnabled: true, PhoneMode: "cellular", DataStrategy: "on_demand"},
+		Backend: backendStub,
+	}
+	w.state.Identity.ICCID = "iccid-disable-nocamp"
+	w.state.Identity.IMSI = "001010000000003"
+	p.workers[deviceID] = w
+	p.SetPolicyResolver(&stubPolicyResolver{
+		pol: cardpolicy.Policy{ICCID: "iccid-disable-nocamp", VoWiFiEnabled: false, AirplaneEnabled: false, NetworkEnabled: false},
+	})
+	p.voWiFiHost().LifecycleControllerForTest().TestRun = func(ctx context.Context, cmd vowifihost.LifecycleCommand) error {
+		return nil
+	}
+
+	if err := p.DisableVoWiFi(deviceID); err != nil {
+		t.Fatalf("DisableVoWiFi() error = %v", err)
+	}
+	if len(backendStub.setOpModeCalls) != 1 || backendStub.setOpModeCalls[0] != backend.ModeRFOff {
+		t.Fatalf("网络关闭时关软件电话应切入飞行，不搜网: %+v", backendStub.setOpModeCalls)
+	}
+	if !w.cellularRadioIsSuppressed() {
+		t.Fatal("网络关闭时应抑制驻网")
 	}
 }
 

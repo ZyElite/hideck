@@ -23,7 +23,11 @@ func shouldSuppressCellularRadio(cfg config.DeviceConfig) bool {
 	if cfg.PhoneMode == "cellular" && cfg.VoWiFiEnabled {
 		return !cellularDataAllowed(cfg.PhoneMode, cfg.DataStrategy, cfg.NetworkEnabled)
 	}
-	return cfg.VoWiFiEnabled || cfg.AirplaneEnabled
+	if cfg.VoWiFiEnabled || cfg.AirplaneEnabled {
+		return true
+	}
+	// 软件电话和网络都关时不驻网，避免空闲搜网循环。
+	return !cfg.NetworkEnabled
 }
 
 // applyPolicyToWorker 把卡策略投影进 worker.Config 的运行时有效字段。
@@ -107,8 +111,12 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	case pol.AirplaneEnabled:
 		// 纯飞行：停数据网 + 切 RFOff，不做注册偏好/重连。
 		p.enterAirplaneModeFromPolicy(worker, reason)
+	case !pol.NetworkEnabled:
+		// 网络关着就不驻网。旧卡 airplane=false 也会走到这里，避免空闲搜网。
+		_ = worker.suppressCellularRegistration(p.ctx, reason)
+		p.enterAirplaneModeFromPolicy(worker, reason)
 	default:
-		// 在线(待机或连网)：若当前在飞行先退出飞行，再按 network 偏好。
+		// 在线连网：若当前在飞行先退出飞行，再按 network 偏好。
 		p.exitAirplaneModeIfNeeded(worker, reason)
 		if err := p.applyNetworkPreference(worker); err != nil {
 			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)

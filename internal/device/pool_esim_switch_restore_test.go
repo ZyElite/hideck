@@ -533,7 +533,7 @@ func TestHandleESIMSwitchAfterRadioCycleOnlineThenSnapshotRestore(t *testing.T) 
 
 	p.handleESIMSwitchAfter("dev-1", 0)
 
-	want := []backend.OperatingMode{backend.ModeOnline, backend.ModeRFOff}
+	want := []backend.OperatingMode{backend.ModeOnline, backend.ModeRFOff, backend.ModeRFOff}
 	if !reflect.DeepEqual(be.setCalls, want) {
 		t.Fatalf("setCalls=%v want %v", be.setCalls, want)
 	}
