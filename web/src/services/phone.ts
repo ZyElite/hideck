@@ -8,6 +8,9 @@ export type PhoneDevice = {
   voice: { ready?: boolean; registered?: boolean; active_call?: boolean }
   phone_mode?: string      // "wifi" | "cellular"
   data_strategy?: string   // "always" | "on_demand"
+  network_enabled?: boolean
+  vowifi_enabled?: boolean
+  vowifi_active?: boolean
 }
 
 export type PhoneCall = {

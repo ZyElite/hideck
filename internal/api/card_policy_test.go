@@ -269,6 +269,11 @@ func TestPatchCardPolicyVoWiFiKeepsAirplaneIntent(t *testing.T) {
 	injectWorker(p, w)
 
 	s := &Server{pool: p}
+	if err := db.UpsertCardPolicy(db.CardPolicy{
+		ICCID: "8986vowifi01", NetworkEnabled: false, VoWiFiEnabled: false, AirplaneEnabled: false, IPVersion: "v4", Source: "user",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// 从在线开 VoWiFi（飞行意图为 false）：airplane 应保持 false，不被强制为 true。
 	_, _, err := s.patchCardPolicyForDevice("wwan-vowifi", vowifiEnablePolicyMutation)
 	if err != nil {

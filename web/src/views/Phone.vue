@@ -70,7 +70,12 @@ function deviceStatus(device?: PhoneDevice) {
   if (!device) return '未选择设备'
   if (isDeviceBusy(device)) return '通话占用'
   const mode = deviceModeLabel(device)
-  return isDeviceReady(device) ? `${mode} · 就绪` : `${mode} · 未就绪`
+  if (isDeviceReady(device) || device.vowifi_active) return `${mode} · 就绪`
+  if (device.phone_mode === 'cellular' && device.vowifi_enabled) {
+    return device.data_strategy === 'always' ? `${mode} · 连接中` : `${mode} · 待机（拨号时连接）`
+  }
+  if (device.vowifi_enabled) return `${mode} · 连接中`
+  return `${mode} · 未开启`
 }
 
 const selectedMode = computed(() => selected.value?.phone_mode === 'cellular' ? 'cellular' : 'wifi')
@@ -79,6 +84,13 @@ const modePending = ref(false)
 
 async function changePhoneMode(mode: string) {
   if (!selectedDevice.value || !!call.value || modePending.value) return
+  if (
+    mode === selectedMode.value
+    && selected.value
+    && (isDeviceReady(selected.value) || selected.value.vowifi_active)
+  ) {
+    return
+  }
   modePending.value = true
   phone.clearError()
   try {
@@ -88,7 +100,11 @@ async function changePhoneMode(mode: string) {
     })
     if (!result.ok) throw new Error(result.error?.message || '切换通话方式失败')
     await phone.refresh()
-    ElMessage.success(mode === 'cellular' ? '已切换到蜂窝数据打电话' : '已切换到 WiFi calling')
+    if (mode === 'cellular') {
+      ElMessage.success('已切到蜂窝。请先到卡策略打开「网络」，仅打电话时开 / 长时间开启才会驻网')
+    } else {
+      ElMessage.success('已切换到 WiFi calling')
+    }
   } catch (error) {
     phone.error = phoneErrorMessage(error, '切换通话方式失败')
   } finally {
@@ -107,7 +123,9 @@ async function changeDataStrategy(strategy: string) {
     })
     if (!result.ok) throw new Error(result.error?.message || '切换数据策略失败')
     await phone.refresh()
-    ElMessage.success(strategy === 'always' ? '已改为长时间开数据' : '已改为仅打电话时开数据')
+    ElMessage.success(strategy === 'always'
+      ? '已改为长时间开启。打开卡策略里的「网络」后才会一直走流量'
+      : '已改为仅打电话时开。打开卡策略里的「网络」后，拨号才会连数据')
   } catch (error) {
     phone.error = phoneErrorMessage(error, '切换数据策略失败')
   } finally {
@@ -269,10 +287,9 @@ async function sendDTMF(digit: string) {
                 :model-value="selectedMode"
                 size="small"
                 :disabled="!!call || modePending"
-                @change="(val: string | number | boolean | undefined) => { if (typeof val === 'string') void changePhoneMode(val) }"
               >
-                <el-radio-button value="wifi">WiFi calling</el-radio-button>
-                <el-radio-button value="cellular">蜂窝数据</el-radio-button>
+                <el-radio-button value="wifi" @click="void changePhoneMode('wifi')">WiFi calling</el-radio-button>
+                <el-radio-button value="cellular" @click="void changePhoneMode('cellular')">蜂窝数据</el-radio-button>
               </el-radio-group>
               <el-select
                 v-if="selectedMode === 'cellular'"
@@ -285,6 +302,14 @@ async function sendDTMF(digit: string) {
                 <el-option label="仅打电话时开" value="on_demand" />
                 <el-option label="长时间开启" value="always" />
               </el-select>
+              <p v-if="selectedMode === 'cellular'" class="phone-mode-hint" :class="{ 'is-warn': !selected?.network_enabled }">
+                {{ selected?.network_enabled
+                  ? (selectedStrategy === 'always' ? '网络已开，数据会保持连接。' : '网络已开，只有拨号时才连数据，挂断后关闭。')
+                  : '蜂窝流量必须先到卡策略打开「网络」。打开后，仅打电话时开 / 长时间开启才会驻网和走流量。' }}
+              </p>
+              <p v-else-if="selected && !isDeviceReady(selected) && !selected.vowifi_active" class="phone-mode-hint">
+                软件电话未开启，点 WiFi calling 即可拉起
+              </p>
             </div>
           </div>
         </header>

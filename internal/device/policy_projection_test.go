@@ -11,6 +11,23 @@ import (
 	"github.com/yibaiba/hideck/internal/vowifihost"
 )
 
+func TestApplyPolicyCellularIdleKeepsAirplane(t *testing.T) {
+	w := &Worker{ID: "wwan0"}
+	applyPolicyToWorker(w, cardpolicy.Policy{
+		ICCID: "x", VoWiFiEnabled: true, PhoneMode: "cellular", DataStrategy: "on_demand",
+	})
+	if !w.Config.AirplaneEnabled || w.Config.NetworkEnabled || !w.cellularRadioIsSuppressed() {
+		t.Fatalf("蜂窝未开网络应飞行并抑制驻网: %+v suppressed=%v", w.Config, w.cellularRadioIsSuppressed())
+	}
+
+	applyPolicyToWorker(w, cardpolicy.Policy{
+		ICCID: "x", VoWiFiEnabled: true, PhoneMode: "cellular", DataStrategy: "on_demand", NetworkEnabled: true,
+	})
+	if w.Config.AirplaneEnabled || !w.Config.NetworkEnabled || w.cellularRadioIsSuppressed() {
+		t.Fatalf("打开网络后应退出飞行并允许驻网: %+v suppressed=%v", w.Config, w.cellularRadioIsSuppressed())
+	}
+}
+
 func TestApplyPolicyProjectsFields(t *testing.T) {
 	w := &Worker{ID: "wwan0"}
 	applyPolicyToWorker(w, cardpolicy.Policy{
@@ -204,8 +221,11 @@ func TestResolveAndApplyPolicyDoesNotRecoverCellularOnDemand(t *testing.T) {
 	if !res.Applied {
 		t.Fatalf("应成功应用: %+v", res)
 	}
-	if w.Config.PhoneMode != "cellular" || w.Config.AirplaneEnabled {
-		t.Fatalf("蜂窝策略投影错误: %+v", w.Config)
+	if w.Config.PhoneMode != "cellular" || !w.Config.AirplaneEnabled {
+		t.Fatalf("蜂窝 on_demand 未开网络应保持飞行: %+v", w.Config)
+	}
+	if !w.cellularRadioIsSuppressed() {
+		t.Fatal("蜂窝 on_demand 未开网络应抑制驻网")
 	}
 
 	select {

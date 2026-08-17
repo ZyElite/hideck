@@ -27,8 +27,11 @@ func TestDeviceConfigForAddDropsDevicePolicyFields(t *testing.T) {
 		SMSEnabled:      false,
 	})
 
-	if cfg.APN != "" || cfg.IPVersion != "" || cfg.NetworkEnabled || cfg.VoWiFiEnabled || cfg.AirplaneEnabled {
-		t.Fatalf("设备添加不应保留卡策略字段: %+v", cfg)
+	if cfg.APN != "" || cfg.IPVersion != "" || cfg.NetworkEnabled || cfg.VoWiFiEnabled {
+		t.Fatalf("设备添加不应保留卡上的网络/电话策略字段: %+v", cfg)
+	}
+	if !cfg.AirplaneEnabled {
+		t.Fatal("第一次添加设备应默认飞行模式")
 	}
 	if !cfg.SMSEnabled {
 		t.Fatal("SMS 应保持系统不变量 true")

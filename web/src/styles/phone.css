@@ -16,6 +16,8 @@
 .device-selector :deep(.el-select) { width: 100%; }
 .device-selector :deep(.el-select__wrapper) { min-height: 44px; background: var(--ui-surface); }
 .phone-mode-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.phone-mode-hint { flex: 1 1 100%; margin: 0; color: var(--ui-text-muted); font-size: 12px; line-height: 1.45; }
+.phone-mode-hint.is-warn { color: var(--ui-warning); }
 .console-loading { min-height: 560px; display: grid; place-items: center; color: var(--ui-text-muted); }
 .media-state { min-height: 36px; padding: 0 10px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--ui-border); border-radius: 18px; background: var(--ui-surface); color: var(--ui-text-muted); font-size: 11px; font-weight: 600; }
 .media-state > span, .selected-device-status > span { width: 7px; height: 7px; border-radius: 50%; background: var(--ui-text-muted); }

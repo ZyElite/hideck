@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 type enabledPatchRequest struct {
@@ -63,6 +64,10 @@ func (s *Server) handleDeviceNetworkPatch(c *gin.Context) {
 	}); err != nil {
 		writeCardPolicyMutationError(c, err)
 		return
+	}
+	s.pool.SetWorkerNetworkPolicy(deviceID, false, "", "")
+	if err := s.pool.ApplyCurrentCardPolicy(deviceID, "network_disabled"); err != nil {
+		logger.Debug("关闭网络后重投影卡策略失败", "device", deviceID, "err", err)
 	}
 	s.handleDeviceMgmtStopNetwork(c)
 }

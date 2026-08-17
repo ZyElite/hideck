@@ -63,11 +63,18 @@ func (s *Server) handlePhoneDevices(c *gin.Context) {
 					voice[key] = value
 				}
 			}
+			phoneMode := worker.Config.PhoneMode
+			if phoneMode == "" {
+				phoneMode = "wifi"
+			}
 			devices = append(devices, gin.H{
 				"id": worker.ID, "name": worker.Config.Name, "iccid": worker.CurrentICCID(),
 				"voice": voice,
-				"phone_mode":    worker.Config.PhoneMode,
-				"data_strategy": worker.Config.DataStrategy,
+				"phone_mode":      phoneMode,
+				"data_strategy":   worker.Config.DataStrategy,
+				"network_enabled": worker.Config.NetworkEnabled,
+				"vowifi_enabled":  worker.Config.VoWiFiEnabled,
+				"vowifi_active":   s.pool.IsVoWiFiActive(worker.ID),
 			})
 		}
 	}

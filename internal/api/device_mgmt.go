@@ -1304,7 +1304,7 @@ func deviceConfigForAdd(cfg config.DeviceConfig) config.DeviceConfig {
 	cfg.IPVersion = ""
 	cfg.NetworkEnabled = false
 	cfg.VoWiFiEnabled = false
-	cfg.AirplaneEnabled = false
+	cfg.AirplaneEnabled = true
 	cfg.SMSEnabled = true
 	return cfg
 }

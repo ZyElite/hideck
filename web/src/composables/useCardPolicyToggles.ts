@@ -48,10 +48,11 @@ function nextMirror(
   if (field === 'vowifi_enabled') {
     if (val) {
       const isCellular = (cur.phone_mode ?? 'wifi') === 'cellular'
+      const cellularLive = isCellular && (cur.data_strategy === 'always' || cur.network_enabled)
       return {
-        network_enabled: isCellular ? (cur.data_strategy === 'always') : false,
+        network_enabled: isCellular ? (cur.data_strategy === 'always' || cur.network_enabled) : false,
         vowifi_enabled: true,
-        airplane_enabled: isCellular ? false : true,
+        airplane_enabled: !cellularLive,
         phone_mode: cur.phone_mode ?? 'wifi',
         data_strategy: cur.data_strategy ?? 'on_demand',
       }
@@ -159,12 +160,12 @@ export function useCardPolicyToggles(
     const next: PolicyMirror = {
       ...cur,
       phone_mode: mode,
-      data_strategy: strategy
+      data_strategy: strategy,
+      vowifi_enabled: true
     }
-    if (!next.vowifi_enabled) return next
     if (mode === 'cellular') {
-      next.airplane_enabled = false
-      next.network_enabled = strategy === 'always'
+      next.network_enabled = strategy === 'always' || next.network_enabled
+      next.airplane_enabled = !(strategy === 'always' || next.network_enabled)
     } else {
       next.airplane_enabled = true
       next.network_enabled = false
@@ -180,6 +181,7 @@ export function useCardPolicyToggles(
     local.value.data_strategy = next.data_strategy
     local.value.network_enabled = next.network_enabled
     local.value.airplane_enabled = next.airplane_enabled
+    local.value.vowifi_enabled = next.vowifi_enabled
     const result = await executors.applyPhoneMode(next)
     phoneModePending.value = false
     if (!result.ok) {
@@ -187,6 +189,7 @@ export function useCardPolicyToggles(
       local.value.data_strategy = prev.data_strategy
       local.value.network_enabled = prev.network_enabled
       local.value.airplane_enabled = prev.airplane_enabled
+      local.value.vowifi_enabled = prev.vowifi_enabled
       phoneModeFailed.value = true
       return
     }

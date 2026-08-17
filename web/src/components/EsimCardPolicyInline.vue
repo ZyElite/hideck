@@ -108,14 +108,11 @@ const {
   },
   async applyPhoneMode(next) {
     if (mode.value === 'stored') return putTriple(next)
-    if (next.vowifi_enabled) {
-      const r = await devicesService.enableVoWiFi(props.deviceId, {
-        mode: next.phone_mode,
-        data_strategy: next.data_strategy
-      })
-      return { ok: r.ok }
-    }
-    return putTriple(next)
+    const r = await devicesService.enableVoWiFi(props.deviceId, {
+      mode: next.phone_mode,
+      data_strategy: next.data_strategy
+    })
+    return { ok: r.ok }
   },
   async applyAirplane(enabled, next) {
     if (mode.value === 'stored') return putTriple(next)
@@ -210,6 +207,15 @@ const {
             <el-option label="长时间开启" value="always" />
           </el-select>
         </div>
+      </div>
+      <div
+        v-if="(local.phone_mode ?? 'wifi') === 'cellular'"
+        class="text-xs leading-5"
+        :class="local.network_enabled ? 'text-gray-500 dark:text-gray-400' : 'text-amber-600 dark:text-amber-400'"
+      >
+        {{ local.network_enabled
+          ? '网络已开，数据策略生效：仅打电话时开 = 拨号才连数据；长时间开启 = 一直开着数据。'
+          : '蜂窝流量必须先打开「网络」。网络关着时，仅打电话时开 / 长时间开启都不会驻网。' }}
       </div>
       <div v-if="phoneModeFailed" class="text-xs text-orange-500">通话方式未生效</div>
     </template>

@@ -81,16 +81,9 @@ const {
     return { ok: r.ok }
   },
   async applyPhoneMode(next) {
-    if (!props.deviceId || !props.iccid) return { ok: false }
-    if (next.vowifi_enabled) {
-      const r = await devicesService.enableVoWiFi(props.deviceId, {
-        mode: next.phone_mode,
-        data_strategy: next.data_strategy
-      })
-      return { ok: r.ok }
-    }
-    const r = await cardsService.putPolicy(props.iccid, {
-      phone_mode: next.phone_mode,
+    if (!props.deviceId) return { ok: false }
+    const r = await devicesService.enableVoWiFi(props.deviceId, {
+      mode: next.phone_mode,
       data_strategy: next.data_strategy
     })
     return { ok: r.ok }
@@ -209,7 +202,7 @@ const policyProjection = computed(() => [
           class="policy-setting-row"
           :class="{ 'is-active': local.network_enabled }"
         >
-          <span><strong>网络</strong><small>蜂窝模式下可与软件电话同时开；WiFi calling 开启时不可用</small></span>
+          <span><strong>网络</strong><small>蜂窝流量必须打开此项；WiFi calling 开启时不可用</small></span>
             <div class="flex items-center gap-2">
               <span v-if="networkFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
               <el-icon v-if="networkPending" class="animate-spin text-gray-400"><Loading /></el-icon>
@@ -238,7 +231,7 @@ const policyProjection = computed(() => [
         </div>
 
         <div class="policy-setting-row" :class="{ 'is-active': local.phone_mode === 'cellular' }">
-          <span><strong>通话方式</strong><small>WiFi calling 走 WiFi；蜂窝数据走 SIM 数据流量</small></span>
+          <span><strong>通话方式</strong><small>切换即开启软件电话。WiFi calling 走 WiFi；蜂窝必须先开网络才走 SIM 流量</small></span>
           <div class="policy-field-control">
             <el-select
               :model-value="local.phone_mode ?? 'wifi'"
@@ -254,8 +247,14 @@ const policyProjection = computed(() => [
           </div>
         </div>
 
+        <div v-if="(local.phone_mode ?? 'wifi') === 'cellular'" class="policy-notice" :class="local.network_enabled ? 'is-info' : 'is-warn'">
+          {{ local.network_enabled
+            ? '网络已开，下方策略生效：仅打电话时开 = 拨号才连数据；长时间开启 = 一直开着数据。'
+            : '蜂窝流量必须先打开「网络」。网络关着时，仅打电话时开 / 长时间开启都不会驻网，也不会走流量。' }}
+        </div>
+
         <div v-if="(local.phone_mode ?? 'wifi') === 'cellular'" class="policy-setting-row">
-          <span><strong>蜂窝数据策略</strong><small>仅打电话时开：挂断后关数据，待机不能被叫</small></span>
+          <span><strong>蜂窝数据策略</strong><small>打开网络后才生效。仅打电话时开：挂断后关数据，待机不能被叫</small></span>
           <div class="policy-field-control">
             <el-select
               :model-value="local.data_strategy ?? 'on_demand'"
@@ -327,6 +326,9 @@ const policyProjection = computed(() => [
 .policy-setting-row > span strong { color: var(--ui-text); font-size: 13px; }
 .policy-setting-row > span small { margin-top: 3px; color: var(--ui-text-muted); font-size: var(--ui-font-body-sm); }
 .policy-field-control { width: min(360px, 52%); }
+.policy-notice { margin: 0 0 10px; padding: 10px 12px; border-radius: 8px; font-size: var(--ui-font-body-sm); line-height: 1.45; }
+.policy-notice.is-warn { background: color-mix(in srgb, var(--ui-warning) 12%, var(--ui-surface)); color: var(--ui-warning); }
+.policy-notice.is-info { background: color-mix(in srgb, var(--ui-primary) 8%, var(--ui-surface)); color: var(--ui-text); }
 .policy-field-control > small { color: var(--ui-warning); font-size: var(--ui-font-caption); }
 
 .policy-projection { min-height: 74px; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--ui-surface-muted); }

@@ -671,6 +671,9 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 	}
 	w.uimIndicationsReady.Store(true)
 	p.scheduleATRadioWarmup(w, "startup")
+	if w.Config.AirplaneEnabled && !w.Config.VoWiFiEnabled {
+		p.enterAirplaneModeFromPolicy(w, "device_bind_default")
+	}
 
 	go func(worker *Worker) {
 		select {

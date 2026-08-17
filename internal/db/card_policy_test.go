@@ -21,8 +21,11 @@ func TestDefaultCardPolicy(t *testing.T) {
 	if p.ICCID != "8986001234567890123" {
 		t.Fatalf("ICCID=%q", p.ICCID)
 	}
-	if p.NetworkEnabled || p.VoWiFiEnabled || p.AirplaneEnabled {
-		t.Fatal("默认应全关")
+	if p.NetworkEnabled || p.VoWiFiEnabled {
+		t.Fatal("默认应关网络和软件电话")
+	}
+	if !p.AirplaneEnabled {
+		t.Fatal("新卡默认应开飞行模式")
 	}
 	if p.IPVersion != "v4" {
 		t.Fatalf("默认 ip=%q，应 v4", p.IPVersion)
@@ -61,7 +64,7 @@ func TestResolveCardPolicyAutoCreates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveCardPolicy error=%v", err)
 	}
-	if p.Source != "auto" || p.IPVersion != "v4" {
+	if p.Source != "auto" || p.IPVersion != "v4" || !p.AirplaneEnabled || p.NetworkEnabled || p.VoWiFiEnabled {
 		t.Fatalf("自动建档默认不符: %+v", p)
 	}
 

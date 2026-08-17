@@ -6,8 +6,25 @@ import (
 
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/cardpolicy"
+	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/pkg/logger"
 )
+
+// cellularDataAllowed reports whether cellular radio/data may leave airplane.
+// 蜂窝流量以「网络」为准：always 或用户打开网络后，on_demand/always 才真正驻网。
+func cellularDataAllowed(phoneMode, dataStrategy string, networkEnabled bool) bool {
+	if strings.TrimSpace(phoneMode) != "cellular" {
+		return false
+	}
+	return dataStrategy == "always" || networkEnabled
+}
+
+func shouldSuppressCellularRadio(cfg config.DeviceConfig) bool {
+	if cfg.PhoneMode == "cellular" && cfg.VoWiFiEnabled {
+		return !cellularDataAllowed(cfg.PhoneMode, cfg.DataStrategy, cfg.NetworkEnabled)
+	}
+	return cfg.VoWiFiEnabled || cfg.AirplaneEnabled
+}
 
 // applyPolicyToWorker 把卡策略投影进 worker.Config 的运行时有效字段。
 // 不在此触发 re-apply，仅做纯投影，便于单测。
@@ -22,7 +39,8 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	w.Config.DataStrategy = p.DataStrategy
 	if p.VoWiFiEnabled {
 		if p.PhoneMode == "cellular" {
-			w.Config.AirplaneEnabled = false
+			live := cellularDataAllowed(p.PhoneMode, p.DataStrategy, p.NetworkEnabled)
+			w.Config.AirplaneEnabled = !live
 			if p.DataStrategy == "always" {
 				w.Config.NetworkEnabled = true
 			}
@@ -37,11 +55,7 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	w.Config.APN = strings.TrimSpace(p.APN)
 	w.Config.SMSEnabled = true // SMS 恒开
 	w.restoreNetworkAfterVoWiFi = p.NetworkEnabled
-	if w.Config.PhoneMode == "cellular" && w.Config.VoWiFiEnabled {
-		w.setCellularRadioSuppressed(false)
-	} else {
-		w.setCellularRadioSuppressed(w.Config.VoWiFiEnabled || w.Config.AirplaneEnabled)
-	}
+	w.setCellularRadioSuppressed(shouldSuppressCellularRadio(w.Config))
 }
 
 type policyApplyResult struct {
@@ -74,12 +88,16 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	// 补齐此前“airplane 字段被投影但从不执行”的缺口。
 	switch {
 	case pol.VoWiFiEnabled && pol.PhoneMode == "cellular":
-		// 蜂窝模式：射频保持在线。用户开了网络或 always 策略时拉起数据；
-		// 否则 on_demand 待机不连，拨号时再开。
-		if pol.DataStrategy == "always" || pol.NetworkEnabled {
+		// 蜂窝：没开网络且不是 always 时保持飞行，避免空闲搜网。
+		// 打开网络后才驻网；always 同时拉起数据，on_demand 拨号时再开数据。
+		if cellularDataAllowed(pol.PhoneMode, pol.DataStrategy, pol.NetworkEnabled) {
+			p.exitAirplaneModeIfNeeded(worker, reason)
 			if err := p.applyNetworkPreference(worker); err != nil {
 				logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
 			}
+		} else {
+			_ = worker.suppressCellularRegistration(p.ctx, reason)
+			p.enterAirplaneModeFromPolicy(worker, reason)
 		}
 	case pol.VoWiFiEnabled:
 		// WiFi calling 原有路径：网络偏好按 false 走(停数据网)，射频由 VoWiFi 恢复流程切 RFOff。
@@ -113,6 +131,10 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 func (p *Pool) enterAirplaneModeFromPolicy(w *Worker, reason string) {
 	if w == nil {
 		return
+	}
+	w.setCellularRadioSuppressed(true)
+	if p.ctx != nil {
+		_ = w.cancelRadioRegistrationReconcile(p.ctx, reason)
 	}
 	if nc := w.NetworkController(); nc != nil && nc.IsConnected() {
 		_ = w.StopNetwork()
