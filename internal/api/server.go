@@ -1273,7 +1273,11 @@ func (s *Server) handleVoWiFiEnable(c *gin.Context) {
 
 	message := "VoWiFi 已启用，设备已进入飞行模式"
 	if worker := s.pool.GetWorker(deviceID); worker != nil && worker.Config.PhoneMode == "cellular" {
-		message = "蜂窝数据通话已启用"
+		if worker.Config.NetworkEnabled || worker.Config.DataStrategy == "always" {
+			message = "蜂窝数据通话已启用"
+		} else {
+			message = "蜂窝模式已设置。请先打开「网络」，仅打电话时开 / 长时间开启才会驻网"
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "ok",

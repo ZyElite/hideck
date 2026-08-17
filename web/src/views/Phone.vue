@@ -72,7 +72,8 @@ function deviceStatus(device?: PhoneDevice) {
   const mode = deviceModeLabel(device)
   if (isDeviceReady(device) || device.vowifi_active) return `${mode} · 就绪`
   if (device.phone_mode === 'cellular' && device.vowifi_enabled) {
-    return device.data_strategy === 'always' ? `${mode} · 连接中` : `${mode} · 待机（拨号时连接）`
+    if (!device.network_enabled && device.data_strategy !== 'always') return `${mode} · 未开网络`
+    return device.data_strategy === 'always' ? `${mode} · 连接中` : `${mode} · 仅打电话时开`
   }
   if (device.vowifi_enabled) return `${mode} · 连接中`
   return `${mode} · 未开启`

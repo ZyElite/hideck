@@ -126,9 +126,13 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 				})
 				return
 			}
+			message := "蜂窝模式已设置。请先打开「网络」，仅打电话时开 / 长时间开启才会驻网"
+			if w.Config.NetworkEnabled {
+				message = "蜂窝模式已设置，仅打电话时开：拨号才连数据"
+			}
 			c.JSON(http.StatusOK, gin.H{
 				"status":  "ok",
-				"message": "蜂窝模式已设置，拨号时再连接数据",
+				"message": message,
 				"device":  deviceID,
 			})
 			return
