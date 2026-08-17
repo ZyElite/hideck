@@ -13,8 +13,25 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 
 > 首次使用默认或弱密码登录后，HiDeck 会提示立即修改，可直接在提示页面完成。HiDeck 会把免责声明同意状态写入数据库；只要持久化 `data/` 目录，同一实例换浏览器后不会重复提示。
 
+## 界面预览
+
+登录页与控制台主界面：
+
+![HiDeck 登录页](docs/images/login.jpg)
+
+![仪表盘](docs/images/dashboard.jpg)
+
+| 设备管理 | 短信中心 |
+| --- | --- |
+| ![设备管理](docs/images/devices.jpg) | ![短信中心](docs/images/sms.jpg) |
+
+| 命令中心 | 代理管理 |
+| --- | --- |
+| ![命令中心](docs/images/commands.jpg) | ![代理管理](docs/images/proxy.jpg) |
+
 ## 快速导航
 
+- [界面预览](#界面预览)
 - [核心能力](#核心能力)
 - [Docker 快速部署](#docker-快速部署)
 - [配置](#配置)
