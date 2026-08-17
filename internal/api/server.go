@@ -1269,9 +1269,13 @@ func (s *Server) handleVoWiFiEnable(c *gin.Context) {
 		return
 	}
 
+	message := "VoWiFi 已启用，设备已进入飞行模式"
+	if worker := s.pool.GetWorker(deviceID); worker != nil && worker.Config.PhoneMode == "cellular" {
+		message = "蜂窝数据通话已启用"
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "ok",
-		"message": "VoWiFi 已启用，设备已进入飞行模式",
+		"message": message,
 		"device":  deviceID,
 	})
 }

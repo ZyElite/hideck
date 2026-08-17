@@ -94,7 +94,16 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 		}
 		// 同步 w.Config，使概览即时切到 VoWiFi 模式面板（EnableVoWiFi 不碰 Config）。
 		w := s.pool.GetWorker(deviceID)
+		prevMode, prevStrategy := "", ""
 		if w != nil {
+			prevMode = w.Config.PhoneMode
+			if prevMode == "" {
+				prevMode = "wifi"
+			}
+			prevStrategy = w.Config.DataStrategy
+			if prevStrategy == "" {
+				prevStrategy = "on_demand"
+			}
 			if req.Mode != nil {
 				w.Config.PhoneMode = mode
 			}
@@ -103,7 +112,9 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 			}
 		}
 		s.pool.SetWorkerVoWiFiPolicy(deviceID, true)
-		if s.pool.IsVoWiFiActive(deviceID) && (req.Mode != nil || req.DataStrategy != nil) {
+		modeChanged := req.Mode != nil && mode != prevMode
+		strategyChanged := req.DataStrategy != nil && strategy != prevStrategy
+		if s.pool.IsVoWiFiActive(deviceID) && (modeChanged || strategyChanged) {
 			if err := s.pool.RestartVoWiFi(deviceID); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"status":  "error",
