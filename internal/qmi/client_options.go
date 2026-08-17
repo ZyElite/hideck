@@ -47,6 +47,19 @@ func DiscoveryClientOptionsForControlDevice(controlDevice string) (qmiq.ClientOp
 	return opts, false
 }
 
+// RecoveryClientOptionsForControlDevice never skips an IMEI probe.
+// USB replug can reuse /dev/cdc-wdmN while hideck still appears as a stale
+// holder; recovery still needs IMEI to rematch the configured device.
+func RecoveryClientOptionsForControlDevice(controlDevice string) qmiq.ClientOptions {
+	opts, ok := DiscoveryClientOptionsForControlDevice(controlDevice)
+	if ok {
+		return opts
+	}
+	opts = qmiq.DefaultClientOptions()
+	forceProxy(&opts)
+	return opts
+}
+
 func clientOpenModeSummary(cfg config.DeviceConfig) []any {
 	opts, decision := clientOptionsFromDeviceConfig(cfg)
 	controlDevice := strings.TrimSpace(cfg.ControlDevice)

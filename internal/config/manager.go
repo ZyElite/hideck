@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/yibaiba/hideck/pkg/logger"
@@ -59,9 +60,13 @@ func ListDevices() []DeviceConfig {
 
 // GetDeviceByID 快捷获取内存中指定 ID 的设备
 func GetDeviceByID(id string) (*DeviceConfig, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, nil
+	}
 	devices := ListDevices()
 	for i := range devices {
-		if devices[i].ID == id {
+		if strings.TrimSpace(devices[i].ID) == id {
 			return &devices[i], nil
 		}
 	}

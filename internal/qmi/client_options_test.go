@@ -128,6 +128,18 @@ func TestDiscoveryClientOptionsForControlDeviceSkipsWhenHeldByNonProxyProcess(t 
 	}
 }
 
+func TestRecoveryClientOptionsForControlDeviceProbesWhenHideckHoldsDevice(t *testing.T) {
+	restore := stubQMIControlDeviceHolders(t, qmiControlDeviceHolders{
+		Holders: []qmiControlDeviceHolder{{PID: 4321, Command: "hideck"}},
+	})
+	defer restore()
+
+	opts := RecoveryClientOptionsForControlDevice("/dev/cdc-wdm0")
+	if !opts.UseProxy {
+		t.Fatal("UseProxy=false, want true so USB rematch can still probe IMEI via qmi-proxy")
+	}
+}
+
 func TestDiscoveryClientOptionsForControlDeviceUsesProxyWhenOnlyProxyHoldsDevice(t *testing.T) {
 	restore := stubQMIControlDeviceHolders(t, qmiControlDeviceHolders{
 		Holders: []qmiControlDeviceHolder{{PID: 1234, Command: "/usr/libexec/qmi-proxy"}},

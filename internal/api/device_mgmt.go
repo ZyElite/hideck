@@ -917,7 +917,7 @@ func (s *Server) handleDeviceMgmtOverviewLite(c *gin.Context) {
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"devices": []deviceMgmtOverviewLiteItem{}})
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到: " + id})
 		return
 	}
 
@@ -1558,27 +1558,17 @@ func (s *Server) handleDeviceMgmtUpdateDevice(c *gin.Context) {
 
 func (s *Server) handleDeviceMgmtDeleteDevice(c *gin.Context) {
 	id := deviceIDParam(c)
-
-	existing, err := config.GetDeviceByID(id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "读取设备配置失败: " + err.Error()})
-		return
-	}
-	if existing == nil {
-		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "设备未找到: " + id})
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "必须填写 id"})
 		return
 	}
 
-	if err := s.pool.RemoveWorker(id); err != nil {
-		logger.Warn("删除设备配置前停止运行时设备失败", "device_id", id, "err", err)
-		if !strings.Contains(err.Error(), "设备未找到") {
-			c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "设备正在停止，请稍后重试: " + err.Error()})
-			return
-		}
+	if s.pool != nil {
+		s.pool.AbandonDevice(id)
 	}
 
 	if err := config.DeleteDeviceInFile(s.configPath, id); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "删除设备配置失败: " + err.Error()})
 		return
 	}
 
@@ -1630,6 +1620,9 @@ func (s *Server) handleDeviceMgmtAddDevice(c *gin.Context) {
 	if existing, err := config.GetDeviceByID(newCfg.ID); err == nil && existing != nil {
 		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "设备 ID 已存在"})
 		return
+	}
+	if s.pool != nil {
+		s.pool.AbandonDevice(newCfg.ID)
 	}
 	if conflict := detectDeviceBindingConflict(newCfg, ""); conflict != nil {
 		c.JSON(http.StatusConflict, gin.H{

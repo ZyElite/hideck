@@ -18,7 +18,7 @@ func (p *Pool) ResolveQMIRecoveryAttachment(cfg config.DeviceConfig) qmiRecovery
 			return qmiRecoveryScanGate(cfg, live, discoveryAvailable)
 		}
 		for _, candidate := range live {
-			if strings.TrimSpace(candidate.IMEI) == configuredIMEI {
+			if config.IMEIMatches(candidate.IMEI, configuredIMEI) {
 				return qmiRecoveryScanDecision{
 					Ready:      true,
 					Reason:     "live_imei_match",

@@ -4,14 +4,19 @@ package device
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/iniwex5/netlink/nl"
 	"github.com/yibaiba/hideck/pkg/logger"
 	"golang.org/x/sys/unix"
 )
+
+// udevKernelUeventGroup is the kernel kobject uevent multicast group.
+const udevKernelUeventGroup = 1
+
+const udevNetlinkRecvBuf = 1024 * 1024
 
 // UdevWatcher 监听 USB 设备热插拔事件
 type UdevWatcher struct {
@@ -53,8 +58,7 @@ func (w *UdevWatcher) Stop() {
 }
 
 func (w *UdevWatcher) loop() {
-	// 创建 netlink 连接监听内核 uevent
-	conn, err := nl.Subscribe(unix.NETLINK_KOBJECT_UEVENT)
+	conn, err := openUdevNetlink()
 	if err != nil {
 		logger.Warn("udev 监听器启动失败，热插拔功能不可用", "err", err)
 		return
@@ -63,6 +67,7 @@ func (w *UdevWatcher) loop() {
 
 	logger.Info("udev 设备热插拔监听器已启动")
 
+	buf := make([]byte, 8192)
 	for {
 		select {
 		case <-w.stop:
@@ -71,27 +76,40 @@ func (w *UdevWatcher) loop() {
 		default:
 		}
 
-		// 设置读取超时，以便定期检查 stop 信号
-		tv := unix.NsecToTimeval((1 * time.Second).Nanoseconds())
-		_ = conn.SetReceiveTimeout(&tv)
-
-		msgs, _, err := conn.Receive()
+		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+		n, err := conn.Read(buf)
 		if err != nil {
-			// 超时错误是正常的
-			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
+			if errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
 				continue
 			}
-			// 其他错误记录但继续
+			logger.Debug("udev netlink 读取失败", "err", err)
 			continue
 		}
-
-		for _, msg := range msgs {
-			if w.isModemEvent(msg.Data) {
-				w.scheduleRescan()
-				break // 一批事件只触发一次扫描
-			}
+		if n <= 0 {
+			continue
+		}
+		// Payload is KEY=value; do not require a parsed nlmsghdr.
+		if w.isModemEvent(buf[:n]) {
+			w.scheduleRescan()
 		}
 	}
+}
+
+func openUdevNetlink() (*os.File, error) {
+	fd, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW|unix.SOCK_CLOEXEC|unix.SOCK_NONBLOCK, unix.NETLINK_KOBJECT_UEVENT)
+	if err != nil {
+		return nil, err
+	}
+	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, udevNetlinkRecvBuf)
+	sa := &unix.SockaddrNetlink{
+		Family: unix.AF_NETLINK,
+		Groups: udevKernelUeventGroup,
+	}
+	if err := unix.Bind(fd, sa); err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), "kobject-uevent"), nil
 }
 
 // isModemEvent 检查是否是 USB 调制解调器相关事件

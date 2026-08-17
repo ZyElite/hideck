@@ -8,6 +8,49 @@ import (
 	"github.com/yibaiba/hideck/internal/config"
 )
 
+func TestOverlayRuntimeQMIAttachmentFillsEmptyDiskPaths(t *testing.T) {
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+
+	p.rememberRuntimeQMIAttachment(config.DeviceConfig{
+		ID:            "wwan0",
+		ControlDevice: "/dev/cdc-wdm0",
+		Interface:     "wwan0",
+		USBPath:       "/sys/bus/usb/devices/2-1",
+		ATPort:        "/dev/ttyUSB2",
+		ModemIMEI:     "866069051900973",
+	})
+
+	got := p.overlayRuntimeQMIAttachment(config.DeviceConfig{
+		ID:            "wwan0",
+		DeviceBackend: "qmi",
+		ModemIMEI:     "866069051900973",
+	})
+	if got.ControlDevice != "/dev/cdc-wdm0" || got.Interface != "wwan0" || got.USBPath != "/sys/bus/usb/devices/2-1" {
+		t.Fatalf("runtime attachment was not overlaid: %+v", got)
+	}
+	if got.ModemIMEI != "866069051900973" {
+		t.Fatalf("IMEI changed: %q", got.ModemIMEI)
+	}
+}
+
+func TestOverlayRuntimeQMIAttachmentDoesNotOverrideDiskIMEI(t *testing.T) {
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+
+	p.rememberRuntimeQMIAttachment(config.DeviceConfig{
+		ID:        "wwan0",
+		ModemIMEI: "864388041069422",
+	})
+	got := p.overlayRuntimeQMIAttachment(config.DeviceConfig{
+		ID:        "wwan0",
+		ModemIMEI: "866069051900973",
+	})
+	if got.ModemIMEI != "866069051900973" {
+		t.Fatalf("disk IMEI was overwritten: %q", got.ModemIMEI)
+	}
+}
+
 func TestDeviceIMEIBackfillNeeded(t *testing.T) {
 	stored := config.DeviceConfig{ID: "dev1"} // 配置侧无 IMEI
 	learned := config.DeviceConfig{ID: "dev1", ModemIMEI: "867383058993207"}

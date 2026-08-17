@@ -97,17 +97,22 @@ func UpdateDeviceIMEIInFile(path string, updates map[string]string) error {
 }
 
 func DeleteDeviceInFile(path string, deviceID string) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return fmt.Errorf("设备未找到: %s", deviceID)
+	}
 	return updateDevicesInFile(path, func(devices *yaml.Node) (*yaml.Node, error) {
 		for i, item := range devices.Content {
 			if item == nil || item.Kind != yaml.MappingNode {
 				continue
 			}
-			if v := getMapScalar(item, "id"); v == deviceID {
+			if strings.TrimSpace(getMapScalar(item, "id")) == deviceID {
 				devices.Content = append(devices.Content[:i], devices.Content[i+1:]...)
 				return devices, nil
 			}
 		}
-		return nil, fmt.Errorf("设备未找到: %s", deviceID)
+		// 配置里已经没有这条，视为删除成功，避免 UI 删了却加不回去。
+		return devices, nil
 	})
 }
 
@@ -173,7 +178,7 @@ func findDeviceNodeByID(devices *yaml.Node, id string) *yaml.Node {
 		if item == nil || item.Kind != yaml.MappingNode {
 			continue
 		}
-		if v := getMapScalar(item, "id"); v == id {
+		if strings.TrimSpace(getMapScalar(item, "id")) == strings.TrimSpace(id) {
 			return item
 		}
 	}

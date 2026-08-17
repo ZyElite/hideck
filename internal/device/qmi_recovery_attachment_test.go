@@ -16,15 +16,15 @@ func TestQMIRecoveryAttachmentResolverPrefersIMEIMatch(t *testing.T) {
 		{ControlPath: "/dev/cdc-wdm0", NetInterface: "wwan0", USBPath: "1-1"},
 		{ControlPath: "/dev/cdc-wdm2", NetInterface: "wwan2", USBPath: "1-2"},
 	}, map[string]string{
-		"/dev/cdc-wdm0": "old-imei",
-		"/dev/cdc-wdm2": "target-imei",
+		"/dev/cdc-wdm0": "864388041069422",
+		"/dev/cdc-wdm2": "867383058993207",
 	})
 	defer restore()
 
 	decision := pool.ResolveQMIRecoveryAttachment(config.DeviceConfig{
 		ID:            "dev-qmi",
 		DeviceBackend: "qmi",
-		ModemIMEI:     "target-imei",
+		ModemIMEI:     "867383058993207",
 		ControlDevice: "/dev/cdc-wdm0",
 		Interface:     "wwan0",
 	})
@@ -68,14 +68,14 @@ func TestQMIRecoveryAttachmentResolverRejectsMismatchedIMEI(t *testing.T) {
 	restore := stubQMIRecoveryDiscovery(t, []QMIDevice{
 		{ControlPath: "/dev/cdc-wdm0", NetInterface: "wwan0", USBPath: "1-1"},
 	}, map[string]string{
-		"/dev/cdc-wdm0": "other-imei",
+		"/dev/cdc-wdm0": "864388041069422",
 	})
 	defer restore()
 
 	decision := pool.ResolveQMIRecoveryAttachment(config.DeviceConfig{
 		ID:            "dev-qmi",
 		DeviceBackend: "qmi",
-		ModemIMEI:     "target-imei",
+		ModemIMEI:     "867383058993207",
 		ControlDevice: "/dev/cdc-wdm2", // Intentional mismatch
 		Interface:     "wwan2",
 	})
@@ -115,14 +115,14 @@ func TestQMIRecoveryAttachmentResolverIMEINotMatchFallbacksToPathMatch(t *testin
 	restore := stubQMIRecoveryDiscovery(t, []QMIDevice{
 		{ControlPath: "/dev/cdc-wdm0", NetInterface: "wwan0", USBPath: "1-1"},
 	}, map[string]string{
-		"/dev/cdc-wdm0": "other-imei", // simulated IMEI mismatch
+		"/dev/cdc-wdm0": "864388041069422", // simulated IMEI mismatch
 	})
 	defer restore()
 
 	decision := pool.ResolveQMIRecoveryAttachment(config.DeviceConfig{
 		ID:            "dev-qmi",
 		DeviceBackend: "qmi",
-		ModemIMEI:     "target-imei",
+		ModemIMEI:     "867383058993207",
 		ControlDevice: "/dev/cdc-wdm0",
 		Interface:     "wwan0",
 	})
@@ -142,14 +142,14 @@ func TestQMIRecoveryAttachmentResolverIMEINotMatchNoPathMatchNotReady(t *testing
 	restore := stubQMIRecoveryDiscovery(t, []QMIDevice{
 		{ControlPath: "/dev/cdc-wdm2", NetInterface: "wwan2", USBPath: "1-2"},
 	}, map[string]string{
-		"/dev/cdc-wdm2": "other-imei",
+		"/dev/cdc-wdm2": "864388041069422",
 	})
 	defer restore()
 
 	decision := pool.ResolveQMIRecoveryAttachment(config.DeviceConfig{
 		ID:            "dev-qmi",
 		DeviceBackend: "qmi",
-		ModemIMEI:     "target-imei",
+		ModemIMEI:     "867383058993207",
 		ControlDevice: "/dev/cdc-wdm0",
 		Interface:     "wwan0",
 	})

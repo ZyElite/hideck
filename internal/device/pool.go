@@ -182,6 +182,8 @@ type Pool struct {
 	// 否则恢复扫描内的 AddWorkerFromConfig 会被自己的标记挡住。
 	modemRebootRecovering     map[string]bool
 	modemRebootWakeups        map[string]chan struct{}
+	modemRebootCancels        map[string]chan struct{}
+	modemRebootGeneration     map[string]uint64
 	cfg                       *config.Config
 	notifier                  Notifier
 	mu                        sync.RWMutex
@@ -218,6 +220,9 @@ type Pool struct {
 	policyResolver         cardpolicy.Resolver
 	smsIdentities          smsIdentityStore
 	dynamicInterfaceMapper DynamicInterfaceMapper
+	// runtimeQMIAttachments 记住 Worker 上次成功用过的 QMI 路径。
+	// 配置文件不持久化 control_device，拔掉 Worker 后恢复只能靠这份内存快照做路径兜底。
+	runtimeQMIAttachments map[string]config.DeviceConfig
 	pcscService            *pcsc.Service
 	pcscReconcileMu        sync.Mutex
 }
@@ -238,6 +243,8 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 		workerGenerations:      make(map[string]uint64),
 		modemRebootRecovering:  make(map[string]bool),
 		modemRebootWakeups:     make(map[string]chan struct{}),
+		modemRebootCancels:     make(map[string]chan struct{}),
+		modemRebootGeneration:  make(map[string]uint64),
 		cfg:                    cfg,
 		ctx:                    ctx,
 		cancel:                 cancel,
@@ -251,6 +258,7 @@ func NewPoolWithDynamicInterfaceMapper(cfg *config.Config, mapper DynamicInterfa
 		smsIdentities:          databaseSMSIdentityStore{},
 		dynamicInterfaceMapper: mapper,
 		pcscService:            pcsc.New(),
+		runtimeQMIAttachments:  make(map[string]config.DeviceConfig),
 	}
 	p.transportRecovery = NewTransportRecoveryController(p)
 	p.voWiFiHost().ConfigureAdapter(p)
@@ -1022,6 +1030,41 @@ func workerAcceptsRuntimeUIMIndication(worker *Worker) bool {
 	return worker != nil && worker.uimIndicationsReady.Load()
 }
 
+// ForceRebuildingForTest marks a device as rebuilding for delete/recovery tests.
+func (p *Pool) ForceRebuildingForTest(deviceID string) {
+	if p == nil {
+		return
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return
+	}
+	p.mu.Lock()
+	if p.rebuilding == nil {
+		p.rebuilding = make(map[string]bool)
+	}
+	p.rebuilding[deviceID] = true
+	p.mu.Unlock()
+}
+
+// AbandonDevice 作废该设备的恢复/启动并拆掉 Worker。
+// 必须真正取消恢复 goroutine，否则删后重加同一 ID 会被旧循环拆掉。
+func (p *Pool) AbandonDevice(deviceID string) {
+	deviceID = strings.TrimSpace(deviceID)
+	if p == nil || deviceID == "" {
+		return
+	}
+	p.abandonModemRebootRecovery(deviceID)
+	p.mu.Lock()
+	p.beginRebuildAttemptLocked(deviceID)
+	delete(p.rebuilding, deviceID)
+	p.mu.Unlock()
+	if err := p.RemoveWorker(deviceID); err != nil && !strings.Contains(err.Error(), "设备未找到") {
+		logger.Warn("删除设备时停止 Worker 失败", "device", deviceID, "err", err)
+	}
+	p.forgetRuntimeQMIAttachment(deviceID)
+}
+
 func (p *Pool) RemoveWorker(deviceID string) error {
 	p.mu.Lock()
 	worker := p.workers[deviceID]
@@ -1043,6 +1086,7 @@ func (p *Pool) RemoveWorker(deviceID string) error {
 	if worker == nil {
 		return fmt.Errorf("设备未找到")
 	}
+	p.rememberRuntimeQMIAttachment(worker.Config)
 	if !alreadyRebuilding {
 		defer func() {
 			p.mu.Lock()
@@ -1106,6 +1150,9 @@ var qmiWorkerBootstrapDeadline = 90 * time.Second
 // beginRebuildAttemptLocked 标记设备进入新一轮启动/重建尝试，返回本次尝试的 token。
 // 调用前必须已持有 p.mu 写锁。
 func (p *Pool) beginRebuildAttemptLocked(deviceID string) uint64 {
+	if p.rebuildAttempt == nil {
+		p.rebuildAttempt = make(map[string]uint64)
+	}
 	p.rebuildAttempt[deviceID]++
 	return p.rebuildAttempt[deviceID]
 }
@@ -1476,13 +1523,18 @@ func (p *Pool) collectRescanHardware(discovered []QMIDevice, liveWorkerIndex Wor
 			}
 			if liveInfo.IMEI != "" {
 				imei = liveInfo.IMEI
-				logger.Debug("扫描到设备", "imei", liveInfo.IMEI, "interface", raw.NetInterface, "at", raw.ATPort)
 			} else {
 				raw, imei = resolveDiscoveredQMIDeviceFn(raw, 1600*time.Millisecond, true)
 			}
 		} else {
 			raw, imei = resolveDiscoveredQMIDeviceFn(raw, 1600*time.Millisecond, true)
 		}
+		logger.Debug("扫描到设备",
+			"imei", imei,
+			"interface", raw.NetInterface,
+			"control", raw.ControlPath,
+			"usb_path", raw.USBPath,
+			"at", raw.ATPort)
 		hardware = append(hardware, CompatibleModem{
 			IMEI:          imei,
 			ControlPath:   raw.ControlPath,

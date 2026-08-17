@@ -6,6 +6,30 @@ import (
 	"testing"
 )
 
+func TestDeleteDeviceInFileRemovesAndIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := "devices:\n- id: wwan0\n  device_backend: qmi\n  modem_imei: \"866069051900973\"\n- id: wwan1\n  device_backend: qmi\n"
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := InitGlobalManager(path); err != nil {
+		t.Fatalf("InitGlobalManager() error = %v", err)
+	}
+
+	if err := DeleteDeviceInFile(path, "wwan0"); err != nil {
+		t.Fatalf("DeleteDeviceInFile() error = %v", err)
+	}
+	if got, _ := GetDeviceByID("wwan0"); got != nil {
+		t.Fatalf("wwan0 still loaded after delete: %+v", got)
+	}
+	if got, _ := GetDeviceByID("wwan1"); got == nil {
+		t.Fatal("wwan1 was removed with wwan0")
+	}
+	if err := DeleteDeviceInFile(path, "wwan0"); err != nil {
+		t.Fatalf("second DeleteDeviceInFile() error = %v", err)
+	}
+}
+
 func TestUpdateDeviceIMEIInFileWritesOnlyIMEI(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	raw := "devices:\n- id: dev1\n  device_backend: qmi\n  control_device: /dev/cdc-wdm1\n  interface: wwan0\n  at_port: /dev/ttyUSB2\n"

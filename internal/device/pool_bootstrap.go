@@ -97,12 +97,11 @@ func requiresMBIMCore(cfg config.DeviceConfig) bool {
 }
 
 func resolveDiscoveredQMIDevice(dev QMIDevice, timeout time.Duration, allowQMIIMEIProbe bool) (QMIDevice, string) {
-	qmiClientOptions, allowQMIProbe := qmicore.DiscoveryClientOptionsForControlDevice(dev.ControlPath)
 	return EnrichDiscoveredQMIDevice(dev, QMIDeviceEnrichOptions{
 		EnableATProbe:      false,
 		ATProbeTimeout:     timeout,
-		EnableQMIIMEIProbe: allowQMIIMEIProbe && allowQMIProbe,
-		QMIClientOptions:   qmiClientOptions,
+		EnableQMIIMEIProbe: allowQMIIMEIProbe && strings.TrimSpace(dev.ControlPath) != "",
+		QMIClientOptions:   qmicore.RecoveryClientOptionsForControlDevice(dev.ControlPath),
 	})
 }
 

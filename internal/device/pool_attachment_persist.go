@@ -25,6 +25,7 @@ func (p *Pool) persistDeviceAttachmentsIfChanged(cfg config.DeviceConfig) {
 	if p == nil || strings.TrimSpace(cfg.ID) == "" {
 		return
 	}
+	p.rememberRuntimeQMIAttachment(cfg)
 	stored, err := config.GetDeviceByID(cfg.ID)
 	if err != nil || stored == nil {
 		return
@@ -46,4 +47,85 @@ func (p *Pool) persistDeviceAttachmentsIfChanged(cfg config.DeviceConfig) {
 		return
 	}
 	logger.Info("已回填设备 IMEI 到配置文件", "device", cfg.ID, "imei", imei)
+}
+
+func (p *Pool) rememberRuntimeQMIAttachment(cfg config.DeviceConfig) {
+	if p == nil {
+		return
+	}
+	id := strings.TrimSpace(cfg.ID)
+	if id == "" {
+		return
+	}
+	snapshot := config.DeviceConfig{
+		ControlDevice: strings.TrimSpace(cfg.ControlDevice),
+		QMIDevice:     strings.TrimSpace(cfg.QMIDevice),
+		Interface:     strings.TrimSpace(cfg.Interface),
+		USBPath:       strings.TrimSpace(cfg.USBPath),
+		ATPort:        strings.TrimSpace(cfg.ATPort),
+		ModemIMEI:     strings.TrimSpace(cfg.ModemIMEI),
+	}
+	if snapshot.ControlDevice == "" && snapshot.Interface == "" && snapshot.USBPath == "" && snapshot.ModemIMEI == "" {
+		return
+	}
+	p.mu.Lock()
+	if p.runtimeQMIAttachments == nil {
+		p.runtimeQMIAttachments = make(map[string]config.DeviceConfig)
+	}
+	p.runtimeQMIAttachments[id] = snapshot
+	p.mu.Unlock()
+}
+
+func (p *Pool) overlayRuntimeQMIAttachment(cfg config.DeviceConfig) config.DeviceConfig {
+	if p == nil {
+		return cfg
+	}
+	id := strings.TrimSpace(cfg.ID)
+	if id == "" {
+		return cfg
+	}
+	p.mu.RLock()
+	runtime, ok := p.runtimeQMIAttachments[id]
+	p.mu.RUnlock()
+	if !ok {
+		return cfg
+	}
+	if strings.TrimSpace(cfg.ControlDevice) == "" {
+		cfg.ControlDevice = runtime.ControlDevice
+		if strings.TrimSpace(cfg.QMIDevice) == "" {
+			cfg.QMIDevice = runtime.QMIDevice
+			if cfg.QMIDevice == "" {
+				cfg.QMIDevice = runtime.ControlDevice
+			}
+		}
+	}
+	if strings.TrimSpace(cfg.Interface) == "" {
+		cfg.Interface = runtime.Interface
+	}
+	if strings.TrimSpace(cfg.USBPath) == "" {
+		cfg.USBPath = runtime.USBPath
+	}
+	if strings.TrimSpace(cfg.ATPort) == "" {
+		cfg.ATPort = runtime.ATPort
+		if strings.TrimSpace(cfg.ManagePort) == "" {
+			cfg.ManagePort = runtime.ATPort
+		}
+	}
+	if strings.TrimSpace(cfg.ModemIMEI) == "" {
+		cfg.ModemIMEI = runtime.ModemIMEI
+	}
+	return cfg
+}
+
+func (p *Pool) forgetRuntimeQMIAttachment(deviceID string) {
+	if p == nil {
+		return
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return
+	}
+	p.mu.Lock()
+	delete(p.runtimeQMIAttachments, deviceID)
+	p.mu.Unlock()
 }

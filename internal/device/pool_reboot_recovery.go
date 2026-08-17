@@ -99,9 +99,52 @@ func manualRebootRecoveryDelays() []time.Duration {
 	return []time.Duration{2 * time.Second, 3 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second}
 }
 
+// usbUnplugRecoveryDelays 给 USB 拔出留更长窗口：udev 会提前唤醒，
+// 超时轮则兜住 udev 漏事件或用户稍后插回的情况。
+func usbUnplugRecoveryDelays() []time.Duration {
+	return []time.Duration{
+		0,
+		time.Second,
+		3 * time.Second,
+		5 * time.Second,
+		10 * time.Second,
+		20 * time.Second,
+		30 * time.Second,
+		time.Minute,
+		2 * time.Minute,
+	}
+}
+
+func recoveryDelaysForReason(reason string) []time.Duration {
+	switch strings.TrimSpace(reason) {
+	case "manual_reboot":
+		return manualRebootRecoveryDelays()
+	case "qmi_transport_down", "qmi_transport_failed", "qmi_health_threshold":
+		return usbUnplugRecoveryDelays()
+	default:
+		return defaultModemRebootRecoveryOptions("", "").delays
+	}
+}
+
+func closeIfOpen(ch chan struct{}) {
+	if ch == nil {
+		return
+	}
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+}
+
 func (p *Pool) beginModemRebootRecovery(deviceID string) bool {
+	_, ok := p.startModemRebootRecovery(deviceID)
+	return ok
+}
+
+func (p *Pool) startModemRebootRecovery(deviceID string) (uint64, bool) {
 	if p == nil || deviceID == "" {
-		return false
+		return 0, false
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -109,24 +152,77 @@ func (p *Pool) beginModemRebootRecovery(deviceID string) bool {
 		p.modemRebootRecovering = make(map[string]bool)
 	}
 	if p.modemRebootRecovering[deviceID] {
-		return false
+		return 0, false
 	}
-	p.modemRebootRecovering[deviceID] = true
+	if p.modemRebootGeneration == nil {
+		p.modemRebootGeneration = make(map[string]uint64)
+	}
 	if p.modemRebootWakeups == nil {
 		p.modemRebootWakeups = make(map[string]chan struct{})
 	}
+	if p.modemRebootCancels == nil {
+		p.modemRebootCancels = make(map[string]chan struct{})
+	}
+	p.modemRebootGeneration[deviceID]++
+	generation := p.modemRebootGeneration[deviceID]
+	p.modemRebootRecovering[deviceID] = true
 	p.modemRebootWakeups[deviceID] = make(chan struct{}, 1)
-	return true
+	p.modemRebootCancels[deviceID] = make(chan struct{})
+	return generation, true
 }
 
 func (p *Pool) finishModemRebootRecovery(deviceID string) {
 	if p == nil || deviceID == "" {
 		return
 	}
+	p.mu.RLock()
+	generation := p.modemRebootGeneration[deviceID]
+	p.mu.RUnlock()
+	p.finishModemRebootRecoveryGen(deviceID, generation)
+}
+
+func (p *Pool) finishModemRebootRecoveryGen(deviceID string, generation uint64) bool {
+	if p == nil || deviceID == "" || generation == 0 {
+		return false
+	}
 	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.modemRebootGeneration[deviceID] != generation {
+		return false
+	}
+	closeIfOpen(p.modemRebootCancels[deviceID])
 	delete(p.modemRebootRecovering, deviceID)
 	delete(p.modemRebootWakeups, deviceID)
+	delete(p.modemRebootCancels, deviceID)
+	return true
+}
+
+func (p *Pool) abandonModemRebootRecovery(deviceID string) {
+	if p == nil || deviceID == "" {
+		return
+	}
+	p.mu.Lock()
+	if p.modemRebootGeneration == nil {
+		p.modemRebootGeneration = make(map[string]uint64)
+	}
+	p.modemRebootGeneration[deviceID]++
+	closeIfOpen(p.modemRebootCancels[deviceID])
+	delete(p.modemRebootRecovering, deviceID)
+	delete(p.modemRebootWakeups, deviceID)
+	delete(p.modemRebootCancels, deviceID)
 	p.mu.Unlock()
+	if p.transportRecovery != nil {
+		p.transportRecovery.Finish(deviceID)
+	}
+}
+
+func (p *Pool) modemRebootRecoveryStillCurrent(deviceID string, generation uint64) bool {
+	if p == nil || deviceID == "" || generation == 0 {
+		return false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.modemRebootRecovering[deviceID] && p.modemRebootGeneration[deviceID] == generation
 }
 
 func (p *Pool) modemRebootWakeChannel(deviceID string) <-chan struct{} {
@@ -139,11 +235,23 @@ func (p *Pool) modemRebootWakeChannel(deviceID string) <-chan struct{} {
 	return ch
 }
 
+func (p *Pool) modemRebootCancelChannel(deviceID string) <-chan struct{} {
+	if p == nil || deviceID == "" {
+		return nil
+	}
+	p.mu.RLock()
+	ch := p.modemRebootCancels[deviceID]
+	p.mu.RUnlock()
+	return ch
+}
+
 func (p *Pool) waitModemRebootRecoveryTrigger(deviceID string, delay time.Duration) {
 	ch := p.modemRebootWakeChannel(deviceID)
+	cancel := p.modemRebootCancelChannel(deviceID)
 	if delay <= 0 {
 		select {
 		case <-ch:
+		case <-cancel:
 		default:
 		}
 		return
@@ -153,6 +261,7 @@ func (p *Pool) waitModemRebootRecoveryTrigger(deviceID string, delay time.Durati
 	select {
 	case <-timer.C:
 	case <-ch:
+	case <-cancel:
 	case <-p.ctx.Done():
 	}
 }
@@ -282,8 +391,14 @@ func (p *Pool) qmiRecoveryLiveCandidates(cfg config.DeviceConfig) ([]qmiRecovery
 			}
 		}
 		if imei == "" {
-			dev, imei = resolveDiscoveredQMIDeviceFn(raw, 1600*time.Millisecond, true)
+			dev, imei = resolveDiscoveredQMIDeviceFn(raw, 3*time.Second, true)
 		}
+		logger.Debug("模组重启恢复：发现 QMI 候选",
+			"device", strings.TrimSpace(cfg.ID),
+			"imei", imei,
+			"control", dev.ControlPath,
+			"interface", dev.NetInterface,
+			"usb_path", dev.USBPath)
 		candidates = append(candidates, qmiRecoveryLiveCandidate{
 			Device: dev,
 			IMEI:   imei,
@@ -360,9 +475,7 @@ func modemRebootRecoveryShouldRebuildAfterTransportDown(worker *Worker, err erro
 
 func (p *Pool) ScheduleModemRebootRecovery(deviceID string, reason string) {
 	opts := defaultModemRebootRecoveryOptions(deviceID, reason)
-	if strings.TrimSpace(reason) == "manual_reboot" {
-		opts.delays = manualRebootRecoveryDelays()
-	}
+	opts.delays = recoveryDelaysForReason(reason)
 	go p.runModemRebootRecovery(opts)
 }
 
@@ -376,6 +489,7 @@ func (p *Pool) scheduleWorkerRecoveryWithTransportEvent(deviceID string, reason 
 		reason = "worker_recovery"
 	}
 	opts := defaultModemRebootRecoveryOptions(deviceID, reason)
+	opts.delays = recoveryDelaysForReason(reason)
 	opts.transportEvent = event
 	if event != nil && p.transportRecovery != nil {
 		if event.DeviceID == "" {
@@ -461,7 +575,8 @@ func (p *Pool) runModemRebootRecovery(opts modemRebootRecoveryOptions) {
 	if p == nil || opts.deviceID == "" {
 		return
 	}
-	if !p.beginModemRebootRecovery(opts.deviceID) {
+	generation, started := p.startModemRebootRecovery(opts.deviceID)
+	if !started {
 		if opts.transportEventObserved && p.transportRecovery != nil {
 			p.transportRecovery.Finish(opts.deviceID)
 		}
@@ -471,15 +586,14 @@ func (p *Pool) runModemRebootRecovery(opts modemRebootRecoveryOptions) {
 
 	if opts.transportEvent != nil && p.transportRecovery != nil && !opts.transportEventObserved {
 		if !p.transportRecovery.Observe(*opts.transportEvent) {
-			p.finishModemRebootRecovery(opts.deviceID)
+			p.finishModemRebootRecoveryGen(opts.deviceID, generation)
 			logger.Debug("QMI 恢复已在运行，释放 modem reboot 锁并跳过", "device", opts.deviceID, "reason", opts.reason)
 			return
 		}
 	}
 
 	defer func() {
-		p.finishModemRebootRecovery(opts.deviceID)
-		if p.transportRecovery != nil {
+		if p.finishModemRebootRecoveryGen(opts.deviceID, generation) && p.transportRecovery != nil {
 			p.transportRecovery.Finish(opts.deviceID)
 		}
 	}()
@@ -506,19 +620,29 @@ func (p *Pool) runModemRebootRecovery(opts modemRebootRecoveryOptions) {
 			logger.Debug("模组重启恢复：旧 Worker 已不存在", "device", opts.deviceID, "err", err)
 		}
 	}
-	cfg, hasCfg := modemRebootRecoveryConfig(opts.deviceID)
-
 	for round, delay := range opts.delays {
 		select {
 		case <-p.ctx.Done():
 			return
 		default:
 		}
+		if !p.modemRebootRecoveryStillCurrent(opts.deviceID, generation) {
+			return
+		}
 		p.waitModemRebootRecoveryTrigger(opts.deviceID, delay)
-		if p.ctx.Err() != nil {
+		if p.ctx.Err() != nil || !p.modemRebootRecoveryStillCurrent(opts.deviceID, generation) {
+			return
+		}
+		cfg, hasCfg := modemRebootRecoveryConfig(opts.deviceID)
+		if !hasCfg && p.GetWorker(opts.deviceID) == nil {
+			logger.Debug("模组重启恢复：设备已删除，停止恢复",
+				"device", opts.deviceID,
+				"round", round+1,
+				"reason", opts.reason)
 			return
 		}
 		if hasCfg && requiresQMICore(cfg) {
+			cfg = p.overlayRuntimeQMIAttachment(cfg)
 			decision := p.ResolveQMIRecoveryAttachment(cfg)
 			if !decision.Ready {
 				logger.Debug("模组重启恢复：QMI attachment 尚未可用，继续等待",
@@ -534,6 +658,9 @@ func (p *Pool) runModemRebootRecovery(opts modemRebootRecoveryOptions) {
 				"reason", decision.Reason,
 				"control", strings.TrimSpace(decision.Attachment.ControlPath),
 				"interface", strings.TrimSpace(decision.Attachment.NetInterface))
+		}
+		if !p.modemRebootRecoveryStillCurrent(opts.deviceID, generation) {
+			return
 		}
 		logger.Info(fmt.Sprintf("[%s] 模组重启恢复扫描 (第 %d/%d 轮)", opts.deviceID, round+1, len(opts.delays)))
 		var err error

@@ -29,6 +29,193 @@ func TestModemRebootRecoveryDefaults(t *testing.T) {
 	}
 }
 
+func TestAbandonDeviceClearsRebuildingAndAllowsRemove(t *testing.T) {
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+	p.ForceRebuildingForTest("wwan0")
+	if !p.beginModemRebootRecovery("wwan0") {
+		t.Fatal("beginModemRebootRecovery = false")
+	}
+
+	p.AbandonDevice("wwan0")
+
+	p.mu.RLock()
+	rebuilding := p.rebuilding["wwan0"]
+	recovering := p.modemRebootRecovering["wwan0"]
+	p.mu.RUnlock()
+	if rebuilding {
+		t.Fatal("rebuilding still set after AbandonDevice")
+	}
+	if recovering {
+		t.Fatal("modem reboot recovery still running after AbandonDevice")
+	}
+	if err := p.RemoveWorker("wwan0"); err == nil || err.Error() != "设备未找到" {
+		t.Fatalf("RemoveWorker after abandon = %v, want 设备未找到", err)
+	}
+}
+
+func TestUSBUnplugRecoveryKeepsWaitingAfterInitialWindow(t *testing.T) {
+	for _, reason := range []string{"qmi_transport_down", "qmi_transport_failed", "qmi_health_threshold"} {
+		delays := recoveryDelaysForReason(reason)
+		if len(delays) < 8 {
+			t.Fatalf("%s delays = %v, want extra long-tail rounds", reason, delays)
+		}
+		if delays[len(delays)-1] < 2*time.Minute {
+			t.Fatalf("%s last delay = %s, want at least 2m", reason, delays[len(delays)-1])
+		}
+	}
+}
+
+func TestAbandonDeviceStopsRecoveryLoopFromRescanning(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("devices:\n- id: wwan0\n  device_backend: qmi\n  modem_imei: \"866069051900973\"\n"), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := config.InitGlobalManager(configPath); err != nil {
+		t.Fatalf("InitGlobalManager() error = %v", err)
+	}
+
+	origDiscover := discoverQMIDevicesFn
+	discoverQMIDevicesFn = func() ([]QMIDevice, error) {
+		return []QMIDevice{{ControlPath: "/dev/cdc-wdm0", NetInterface: "wwan0"}}, nil
+	}
+	t.Cleanup(func() { discoverQMIDevicesFn = origDiscover })
+
+	origResolve := resolveDiscoveredQMIDeviceFn
+	resolveDiscoveredQMIDeviceFn = func(dev QMIDevice, timeout time.Duration, allowIMEIProbe bool) (QMIDevice, string) {
+		return dev, "866069051900973"
+	}
+	t.Cleanup(func() { resolveDiscoveredQMIDeviceFn = origResolve })
+
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+
+	scanned := make(chan struct{}, 8)
+	p.rescanAndReconnectForTest = func() error {
+		scanned <- struct{}{}
+		return nil
+	}
+
+	done := make(chan struct{})
+	go func() {
+		p.runModemRebootRecovery(modemRebootRecoveryOptions{
+			deviceID:         "wwan0",
+			reason:           "qmi_transport_down",
+			delays:           []time.Duration{0, time.Hour},
+			removeBeforeScan: false,
+			restoreVoWiFi:    false,
+		})
+		close(done)
+	}()
+
+	select {
+	case <-scanned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first recovery scan did not run")
+	}
+
+	p.AbandonDevice("wwan0")
+
+	select {
+	case <-scanned:
+		t.Fatal("recovery scanned again after AbandonDevice")
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("recovery loop did not exit after AbandonDevice")
+	}
+
+	if !p.beginModemRebootRecovery("wwan0") {
+		t.Fatal("new recovery should start after abandon")
+	}
+	p.finishModemRebootRecovery("wwan0")
+}
+
+func TestModemRebootRecoveryOverlaysRuntimeAttachmentWhenDiskHasNoPaths(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("devices:\n- id: wwan0\n  device_backend: qmi\n  modem_imei: \"866069051900973\"\n"), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := config.InitGlobalManager(configPath); err != nil {
+		t.Fatalf("InitGlobalManager() error = %v", err)
+	}
+
+	origDiscover := discoverQMIDevicesFn
+	discoverQMIDevicesFn = func() ([]QMIDevice, error) {
+		return []QMIDevice{{ControlPath: "/dev/cdc-wdm0", NetInterface: "wwan0"}}, nil
+	}
+	t.Cleanup(func() { discoverQMIDevicesFn = origDiscover })
+
+	origResolve := resolveDiscoveredQMIDeviceFn
+	resolveDiscoveredQMIDeviceFn = func(dev QMIDevice, timeout time.Duration, allowIMEIProbe bool) (QMIDevice, string) {
+		return dev, ""
+	}
+	t.Cleanup(func() { resolveDiscoveredQMIDeviceFn = origResolve })
+
+	origStat := qmiControlStatFn
+	qmiControlStatFn = func(path string) (os.FileInfo, error) {
+		return nil, nil
+	}
+	t.Cleanup(func() { qmiControlStatFn = origStat })
+
+	p := NewPool(&config.Config{})
+	p.rememberRuntimeQMIAttachment(config.DeviceConfig{
+		ID:            "wwan0",
+		ControlDevice: "/dev/cdc-wdm0",
+		Interface:     "wwan0",
+	})
+	called := false
+	p.rescanAndReconnectForTest = func() error {
+		called = true
+		return nil
+	}
+
+	p.runModemRebootRecovery(modemRebootRecoveryOptions{
+		deviceID:         "wwan0",
+		reason:           "qmi_transport_down",
+		delays:           []time.Duration{0},
+		removeBeforeScan: false,
+		restoreVoWiFi:    false,
+	})
+
+	if !called {
+		t.Fatal("RescanAndReconnect was not called; runtime path overlay should have unblocked recovery")
+	}
+}
+
+func TestModemRebootRecoveryDoesNotGateATDeviceOnOverlaidQMIPaths(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("devices:\n- id: dev-at\n  device_backend: at\n"), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := config.InitGlobalManager(configPath); err != nil {
+		t.Fatalf("InitGlobalManager() error = %v", err)
+	}
+
+	p := NewPool(&config.Config{})
+	p.rememberRuntimeQMIAttachment(config.DeviceConfig{
+		ID:            "dev-at",
+		ControlDevice: "/dev/cdc-wdm0",
+		Interface:     "wwan0",
+	})
+	called := false
+	p.rescanAndReconnectForTest = func() error {
+		called = true
+		return nil
+	}
+
+	p.runModemRebootRecovery(modemRebootRecoveryOptions{
+		deviceID:         "dev-at",
+		reason:           "worker_recovery",
+		delays:           []time.Duration{0},
+		removeBeforeScan: false,
+		restoreVoWiFi:    false,
+	})
+
+	if !called {
+		t.Fatal("AT recovery waited on QMI attachment after runtime path overlay")
+	}
+}
+
 func TestDefaultModemRebootRecoveryStartsWithImmediateAttempt(t *testing.T) {
 	opts := defaultModemRebootRecoveryOptions("dev-qmi", "qmi_transport_failed")
 	if len(opts.delays) == 0 {

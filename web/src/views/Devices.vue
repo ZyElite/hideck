@@ -22,6 +22,7 @@ import { useEventStream } from '../composables/useEventStream'
 import { useDevicesStore } from '../stores/devices'
 import { debugCollector } from '../debug/collector'
 import { isManagedDeviceBackendSwitch, isWwanQmiControlPath } from '../utils/deviceBackend'
+import { firstRemainingDeviceId, isPCSCServiceUnavailable, routeDeviceStillManaged, suggestedAddDeviceId } from '../utils/deviceSelection'
 import { isControlOnline, isRecoveryPhase } from '../utils/deviceLifecycle'
 import { createDeviceRequestScope } from '../utils/deviceRequestScope'
 import { getMccMncIndex, lookupMccMncRow, mccMncCountryCode, type MccMncRow } from '../utils/mcc-mnc'
@@ -213,7 +214,8 @@ function applyRouteSelection(): boolean {
   }
 
   const deviceID = firstQueryValue(route.query.device).trim()
-  if (!deviceID || selectedId.value === deviceID) {
+  const knownIds = devices.value.map((item) => item.id)
+  if (!routeDeviceStillManaged(deviceID, selectedId.value, knownIds)) {
     return false
   }
 
@@ -574,6 +576,12 @@ async function fetchSelectedDetail(id: string): Promise<LoadOutcome> {
 
   if (!result.ok) {
     if (result.error.code === 'ERR_CANCELED') return { status: 'stale' }
+    if (result.error.status === 404) {
+      clearSelectedDetail()
+      detailError.value = null
+      if (selectedId.value === deviceID) selectedId.value = ''
+      return { status: 'ok' }
+    }
     clearSelectedDetail()
     detailError.value = result.error
     return { status: 'failed', error: result.error }
@@ -581,10 +589,10 @@ async function fetchSelectedDetail(id: string): Promise<LoadOutcome> {
 
   const detail = result.data as DeviceOverviewItem | null
   if (!detail) {
-    const error = emptyResponseError('设备详情', `/devices/${deviceID}/overview`)
     clearSelectedDetail()
-    detailError.value = error
-    return { status: 'failed', error }
+    detailError.value = null
+    if (selectedId.value === deviceID) selectedId.value = ''
+    return { status: 'ok' }
   }
 
   selectedDetail.value = resolveDetailForDisplay(detail)
@@ -711,16 +719,12 @@ async function fetchAll() {
     loadLastOkAt.value = Date.now()
     applyRouteSelection()
 
-    if (!hasAutoSelected.value && !selectedId.value && devices.value.length) {
-      selectedId.value = devices.value[0].id
-      hasAutoSelected.value = true
+    const nextSelected = firstRemainingDeviceId(devices.value.map((item) => item.id), selectedId.value)
+    if (nextSelected !== selectedId.value) {
+      selectedId.value = nextSelected
     }
-    // 移除强行重置 selectedId 的逻辑，因为这会在轮询期间当设备短暂拿不到时，把界面强制拉回到第一项。
-    const selectedStillExists = selectedId.value
-      ? devices.value.some(d => d.id === selectedId.value)
-      : false
-    if (selectedId.value && !selectedStillExists && devices.value.length === 0) {
-      selectedId.value = ''
+    if (selectedId.value) {
+      hasAutoSelected.value = true
     }
     
     // 如果之前没有选中的id或者这次选中改变了，则加载详情
@@ -1043,6 +1047,8 @@ async function deleteDevice() {
     const result = await devicesService.deleteManaged(id)
     if (!result.ok) throw new Error(result.error.message || '删除失败')
     ElMessage.success('设备已删除')
+    if (detailAbort) detailAbort.abort()
+    detailError.value = null
     clearLiveRadioFallbackTimer()
     selectedDetail.value = null
     updateTrafficSpeedFromSelected()
@@ -1052,6 +1058,9 @@ async function deleteDevice() {
     editDirty.value = false
     selectedId.value = ''
     hasAutoSelected.value = false
+    const query = { ...route.query }
+    delete query.device
+    await router.replace({ name: 'Devices', query })
     await fetchAll()
   } catch (e: unknown) {
     const err = toAppError(e)
@@ -1084,7 +1093,7 @@ async function refreshDiscoveredForAdd() {
     const result = await devicesStore.fetchDiscovered()
     if (result.ok) {
       discovered.value = Array.isArray(storeDiscovered.value) ? storeDiscovered.value : []
-      if (pcscDiscoveryError.value) {
+      if (pcscDiscoveryError.value && !isPCSCServiceUnavailable(pcscDiscoveryError.value)) {
         ElMessage.warning(`PC/SC 读卡器探测失败: ${pcscDiscoveryError.value}`)
       }
     } else {
@@ -1099,6 +1108,9 @@ async function refreshDiscoveredForAdd() {
 
 function applyDiscoveredToAddConfig(d: DiscoveredDevice | null) {
   if (!d) return
+  if (!String(addConfig.value.id || '').trim()) {
+    addConfig.value.id = suggestedAddDeviceId(d)
+  }
   addConfig.value.interface = d.net_interface || ''
   addConfig.value.at_port = d.at_port || ''
   addConfig.value.control_device = d.control_path || ''

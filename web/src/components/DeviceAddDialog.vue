@@ -48,7 +48,10 @@ function discoveryModeText(d: DiscoveredDevice | null | undefined): string {
   return 'UNKNOWN'
 }
 
-const isQMIBackendOnly = computed(() => isWwanQmiControlPath(props.addSelected?.control_path || props.addConfig?.control_device))
+const isQMIBackendOnly = computed(() => {
+  const control = props.addSelected?.control_path || props.addConfig?.control_device
+  return isWwanQmiControlPath(control) || (isQmiDiscovery(props.addSelected) && Boolean(String(control || '').trim()))
+})
 const isMBIMBackendOnly = computed(
   () => String(props.addSelected?.mode || '').toLowerCase() === 'mbim'
 )
@@ -94,33 +97,32 @@ watch(
     @update:model-value="handleDialogModelUpdate"
     title="添加设备配置"
     width="min(720px, 92vw)"
-    class="glass-modal"
+    class="glass-modal add-device-dialog"
   >
-    <div class="text-sm text-gray-500 mb-3">选择一个“未配置”的设备，系统将自动填充 AT 端口与识别信息。</div>
-    <div class="max-h-[260px] overflow-auto space-y-2 pr-1">
-      <div v-if="discovering" class="py-10 flex flex-col items-center justify-center text-gray-400">
-        <el-icon class="is-loading mb-3" size="32"><ArrowSync24Regular /></el-icon>
-        <div class="text-xs">正在探测设备...</div>
+    <p class="add-device-hint">选择一个未配置设备，系统会填入 ID、端口和识别信息。</p>
+    <div class="add-device-list">
+      <div v-if="discovering" class="add-device-empty">
+        <el-icon class="is-loading" size="28"><ArrowSync24Regular /></el-icon>
+        <span>正在探测设备...</span>
       </div>
       <template v-else>
         <button
           v-for="d in unconfiguredDiscovered"
           :key="discoveryIdentity(d)"
           type="button"
-          class="w-full text-left p-3 rounded-xl border"
-          :class="[
-            d.degraded ? 'border-amber-200 bg-amber-50 cursor-not-allowed opacity-85' : '',
-            !d.degraded && discoveryIdentity(addSelected) === discoveryIdentity(d) ? 'border-indigo-300 bg-indigo-50' : '',
-            !d.degraded && discoveryIdentity(addSelected) !== discoveryIdentity(d) ? 'border-gray-200 hover:bg-gray-50' : ''
-          ]"
+          class="add-device-option"
+          :class="{
+            'is-selected': discoveryIdentity(addSelected) === discoveryIdentity(d),
+            'is-degraded': d.degraded
+          }"
           :aria-disabled="!!d.degraded"
           @click="emit('select-device', d)"
         >
-          <div class="font-bold text-gray-800 flex items-center gap-2">
-            <span>{{ d.reader_name || d.net_interface || '--' }} · {{ d.driver_name || '--' }}</span>
+          <div class="add-device-option-title">
+            <strong>{{ d.reader_name || d.net_interface || '--' }} · {{ d.driver_name || '--' }}</strong>
             <el-tag size="small" :type="isQmiDiscovery(d) ? 'success' : 'warning'">{{ discoveryModeText(d) }}</el-tag>
           </div>
-          <div class="text-xs text-gray-500 mt-0.5 truncate">
+          <div class="add-device-option-meta">
             <template v-if="d.hardware_kind === 'pcsc'">
               卡片: {{ d.card_present ? '已插入' : '未插入' }} · ATR: {{ d.atr || '--' }} · USB: {{ d.usb_path || '--' }}
             </template>
@@ -128,91 +130,75 @@ watch(
               {{ d.control_path }} · AT: {{ d.at_port || '--' }} · IMEI: {{ d.imei || '--' }} · USB: {{ d.usb_path || '--' }}
             </template>
           </div>
-          <div v-if="d.degraded" class="text-xs text-amber-700 mt-1">
-            {{ d.hardware_kind === 'pcsc' ? '读卡器内没有可用卡片，暂不可添加。' : '无法读取 IMEI（控制口可能挂死），暂不可添加。' }}
+          <div v-if="d.degraded" class="add-device-option-warn">
+            {{ d.hardware_kind === 'pcsc' ? '读卡器内没有可用卡片，暂不可添加。' : '无法读取 IMEI（控制口可能挂死），请稍后重试。' }}
           </div>
         </button>
-        <div v-if="unconfiguredDiscovered.length === 0" class="text-sm text-gray-500 p-3">
-          暂无可添加设备（或系统未发现新的模组）
+        <div v-if="unconfiguredDiscovered.length === 0" class="add-device-empty">
+          暂无可添加设备
         </div>
       </template>
     </div>
 
-    <div v-if="addSelected" class="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
-      <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">选定设备状态</div>
-      <div class="flex items-center gap-4 text-sm">
-        <div class="flex items-center gap-2">
-          <span class="text-gray-600">模式:</span>
-          <el-tag size="small" :type="isQmiDiscovery(addSelected) ? 'success' : 'warning'">{{ discoveryModeText(addSelected) }}</el-tag>
-          <el-tag v-if="isQMIBackendOnly" size="small" type="success">仅 QMI 后端</el-tag>
-          <el-tag v-if="isMBIMBackendOnly" size="small" type="success">仅 MBIM 后端</el-tag>
-          <el-tag v-if="isPCSCBackendOnly" size="small" type="success">读卡器模式</el-tag>
-        </div>
-      </div>
-      <div v-if="isQMIBackendOnly" class="text-xs text-emerald-700">
-        此类 WWAN QMI 设备运行后端固定为 QMI；AT 口仍会保留给 AT 终端。
-      </div>
-    </div>
-
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
-      <div class="space-y-1">
-        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">ID</label>
-        <el-input v-model="addConfig.id" placeholder="例如 ec20_3" />
-      </div>
-      <div v-if="isPCSCBackendOnly" class="space-y-1">
-        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">SIM PIN 环境变量名</label>
+    <div class="add-device-grid">
+      <label class="add-device-field">
+        <span>ID</span>
+        <el-input v-model="addConfig.id" placeholder="例如 wwan0" />
+      </label>
+      <label v-if="isPCSCBackendOnly" class="add-device-field">
+        <span>SIM PIN 环境变量名</span>
         <el-input v-model="addConfig.sim_pin_env" placeholder="例如 HIDECK_SIM_PIN_READER1" />
-      </div>
-      <div class="space-y-1">
-        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">名称</label>
+      </label>
+      <label class="add-device-field">
+        <span>名称</span>
         <el-input v-model="addConfig.name" placeholder="显示名称（可选）" />
-      </div>
-      <div v-if="!isPCSCBackendOnly" class="space-y-1">
-        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">IMEI 绑定</label>
-        <el-input v-model="addConfig.modem_imei" disabled placeholder="自动识别（从发现设备填充）" />
-      </div>
-      <div class="space-y-1">
-        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">USB 路径</label>
+      </label>
+      <label v-if="!isPCSCBackendOnly" class="add-device-field">
+        <span>IMEI 绑定</span>
+        <el-input v-model="addConfig.modem_imei" disabled placeholder="选中设备后自动填入" />
+      </label>
+      <label class="add-device-field">
+        <span>USB 路径</span>
         <el-input v-model="addConfig.usb_path" disabled />
-      </div>
-      <div v-if="!isPCSCBackendOnly" class="space-y-1">
-        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">网卡接口</label>
+      </label>
+      <label v-if="!isPCSCBackendOnly" class="add-device-field">
+        <span>网卡接口</span>
         <el-input v-model="addConfig.interface" disabled />
-      </div>
-      <div v-if="!isPCSCBackendOnly" class="space-y-1">
-        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">AT 端口</label>
+      </label>
+      <label v-if="!isPCSCBackendOnly" class="add-device-field">
+        <span>AT 端口</span>
         <el-input v-model="addConfig.at_port" disabled />
-      </div>
-      <div class="space-y-1">
-        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">控制设备</label>
+      </label>
+      <label class="add-device-field">
+        <span>控制设备</span>
         <el-input v-model="addConfig.control_device" disabled />
-      </div>
-      <div class="flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-gray-50">
-        <div>
-          <div class="text-sm font-bold text-gray-800">设备后端模式</div>
-          <div class="text-xs text-gray-500">
+      </label>
+      <div class="add-device-field add-device-backend">
+        <span>设备后端模式</span>
+        <div class="add-device-backend-row">
+          <small>
             {{ isPCSCBackendOnly ? '固定 PC/SC，无蜂窝射频'
                : (isQMIBackendOnly ? '固定 QMI，AT 口仅用于终端'
                : (isMBIMBackendOnly ? '固定 MBIM，AT 口仅用于终端'
                : 'AT=串口 / QMI=纯 QMI')) }}
-          </div>
+          </small>
+          <el-select
+            v-model="addConfig.device_backend"
+            style="width: 110px"
+            placeholder="AT"
+            :disabled="isQMIBackendOnly || isMBIMBackendOnly || isPCSCBackendOnly"
+          >
+            <el-option v-if="!isMBIMBackendOnly && !isPCSCBackendOnly" label="AT" value="at" :disabled="isQMIBackendOnly" />
+            <el-option v-if="!isMBIMBackendOnly && !isPCSCBackendOnly" label="QMI" value="qmi" :disabled="!addConfig.control_device" />
+            <el-option v-if="isMBIMBackendOnly" label="MBIM" value="mbim" />
+            <el-option v-if="isPCSCBackendOnly" label="PC/SC" value="pcsc" />
+          </el-select>
         </div>
-        <el-select
-          v-model="addConfig.device_backend"
-          style="width: 110px"
-          placeholder="AT"
-          :disabled="isQMIBackendOnly || isMBIMBackendOnly || isPCSCBackendOnly"
-        >
-          <el-option v-if="!isMBIMBackendOnly && !isPCSCBackendOnly" label="AT" value="at" :disabled="isQMIBackendOnly" />
-          <el-option v-if="!isMBIMBackendOnly && !isPCSCBackendOnly" label="QMI" value="qmi" :disabled="!addConfig.control_device" />
-          <el-option v-if="isMBIMBackendOnly" label="MBIM" value="mbim" />
-          <el-option v-if="isPCSCBackendOnly" label="PC/SC" value="pcsc" />
-        </el-select>
       </div>
     </div>
 
     <template #footer>
-      <div class="flex justify-end gap-2">
+      <div class="add-device-footer">
         <el-button @click="closeDialog" class="ui-button-plain">取消</el-button>
         <el-button type="primary" :loading="addSaving" @click="emit('save')" class="!border-0">
           <el-icon><Save24Regular /></el-icon>
@@ -222,3 +208,127 @@ watch(
     </template>
   </el-dialog>
 </template>
+
+<style scoped>
+.add-device-hint {
+  margin: 0 0 12px;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-body-sm);
+}
+
+.add-device-list {
+  max-height: 220px;
+  padding-right: 2px;
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+}
+
+.add-device-empty {
+  min-height: 88px;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-body-sm);
+  text-align: center;
+}
+
+.add-device-option {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-muted);
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.add-device-option:hover {
+  border-color: color-mix(in srgb, var(--ui-primary) 38%, var(--ui-border));
+}
+
+.add-device-option.is-selected {
+  border-color: color-mix(in srgb, var(--ui-primary) 58%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-primary) 12%, var(--ui-surface));
+}
+
+.add-device-option.is-degraded {
+  opacity: .78;
+  cursor: not-allowed;
+}
+
+.add-device-option-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-device-option-title strong {
+  min-width: 0;
+  font-size: var(--ui-font-body);
+  font-weight: 650;
+}
+
+.add-device-option-meta,
+.add-device-option-warn {
+  margin-top: 4px;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-device-option-warn {
+  color: var(--ui-warning);
+  white-space: normal;
+}
+
+.add-device-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.add-device-field {
+  display: grid;
+  gap: 6px;
+}
+
+.add-device-field > span {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-caption);
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.add-device-backend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.add-device-backend-row small {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-caption);
+  line-height: 1.4;
+}
+
+.add-device-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 639px) {
+  .add-device-grid,
+  .add-device-backend-row {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+}
+</style>
