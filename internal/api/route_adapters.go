@@ -103,6 +103,22 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 			}
 		}
 		s.pool.SetWorkerVoWiFiPolicy(deviceID, true)
+		if s.pool.IsVoWiFiActive(deviceID) && (req.Mode != nil || req.DataStrategy != nil) {
+			if err := s.pool.RestartVoWiFi(deviceID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status":  "error",
+					"message": "切换通话模式失败: " + err.Error(),
+					"device":  deviceID,
+				})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "ok",
+				"message": "通话模式已切换",
+				"device":  deviceID,
+			})
+			return
+		}
 		s.handleVoWiFiEnable(c)
 		return
 	}

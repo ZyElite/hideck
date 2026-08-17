@@ -28,7 +28,9 @@ const mirror = computed<PolicyMirror | null>(() =>
     ? {
         network_enabled: props.policy.network_enabled,
         vowifi_enabled: props.policy.vowifi_enabled,
-        airplane_enabled: props.policy.airplane_enabled
+        airplane_enabled: props.policy.airplane_enabled,
+        phone_mode: props.policy.phone_mode ?? 'wifi',
+        data_strategy: props.policy.data_strategy ?? 'on_demand'
       }
     : null
 )
@@ -55,7 +57,11 @@ const {
   airplaneFailed,
   onNetworkToggle,
   onVoWiFiToggle,
-  onAirplaneToggle
+  onAirplaneToggle,
+  phoneModePending,
+  phoneModeFailed,
+  onPhoneModeChange,
+  onDataStrategyChange
 } = useCardPolicyToggles(mirror, {
   async applyNetwork(enabled) {
     if (!props.deviceId) return { ok: false }
@@ -64,11 +70,29 @@ const {
       : await devicesService.stopNetwork(props.deviceId)
     return { ok: r.ok }
   },
-  async applyVoWiFi(enabled) {
+  async applyVoWiFi(enabled, next) {
     if (!props.deviceId) return { ok: false }
     const r = enabled
-      ? await devicesService.enableVoWiFi(props.deviceId)
+      ? await devicesService.enableVoWiFi(props.deviceId, {
+          mode: next.phone_mode,
+          data_strategy: next.data_strategy
+        })
       : await devicesService.disableVoWiFi(props.deviceId)
+    return { ok: r.ok }
+  },
+  async applyPhoneMode(next) {
+    if (!props.deviceId || !props.iccid) return { ok: false }
+    if (next.vowifi_enabled) {
+      const r = await devicesService.enableVoWiFi(props.deviceId, {
+        mode: next.phone_mode,
+        data_strategy: next.data_strategy
+      })
+      return { ok: r.ok }
+    }
+    const r = await cardsService.putPolicy(props.iccid, {
+      phone_mode: next.phone_mode,
+      data_strategy: next.data_strategy
+    })
     return { ok: r.ok }
   },
   async applyAirplane(enabled) {
@@ -98,7 +122,7 @@ const policyStatus = computed(() => {
 
 const policyProjection = computed(() => [
   `网络 ${local.value.network_enabled ? '开启' : '关闭'}`,
-  `VoWiFi ${local.value.vowifi_enabled ? '开启' : '关闭'}`,
+  `通话 ${local.value.phone_mode === 'cellular' ? '蜂窝数据' : 'WiFi calling'}${local.value.vowifi_enabled ? '开启' : '关闭'}`,
   `飞行模式 ${local.value.airplane_enabled ? '开启' : '关闭'}`,
   `IP ${ipVersion.value.toUpperCase()}`
 ].join(' · '))
@@ -201,7 +225,7 @@ const policyProjection = computed(() => [
           class="policy-setting-row"
           :class="{ 'is-active': local.vowifi_enabled }"
         >
-          <span><strong>VoWiFi</strong><small>启用后进入飞行模式，不支持国内运营商</small></span>
+          <span><strong>软件电话</strong><small>开启后可用浏览器/命令拨号，WiFi calling 会关射频</small></span>
             <div class="flex items-center gap-2">
               <span v-if="vowifiFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
               <el-icon v-if="vowifiPending" class="animate-spin text-gray-400"><Loading /></el-icon>
@@ -210,6 +234,38 @@ const policyProjection = computed(() => [
                 :disabled="!canToggle || vowifiPending"
                 @change="onVoWiFiToggle"
               />
+          </div>
+        </div>
+
+        <div class="policy-setting-row" :class="{ 'is-active': local.phone_mode === 'cellular' }">
+          <span><strong>通话方式</strong><small>WiFi calling 走 WiFi；蜂窝数据走 SIM 数据流量</small></span>
+          <div class="policy-field-control">
+            <el-select
+              :model-value="local.phone_mode ?? 'wifi'"
+              class="w-full"
+              :disabled="!canToggle || phoneModePending"
+              @change="onPhoneModeChange"
+            >
+              <el-option label="WiFi calling" value="wifi" />
+              <el-option label="蜂窝数据" value="cellular" />
+            </el-select>
+            <small v-if="phoneModePending">正在切换...</small>
+            <div v-if="phoneModeFailed" class="text-xs text-orange-500 dark:text-orange-400">切换未生效</div>
+          </div>
+        </div>
+
+        <div v-if="(local.phone_mode ?? 'wifi') === 'cellular'" class="policy-setting-row">
+          <span><strong>蜂窝数据策略</strong><small>仅打电话时开：挂断后关数据，待机不能被叫</small></span>
+          <div class="policy-field-control">
+            <el-select
+              :model-value="local.data_strategy ?? 'on_demand'"
+              class="w-full"
+              :disabled="!canToggle || phoneModePending"
+              @change="onDataStrategyChange"
+            >
+              <el-option label="仅打电话时开启" value="on_demand" />
+              <el-option label="长时间开启" value="always" />
+            </el-select>
           </div>
         </div>
 

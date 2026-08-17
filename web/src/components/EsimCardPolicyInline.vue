@@ -37,7 +37,9 @@ const mirror = computed<PolicyMirror | null>(() =>
     ? {
         network_enabled: policy.value.network_enabled,
         vowifi_enabled: policy.value.vowifi_enabled,
-        airplane_enabled: policy.value.airplane_enabled
+        airplane_enabled: policy.value.airplane_enabled,
+        phone_mode: policy.value.phone_mode ?? 'wifi',
+        data_strategy: policy.value.data_strategy ?? 'on_demand'
       }
     : null
 )
@@ -61,7 +63,9 @@ async function putTriple(next: PolicyMirror): Promise<{ ok: boolean }> {
   const r = await cardsService.putPolicy(props.iccid, {
     network_enabled: next.network_enabled,
     vowifi_enabled: next.vowifi_enabled,
-    airplane_enabled: next.airplane_enabled
+    airplane_enabled: next.airplane_enabled,
+    phone_mode: next.phone_mode,
+    data_strategy: next.data_strategy
   })
   return { ok: r.ok }
 }
@@ -76,7 +80,11 @@ const {
   airplaneFailed,
   onNetworkToggle,
   onVoWiFiToggle,
-  onAirplaneToggle
+  onAirplaneToggle,
+  phoneModePending,
+  phoneModeFailed,
+  onPhoneModeChange,
+  onDataStrategyChange
 } = useCardPolicyToggles(mirror, {
   async applyNetwork(enabled, next) {
     if (mode.value === 'stored') return putTriple(next)
@@ -91,9 +99,23 @@ const {
   async applyVoWiFi(enabled, next) {
     if (mode.value === 'stored') return putTriple(next)
     const r = enabled
-      ? await devicesService.enableVoWiFi(props.deviceId)
+      ? await devicesService.enableVoWiFi(props.deviceId, {
+          mode: next.phone_mode,
+          data_strategy: next.data_strategy
+        })
       : await devicesService.disableVoWiFi(props.deviceId)
     return { ok: r.ok }
+  },
+  async applyPhoneMode(next) {
+    if (mode.value === 'stored') return putTriple(next)
+    if (next.vowifi_enabled) {
+      const r = await devicesService.enableVoWiFi(props.deviceId, {
+        mode: next.phone_mode,
+        data_strategy: next.data_strategy
+      })
+      return { ok: r.ok }
+    }
+    return putTriple(next)
   },
   async applyAirplane(enabled, next) {
     if (mode.value === 'stored') return putTriple(next)
@@ -131,9 +153,9 @@ const {
             />
           </div>
         </div>
-        <!-- VoWiFi -->
+        <!-- 软件电话 -->
         <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
-          <span class="text-sm text-gray-700 dark:text-gray-200">VoWiFi</span>
+          <span class="text-sm text-gray-700 dark:text-gray-200">软件电话</span>
           <div class="flex items-center gap-2">
             <span v-if="vowifiFailed" class="text-xs text-orange-500">未生效</span>
             <el-icon v-if="vowifiPending" class="animate-spin text-gray-400"><Loading /></el-icon>
@@ -158,6 +180,38 @@ const {
           </div>
         </div>
       </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
+          <span class="text-sm text-gray-700 dark:text-gray-200">通话方式</span>
+          <el-select
+            :model-value="local.phone_mode ?? 'wifi'"
+            size="small"
+            style="width: 140px"
+            :disabled="phoneModePending"
+            @change="onPhoneModeChange"
+          >
+            <el-option label="WiFi calling" value="wifi" />
+            <el-option label="蜂窝数据" value="cellular" />
+          </el-select>
+        </div>
+        <div
+          v-if="(local.phone_mode ?? 'wifi') === 'cellular'"
+          class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5"
+        >
+          <span class="text-sm text-gray-700 dark:text-gray-200">数据策略</span>
+          <el-select
+            :model-value="local.data_strategy ?? 'on_demand'"
+            size="small"
+            style="width: 160px"
+            :disabled="phoneModePending"
+            @change="onDataStrategyChange"
+          >
+            <el-option label="仅打电话时开启" value="on_demand" />
+            <el-option label="长时间开启" value="always" />
+          </el-select>
+        </div>
+      </div>
+      <div v-if="phoneModeFailed" class="text-xs text-orange-500">通话方式未生效</div>
     </template>
   </div>
 </template>

@@ -16,6 +16,7 @@ import PageHeader from '../components/PageHeader.vue'
 import PhoneCallHistory from '../components/PhoneCallHistory.vue'
 import PhoneDialPad from '../components/PhoneDialPad.vue'
 import type { PhoneCall, PhoneDevice } from '../services/phone'
+import { devicesService } from '../services/devices'
 import { usePhoneStore } from '../stores/phone'
 import { formatCallDuration, phoneCallStatusLabel, phoneErrorMessage } from '../utils/phone'
 
@@ -61,10 +62,57 @@ function isDeviceBusy(device: PhoneDevice) {
   return phone.calls.some((item) => item.device_id === device.id)
 }
 
+function deviceModeLabel(device?: PhoneDevice) {
+  return device?.phone_mode === 'cellular' ? '蜂窝数据' : 'WiFi calling'
+}
+
 function deviceStatus(device?: PhoneDevice) {
   if (!device) return '未选择设备'
   if (isDeviceBusy(device)) return '通话占用'
-  return isDeviceReady(device) ? 'IMS 语音就绪' : 'IMS 语音未就绪'
+  const mode = deviceModeLabel(device)
+  return isDeviceReady(device) ? `${mode} · 就绪` : `${mode} · 未就绪`
+}
+
+const selectedMode = computed(() => selected.value?.phone_mode === 'cellular' ? 'cellular' : 'wifi')
+const selectedStrategy = computed(() => selected.value?.data_strategy === 'always' ? 'always' : 'on_demand')
+const modePending = ref(false)
+
+async function changePhoneMode(mode: string) {
+  if (!selectedDevice.value || !!call.value || modePending.value) return
+  modePending.value = true
+  phone.clearError()
+  try {
+    const result = await devicesService.enableVoWiFi(selectedDevice.value, {
+      mode,
+      data_strategy: selectedStrategy.value
+    })
+    if (!result.ok) throw new Error(result.error?.message || '切换通话方式失败')
+    await phone.refresh()
+    ElMessage.success(mode === 'cellular' ? '已切换到蜂窝数据打电话' : '已切换到 WiFi calling')
+  } catch (error) {
+    phone.error = phoneErrorMessage(error, '切换通话方式失败')
+  } finally {
+    modePending.value = false
+  }
+}
+
+async function changeDataStrategy(strategy: string) {
+  if (!selectedDevice.value || !!call.value || modePending.value) return
+  modePending.value = true
+  phone.clearError()
+  try {
+    const result = await devicesService.enableVoWiFi(selectedDevice.value, {
+      mode: 'cellular',
+      data_strategy: strategy
+    })
+    if (!result.ok) throw new Error(result.error?.message || '切换数据策略失败')
+    await phone.refresh()
+    ElMessage.success(strategy === 'always' ? '已改为长时间开数据' : '已改为仅打电话时开数据')
+  } catch (error) {
+    phone.error = phoneErrorMessage(error, '切换数据策略失败')
+  } finally {
+    modePending.value = false
+  }
 }
 
 function appendDigit(digit: string) {
@@ -213,9 +261,31 @@ async function sendDTMF(digit: string) {
                 :key="device.id"
                 :label="`${device.name || device.id} · ${deviceStatus(device)}`"
                 :value="device.id"
-                :disabled="!isDeviceReady(device) || isDeviceBusy(device)"
+                :disabled="isDeviceBusy(device)"
               />
             </el-select>
+            <div v-if="selectedDevice" class="phone-mode-bar">
+              <el-radio-group
+                :model-value="selectedMode"
+                size="small"
+                :disabled="!!call || modePending"
+                @change="(val: string | number | boolean | undefined) => { if (typeof val === 'string') void changePhoneMode(val) }"
+              >
+                <el-radio-button value="wifi">WiFi calling</el-radio-button>
+                <el-radio-button value="cellular">蜂窝数据</el-radio-button>
+              </el-radio-group>
+              <el-select
+                v-if="selectedMode === 'cellular'"
+                :model-value="selectedStrategy"
+                size="small"
+                style="width: 160px"
+                :disabled="!!call || modePending"
+                @change="(val: string | number | boolean | undefined) => { if (typeof val === 'string') void changeDataStrategy(val) }"
+              >
+                <el-option label="仅打电话时开" value="on_demand" />
+                <el-option label="长时间开启" value="always" />
+              </el-select>
+            </div>
           </div>
         </header>
 

@@ -98,6 +98,8 @@ func (s *Server) handlePutCardPolicy(c *gin.Context) {
 		AirplaneEnabled *bool   `json:"airplane_enabled"`
 		IPVersion       *string `json:"ip_version"`
 		APN             *string `json:"apn"`
+		PhoneMode       *string `json:"phone_mode"`
+		DataStrategy    *string `json:"data_strategy"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -131,6 +133,12 @@ func (s *Server) handlePutCardPolicy(c *gin.Context) {
 	}
 	if req.APN != nil {
 		pol.APN = strings.TrimSpace(*req.APN)
+	}
+	if req.PhoneMode != nil {
+		pol.PhoneMode = normalizePhoneMode(req.PhoneMode)
+	}
+	if req.DataStrategy != nil {
+		pol.DataStrategy = normalizeDataStrategy(req.DataStrategy)
 	}
 	pol.Source = "user"
 

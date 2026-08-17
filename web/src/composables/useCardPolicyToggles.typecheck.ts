@@ -6,6 +6,7 @@ const toggles = useCardPolicyToggles(src, {
   applyNetwork: async () => ({ ok: true }),
   applyVoWiFi: async () => ({ ok: true }),
   applyAirplane: async () => ({ ok: true }),
+  applyPhoneMode: async () => ({ ok: true }),
   onChanged: () => {}
 })
 
@@ -14,3 +15,5 @@ void toggles.networkPending
 void toggles.onNetworkToggle
 void toggles.onVoWiFiToggle
 void toggles.onAirplaneToggle
+void toggles.onPhoneModeChange
+void toggles.onDataStrategyChange

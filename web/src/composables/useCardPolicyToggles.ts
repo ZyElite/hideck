@@ -17,6 +17,7 @@ export type CardPolicyExecutors = {
   applyNetwork: (enabled: boolean, next: PolicyMirror) => Promise<ToggleResult>
   applyVoWiFi: (enabled: boolean, next: PolicyMirror) => Promise<ToggleResult>
   applyAirplane: (enabled: boolean, next: PolicyMirror) => Promise<ToggleResult>
+  applyPhoneMode: (next: PolicyMirror) => Promise<ToggleResult>
   onChanged?: () => void
 }
 
@@ -142,6 +143,55 @@ export function useCardPolicyToggles(
     executors.onChanged?.()
   }
 
+  const phoneModePending = ref(false)
+  const phoneModeFailed = ref(false)
+
+  function withPhoneMode(cur: PolicyMirror, mode: string, strategy: string): PolicyMirror {
+    const next: PolicyMirror = {
+      ...cur,
+      phone_mode: mode,
+      data_strategy: strategy
+    }
+    if (!next.vowifi_enabled) return next
+    if (mode === 'cellular') {
+      next.airplane_enabled = false
+      next.network_enabled = strategy === 'always'
+    } else {
+      next.airplane_enabled = true
+      next.network_enabled = false
+    }
+    return next
+  }
+
+  async function applyPhoneSettings(next: PolicyMirror) {
+    phoneModePending.value = true
+    phoneModeFailed.value = false
+    const prev = { ...local.value }
+    local.value.phone_mode = next.phone_mode
+    local.value.data_strategy = next.data_strategy
+    local.value.network_enabled = next.network_enabled
+    local.value.airplane_enabled = next.airplane_enabled
+    const result = await executors.applyPhoneMode(next)
+    phoneModePending.value = false
+    if (!result.ok) {
+      local.value.phone_mode = prev.phone_mode
+      local.value.data_strategy = prev.data_strategy
+      local.value.network_enabled = prev.network_enabled
+      local.value.airplane_enabled = prev.airplane_enabled
+      phoneModeFailed.value = true
+      return
+    }
+    executors.onChanged?.()
+  }
+
+  async function onPhoneModeChange(mode: string) {
+    await applyPhoneSettings(withPhoneMode(local.value, mode, local.value.data_strategy ?? 'on_demand'))
+  }
+
+  async function onDataStrategyChange(strategy: string) {
+    await applyPhoneSettings(withPhoneMode(local.value, local.value.phone_mode ?? 'wifi', strategy))
+  }
+
   return {
     local,
     networkPending,
@@ -150,8 +200,12 @@ export function useCardPolicyToggles(
     vowifiFailed,
     airplanePending,
     airplaneFailed,
+    phoneModePending,
+    phoneModeFailed,
     onNetworkToggle,
     onVoWiFiToggle,
-    onAirplaneToggle
+    onAirplaneToggle,
+    onPhoneModeChange,
+    onDataStrategyChange
   }
 }

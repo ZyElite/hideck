@@ -8,6 +8,8 @@ type PutCardPolicyRequest = {
   airplane_enabled?: boolean
   ip_version?: string
   apn?: string
+  phone_mode?: string
+  data_strategy?: string
 }
 
 export const cardsService = {
