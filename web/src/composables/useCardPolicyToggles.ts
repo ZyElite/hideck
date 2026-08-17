@@ -1,4 +1,4 @@
-import { ref, watch, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 
 // 卡策略三开关镜像（不含 ip/apn——那两项仅在独立"卡策略"页编辑）
 export type PolicyMirror = {
@@ -21,11 +21,19 @@ export type CardPolicyExecutors = {
   onChanged?: () => void
 }
 
-// 互斥规则：
-// 开网络 + WiFi calling ⇒ 关软件电话、关飞行
-// 开网络 + 蜂窝 ⇒ 保留软件电话，只关飞行（蜂窝本来就要用 SIM 数据）
-// 开 VoWiFi ⇒ WiFi calling 关网络；蜂窝则按数据策略决定网络
-// 开飞行 ⇒ 关网络、关 VoWiFi
+function isCellularMode(cur: PolicyMirror): boolean {
+  return (cur.phone_mode ?? 'wifi') === 'cellular'
+}
+
+function isWifiCalling(cur: PolicyMirror): boolean {
+  return !!cur.vowifi_enabled && !isCellularMode(cur)
+}
+
+// 互斥规则（开关联动，避免用户点出冲突组合）：
+// 开网络 ⇒ 必须驻网；WiFi calling 与数据互斥，蜂窝则保留软件电话
+// 开 WiFi calling ⇒ 锁定飞行、关网络
+// 开蜂窝软件电话 ⇒ 驻网；always 才顺手开网络
+// 开飞行 ⇒ 关网络；WiFi calling 占用射频一并关掉；蜂窝软件电话可保持
 // 关任一项 ⇒ 不动其它项
 function nextMirror(
   cur: PolicyMirror,
@@ -36,10 +44,9 @@ function nextMirror(
     if (!val) {
       return { ...cur, network_enabled: false }
     }
-    const isCellular = (cur.phone_mode ?? 'wifi') === 'cellular'
     return {
       network_enabled: true,
-      vowifi_enabled: isCellular ? cur.vowifi_enabled : false,
+      vowifi_enabled: isCellularMode(cur) ? cur.vowifi_enabled : false,
       airplane_enabled: false,
       phone_mode: cur.phone_mode ?? 'wifi',
       data_strategy: cur.data_strategy ?? 'on_demand'
@@ -47,21 +54,27 @@ function nextMirror(
   }
   if (field === 'vowifi_enabled') {
     if (val) {
-      const isCellular = (cur.phone_mode ?? 'wifi') === 'cellular'
+      const cellular = isCellularMode(cur)
       return {
-        network_enabled: isCellular ? (cur.data_strategy === 'always' || cur.network_enabled) : false,
+        network_enabled: cellular ? (cur.data_strategy === 'always' || cur.network_enabled) : false,
         vowifi_enabled: true,
-        airplane_enabled: isCellular ? false : true,
+        airplane_enabled: cellular ? false : true,
         phone_mode: cur.phone_mode ?? 'wifi',
         data_strategy: cur.data_strategy ?? 'on_demand',
       }
     }
     return { ...cur, vowifi_enabled: false }
   }
-  // airplane_enabled
-  return val
-    ? { network_enabled: false, vowifi_enabled: false, airplane_enabled: true, phone_mode: cur.phone_mode ?? 'wifi', data_strategy: cur.data_strategy ?? 'on_demand' }
-    : { ...cur, airplane_enabled: false }
+  if (!val) {
+    return { ...cur, airplane_enabled: false }
+  }
+  return {
+    network_enabled: false,
+    vowifi_enabled: isCellularMode(cur) ? cur.vowifi_enabled : false,
+    airplane_enabled: true,
+    phone_mode: cur.phone_mode ?? 'wifi',
+    data_strategy: cur.data_strategy ?? 'on_demand'
+  }
 }
 
 export function useCardPolicyToggles(
@@ -172,6 +185,16 @@ export function useCardPolicyToggles(
     return next
   }
 
+  const wifiCallingLocksRadio = computed(() => isWifiCalling(local.value))
+  const radioMode = computed(() => (wifiCallingLocksRadio.value || local.value.airplane_enabled) ? 'airplane' : 'camp')
+
+  async function onRadioModeChange(raw: string | number | boolean) {
+    if (raw !== 'airplane' && isWifiCalling(local.value)) {
+      return
+    }
+    await onAirplaneToggle(raw === 'airplane')
+  }
+
   async function applyPhoneSettings(next: PolicyMirror) {
     phoneModePending.value = true
     phoneModeFailed.value = false
@@ -213,9 +236,12 @@ export function useCardPolicyToggles(
     airplaneFailed,
     phoneModePending,
     phoneModeFailed,
+    wifiCallingLocksRadio,
+    radioMode,
     onNetworkToggle,
     onVoWiFiToggle,
     onAirplaneToggle,
+    onRadioModeChange,
     onPhoneModeChange,
     onDataStrategyChange
   }

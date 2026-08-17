@@ -2661,28 +2661,27 @@ func (s *Server) handleDeviceMgmtSetFlightMode(c *gin.Context) {
 		return
 	}
 
-	if s.pool.IsVoWiFiActive(id) {
-		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "VoWiFi 正在接管飞行模式，请先停用或退出 VoWiFi"})
+	if s.pool.IsVoWiFiActive(id) && worker.Config.PhoneMode != "cellular" {
+		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "WiFi calling 正在接管射频，请先关掉软件电话或改成蜂窝"})
 		return
 	}
 
 	flightModeEnabled := req.Enabled
 
 	// 卡策略持久化是硬件动作的前置条件，避免数据库与真实射频状态悄悄分叉。
+	// 蜂窝软件电话与飞行可以并存：只关射频和流量，电话策略保持。
 	if _, _, err := s.patchCardPolicyForDevice(id, func(p *db.CardPolicy) {
-		if flightModeEnabled {
-			p.AirplaneEnabled = true
-			p.VoWiFiEnabled = false
-			p.NetworkEnabled = false
-		} else {
-			p.AirplaneEnabled = false
-		}
+		applyAirplaneToCardPolicy(p, flightModeEnabled)
 	}); err != nil {
 		writeCardPolicyMutationError(c, err)
 		return
 	}
 	// 同步 w.Config，使概览即时反映飞行/在线模式（setWorkerFlightMode 只切硬件不碰 Config）。
 	s.pool.SetWorkerAirplanePolicy(id, flightModeEnabled)
+	if flightModeEnabled && worker.Config.PhoneMode == "cellular" && s.pool.IsVoWiFiActive(id) {
+		// 先停 IMS 再关射频；RestoreRadioAfterVoWiFi 看到 airplane 后不会把射频拉回 Online。
+		_ = s.pool.StopVoWiFiRuntimeForCellularIdle(id)
+	}
 
 	operatingMode, flightMode, err := setWorkerFlightMode(c.Request.Context(), worker, flightModeEnabled)
 	if err != nil {

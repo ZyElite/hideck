@@ -62,6 +62,22 @@ func TestSetWorkerVoWiFiPolicyCellularIdleStaysAirplane(t *testing.T) {
 	}
 }
 
+func TestSetWorkerAirplanePolicyKeepsCellularSoftwarePhone(t *testing.T) {
+	p, w := newPoolWithWorkerForSync("wwan0", config.DeviceConfig{
+		VoWiFiEnabled:  true,
+		NetworkEnabled: true,
+		PhoneMode:      "cellular",
+	})
+
+	p.SetWorkerAirplanePolicy("wwan0", true)
+	if !w.Config.AirplaneEnabled || !w.Config.VoWiFiEnabled || w.Config.NetworkEnabled {
+		t.Fatalf("蜂窝开飞行应保留软件电话并关流量: %+v", w.Config)
+	}
+	if !w.cellularRadioIsSuppressed() {
+		t.Fatal("蜂窝开飞行应抑制射频")
+	}
+}
+
 func TestSetWorkerAirplanePolicySyncsConfig(t *testing.T) {
 	p, w := newPoolWithWorkerForSync("wwan0", config.DeviceConfig{VoWiFiEnabled: true, NetworkEnabled: true})
 

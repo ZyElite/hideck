@@ -15,5 +15,8 @@ void toggles.networkPending
 void toggles.onNetworkToggle
 void toggles.onVoWiFiToggle
 void toggles.onAirplaneToggle
+void toggles.onRadioModeChange
+void toggles.wifiCallingLocksRadio
+void toggles.radioMode
 void toggles.onPhoneModeChange
 void toggles.onDataStrategyChange

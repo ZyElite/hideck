@@ -17,7 +17,7 @@ const identityPanel = await readFile(
 
 test('VoWiFi overview exposes one service path and centralizes diagnostics', () => {
   assert.doesNotMatch(overviewTab, /VoWiFi 运行时|readinessItems|showVowifiDetail/)
-  assert.match(overviewTab, /v-if="!device\?\.vowifi_enabled"/)
+  assert.match(overviewTab, /v-if="!isWifiCalling"/)
   assert.match(overviewTab, /<DeviceOverviewIdentityPanel/)
   assert.equal(connectionStage.match(/class="overview-service-path"/g)?.length, 1)
 

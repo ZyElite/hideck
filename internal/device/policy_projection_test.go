@@ -11,6 +11,20 @@ import (
 	"github.com/yibaiba/hideck/internal/vowifihost"
 )
 
+func TestApplyPolicyCellularAirplaneKeepsSoftwarePhone(t *testing.T) {
+	w := &Worker{ID: "wwan0"}
+	applyPolicyToWorker(w, cardpolicy.Policy{
+		ICCID: "x", VoWiFiEnabled: true, PhoneMode: "cellular",
+		AirplaneEnabled: true, NetworkEnabled: true, DataStrategy: "on_demand",
+	})
+	if !w.Config.AirplaneEnabled || !w.Config.VoWiFiEnabled || w.Config.NetworkEnabled {
+		t.Fatalf("蜂窝飞行应保留软件电话并关流量: %+v", w.Config)
+	}
+	if !w.cellularRadioIsSuppressed() {
+		t.Fatal("蜂窝飞行应抑制射频")
+	}
+}
+
 func TestApplyPolicyCellularIdleKeepsCamped(t *testing.T) {
 	w := &Worker{ID: "wwan0"}
 	applyPolicyToWorker(w, cardpolicy.Policy{
@@ -34,8 +48,8 @@ func TestApplyPolicyProjectsFields(t *testing.T) {
 		ICCID: "x", NetworkEnabled: true, VoWiFiEnabled: true,
 		AirplaneEnabled: true, IPVersion: "v4v6", APN: "ims",
 	})
-	if !w.Config.NetworkEnabled || !w.Config.VoWiFiEnabled || !w.Config.AirplaneEnabled {
-		t.Fatalf("开关未投影: %+v", w.Config)
+	if w.Config.NetworkEnabled || !w.Config.VoWiFiEnabled || !w.Config.AirplaneEnabled {
+		t.Fatalf("WiFi calling 投影应关流量并保持飞行: %+v", w.Config)
 	}
 	if w.Config.IPVersion != "v4v6" || w.Config.APN != "ims" {
 		t.Fatalf("ip/apn 未投影: %+v", w.Config)

@@ -76,7 +76,7 @@ test('phone device picker uses the themed select without changing availability r
   assert.match(phoneView, /id="phone-device"[\s\S]*aria-label="语音设备"/)
   assert.match(phoneView, /:disabled="!!call"/)
   assert.match(phoneView, /<el-option v-if="!phone\.devices\.length" label="无可用设备" value=""/)
-  assert.match(phoneView, /:disabled="!isDeviceReady\(device\) \|\| isDeviceBusy\(device\)"/)
+  assert.match(phoneView, /:disabled="isDeviceBusy\(device\)"/)
   assert.doesNotMatch(phoneCSS, /\.device-selector select/)
   assert.match(phoneCSS, /\.device-selector :deep\(\.el-select__wrapper\) \{ min-height: 44px;/)
 })

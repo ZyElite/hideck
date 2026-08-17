@@ -59,7 +59,6 @@ const identityFacts = computed<readonly IdentityFact[]>(() => {
   const esimName = activeEsimProfileDisplayName(props.device)
   if (esimName) facts.push(createFact({ key: 'esim', label: '当前 eSIM', value: esimName, copyable: true }))
   facts.push(
-    createFact({ key: 'camped', label: '驻网', value: flightModeEnabled.value ? '关闭' : '开启', tone: 'status' }),
     createFact({ key: 'flight', label: '飞行模式', value: flightModeEnabled.value ? '已开启' : '未开启', tone: 'status' }),
     createFact({ key: 'backend', label: '运行模式', value: backendLabel.value, tone: 'status' })
   )

@@ -327,6 +327,51 @@ func TestVoWiFiToggleCyclePreservesAirplaneIntent(t *testing.T) {
 
 // TestPatchCardPolicyAirplaneMutualExclusion 验证“开飞行模式”落库时与 network/vowifi 互斥
 // （等价于 handleDeviceMgmtSetFlightMode 开飞行时的落库副作用）。
+func TestApplyAirplaneToCardPolicyInterlock(t *testing.T) {
+	wifi := db.CardPolicy{PhoneMode: "wifi", VoWiFiEnabled: true, NetworkEnabled: true}
+	applyAirplaneToCardPolicy(&wifi, true)
+	if !wifi.AirplaneEnabled || wifi.NetworkEnabled || wifi.VoWiFiEnabled {
+		t.Fatalf("WiFi calling 开飞行应关电话和流量: %+v", wifi)
+	}
+
+	cell := db.CardPolicy{PhoneMode: "cellular", VoWiFiEnabled: true, NetworkEnabled: true}
+	applyAirplaneToCardPolicy(&cell, true)
+	if !cell.AirplaneEnabled || cell.NetworkEnabled || !cell.VoWiFiEnabled {
+		t.Fatalf("蜂窝开飞行应保留软件电话并关流量: %+v", cell)
+	}
+
+	applyAirplaneToCardPolicy(&cell, false)
+	if cell.AirplaneEnabled || !cell.VoWiFiEnabled {
+		t.Fatalf("关飞行只清 airplane: %+v", cell)
+	}
+}
+
+func TestApplyNetworkAndVoWiFiInterlock(t *testing.T) {
+	wifi := db.CardPolicy{PhoneMode: "wifi", VoWiFiEnabled: true, AirplaneEnabled: true}
+	applyNetworkEnableToCardPolicy(&wifi)
+	if !wifi.NetworkEnabled || wifi.AirplaneEnabled || wifi.VoWiFiEnabled {
+		t.Fatalf("开网络应驻网并关掉 WiFi calling: %+v", wifi)
+	}
+
+	cell := db.CardPolicy{PhoneMode: "cellular", VoWiFiEnabled: true, AirplaneEnabled: true, DataStrategy: "on_demand"}
+	applyNetworkEnableToCardPolicy(&cell)
+	if !cell.NetworkEnabled || cell.AirplaneEnabled || !cell.VoWiFiEnabled {
+		t.Fatalf("蜂窝开网络应驻网并保留软件电话: %+v", cell)
+	}
+
+	wifiPhone := db.CardPolicy{PhoneMode: "wifi", NetworkEnabled: true}
+	applyVoWiFiEnableToCardPolicy(&wifiPhone)
+	if !wifiPhone.VoWiFiEnabled || !wifiPhone.AirplaneEnabled || wifiPhone.NetworkEnabled {
+		t.Fatalf("开 WiFi calling 应锁定飞行并关流量: %+v", wifiPhone)
+	}
+
+	cellPhone := db.CardPolicy{PhoneMode: "cellular", DataStrategy: "on_demand", AirplaneEnabled: true}
+	applyVoWiFiEnableToCardPolicy(&cellPhone)
+	if !cellPhone.VoWiFiEnabled || cellPhone.AirplaneEnabled || cellPhone.NetworkEnabled {
+		t.Fatalf("开蜂窝软件电话应驻网且默认不开流量: %+v", cellPhone)
+	}
+}
+
 func TestPatchCardPolicyAirplaneMutualExclusion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	openTestDB(t)

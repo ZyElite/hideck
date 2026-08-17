@@ -40,7 +40,7 @@ func (s *Server) handleDeviceNetworkPatch(c *gin.Context) {
 		effectiveIPVersion := ""
 		effectiveAPN := ""
 		_, _, err = s.patchCardPolicyForDevice(deviceID, func(p *db.CardPolicy) {
-			p.NetworkEnabled = true
+			applyNetworkEnableToCardPolicy(p)
 			if ipVersion != "" {
 				p.IPVersion = ipVersion
 			}
@@ -86,13 +86,13 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 		mode := normalizePhoneMode(req.Mode)
 		strategy := normalizeDataStrategy(req.DataStrategy)
 		if _, _, err := s.patchCardPolicyForDevice(deviceID, func(p *db.CardPolicy) {
-			p.VoWiFiEnabled = true
 			if req.Mode != nil {
 				p.PhoneMode = mode
 			}
 			if req.DataStrategy != nil {
 				p.DataStrategy = strategy
 			}
+			applyVoWiFiEnableToCardPolicy(p)
 		}); err != nil {
 			writeCardPolicyMutationError(c, err)
 			return
@@ -174,6 +174,51 @@ func vowifiEnablePolicyMutation(p *db.CardPolicy) { p.VoWiFiEnabled = true }
 
 // vowifiDisablePolicyMutation 关 VoWiFi 的落库副作用：只清 vowifi，保留用户飞行意图以便回退。
 func vowifiDisablePolicyMutation(p *db.CardPolicy) { p.VoWiFiEnabled = false }
+
+// applyAirplaneToCardPolicy 把飞行/驻网写成一组互斥结果：开飞行必关流量；
+// WiFi calling 占用射频，开飞行就关掉它；蜂窝软件电话可以保持开启。
+func applyAirplaneToCardPolicy(p *db.CardPolicy, enabled bool) {
+	if p == nil {
+		return
+	}
+	p.AirplaneEnabled = enabled
+	if !enabled {
+		return
+	}
+	p.NetworkEnabled = false
+	if p.PhoneMode != "cellular" {
+		p.VoWiFiEnabled = false
+	}
+}
+
+// applyNetworkEnableToCardPolicy 开流量必须先驻网；WiFi calling 与数据互斥。
+func applyNetworkEnableToCardPolicy(p *db.CardPolicy) {
+	if p == nil {
+		return
+	}
+	p.NetworkEnabled = true
+	p.AirplaneEnabled = false
+	if p.PhoneMode != "cellular" {
+		p.VoWiFiEnabled = false
+	}
+}
+
+// applyVoWiFiEnableToCardPolicy 按通话方式联动射频和流量。
+func applyVoWiFiEnableToCardPolicy(p *db.CardPolicy) {
+	if p == nil {
+		return
+	}
+	p.VoWiFiEnabled = true
+	if p.PhoneMode == "cellular" {
+		p.AirplaneEnabled = false
+		if p.DataStrategy == "always" {
+			p.NetworkEnabled = true
+		}
+		return
+	}
+	p.AirplaneEnabled = true
+	p.NetworkEnabled = false
+}
 
 func normalizePhoneMode(v *string) string {
 	if v == nil {

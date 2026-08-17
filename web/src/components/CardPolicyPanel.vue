@@ -58,6 +58,8 @@ const {
   onNetworkToggle,
   onVoWiFiToggle,
   onAirplaneToggle,
+  wifiCallingLocksRadio,
+  radioMode,
   phoneModePending,
   phoneModeFailed,
   onPhoneModeChange,
@@ -114,12 +116,21 @@ const policyStatus = computed(() => {
 })
 
 const policyProjection = computed(() => [
+  `飞行 ${radioMode.value === 'airplane' ? '开启' : '关闭'}`,
   `网络 ${local.value.network_enabled ? '开启' : '关闭'}`,
   `通话 ${local.value.phone_mode === 'cellular' ? '蜂窝数据' : 'WiFi calling'}${local.value.vowifi_enabled ? '开启' : '关闭'}`,
-  `驻网 ${local.value.airplane_enabled ? '关闭' : '开启'}`,
-  `飞行模式 ${local.value.airplane_enabled ? '开启' : '关闭'}`,
   `IP ${ipVersion.value.toUpperCase()}`
 ].join(' · '))
+
+const airplaneHint = computed(() => {
+  if (wifiCallingLocksRadio.value) {
+    return 'WiFi calling 占用射频，飞行已锁定。改成蜂窝或关掉软件电话后才能注册运营商'
+  }
+  if (radioMode.value === 'airplane') {
+    return '开启后关射频和流量，不再注册运营商'
+  }
+  return '关闭后会注册运营商；网络开关只控制流量'
+})
 </script>
 
 <template>
@@ -199,17 +210,33 @@ const policyProjection = computed(() => [
           </div>
         </div>
 
+        <div class="policy-setting-row" :class="{ 'is-active': radioMode === 'airplane' }">
+          <span>
+            <strong>飞行模式</strong>
+            <small>{{ airplaneHint }}</small>
+          </span>
+          <div class="flex items-center gap-2">
+            <span v-if="airplaneFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
+            <el-icon v-if="airplanePending" class="animate-spin text-gray-400"><Loading /></el-icon>
+            <el-switch
+              :model-value="radioMode === 'airplane'"
+              :disabled="!canToggle || airplanePending || wifiCallingLocksRadio"
+              @change="onAirplaneToggle"
+            />
+          </div>
+        </div>
+
         <div
           class="policy-setting-row"
           :class="{ 'is-active': local.network_enabled }"
         >
-          <span><strong>网络</strong><small>只开数据流量。关掉也能正常驻网；WiFi calling 开启时不可用</small></span>
+          <span><strong>网络</strong><small>只开数据流量。飞行开启或 WiFi calling 占用射频时不可用</small></span>
             <div class="flex items-center gap-2">
               <span v-if="networkFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
               <el-icon v-if="networkPending" class="animate-spin text-gray-400"><Loading /></el-icon>
               <el-switch
                 v-model="local.network_enabled"
-                :disabled="!canToggle || local.airplane_enabled || networkPending || (local.vowifi_enabled && local.phone_mode !== 'cellular')"
+                :disabled="!canToggle || radioMode === 'airplane' || networkPending || wifiCallingLocksRadio"
                 @change="onNetworkToggle"
               />
           </div>
@@ -219,7 +246,7 @@ const policyProjection = computed(() => [
           class="policy-setting-row"
           :class="{ 'is-active': local.vowifi_enabled }"
         >
-          <span><strong>软件电话</strong><small>开启后可用浏览器/命令拨号，WiFi calling 会关射频</small></span>
+          <span><strong>软件电话</strong><small>开启后可用浏览器/命令拨号。WiFi calling 会锁定飞行；蜂窝会退出飞行</small></span>
             <div class="flex items-center gap-2">
               <span v-if="vowifiFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
               <el-icon v-if="vowifiPending" class="animate-spin text-gray-400"><Loading /></el-icon>
@@ -232,7 +259,7 @@ const policyProjection = computed(() => [
         </div>
 
         <div class="policy-setting-row" :class="{ 'is-active': local.phone_mode === 'cellular' }">
-          <span><strong>通话方式</strong><small>切换即开启软件电话。WiFi calling 走 WiFi；蜂窝走 SIM，流量由上面的网络开关控制</small></span>
+          <span><strong>通话方式</strong><small>切换即开启软件电话。WiFi calling 会打开飞行；蜂窝会关掉飞行</small></span>
           <div class="policy-field-control">
             <el-select
               :model-value="local.phone_mode ?? 'wifi'"
@@ -248,49 +275,18 @@ const policyProjection = computed(() => [
           </div>
         </div>
 
-        <div v-if="(local.phone_mode ?? 'wifi') === 'cellular'" class="policy-notice is-info">
-          {{ local.network_enabled
-            ? '网络已开，会走流量。仅打电话时开 = 拨号才连数据；长时间开启 = 一直开着数据。'
-            : '网络关着仍会注册运营商，只是不走流量。打开网络后才按下面策略连数据。' }}
-        </div>
-
         <div v-if="(local.phone_mode ?? 'wifi') === 'cellular'" class="policy-setting-row">
           <span><strong>蜂窝数据策略</strong><small>只影响流量。仅打电话时开：挂断后关数据，待机不能被叫</small></span>
           <div class="policy-field-control">
             <el-select
               :model-value="local.data_strategy ?? 'on_demand'"
               class="w-full"
-              :disabled="!canToggle || phoneModePending"
+              :disabled="!canToggle || phoneModePending || radioMode === 'airplane'"
               @change="onDataStrategyChange"
             >
               <el-option label="仅打电话时开启" value="on_demand" />
               <el-option label="长时间开启" value="always" />
             </el-select>
-          </div>
-        </div>
-
-        <div class="policy-setting-row" :class="{ 'is-active': !local.airplane_enabled }">
-          <span><strong>驻网</strong><small>关飞行就会注册运营商；开飞行则停止注册。和「网络」无关，网络只开流量</small></span>
-          <strong class="policy-inline-status">{{ local.airplane_enabled ? '关闭' : '开启' }}</strong>
-        </div>
-
-        <div
-          class="policy-setting-row"
-          :class="{ 'is-active': local.airplane_enabled }"
-        >
-          <span>
-            <strong>飞行模式</strong>
-            <small v-if="local.vowifi_enabled && local.phone_mode !== 'cellular'">WiFi calling 开着时由软件电话接管射频，请先关掉软件电话或改成蜂窝</small>
-            <small v-else>蜂窝模式下可直接开启。开启后关射频、停止驻网</small>
-          </span>
-            <div class="flex items-center gap-2">
-              <span v-if="airplaneFailed" class="text-xs text-orange-500 dark:text-orange-400">未生效</span>
-              <el-icon v-if="airplanePending" class="animate-spin text-gray-400"><Loading /></el-icon>
-              <el-switch
-                v-model="local.airplane_enabled"
-                :disabled="!canToggle || (local.vowifi_enabled && local.phone_mode !== 'cellular') || airplanePending"
-                @change="onAirplaneToggle"
-              />
           </div>
         </div>
       </div>

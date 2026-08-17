@@ -81,6 +81,8 @@ const {
   onNetworkToggle,
   onVoWiFiToggle,
   onAirplaneToggle,
+  wifiCallingLocksRadio,
+  radioMode,
   phoneModePending,
   phoneModeFailed,
   onPhoneModeChange,
@@ -137,20 +139,30 @@ const {
     <template v-else>
       <div v-if="hint" class="text-xs text-amber-600 dark:text-amber-400">{{ hint }}</div>
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <!-- 网络 -->
         <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
-          <span class="text-sm text-gray-700 dark:text-gray-200">网络<small class="block text-[11px] text-gray-400 font-normal">只开流量，关掉仍驻网</small></span>
+          <span class="text-sm text-gray-700 dark:text-gray-200">飞行<small class="block text-xs text-gray-400 font-normal">{{ wifiCallingLocksRadio ? 'WiFi calling 已锁定' : '关闭后注册运营商' }}</small></span>
+          <div class="flex items-center gap-2">
+            <span v-if="airplaneFailed" class="text-xs text-orange-500">未生效</span>
+            <el-icon v-if="airplanePending" class="animate-spin text-gray-400"><Loading /></el-icon>
+            <el-switch
+              :model-value="radioMode === 'airplane'"
+              :disabled="airplanePending || wifiCallingLocksRadio"
+              @change="onAirplaneToggle"
+            />
+          </div>
+        </div>
+        <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
+          <span class="text-sm text-gray-700 dark:text-gray-200">网络<small class="block text-xs text-gray-400 font-normal">只开流量</small></span>
           <div class="flex items-center gap-2">
             <span v-if="networkFailed" class="text-xs text-orange-500">未生效</span>
             <el-icon v-if="networkPending" class="animate-spin text-gray-400"><Loading /></el-icon>
             <el-switch
               v-model="local.network_enabled"
-              :disabled="local.airplane_enabled || networkPending || (local.vowifi_enabled && local.phone_mode !== 'cellular')"
+              :disabled="radioMode === 'airplane' || networkPending || wifiCallingLocksRadio"
               @change="onNetworkToggle"
             />
           </div>
         </div>
-        <!-- 软件电话 -->
         <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
           <span class="text-sm text-gray-700 dark:text-gray-200">软件电话</span>
           <div class="flex items-center gap-2">
@@ -160,23 +172,6 @@ const {
               v-model="local.vowifi_enabled"
               :disabled="vowifiPending"
               @change="onVoWiFiToggle"
-            />
-          </div>
-        </div>
-        <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
-          <span class="text-sm text-gray-700 dark:text-gray-200">驻网<small class="block text-[11px] text-gray-400 font-normal">关飞行即注册运营商</small></span>
-          <strong class="text-sm">{{ local.airplane_enabled ? '关闭' : '开启' }}</strong>
-        </div>
-        <!-- 飞行 -->
-        <div class="flex items-center justify-between rounded-lg px-3 py-2 bg-white dark:bg-white/5">
-          <span class="text-sm text-gray-700 dark:text-gray-200">飞行<small class="block text-[11px] text-gray-400 font-normal">{{ local.vowifi_enabled && local.phone_mode !== 'cellular' ? 'WiFi calling 开着时不可用' : '蜂窝下可直接开' }}</small></span>
-          <div class="flex items-center gap-2">
-            <span v-if="airplaneFailed" class="text-xs text-orange-500">未生效</span>
-            <el-icon v-if="airplanePending" class="animate-spin text-gray-400"><Loading /></el-icon>
-            <el-switch
-              v-model="local.airplane_enabled"
-              :disabled="(local.vowifi_enabled && local.phone_mode !== 'cellular') || airplanePending"
-              @change="onAirplaneToggle"
             />
           </div>
         </div>
@@ -204,7 +199,7 @@ const {
             :model-value="local.data_strategy ?? 'on_demand'"
             size="small"
             style="width: 160px"
-            :disabled="phoneModePending"
+            :disabled="phoneModePending || radioMode === 'airplane'"
             @change="onDataStrategyChange"
           >
             <el-option label="仅打电话时开启" value="on_demand" />
@@ -212,13 +207,15 @@ const {
           </el-select>
         </div>
       </div>
-      <div
-        v-if="(local.phone_mode ?? 'wifi') === 'cellular'"
-        class="text-xs leading-5 text-gray-500 dark:text-gray-400"
-      >
-        {{ local.network_enabled
-          ? '网络已开，会走流量。仅打电话时开 = 拨号才连数据；长时间开启 = 一直开着数据。'
-          : '网络关着仍会注册运营商，只是不走流量。打开网络后才按策略连数据。' }}
+      <div class="text-xs leading-5 text-gray-500 dark:text-gray-400">
+        <template v-if="wifiCallingLocksRadio">WiFi calling 占用射频，飞行已锁定，网络不可用。</template>
+        <template v-else-if="radioMode === 'airplane'">飞行已开，射频关闭。关掉飞行后才会注册运营商。</template>
+        <template v-else-if="(local.phone_mode ?? 'wifi') === 'cellular'">
+          {{ local.network_enabled
+            ? '已注册运营商，网络开启，会走流量。'
+            : '已注册运营商，不走流量。打开网络后才按策略连数据。' }}
+        </template>
+        <template v-else>已注册运营商。打开网络才会用数据。</template>
       </div>
       <div v-if="phoneModeFailed" class="text-xs text-orange-500">通话方式未生效</div>
     </template>

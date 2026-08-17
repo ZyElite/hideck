@@ -40,12 +40,14 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	w.Config.DataStrategy = p.DataStrategy
 	if p.VoWiFiEnabled {
 		if p.PhoneMode == "cellular" {
-			w.Config.AirplaneEnabled = false
-			if p.DataStrategy == "always" {
+			if p.AirplaneEnabled {
+				w.Config.NetworkEnabled = false
+			} else if p.DataStrategy == "always" {
 				w.Config.NetworkEnabled = true
 			}
 		} else {
 			w.Config.AirplaneEnabled = true
+			w.Config.NetworkEnabled = false
 		}
 	}
 	w.Config.IPVersion = strings.TrimSpace(p.IPVersion)
@@ -87,6 +89,9 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	// 三态分支：VoWiFi / 纯飞行 / 在线(含连网)。射频模式按策略真正切换，
 	// 补齐此前“airplane 字段被投影但从不执行”的缺口。
 	switch {
+	case pol.AirplaneEnabled:
+		// 飞行优先：蜂窝软件电话可以保持开启，只关射频和流量。
+		p.enterAirplaneModeFromPolicy(worker, reason)
 	case pol.VoWiFiEnabled && pol.PhoneMode == "cellular":
 		// 蜂窝：射频保持在线以驻网。网络开着才连数据；on_demand 拨号时再开数据。
 		p.exitAirplaneModeIfNeeded(worker, reason)
@@ -98,9 +103,6 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		if err := p.applyNetworkPreference(worker); err != nil {
 			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
 		}
-	case pol.AirplaneEnabled:
-		// 纯飞行：停数据网 + 切 RFOff，不做注册偏好/重连。
-		p.enterAirplaneModeFromPolicy(worker, reason)
 	default:
 		// 在线待机或连网：飞行关着就驻网；网络开关只决定是否拉起数据。
 		p.exitAirplaneModeIfNeeded(worker, reason)

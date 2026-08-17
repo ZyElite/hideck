@@ -1937,7 +1937,7 @@ func (p *Pool) SetWorkerVoWiFiPolicy(deviceID string, vowifiEnabled bool) *Worke
 }
 
 // SetWorkerAirplanePolicy 同步 worker 运行时的飞行(airplane)策略字段。
-// 开飞行 ⇒ vowifi=false、network=false（纯飞行互斥）；关飞行仅清 airplane。
+// 开飞行 ⇒ 关流量；WiFi calling 占用射频一并关掉；蜂窝软件电话可保持。关飞行仅清 airplane。
 func (p *Pool) SetWorkerAirplanePolicy(deviceID string, airplaneEnabled bool) *Worker {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1947,8 +1947,10 @@ func (p *Pool) SetWorkerAirplanePolicy(deviceID string, airplaneEnabled bool) *W
 	}
 	w.Config.AirplaneEnabled = airplaneEnabled
 	if airplaneEnabled {
-		w.Config.VoWiFiEnabled = false
 		w.Config.NetworkEnabled = false
+		if w.Config.PhoneMode != "cellular" {
+			w.Config.VoWiFiEnabled = false
+		}
 	}
 	w.setCellularRadioSuppressed(shouldSuppressCellularRadio(w.Config))
 	return w

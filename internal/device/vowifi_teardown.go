@@ -74,6 +74,14 @@ func (p *Pool) RestoreRadioAfterVoWiFi(deviceID string) error {
 
 	w.setCellularRadioSuppressed(shouldSuppressCellularRadio(w.Config))
 
+	if w.Config.AirplaneEnabled {
+		logger.Info("策略要求飞行，收尾不恢复射频", "device", deviceID)
+		if nc := w.NetworkController(); nc != nil && nc.IsConnected() {
+			_ = w.StopNetwork()
+		}
+		return nil
+	}
+
 	// Cellular mode: keep radio online so the card stays camped even without data.
 	if w.Config.PhoneMode == "cellular" {
 		logger.Info("蜂窝模式收尾：保持射频在线", "device", deviceID)
