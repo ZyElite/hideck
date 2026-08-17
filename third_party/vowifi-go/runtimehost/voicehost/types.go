@@ -4,7 +4,6 @@ package voicehost
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -249,15 +248,17 @@ func (g *Gateway) finalizeSimulateCallAudio(
 	transcoder := g.audioTranscoder
 	g.mu.RUnlock()
 	if transcoder == nil {
-		err := errors.New("voicehost: MP3 audio transcoder is not configured")
-		result.Success, result.Reason = false, err.Error()
-		return result, err
+		if result.Message == "" && result.Success {
+			result.Message = "call completed"
+		}
+		return result, nil
 	}
 	outputPath, err := transcoder.ToMP3(ctx, result.AudioPath)
 	if err != nil {
-		err = fmt.Errorf("voicehost: transcode call recording to MP3: %w", err)
-		result.Success, result.Reason = false, err.Error()
-		return result, err
+		if result.Message == "" && result.Success {
+			result.Message = "call completed"
+		}
+		return result, nil
 	}
 	result.SourceAudioPath, result.SourceAudioCodec = result.AudioPath, result.AudioCodec
 	result.AudioPath, result.AudioCodec = outputPath, "MP3"

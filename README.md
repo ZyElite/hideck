@@ -33,12 +33,13 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 
 - [界面预览](#界面预览)
 - [核心能力](#核心能力)
+- [Docker 部署（推荐）](#docker-部署推荐)
 - [二进制部署](#二进制部署)
-- [Docker 快速部署](#docker-快速部署)
 - [配置](#配置)
 - [源码构建](#源码构建)
 - [开发与验证](#开发与验证)
 - [模组硬件](#模组硬件)
+- [感谢](#感谢)
 - [使用与许可](#使用与许可)
 
 ## 核心能力
@@ -54,40 +55,9 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 | 通知 | 支持 Telegram、Email、PushPlus、Bark、飞书、企业微信、微信和 QQ 等渠道 |
 | 多架构交付 | 支持 Linux amd64、arm64 与 armv7 构建及 Docker 部署 |
 
-## 二进制部署
+## Docker 部署（推荐）
 
-不使用 Docker 时，在 Linux 上一键下载 Releases 里的预编译文件、生成配置并安装 systemd 服务：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.sh | sh
-```
-
-自定义安装目录：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.sh | HIDECK_DIR=/opt/hideck sh
-```
-
-指定版本或架构（默认跟随最新 Release，并按 `uname -m` 选择）：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.sh | \
-  HIDECK_DIR=/opt/hideck \
-  HIDECK_VERSION=v2.0.6 \
-  HIDECK_ARCH=linux_amd64 sh
-```
-
-脚本会创建 `config/`、`data/`、`logs/`，首次运行从模板生成 `config/config.yaml`，用 Release 里的 `SHA256SUMS` 或同名 `.sha256` 校验后再安装 `hideck`。已有配置不会覆盖。有 systemd 权限时会安装并启动 `hideck.service`。
-
-也可以只从 [GitHub Releases](https://github.com/yibaiba/hideck/releases) 手工下载：
-
-| 文件 | 适用平台 |
-| --- | --- |
-| `hideck_v2.0.6_linux_amd64` | x86_64 服务器、多数 NAS / 工控机 |
-| `hideck_v2.0.6_linux_arm64` | ARM64 板卡、树莓派 64 位 |
-| `hideck_v2.0.6_linux_armv7` | 32 位 ARM |
-
-## Docker 快速部署
+优先用 Docker。镜像已内置通话录音需要的 AMR / MP3 编解码库，不用再往宿主机装依赖。
 
 运行环境需要 Linux、curl、Docker Engine、Docker Compose、host 网络和 USB 设备访问权限。
 服务器使用 `docker-compose.yml` 拉取发布镜像；维护者本机的多架构构建使用独立的 `docker-compose.build.yml`。
@@ -148,6 +118,41 @@ http://YOUR_IP:7575
 docker compose ps
 docker compose logs -f hideck
 ```
+
+## 二进制部署
+
+`deploy-binary.sh` 会按发行版安装录音需要的 `lame`、`opencore-amr`、`vo-amrwbenc`。这些库装不上时，打电话和挂断仍可用，只是没有 MP3 / 渠道语音。完整录音仍建议用上面的 [Docker 部署](#docker-部署推荐)。
+
+在 Linux 上下载 Releases 里的预编译文件：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.sh | sh
+```
+
+自定义安装目录：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.sh | HIDECK_DIR=/opt/hideck sh
+```
+
+指定版本或架构（默认跟随最新 Release，并按 `uname -m` 选择）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy-binary.sh | \
+  HIDECK_DIR=/opt/hideck \
+  HIDECK_VERSION=v2.0.6 \
+  HIDECK_ARCH=linux_amd64 sh
+```
+
+脚本会创建 `config/`、`data/`、`logs/`，首次运行从模板生成 `config/config.yaml`，用 Release 里的 `SHA256SUMS` 或同名 `.sha256` 校验后再安装 `hideck`。已有配置不会覆盖。有 systemd 权限时会安装并启动 `hideck.service`。
+
+也可以只从 [GitHub Releases](https://github.com/yibaiba/hideck/releases) 手工下载：
+
+| 文件 | 适用平台 |
+| --- | --- |
+| `hideck_v2.0.6_linux_amd64` | x86_64 服务器、多数 NAS / 工控机 |
+| `hideck_v2.0.6_linux_arm64` | ARM64 板卡、树莓派 64 位 |
+| `hideck_v2.0.6_linux_armv7` | 32 位 ARM |
 
 ## 配置
 
@@ -279,6 +284,12 @@ VITE_API_PROXY_TARGET=http://127.0.0.1:7575
 ## 模组硬件
 
 EC25 实体 SIM 检测、大疆定制模块 USB 身份恢复，以及 AT、QMI、MBIM 的使用和排查说明见 [模组硬件与协议说明](docs/modem-hardware.md)。
+
+## 感谢
+
+1. [LINUX DO](https://linux.do/)
+2. [iniwex5/vohive-release](https://github.com/iniwex5/vohive-release)
+3. [boa-z/vowifi-go](https://github.com/boa-z/vowifi-go)
 
 ## 使用与许可
 

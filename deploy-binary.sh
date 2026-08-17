@@ -272,6 +272,62 @@ install_systemd_service() {
     "$unit_source" "$unit_source" "$BINARY_PATH" "$CONFIG_FILE"
 }
 
+install_recording_libraries() {
+  printf '正在安装通话录音依赖（AMR/MP3）…\n'
+  if install_recording_libraries_with_pkg; then
+    printf '录音依赖已安装。\n'
+    return 0
+  fi
+  printf '录音依赖未装全。打电话不受影响，只是不会生成 MP3/渠道语音。\n也可改用 Docker：\n  curl -fsSL https://raw.githubusercontent.com/yibaiba/hideck/main/deploy.sh | sh\n'
+  return 1
+}
+
+install_packages() {
+  installer=$1
+  shift
+  failed=0
+  for package in "$@"; do
+    if ! $installer "$package"; then
+      printf '未安装：%s\n' "$package"
+      failed=1
+    fi
+  done
+  return "$failed"
+}
+
+install_recording_libraries_with_pkg() {
+  if command -v apt-get >/dev/null 2>&1; then
+    maybe_sudo apt-get update -y || return 1
+    install_packages "maybe_sudo apt-get install -y" \
+      libmp3lame0 libopencore-amrnb0 libopencore-amrwb0 libvo-amrwbenc0
+    return $?
+  fi
+  if command -v dnf >/dev/null 2>&1; then
+    install_packages "maybe_sudo dnf install -y" lame-libs opencore-amr vo-amrwbenc
+    return $?
+  fi
+  if command -v yum >/dev/null 2>&1; then
+    install_packages "maybe_sudo yum install -y" lame-libs opencore-amr vo-amrwbenc
+    return $?
+  fi
+  if command -v apk >/dev/null 2>&1; then
+    install_packages "maybe_sudo apk add --no-cache" lame-libs opencore-amr vo-amrwbenc
+    return $?
+  fi
+  if command -v pacman >/dev/null 2>&1; then
+    install_packages "maybe_sudo pacman -Sy --noconfirm" lame opencore-amr vo-amrwbenc
+    return $?
+  fi
+  if command -v opkg >/dev/null 2>&1; then
+    maybe_sudo opkg update || return 1
+    install_packages "maybe_sudo opkg install" \
+      lame-lib libopencore-amrnb libopencore-amrwb libvo-amrwbenc
+    return $?
+  fi
+  printf '未识别的包管理器，请自行安装 libmp3lame、libopencore-amrnb、libopencore-amrwb、libvo-amrwbenc。\n'
+  return 1
+}
+
 detect_os
 require_command curl
 require_command uname
@@ -324,6 +380,7 @@ verify_checksum "$DOWNLOAD_DIR/SHA256SUMS" "$DOWNLOAD_DIR/${ASSET_NAME}.sha256" 
 
 install -m 755 "$DOWNLOAD_DIR/$ASSET_NAME" "$BINARY_PATH"
 printf '已安装二进制：%s\n' "$BINARY_PATH"
+install_recording_libraries || true
 
 write_systemd_unit "$UNIT_FILE" "$PROJECT_DIR" "$BINARY_PATH" "$CONFIG_FILE"
 install_systemd_service "$UNIT_FILE"

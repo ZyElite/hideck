@@ -98,8 +98,18 @@ func TestGatewayReportsMP3TranscodeFailure(t *testing.T) {
 	result, err := gateway.finalizeSimulateCallAudio(context.Background(), &SimulateCallResult{
 		Success: true, AudioPath: "/recordings/call.amr", AudioCodec: "AMR",
 	}, nil)
-	if err == nil || result.Success || !strings.Contains(result.Reason, "codec failed") {
-		t.Fatalf("result=%+v error=%v", result, err)
+	if err != nil || !result.Success || result.AudioPath != "/recordings/call.amr" || result.AudioCodec != "AMR" {
+		t.Fatalf("missing recorder must not fail the call: result=%+v error=%v", result, err)
+	}
+}
+
+func TestGatewayKeepsCallSuccessWhenMP3TranscoderMissing(t *testing.T) {
+	gateway := NewGateway()
+	result, err := gateway.finalizeSimulateCallAudio(context.Background(), &SimulateCallResult{
+		Success: true, AudioPath: "/recordings/call.amr", AudioCodec: "AMR",
+	}, nil)
+	if err != nil || !result.Success || result.AudioPath != "/recordings/call.amr" {
+		t.Fatalf("missing transcoder must not fail the call: result=%+v error=%v", result, err)
 	}
 }
 
