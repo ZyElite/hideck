@@ -1,6 +1,8 @@
 package device
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/yibaiba/hideck/internal/config"
@@ -75,6 +77,49 @@ func TestSetWorkerAirplanePolicyKeepsCellularSoftwarePhone(t *testing.T) {
 	}
 	if !w.cellularRadioIsSuppressed() {
 		t.Fatal("蜂窝开飞行应抑制射频")
+	}
+
+	p.SetWorkerAirplanePolicy("wwan0", false)
+	if w.Config.AirplaneEnabled || !w.Config.VoWiFiEnabled {
+		t.Fatalf("关飞行应保留软件电话: %+v", w.Config)
+	}
+}
+
+func TestSetWorkerAirplanePolicyRestoresAlwaysNetwork(t *testing.T) {
+	p, w := newPoolWithWorkerForSync("wwan0", config.DeviceConfig{
+		VoWiFiEnabled:   true,
+		PhoneMode:       "cellular",
+		DataStrategy:    "always",
+		AirplaneEnabled: true,
+		NetworkEnabled:  false,
+	})
+
+	p.SetWorkerAirplanePolicy("wwan0", false)
+	if w.Config.AirplaneEnabled || !w.Config.NetworkEnabled || !w.Config.VoWiFiEnabled {
+		t.Fatalf("蜂窝 always 关飞行应写回网络: %+v", w.Config)
+	}
+}
+
+func TestPrepareCellularCallRefusesAirplane(t *testing.T) {
+	p, _ := newPoolWithWorkerForSync("wwan0", config.DeviceConfig{
+		PhoneMode:       "cellular",
+		AirplaneEnabled: true,
+	})
+	err := p.PrepareCellularCall(context.Background(), "wwan0")
+	if err == nil || !strings.Contains(err.Error(), "飞行模式") {
+		t.Fatalf("飞行中拨号应失败: %v", err)
+	}
+}
+
+func TestEnsureCellularDataRefusesAirplane(t *testing.T) {
+	p, _ := newPoolWithWorkerForSync("wwan0", config.DeviceConfig{
+		PhoneMode:       "cellular",
+		DataStrategy:    "always",
+		AirplaneEnabled: true,
+	})
+	err := p.EnsureCellularData(context.Background(), "wwan0")
+	if err == nil || !strings.Contains(err.Error(), "飞行模式") {
+		t.Fatalf("飞行中开数据应失败: %v", err)
 	}
 }
 

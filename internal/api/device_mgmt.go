@@ -2688,6 +2688,9 @@ func (s *Server) handleDeviceMgmtSetFlightMode(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "切换飞行模式失败: " + err.Error()})
 		return
 	}
+	if err := s.pool.ApplyCurrentCardPolicy(id, "flight_mode_change"); err != nil {
+		logger.Debug("飞行切换后重投影卡策略失败", "device", id, "err", err)
+	}
 	go func(disabled bool) {
 		_ = worker.RefreshRuntime(nil, "flight_mode_change")
 		if !disabled {

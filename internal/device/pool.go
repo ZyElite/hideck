@@ -1951,6 +1951,8 @@ func (p *Pool) SetWorkerAirplanePolicy(deviceID string, airplaneEnabled bool) *W
 		if w.Config.PhoneMode != "cellular" {
 			w.Config.VoWiFiEnabled = false
 		}
+	} else if w.Config.PhoneMode == "cellular" && w.Config.DataStrategy == "always" {
+		w.Config.NetworkEnabled = true
 	}
 	w.setCellularRadioSuppressed(shouldSuppressCellularRadio(w.Config))
 	return w

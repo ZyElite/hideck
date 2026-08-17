@@ -66,7 +66,11 @@ function nextMirror(
     return { ...cur, vowifi_enabled: false }
   }
   if (!val) {
-    return { ...cur, airplane_enabled: false }
+    return {
+      ...cur,
+      airplane_enabled: false,
+      network_enabled: isCellularMode(cur) && cur.data_strategy === 'always' ? true : cur.network_enabled
+    }
   }
   return {
     network_enabled: false,

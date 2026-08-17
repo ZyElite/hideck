@@ -105,6 +105,32 @@ test('airplane in cellular keeps software phone and closes data', async () => {
   assert.equal(toggles.radioMode.value, 'airplane')
 })
 
+test('turning airplane off restores network for cellular always', async () => {
+  const source = ref<PolicyMirror | null>(mirror({
+    airplane_enabled: true,
+    vowifi_enabled: true,
+    phone_mode: 'cellular',
+    data_strategy: 'always'
+  }))
+  let applied: PolicyMirror | null = null
+  const toggles = useCardPolicyToggles(source, {
+    applyNetwork: async () => ({ ok: true }),
+    applyVoWiFi: async () => ({ ok: true }),
+    applyAirplane: async (_enabled, next) => {
+      applied = next
+      return { ok: true }
+    },
+    applyPhoneMode: async () => ({ ok: true })
+  })
+  await nextTick()
+
+  await toggles.onAirplaneToggle(false)
+
+  assert.equal(applied?.airplane_enabled, false)
+  assert.equal(applied?.network_enabled, true)
+  assert.equal(applied?.vowifi_enabled, true)
+})
+
 test('airplane in wifi calling turns software phone off', async () => {
   const source = ref<PolicyMirror | null>(mirror({
     vowifi_enabled: true,

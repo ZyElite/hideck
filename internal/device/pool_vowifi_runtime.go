@@ -160,6 +160,10 @@ func (p *Pool) EnableVoWiFi(deviceID string) error {
 		return fmt.Errorf("设备 %s 正在切卡，暂不允许启动 VoWiFi", deviceID)
 	}
 	if w := p.GetWorker(deviceID); w != nil && w.Config.PhoneMode == "cellular" {
+		if w.Config.AirplaneEnabled {
+			logger.Info("蜂窝飞行：待机不建 SWu 隧道", "device", deviceID)
+			return p.StopVoWiFiRuntimeForCellularIdle(deviceID)
+		}
 		if w.Config.DataStrategy != "always" {
 			if nc := w.NetworkController(); nc == nil || !nc.IsConnected() {
 				logger.Info("蜂窝 on_demand：待机不建 SWu 隧道，拨号时再连数据", "device", deviceID)

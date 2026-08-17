@@ -344,6 +344,12 @@ func TestApplyAirplaneToCardPolicyInterlock(t *testing.T) {
 	if cell.AirplaneEnabled || !cell.VoWiFiEnabled {
 		t.Fatalf("关飞行只清 airplane: %+v", cell)
 	}
+
+	always := db.CardPolicy{PhoneMode: "cellular", VoWiFiEnabled: true, DataStrategy: "always", NetworkEnabled: false, AirplaneEnabled: true}
+	applyAirplaneToCardPolicy(&always, false)
+	if always.AirplaneEnabled || !always.NetworkEnabled || !always.VoWiFiEnabled {
+		t.Fatalf("蜂窝 always 关飞行应写回网络: %+v", always)
+	}
 }
 
 func TestApplyNetworkAndVoWiFiInterlock(t *testing.T) {

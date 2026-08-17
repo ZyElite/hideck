@@ -21,8 +21,24 @@ func isCellularOnDemandIdleError(err error) bool {
 }
 
 func isCellularOnDemandIdle(w *Worker, pol cardpolicy.Policy) bool {
-	mode := strings.TrimSpace(pol.PhoneMode)
-	strategy := strings.TrimSpace(pol.DataStrategy)
+	mode, strategy, _ := cellularRecoverFields(w, pol)
+	return mode == "cellular" && strategy != "always"
+}
+
+// cellularSoftwarePhoneHeld 表示蜂窝软件电话保持策略开启，但现在不能建 IMS：
+// 飞行关着射频，或 on_demand 待机还没到拨号。
+func cellularSoftwarePhoneHeld(w *Worker, pol cardpolicy.Policy) bool {
+	mode, strategy, airplane := cellularRecoverFields(w, pol)
+	if mode != "cellular" {
+		return false
+	}
+	return airplane || strategy != "always"
+}
+
+func cellularRecoverFields(w *Worker, pol cardpolicy.Policy) (mode, strategy string, airplane bool) {
+	mode = strings.TrimSpace(pol.PhoneMode)
+	strategy = strings.TrimSpace(pol.DataStrategy)
+	airplane = pol.AirplaneEnabled
 	if w != nil {
 		if m := strings.TrimSpace(w.Config.PhoneMode); m != "" {
 			mode = m
@@ -30,8 +46,11 @@ func isCellularOnDemandIdle(w *Worker, pol cardpolicy.Policy) bool {
 		if s := strings.TrimSpace(w.Config.DataStrategy); s != "" {
 			strategy = s
 		}
+		if w.Config.AirplaneEnabled {
+			airplane = true
+		}
 	}
-	return mode == "cellular" && strategy != "always"
+	return mode, strategy, airplane
 }
 
 // SetVoiceGateway 注入 VoWiFi 语音网关，用于优先走 IMS 外呼/挂断路径。
@@ -58,6 +77,9 @@ func (p *Pool) EnsureCellularData(ctx context.Context, deviceID string) error {
 	if w == nil {
 		return fmt.Errorf("设备 %s 不存在", deviceID)
 	}
+	if w.Config.AirplaneEnabled {
+		return fmt.Errorf("飞行模式已开启，无法开启蜂窝数据")
+	}
 	nc := w.NetworkController()
 	if nc == nil {
 		return fmt.Errorf("设备 %s 没有蜂窝数据控制器", deviceID)
@@ -83,6 +105,9 @@ func (p *Pool) PrepareCellularCall(ctx context.Context, deviceID string) error {
 	w := p.GetWorker(deviceID)
 	if w == nil || w.Config.PhoneMode != "cellular" {
 		return nil
+	}
+	if w.Config.AirplaneEnabled {
+		return fmt.Errorf("飞行模式已开启，无法拨号")
 	}
 	if err := p.EnsureCellularData(ctx, deviceID); err != nil {
 		return err

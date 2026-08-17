@@ -12,7 +12,7 @@ import (
 type enabledPatchRequest struct {
 	Enabled      *bool   `json:"enabled"`
 	Mode         *string `json:"mode"`          // "wifi" | "cellular"
-	DataStrategy *string `json:"data_strategy"`  // "always" | "on_demand"
+	DataStrategy *string `json:"data_strategy"` // "always" | "on_demand"
 }
 
 type networkPatchRequest struct {
@@ -183,6 +183,10 @@ func applyAirplaneToCardPolicy(p *db.CardPolicy, enabled bool) {
 	}
 	p.AirplaneEnabled = enabled
 	if !enabled {
+		// 长时间开启 = 驻网时保持流量；退出飞行后把网络开关写回，避免恢复路径偷开 PDP。
+		if p.PhoneMode == "cellular" && p.DataStrategy == "always" {
+			p.NetworkEnabled = true
+		}
 		return
 	}
 	p.NetworkEnabled = false

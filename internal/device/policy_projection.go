@@ -110,12 +110,8 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
 		}
 	}
-	if pol.VoWiFiEnabled {
-		if pol.PhoneMode == "cellular" && pol.DataStrategy != "always" {
-			p.clearDesiredVoWiFiRecoverState(worker.ID)
-		} else {
-			p.scheduleDesiredVoWiFiRecover(worker.ID, reason, time.Now())
-		}
+	if pol.VoWiFiEnabled && !cellularSoftwarePhoneHeld(worker, pol) {
+		p.scheduleDesiredVoWiFiRecover(worker.ID, reason, time.Now())
 	} else {
 		p.clearDesiredVoWiFiRecoverState(worker.ID)
 	}

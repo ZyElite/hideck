@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/runtimehost"
+	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/cardpolicy"
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/internal/vowifihost"
-	"github.com/iniwex5/vowifi-go/runtimehost"
-	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 )
 
 func newDesiredVoWiFiTestPool(t *testing.T, deviceID string, enabled bool, imsi string) *Pool {
@@ -315,6 +315,15 @@ func TestCellularOnDemandIdleHelpers(t *testing.T) {
 	if isCellularOnDemandIdle(&Worker{Config: config.DeviceConfig{PhoneMode: "wifi", DataStrategy: "on_demand"}}, cardpolicy.Policy{}) {
 		t.Fatal("wifi calling should not be treated as cellular idle")
 	}
+	if !cellularSoftwarePhoneHeld(&Worker{Config: config.DeviceConfig{PhoneMode: "cellular", DataStrategy: "always", AirplaneEnabled: true}}, cardpolicy.Policy{}) {
+		t.Fatal("cellular always + airplane should hold software phone")
+	}
+	if cellularSoftwarePhoneHeld(&Worker{Config: config.DeviceConfig{PhoneMode: "cellular", DataStrategy: "always"}}, cardpolicy.Policy{}) {
+		t.Fatal("cellular always camped should not hold software phone")
+	}
+	if cellularSoftwarePhoneHeld(&Worker{Config: config.DeviceConfig{PhoneMode: "wifi", AirplaneEnabled: true}}, cardpolicy.Policy{}) {
+		t.Fatal("wifi calling airplane should still recover")
+	}
 	if !isCellularOnDemandIdleError(fmt.Errorf("恢复 VoWiFi 失败(desired_reconcile): %w", errCellularOnDemandIdle)) {
 		t.Fatal("wrapped idle error should match")
 	}
@@ -390,6 +399,35 @@ func TestDesiredVoWiFiStillRecoversCellularAlways(t *testing.T) {
 	cmd := waitForRecoverCommand(t, commands)
 	if cmd.Kind != vowifihost.LifecycleCommandRecover {
 		t.Fatalf("kind = %s, want recover", cmd.Kind.String())
+	}
+}
+
+func TestDesiredVoWiFiDoesNotRecoverCellularAirplane(t *testing.T) {
+	p := newDesiredVoWiFiTestPool(t, "wwan0", true, "001010000000001")
+	w := p.GetWorker("wwan0")
+	w.Config.PhoneMode = "cellular"
+	w.Config.DataStrategy = "always"
+	w.Config.AirplaneEnabled = true
+	p.SetPolicyResolver(&stubPolicyResolver{
+		pol: cardpolicy.Policy{
+			ICCID:           w.state.Identity.ICCID,
+			VoWiFiEnabled:   true,
+			PhoneMode:       "cellular",
+			DataStrategy:    "always",
+			AirplaneEnabled: true,
+		},
+	})
+	commands := make(chan vowifihost.LifecycleCommand, 1)
+	p.voWiFiHost().LifecycleControllerForTest().TestRun = func(ctx context.Context, cmd vowifihost.LifecycleCommand) error {
+		commands <- cmd
+		return nil
+	}
+
+	p.reconcileDesiredVoWiFiOnce(time.Now())
+
+	assertNoRecoverCommand(t, commands)
+	if p.voWiFiHost().HasDesiredRecoverState("wwan0") {
+		t.Fatal("cellular airplane should not keep recover state")
 	}
 }
 
