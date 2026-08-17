@@ -21,9 +21,9 @@ HiDeck 是面向高通 4G/LTE/5G 模组的综合管理平台，将设备热插�
 
 ![仪表盘](docs/images/dashboard.jpg)
 
-| 设备管理 | 短信中心 |
+| 设备管理 | 电话 |
 | --- | --- |
-| ![设备管理](docs/images/devices.jpg) | ![短信中心](docs/images/sms.jpg) |
+| ![设备管理](docs/images/devices.jpg) | ![电话](docs/images/phone.jpg) |
 
 | 命令中心 | 代理管理 |
 | --- | --- |
