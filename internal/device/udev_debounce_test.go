@@ -1,9 +1,17 @@
 package device
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+var fastUdevDebounceTiming = udevDebounceTiming{
+	addQuiet:    10 * time.Millisecond,
+	addMax:      60 * time.Millisecond,
+	removeQuiet: 5 * time.Millisecond,
+	removeMax:   30 * time.Millisecond,
+}
 
 func TestParseUdevEventKind(t *testing.T) {
 	if got := parseUdevEventKind([]byte("ACTION=add\x00SUBSYSTEM=tty")); got != udevEventAdd {
@@ -29,41 +37,92 @@ func TestUdevEventHasControlPath(t *testing.T) {
 	}
 }
 
-func TestUdevShouldFireCapsAddWait(t *testing.T) {
-	start := time.Unix(1000, 0)
-	// A burst of ttyUSB events that would have reset a 3s timer forever.
-	last := start.Add(900 * time.Millisecond)
-	now := start.Add(udevMaxAdd)
-	if !udevShouldFire(start, last, now, udevEventAdd) {
-		t.Fatal("add wave must fire at the 1.2s cap even if events keep arriving")
+func TestUdevSchedulerWaitsForAddCapWithoutControlPath(t *testing.T) {
+	fired := make(chan struct{}, 1)
+	scheduler := newUdevRescanSchedulerWithTiming(fastUdevDebounceTiming, func() { fired <- struct{}{} })
+	defer scheduler.Stop()
+
+	scheduler.Schedule(udevEventAdd, false)
+	select {
+	case <-fired:
+		t.Fatal("tty-only add must not fire at the quiet window")
+	case <-time.After(2 * fastUdevDebounceTiming.addQuiet):
 	}
-	if udevShouldFire(start, last, start.Add(800*time.Millisecond), udevEventAdd) {
-		t.Fatal("add wave should not fire before quiet window or cap")
+	waitUdevSignal(t, fired, "add wave did not fire at the maximum wait")
+}
+
+func TestUdevSchedulerFiresAfterControlPathQuietWindow(t *testing.T) {
+	fired := make(chan struct{}, 1)
+	scheduler := newUdevRescanSchedulerWithTiming(fastUdevDebounceTiming, func() { fired <- struct{}{} })
+	defer scheduler.Stop()
+
+	scheduler.Schedule(udevEventAdd, true)
+	waitUdevSignal(t, fired, "control-path add did not fire after the quiet window")
+}
+
+func TestUdevSchedulerSerializesPendingRescan(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	completed := make(chan int32, 2)
+	var calls atomic.Int32
+	var active atomic.Int32
+	var overlapped atomic.Bool
+
+	scheduler := newUdevRescanSchedulerWithTiming(fastUdevDebounceTiming, func() {
+		call := calls.Add(1)
+		if active.Add(1) > 1 {
+			overlapped.Store(true)
+		}
+		if call == 1 {
+			close(firstStarted)
+			<-releaseFirst
+		}
+		active.Add(-1)
+		completed <- call
+	})
+	defer scheduler.Stop()
+
+	scheduler.Schedule(udevEventAdd, true)
+	waitUdevSignal(t, firstStarted, "first rescan did not start")
+	scheduler.Schedule(udevEventAdd, true)
+	waitUdevPending(t, scheduler)
+	close(releaseFirst)
+	waitUdevCompletion(t, completed)
+	waitUdevCompletion(t, completed)
+
+	if overlapped.Load() {
+		t.Fatal("pending udev rescans must not overlap")
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("rescan calls = %d, want 2", calls.Load())
 	}
 }
 
-func TestUdevShouldFireAfterQuietWindow(t *testing.T) {
-	start := time.Unix(2000, 0)
-	last := start.Add(100 * time.Millisecond)
-	if !udevShouldFire(start, last, last.Add(udevQuietAdd), udevEventAdd) {
-		t.Fatal("add wave should fire 400ms after the last event")
-	}
-	if udevShouldFire(start, last, last.Add(udevQuietAdd-time.Millisecond), udevEventAdd) {
-		t.Fatal("add wave should wait the quiet window")
+func TestUdevSchedulerKindChangeCancelsPreviousWave(t *testing.T) {
+	fired := make(chan struct{}, 2)
+	scheduler := newUdevRescanSchedulerWithTiming(fastUdevDebounceTiming, func() { fired <- struct{}{} })
+	defer scheduler.Stop()
+
+	scheduler.Schedule(udevEventAdd, false)
+	scheduler.Schedule(udevEventRemove, false)
+	waitUdevSignal(t, fired, "remove wave did not replace pending add wave")
+	select {
+	case <-fired:
+		t.Fatal("canceled add wave triggered a second rescan")
+	case <-time.After(2 * fastUdevDebounceTiming.addMax):
 	}
 }
 
-func TestUdevRemoveFiresFasterThanAdd(t *testing.T) {
-	start := time.Unix(3000, 0)
-	last := start
-	if udevShouldFire(start, last, start.Add(udevQuietRemove-time.Millisecond), udevEventRemove) {
-		t.Fatal("remove should still wait its short quiet window")
-	}
-	if !udevShouldFire(start, last, start.Add(udevQuietRemove), udevEventRemove) {
-		t.Fatal("remove should fire after 200ms quiet")
-	}
-	if !udevShouldFire(start, last.Add(500*time.Millisecond), start.Add(udevMaxRemove), udevEventRemove) {
-		t.Fatal("remove must fire at the 600ms cap")
+func TestUdevSchedulerStopCancelsWave(t *testing.T) {
+	fired := make(chan struct{}, 1)
+	scheduler := newUdevRescanSchedulerWithTiming(fastUdevDebounceTiming, func() { fired <- struct{}{} })
+	scheduler.Schedule(udevEventAdd, true)
+	scheduler.Stop()
+
+	select {
+	case <-fired:
+		t.Fatal("stopped scheduler must not fire a pending wave")
+	case <-time.After(2 * fastUdevDebounceTiming.addMax):
 	}
 }
 
@@ -85,4 +144,37 @@ func TestUdevDoesNotSwallowLateControlPathAdd(t *testing.T) {
 	if udevSwallowAfterFire(firedAt, firedAt.Add(100*time.Millisecond), udevEventAdd, udevEventAdd, true) {
 		t.Fatal("late cdc-wdm/qmi add after a tty-only scan must start a new wave")
 	}
+}
+
+func waitUdevSignal(t *testing.T, signal <-chan struct{}, message string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal(message)
+	}
+}
+
+func waitUdevCompletion(t *testing.T, completed <-chan int32) {
+	t.Helper()
+	select {
+	case <-completed:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for rescan completion")
+	}
+}
+
+func waitUdevPending(t *testing.T, scheduler *udevRescanScheduler) {
+	t.Helper()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		scheduler.mu.Lock()
+		pending := scheduler.rescanPending
+		scheduler.mu.Unlock()
+		if pending {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("second wave was not retained as a pending rescan")
 }

@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -471,5 +472,24 @@ func TestRefreshIdentityAndApplyCardPolicyDoesNotFallbackToConfiguredNetworkWith
 	}
 	if ctrl.connected {
 		t.Fatal("无 policy resolver 时不应回退到旧 worker.Config 连接数据网络")
+	}
+}
+
+func TestRefreshIdentityAndApplyCardPolicyReturnsResolverError(t *testing.T) {
+	expected := errors.New("temporary policy store failure")
+	p := NewPool(nil)
+	defer p.cancel()
+	p.SetPolicyResolver(&stubPolicyResolver{err: expected})
+	w := &Worker{
+		ID: "wwan0",
+		Backend: &workerStartupIdentityBackendStub{
+			liveICCID: "898600000000000001",
+			liveIMSI:  "460001234567890",
+		},
+	}
+
+	_, err := p.refreshIdentityAndApplyCardPolicy(w, "startup_post_apply")
+	if !errors.Is(err, expected) {
+		t.Fatalf("refresh error = %v, want wrapped resolver error", err)
 	}
 }

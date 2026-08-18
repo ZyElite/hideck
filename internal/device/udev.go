@@ -20,27 +20,20 @@ const udevNetlinkRecvBuf = 1024 * 1024
 
 // UdevWatcher 监听 USB 设备热插拔事件
 type UdevWatcher struct {
-	pool     *Pool
-	stop     chan struct{}
-	stopOnce sync.Once
-
-	pendingMu      sync.Mutex
-	waveKind       udevEventKind
-	waveStart      time.Time
-	waveSawControl bool
-	waveGen        uint64
-	quietTimer     *time.Timer
-	maxTimer       *time.Timer
-	firedAt        time.Time
-	firedKind      udevEventKind
+	pool      *Pool
+	stop      chan struct{}
+	stopOnce  sync.Once
+	scheduler *udevRescanScheduler
 }
 
 // NewUdevWatcher 创建 udev 监听器
 func NewUdevWatcher(pool *Pool) *UdevWatcher {
-	return &UdevWatcher{
+	watcher := &UdevWatcher{
 		pool: pool,
 		stop: make(chan struct{}),
 	}
+	watcher.scheduler = newUdevRescanScheduler(watcher.runRescan)
+	return watcher
 }
 
 // Start 启动 udev 事件监听
@@ -52,9 +45,7 @@ func (w *UdevWatcher) Start() {
 func (w *UdevWatcher) Stop() {
 	w.stopOnce.Do(func() {
 		close(w.stop)
-		w.pendingMu.Lock()
-		w.stopWaveLocked()
-		w.pendingMu.Unlock()
+		w.scheduler.Stop()
 	})
 }
 
@@ -155,59 +146,10 @@ func (w *UdevWatcher) isModemEvent(data []byte) bool {
 
 // scheduleRescan 枚举会连着冒 ttyUSB，3s 重置会把识别拖到枚举结束之后。
 func (w *UdevWatcher) scheduleRescan(kind udevEventKind, controlReady bool) {
-	if kind == udevEventNone {
-		return
-	}
-	w.pendingMu.Lock()
-	defer w.pendingMu.Unlock()
-
-	now := time.Now()
-	if udevSwallowAfterFire(w.firedAt, now, w.firedKind, kind, controlReady) {
-		return
-	}
-	if w.waveKind != udevEventNone && kind != w.waveKind {
-		w.stopWaveLocked()
-	}
-
-	quiet, max := udevDebounceWindows(kind)
-	if w.waveKind == udevEventNone {
-		w.waveKind = kind
-		w.waveStart = now
-		w.waveSawControl = controlReady
-		w.waveGen++
-		gen := w.waveGen
-		w.maxTimer = time.AfterFunc(max, func() { w.tryFireRescan(gen) })
-		// add 在控制口出现前只靠上限，避免 tty 安静 400ms 就扫到空控制口。
-		if kind == udevEventRemove || controlReady {
-			w.quietTimer = time.AfterFunc(quiet, func() { w.tryFireRescan(gen) })
-		}
-		return
-	}
-
-	if controlReady {
-		w.waveSawControl = true
-	}
-	if kind == udevEventAdd && !w.waveSawControl {
-		return
-	}
-	if w.quietTimer != nil {
-		w.quietTimer.Stop()
-	}
-	gen := w.waveGen
-	w.quietTimer = time.AfterFunc(quiet, func() { w.tryFireRescan(gen) })
+	w.scheduler.Schedule(kind, controlReady)
 }
 
-func (w *UdevWatcher) tryFireRescan(gen uint64) {
-	w.pendingMu.Lock()
-	if gen != w.waveGen || w.waveKind == udevEventNone {
-		w.pendingMu.Unlock()
-		return
-	}
-	w.firedAt = time.Now()
-	w.firedKind = w.waveKind
-	w.stopWaveLocked()
-	w.pendingMu.Unlock()
-
+func (w *UdevWatcher) runRescan() {
 	logger.Info("udev 检测到设备变化，执行重新扫描")
 	if w.pool != nil {
 		if woken := w.pool.WakeModemRebootRecoveries("udev_modem_event"); woken > 0 {
@@ -218,20 +160,6 @@ func (w *UdevWatcher) tryFireRescan(gen uint64) {
 			logger.Warn("设备重新扫描失败", "err", err)
 		}
 	}
-}
-
-func (w *UdevWatcher) stopWaveLocked() {
-	if w.quietTimer != nil {
-		w.quietTimer.Stop()
-		w.quietTimer = nil
-	}
-	if w.maxTimer != nil {
-		w.maxTimer.Stop()
-		w.maxTimer = nil
-	}
-	w.waveKind = udevEventNone
-	w.waveStart = time.Time{}
-	w.waveSawControl = false
 }
 
 // truncateString 截断字符串用于日志

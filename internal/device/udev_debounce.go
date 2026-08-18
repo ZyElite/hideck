@@ -2,6 +2,7 @@ package device
 
 import (
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,6 +21,44 @@ const (
 	udevEventAdd
 	udevEventRemove
 )
+
+type udevDebounceTiming struct {
+	addQuiet    time.Duration
+	addMax      time.Duration
+	removeQuiet time.Duration
+	removeMax   time.Duration
+}
+
+var defaultUdevDebounceTiming = udevDebounceTiming{
+	addQuiet:    udevQuietAdd,
+	addMax:      udevMaxAdd,
+	removeQuiet: udevQuietRemove,
+	removeMax:   udevMaxRemove,
+}
+
+type udevRescanScheduler struct {
+	mu             sync.Mutex
+	timing         udevDebounceTiming
+	fire           func()
+	stopped        bool
+	waveKind       udevEventKind
+	waveSawControl bool
+	waveGen        uint64
+	quietTimer     *time.Timer
+	maxTimer       *time.Timer
+	firedAt        time.Time
+	firedKind      udevEventKind
+	rescanRunning  bool
+	rescanPending  bool
+}
+
+func newUdevRescanScheduler(fire func()) *udevRescanScheduler {
+	return newUdevRescanSchedulerWithTiming(defaultUdevDebounceTiming, fire)
+}
+
+func newUdevRescanSchedulerWithTiming(timing udevDebounceTiming, fire func()) *udevRescanScheduler {
+	return &udevRescanScheduler{timing: timing, fire: fire}
+}
 
 func parseUdevEventKind(data []byte) udevEventKind {
 	s := string(data)
@@ -46,25 +85,120 @@ func udevEventHasControlPath(data []byte) bool {
 	return false
 }
 
-func udevDebounceWindows(kind udevEventKind) (quiet, max time.Duration) {
+func (t udevDebounceTiming) windows(kind udevEventKind) (quiet, max time.Duration) {
 	if kind == udevEventRemove {
-		return udevQuietRemove, udevMaxRemove
+		return t.removeQuiet, t.removeMax
 	}
-	return udevQuietAdd, udevMaxAdd
+	return t.addQuiet, t.addMax
 }
 
-func udevShouldFire(waveStart, lastEvent, now time.Time, kind udevEventKind) bool {
-	if kind == udevEventNone || waveStart.IsZero() || lastEvent.IsZero() {
-		return false
+func (s *udevRescanScheduler) Schedule(kind udevEventKind, controlReady bool) {
+	if kind == udevEventNone {
+		return
 	}
-	quiet, max := udevDebounceWindows(kind)
-	quietAt := lastEvent.Add(quiet)
-	maxAt := waveStart.Add(max)
-	fireAt := quietAt
-	if maxAt.Before(fireAt) {
-		fireAt = maxAt
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return
 	}
-	return !now.Before(fireAt)
+
+	now := time.Now()
+	if udevSwallowAfterFire(s.firedAt, now, s.firedKind, kind, controlReady) {
+		return
+	}
+	if s.waveKind != udevEventNone && kind != s.waveKind {
+		s.stopWaveLocked()
+	}
+	if s.waveKind == udevEventNone {
+		s.startWaveLocked(kind, controlReady)
+		return
+	}
+
+	if controlReady {
+		s.waveSawControl = true
+	}
+	if kind == udevEventAdd && !s.waveSawControl {
+		return
+	}
+	s.resetQuietTimerLocked(kind)
+}
+
+func (s *udevRescanScheduler) startWaveLocked(kind udevEventKind, controlReady bool) {
+	quiet, max := s.timing.windows(kind)
+	s.waveKind = kind
+	s.waveSawControl = controlReady
+	s.waveGen++
+	gen := s.waveGen
+	s.maxTimer = time.AfterFunc(max, func() { s.tryFire(gen) })
+	if kind == udevEventRemove || controlReady {
+		s.quietTimer = time.AfterFunc(quiet, func() { s.tryFire(gen) })
+	}
+}
+
+func (s *udevRescanScheduler) resetQuietTimerLocked(kind udevEventKind) {
+	if s.quietTimer != nil {
+		s.quietTimer.Stop()
+	}
+	quiet, _ := s.timing.windows(kind)
+	gen := s.waveGen
+	s.quietTimer = time.AfterFunc(quiet, func() { s.tryFire(gen) })
+}
+
+func (s *udevRescanScheduler) tryFire(gen uint64) {
+	s.mu.Lock()
+	if s.stopped || gen != s.waveGen || s.waveKind == udevEventNone {
+		s.mu.Unlock()
+		return
+	}
+	s.firedAt = time.Now()
+	s.firedKind = s.waveKind
+	s.stopWaveLocked()
+	if s.rescanRunning {
+		s.rescanPending = true
+		s.mu.Unlock()
+		return
+	}
+	s.rescanRunning = true
+	s.mu.Unlock()
+	s.runRescans()
+}
+
+func (s *udevRescanScheduler) runRescans() {
+	for {
+		if s.fire != nil {
+			s.fire()
+		}
+		s.mu.Lock()
+		if s.stopped || !s.rescanPending {
+			s.rescanRunning = false
+			s.rescanPending = false
+			s.mu.Unlock()
+			return
+		}
+		s.rescanPending = false
+		s.mu.Unlock()
+	}
+}
+
+func (s *udevRescanScheduler) Stop() {
+	s.mu.Lock()
+	s.stopped = true
+	s.rescanPending = false
+	s.stopWaveLocked()
+	s.mu.Unlock()
+}
+
+func (s *udevRescanScheduler) stopWaveLocked() {
+	if s.quietTimer != nil {
+		s.quietTimer.Stop()
+		s.quietTimer = nil
+	}
+	if s.maxTimer != nil {
+		s.maxTimer.Stop()
+		s.maxTimer = nil
+	}
+	s.waveKind = udevEventNone
+	s.waveSawControl = false
 }
 
 func udevSwallowAfterFire(firedAt, now time.Time, firedKind, incoming udevEventKind, incomingControl bool) bool {

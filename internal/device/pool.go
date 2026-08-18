@@ -216,6 +216,7 @@ type Pool struct {
 
 	// 热插拔监听
 	udevWatcher            *UdevWatcher
+	rescanMu               sync.Mutex
 	startOnce              sync.Once
 	policyResolver         cardpolicy.Resolver
 	smsIdentities          smsIdentityStore
@@ -1237,6 +1238,7 @@ func (p *Pool) refreshIdentityAndApplyCardPolicy(worker *Worker, reason string) 
 
 	_ = worker.RefreshRuntime(nil, reason)
 	result, identityErr := worker.refreshIdentityLive(nil, reason)
+	refreshErr := identityErr
 
 	if p != nil {
 		p.PersistRuntimeState(worker)
@@ -1244,13 +1246,16 @@ func (p *Pool) refreshIdentityAndApplyCardPolicy(worker *Worker, reason string) 
 
 		if identityErr == nil {
 			if worker.CurrentICCID() != "" {
-				p.resolveAndApplyPolicy(worker, reason)
+				policyResult := p.resolveAndApplyPolicy(worker, reason)
+				if policyResult.Err != nil {
+					refreshErr = fmt.Errorf("应用卡策略: %w", policyResult.Err)
+				}
 			}
 		}
 
 		p.broadcastVoWiFiStateChange(worker.ID)
 	}
-	return result, identityErr
+	return result, refreshErr
 }
 
 func (p *Pool) applyNetworkPreference(worker *Worker) error {
@@ -1572,6 +1577,9 @@ func (p *Pool) collectRescanHardware(discovered []QMIDevice, liveWorkerIndex Wor
 }
 
 func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
+	p.rescanMu.Lock()
+	defer p.rescanMu.Unlock()
+
 	discovered, err := discoverQMIDevicesFn()
 	if err != nil {
 		logger.Warn("QMI 硬件扫描失败，将继续使用兼容扫描", "err", err)

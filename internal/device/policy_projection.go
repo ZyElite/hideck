@@ -64,6 +64,7 @@ type policyApplyResult struct {
 	Applied bool
 	ICCID   string
 	Reason  string
+	Err     error
 }
 
 // resolveAndApplyPolicy 解析 worker 当前 ICCID 的策略，投影并复用现有 apply 路径。
@@ -79,7 +80,7 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	pol, err := p.policyResolver.Resolve(iccid)
 	if err != nil {
 		logger.Warn("解析卡策略失败", "device", worker.ID, "iccid", iccid, "err", err)
-		return policyApplyResult{ICCID: iccid, Reason: "resolve_failed"}
+		return policyApplyResult{ICCID: iccid, Reason: "resolve_failed", Err: err}
 	}
 	applyPolicyToWorker(worker, pol)
 	logger.Info("已投影卡策略", "device", worker.ID, "iccid", iccid,
