@@ -103,9 +103,7 @@ func (p *Pool) startQMICoreRetryLoop(worker *Worker) {
 				if _, resetErr := p.resetExistingQMIDataConnectionBeforePreference(worker, "qmi_core_recovered"); resetErr != nil {
 					logger.Warn(fmt.Sprintf("[%s] QMI Core 恢复后清理既有数据连接失败，跳过自动应用网络偏好", worker.ID), "err", resetErr)
 				} else {
-					if applyErr := p.applyNetworkPreference(worker); applyErr != nil {
-						logger.Warn(fmt.Sprintf("[%s] QMI Core 恢复后自动应用网络偏好失败", worker.ID), "err", applyErr)
-					}
+					p.applyAfterQMIControlReady(worker, "qmi_core_recovered")
 				}
 				p.markQMIControlRecovered(worker, "qmi_core_recovered")
 				return

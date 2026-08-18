@@ -223,8 +223,8 @@ type Pool struct {
 	// runtimeQMIAttachments 记住 Worker 上次成功用过的 QMI 路径。
 	// 配置文件不持久化 control_device，拔掉 Worker 后恢复只能靠这份内存快照做路径兜底。
 	runtimeQMIAttachments map[string]config.DeviceConfig
-	pcscService            *pcsc.Service
-	pcscReconcileMu        sync.Mutex
+	pcscService           *pcsc.Service
+	pcscReconcileMu       sync.Mutex
 }
 
 func NewPool(cfg *config.Config) *Pool {
@@ -1634,7 +1634,7 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 			if p.lifecycle != nil {
 				p.lifecycle.BeginRecovery(md.ID, LifecyclePhaseWorkerStarting, "rescan_device_online", qmiLifecycleRecoveryTTL)
 			}
-			if _, err := p.AddWorkerFromConfig(cfg); err != nil {
+			if _, err := p.AddWorkerFromConfig(withConnectHoldRF(cfg)); err != nil {
 				logger.Warn("自动启动设备失败", "device", md.ID, "err", err)
 			} else if md.VoWiFiEnabled {
 				go func(deviceID string) {
@@ -1674,7 +1674,7 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 					ATPort:       hw.ATPort,
 				})
 			}
-			if _, err := p.AddWorkerFromConfig(cfg); err != nil {
+			if _, err := p.AddWorkerFromConfig(withConnectHoldRF(cfg)); err != nil {
 				logger.Warn("重新初始化设备失败", "device", md.ID, "err", err)
 			} else if md.VoWiFiEnabled {
 				go func(deviceID string) {
@@ -1720,7 +1720,7 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 						logger.Warn("移除旧 QMI Worker 失败", "device", md.ID, "err", err)
 						continue
 					}
-					if _, err := p.AddWorkerFromConfig(nextCfg); err != nil {
+					if _, err := p.AddWorkerFromConfig(withConnectHoldRF(nextCfg)); err != nil {
 						logger.Warn("使用新 QMI 路径重建 Worker 失败", "device", md.ID, "err", err)
 					} else if md.VoWiFiEnabled {
 						go func(deviceID string) {
@@ -1753,7 +1753,7 @@ func (p *Pool) rescanAndReconnect(opts rescanReconnectOptions) error {
 				} else {
 					cfg = applyQMIManagedAttachment(cfg, hwQMI)
 				}
-				if _, err := p.AddWorkerFromConfig(cfg); err != nil {
+				if _, err := p.AddWorkerFromConfig(withConnectHoldRF(cfg)); err != nil {
 					logger.Warn("端口变化后重建设备失败", "device", md.ID, "err", err)
 				} else if md.VoWiFiEnabled {
 					go func(deviceID string) {
@@ -1845,7 +1845,7 @@ func (p *Pool) RebuildWorker(deviceID string) error {
 	p.mu.Unlock()
 
 	// 重建 Worker
-	if _, err := p.AddWorkerFromConfig(*cfg); err != nil {
+	if _, err := p.AddWorkerFromConfig(withConnectHoldRF(*cfg)); err != nil {
 		return fmt.Errorf("RebuildWorker 重建失败: %w", err)
 	}
 

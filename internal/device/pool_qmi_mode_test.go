@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
+	"github.com/iniwex5/vowifi-go/runtimehost"
+	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/internal/modem"
 	"github.com/yibaiba/hideck/internal/vowifihost"
-	"github.com/iniwex5/vowifi-go/runtimehost"
-	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 
 type workerStatusBackendStub struct {
@@ -80,6 +80,7 @@ func (s *workerStatusBackendStub) ListSMS(ctx context.Context) ([]backend.SMSSum
 func (s *workerStatusBackendStub) DeleteAllSMS(ctx context.Context) error { return nil }
 func (s *workerStatusBackendStub) SetOperatingMode(ctx context.Context, mode backend.OperatingMode) error {
 	s.setOpModeCalls = append(s.setOpModeCalls, mode)
+	s.opMode = mode
 	return nil
 }
 func (s *workerStatusBackendStub) GetOperatingMode(ctx context.Context) (backend.OperatingMode, error) {

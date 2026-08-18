@@ -160,6 +160,7 @@ func (s *backendSwitchService) verifyPersistAndStart(
 		return result, backendSwitchError("persist_config", result, err)
 	}
 	result.Persisted = true
+	desired.ConnectHoldRF = true
 	if _, err := s.pool.AddWorkerFromConfig(desired); err != nil {
 		return result, backendSwitchError("start_worker", result, err)
 	}

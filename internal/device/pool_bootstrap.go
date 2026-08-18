@@ -669,6 +669,9 @@ func (p *Pool) AddWorkerFromConfig(devCfg config.DeviceConfig) (*Worker, error) 
 		p.mu.Unlock()
 	}
 	w.uimIndicationsReady.Store(true)
+	if w.Config.ConnectHoldRF {
+		p.holdRadioOffOnConnect(w, "connect_hold_rf")
+	}
 	p.scheduleATRadioWarmup(w, "startup")
 	if w.Config.AirplaneEnabled && !w.Config.VoWiFiEnabled {
 		p.enterAirplaneModeFromPolicy(w, "device_bind_default")

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -122,5 +123,20 @@ func TestUpdateDeviceInFilePersistsPCSCBindingAndPINReference(t *testing.T) {
 	got := loaded.Devices[0]
 	if got.PCSCReaderName != updated.PCSCReaderName || got.PCSCUSBPath != updated.PCSCUSBPath || got.SIMPINEnv != updated.SIMPINEnv {
 		t.Fatalf("updated PC/SC fields were not preserved: %+v", got)
+	}
+}
+
+func TestDeviceConfigToNodeOmitsConnectHoldRF(t *testing.T) {
+	node := deviceConfigToNode(DeviceConfig{
+		ID:              "dev1",
+		ModemIMEI:       "867383058993207",
+		ConnectHoldRF:   true,
+		AirplaneEnabled: true,
+	})
+	for i := 0; i < len(node.Content); i += 2 {
+		key := strings.ToLower(node.Content[i].Value)
+		if strings.Contains(key, "connect") || key == "airplane_enabled" {
+			t.Fatalf("device yaml must not persist %s", node.Content[i].Value)
+		}
 	}
 }

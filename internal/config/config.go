@@ -231,6 +231,7 @@ type DeviceConfig struct {
 	IPVersion       string `mapstructure:"-"`
 	VoWiFiEnabled   bool   `mapstructure:"-"`
 	AirplaneEnabled bool   `mapstructure:"-"`
+	ConnectHoldRF   bool   `mapstructure:"-"` // USB 热插/控制口重建时暂扣射频，不落文件
 	SMSEnabled      bool   `mapstructure:"-"` // SMS 恒开，运行时强制 true
 	PhoneMode       string `mapstructure:"-"` // wifi | cellular
 	DataStrategy    string `mapstructure:"-"` // always | on_demand

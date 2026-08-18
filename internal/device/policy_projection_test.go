@@ -91,6 +91,141 @@ func TestInitialCellularRadioSuppressionWithoutResolverUsesDeviceConfig(t *testi
 	}
 }
 
+func TestHoldRadioOffOnConnectDoesNotChangeStoredAirplane(t *testing.T) {
+	p := &Pool{ctx: context.Background()}
+	stub := &workerStatusBackendStub{opMode: backend.ModeOnline}
+	w := &Worker{
+		ID:      "wwan0",
+		Backend: stub,
+		Config:  config.DeviceConfig{AirplaneEnabled: false, ConnectHoldRF: true},
+	}
+
+	p.holdRadioOffOnConnect(w, "connect_hold_rf")
+
+	if w.Config.AirplaneEnabled {
+		t.Fatal("连接期先飞不得改写 AirplaneEnabled")
+	}
+	if !w.cellularRadioIsSuppressed() {
+		t.Fatal("连接期先飞应暂扣驻网协调")
+	}
+	if len(stub.setOpModeCalls) != 1 || stub.setOpModeCalls[0] != backend.ModeRFOff {
+		t.Fatalf("连接期第一条射频指令必须是 RFOff: %+v", stub.setOpModeCalls)
+	}
+	if w.Config.ConnectHoldRF {
+		t.Fatal("成功 hold 后应清掉 ConnectHoldRF，避免 QMI 重试再飞")
+	}
+}
+
+func TestHoldRadioOffOnConnectIdempotentWhenAlreadyFlight(t *testing.T) {
+	p := &Pool{ctx: context.Background()}
+	stub := &workerStatusBackendStub{opMode: backend.ModeRFOff}
+	w := &Worker{ID: "wwan0", Backend: stub}
+
+	w.Config.ConnectHoldRF = true
+	p.holdRadioOffOnConnect(w, "connect_hold_rf")
+
+	if len(stub.setOpModeCalls) != 0 {
+		t.Fatalf("已在飞行不应重复切: %+v", stub.setOpModeCalls)
+	}
+	if w.Config.ConnectHoldRF {
+		t.Fatal("已在飞行的 hold 也应清掉 ConnectHoldRF")
+	}
+}
+
+func TestWithConnectHoldRFDoesNotPersistIntent(t *testing.T) {
+	cfg := withConnectHoldRF(config.DeviceConfig{ID: "wwan0", AirplaneEnabled: false})
+	if !cfg.ConnectHoldRF {
+		t.Fatal("withConnectHoldRF 应打上运行时标记")
+	}
+	if cfg.AirplaneEnabled {
+		t.Fatal("withConnectHoldRF 不得改飞行策略")
+	}
+}
+
+func TestIdentityReadyAfterConnectHoldRestoresCamp(t *testing.T) {
+	p := &Pool{ctx: context.Background()}
+	p.SetPolicyResolver(&stubPolicyResolver{
+		pol: cardpolicy.Policy{ICCID: "123", AirplaneEnabled: false, NetworkEnabled: false},
+	})
+	stub := &workerStatusBackendStub{opMode: backend.ModeOnline}
+	w := &Worker{
+		ID:      "wwan0",
+		Backend: stub,
+		Config:  config.DeviceConfig{AirplaneEnabled: false, ConnectHoldRF: true},
+	}
+	w.state.Identity.ICCID = "123"
+
+	p.holdRadioOffOnConnect(w, "connect_hold_rf")
+	res := p.resolveAndApplyPolicy(w, "identity_ready")
+	if !res.Applied {
+		t.Fatalf("identity_ready 应应用策略: %+v", res)
+	}
+	if w.Config.AirplaneEnabled {
+		t.Fatal("老卡驻网策略不得被写成飞行")
+	}
+	if len(stub.setOpModeCalls) < 2 || stub.setOpModeCalls[0] != backend.ModeRFOff || stub.setOpModeCalls[1] != backend.ModeOnline {
+		t.Fatalf("先飞再按策略 Online: %+v", stub.setOpModeCalls)
+	}
+	if w.cellularRadioIsSuppressed() {
+		t.Fatal("驻网策略投影后应解除射频抑制")
+	}
+
+	before := append([]backend.OperatingMode(nil), stub.setOpModeCalls...)
+	w.Config.ConnectHoldRF = true
+	p.applyAfterQMIControlReady(w, "qmi_core_recovered")
+	if w.cellularRadioIsSuppressed() {
+		t.Fatal("QMI 恢复时身份已在，不得再次抑制驻网")
+	}
+	if w.Config.AirplaneEnabled {
+		t.Fatal("QMI 恢复不得把驻网卡写成飞行")
+	}
+	if w.Config.ConnectHoldRF {
+		t.Fatal("身份已在时 QMI 恢复应清掉 ConnectHoldRF")
+	}
+	for i := len(before); i < len(stub.setOpModeCalls); i++ {
+		if stub.setOpModeCalls[i] == backend.ModeRFOff {
+			t.Fatalf("QMI 恢复不得再 RFOff: %+v", stub.setOpModeCalls)
+		}
+	}
+}
+
+func TestIdentityReadyAfterConnectHoldKeepsAirplaneOrVoWiFiRFOff(t *testing.T) {
+	cases := []struct {
+		name string
+		pol  cardpolicy.Policy
+	}{
+		{name: "airplane", pol: cardpolicy.Policy{ICCID: "123", AirplaneEnabled: true}},
+		{name: "vowifi-wifi", pol: cardpolicy.Policy{ICCID: "123", VoWiFiEnabled: true, PhoneMode: "wifi"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &Pool{ctx: context.Background()}
+			p.SetPolicyResolver(&stubPolicyResolver{pol: tc.pol})
+			stub := &workerStatusBackendStub{opMode: backend.ModeOnline}
+			w := &Worker{
+				ID:      "wwan0",
+				Backend: stub,
+				Config:  config.DeviceConfig{AirplaneEnabled: false, ConnectHoldRF: true},
+			}
+			w.state.Identity.ICCID = "123"
+
+			p.holdRadioOffOnConnect(w, "connect_hold_rf")
+			res := p.resolveAndApplyPolicy(w, "identity_ready")
+			if !res.Applied {
+				t.Fatalf("identity_ready 应应用策略: %+v", res)
+			}
+			for _, mode := range stub.setOpModeCalls {
+				if mode == backend.ModeOnline {
+					t.Fatalf("%s 策略投影后不应 Online: %+v", tc.name, stub.setOpModeCalls)
+				}
+			}
+			if !w.cellularRadioIsSuppressed() {
+				t.Fatalf("%s 应保持射频抑制", tc.name)
+			}
+		})
+	}
+}
+
 // 投影时按策略真正进入飞行模式：当前在线 ⇒ 切 RFOff。
 func TestProjectionEntersAirplaneMode(t *testing.T) {
 	p := &Pool{ctx: context.Background()}

@@ -118,6 +118,75 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 	return policyApplyResult{Applied: true, ICCID: iccid, Reason: reason}
 }
 
+func withConnectHoldRF(cfg config.DeviceConfig) config.DeviceConfig {
+	cfg.ConnectHoldRF = true
+	return cfg
+}
+
+func clearConnectHoldRF(w *Worker) {
+	if w != nil {
+		w.Config.ConnectHoldRF = false
+	}
+}
+
+// holdRadioOffOnConnect 连接期暂扣射频：控制口刚恢复时先 RFOff，不改卡策略里的 AirplaneEnabled。
+// 成功（已飞或刚切到 RFOff）后清掉 ConnectHoldRF，避免 QMI 后台重试再打一轮飞。
+func (p *Pool) holdRadioOffOnConnect(w *Worker, reason string) {
+	if w == nil {
+		return
+	}
+	if reason == "" {
+		reason = "connect_hold_rf"
+	}
+	w.setCellularRadioSuppressed(true)
+	if p != nil && p.ctx != nil {
+		_ = w.cancelRadioRegistrationReconcile(p.ctx, reason)
+	}
+	if nc := w.NetworkController(); nc != nil && nc.IsConnected() {
+		_ = w.StopNetwork()
+	}
+	w.clearCachedIP()
+	if w.Backend == nil {
+		return
+	}
+	ctrl, ok := w.Backend.(backend.OperatingModeController)
+	if !ok {
+		logger.Warn("设备不支持射频控制，无法在连接期暂扣射频", "device", w.ID, "reason", reason)
+		clearConnectHoldRF(w)
+		return
+	}
+	if cur, err := ctrl.GetOperatingMode(p.ctx); err == nil && isFlightOperatingMode(cur) {
+		logger.Info("连接期射频已处于飞行，保持暂扣", "device", w.ID, "reason", reason)
+		clearConnectHoldRF(w)
+		return
+	}
+	if err := ctrl.SetOperatingMode(p.ctx, backend.ModeRFOff); err != nil {
+		logger.Warn("连接期暂扣射频失败", "device", w.ID, "reason", reason, "err", err)
+		return
+	}
+	clearConnectHoldRF(w)
+	logger.Info("连接期已暂扣射频", "device", w.ID, "reason", reason)
+}
+
+// applyAfterQMIControlReady QMI 后台起来后收口：身份已在则按卡策略投影，
+// 不再无条件 RFOff。身份未到且仍要先飞时才 hold 一次。
+func (p *Pool) applyAfterQMIControlReady(worker *Worker, reason string) {
+	if p == nil || worker == nil {
+		return
+	}
+	if worker.CurrentICCID() != "" {
+		clearConnectHoldRF(worker)
+		p.resolveAndApplyPolicy(worker, reason)
+		return
+	}
+	if worker.Config.ConnectHoldRF {
+		p.holdRadioOffOnConnect(worker, "connect_hold_rf")
+	}
+	if err := p.applyNetworkPreference(worker); err != nil {
+		logger.Warn("QMI 控制面就绪后应用网络偏好失败", "device", worker.ID, "reason", reason, "err", err)
+	}
+}
+
 // enterAirplaneModeFromPolicy 按策略进入纯飞行：先断数据网，再把射频切到 RFOff。
 // 已处于飞行则跳过。设备不支持射频控制时仅告警。
 func (p *Pool) enterAirplaneModeFromPolicy(w *Worker, reason string) {
