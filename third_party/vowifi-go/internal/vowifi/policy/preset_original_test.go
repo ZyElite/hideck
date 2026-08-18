@@ -26,6 +26,7 @@ func TestOriginalCarrierPresetAssetsRemainExact(t *testing.T) {
 		"tmobile_310240.yaml":    "bed3bfcb871282eab4c446004c1837c39426aa94e1206ab18c41f52aa82c4cb1",
 		"tmobile_310260.yaml":    "57619113de3cfbe9ddb4afda13885501415f534f580fc55a8e7f54a15f2b93a6",
 		"vodafone_nl_20404.yaml": "ca847e87abe516603cd92f05ef0a9e5ba8ad0869f7cca3ea2aabe9f49694df8b",
+		"vodafone_uk_23415.yaml": "63fb1642b77a291de5795827200a1589117fed25fab843748a3bea39dc1d6a62",
 	}
 	entries, err := carrierPresetFiles.ReadDir("presets")
 	if err != nil {
@@ -47,7 +48,7 @@ func TestOriginalCarrierPresetAssetsRemainExact(t *testing.T) {
 
 func TestEmbeddedCarrierPresetInventory(t *testing.T) {
 	want := []string{
-		"204004", "228002", "234010", "234020", "234033", "262003", "262007", "310240",
+		"204004", "228002", "234010", "234015", "234020", "234033", "262003", "262007", "310240",
 		"310260", "310280", "310410", "454000", "454003", "530001", "530005", "530024",
 	}
 	got := make([]string, 0, len(embeddedCarrierPresets))

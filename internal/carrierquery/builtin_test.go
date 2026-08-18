@@ -12,6 +12,7 @@ func TestBuiltInRulesCoverProductionPresets(t *testing.T) {
 		{"228", "002", "sunrise_22802"}, {"454", "003", "three_hk_454003"},
 		{"234", "020", "three_uk_234020"}, {"310", "240", "tmobile_310240"},
 		{"310", "260", "tmobile_310260"}, {"204", "04", "vodafone_nl_20404"},
+		{"234", "15", "vodafone_uk_23415"},
 	}
 
 	rules := BuiltInRules()

@@ -40,6 +40,8 @@ var builtInRules = []Rule{
 		"https://www.t-mobile.com/support/plans-features/self-service-short-codes/", "部分新套餐不支持该短码"),
 	smsRule("vodafone_nl_20404", "204", "04", "Vodafone Netherlands", "4000", "STATUS", "EUR", costUnknown,
 		"https://www.vodafone.nl/abonnement/prepaid/en", []string{"4000", "Vodafone"}),
+	unsupportedRule("vodafone_uk_23415", "234", "15", "Vodafone UK / VOXI", "使用 Vodafone/VOXI App 或账户页查询",
+		"https://www.voxi.co.uk/help/network/what-is-wifi-calling", "未找到可审计的统一免费短信/USSD 查询码；VOXI 与沃达丰 UK 共用 234/15"),
 }
 
 func BuiltInRules() []Rule {
