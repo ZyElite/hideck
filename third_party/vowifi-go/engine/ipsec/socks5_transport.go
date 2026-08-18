@@ -89,15 +89,19 @@ func NewSocks5Transport(cfg Socks5Config, compatibility ...any) (*Socks5Transpor
 	if err != nil {
 		return nil, err
 	}
-	relayAddr, err := establishUDPAssociation(tcpConn, &cfg)
-	if err != nil {
-		_ = tcpConn.Close()
-		return nil, err
-	}
-	udpConn, err := net.ListenUDP("udp", nil)
+	// Bind UDP to the same local IP as the TCP control channel so a host
+	// virtual NIC (VMware/Hyper-V/Clash TUN) cannot send IKE on a different
+	// source address than the UDP Associate.
+	udpConn, err := listenSocks5UDP(tcpConn)
 	if err != nil {
 		_ = tcpConn.Close()
 		return nil, fmt.Errorf("create SOCKS5 UDP socket: %w", err)
+	}
+	relayAddr, err := establishUDPAssociation(tcpConn, &cfg, udpAssociateAddr(udpConn, tcpConn))
+	if err != nil {
+		_ = udpConn.Close()
+		_ = tcpConn.Close()
+		return nil, err
 	}
 	connections := socks5Connections{tcp: tcpConn, udp: udpConn, relay: relayAddr}
 	return newSocks5Transport(cfg, connections, remoteAddr), nil
@@ -137,11 +141,11 @@ func connectSocks5(cfg Socks5Config, timeout time.Duration) (net.Conn, error) {
 	return conn, nil
 }
 
-func establishUDPAssociation(conn net.Conn, cfg *Socks5Config) (*net.UDPAddr, error) {
+func establishUDPAssociation(conn net.Conn, cfg *Socks5Config, client *net.UDPAddr) (*net.UDPAddr, error) {
 	if err := socks5Handshake(conn, cfg); err != nil {
 		return nil, fmt.Errorf("SOCKS5 handshake: %w", err)
 	}
-	relay, err := socks5UDPAssociate(conn, socks5UDPAssociateClientAddr(conn))
+	relay, err := socks5UDPAssociate(conn, client)
 	if err != nil {
 		return nil, fmt.Errorf("SOCKS5 UDP associate: %w", err)
 	}
@@ -169,13 +173,30 @@ func newSocks5Transport(
 	}
 }
 
-func socks5UDPAssociateClientAddr(conn net.Conn) *net.UDPAddr {
-	if conn != nil {
-		if addr, ok := conn.LocalAddr().(*net.TCPAddr); ok && addr.IP != nil && !addr.IP.IsUnspecified() {
+func listenSocks5UDP(tcpConn net.Conn) (*net.UDPConn, error) {
+	udpConn, err := net.ListenUDP("udp", socks5UDPBindAddr(tcpConn))
+	if err == nil {
+		return udpConn, nil
+	}
+	return net.ListenUDP("udp", &net.UDPAddr{})
+}
+
+func socks5UDPBindAddr(tcpConn net.Conn) *net.UDPAddr {
+	if tcpConn != nil {
+		if addr, ok := tcpConn.LocalAddr().(*net.TCPAddr); ok && addr.IP != nil && !addr.IP.IsUnspecified() {
 			return &net.UDPAddr{IP: ipv4Compat(addr.IP)}
 		}
 	}
-	return &net.UDPAddr{IP: net.IPv4zero}
+	return &net.UDPAddr{}
+}
+
+func udpAssociateAddr(udpConn *net.UDPConn, tcpConn net.Conn) *net.UDPAddr {
+	if udpConn != nil {
+		if addr, ok := udpConn.LocalAddr().(*net.UDPAddr); ok && addr != nil && addr.IP != nil && !addr.IP.IsUnspecified() {
+			return &net.UDPAddr{IP: ipv4Compat(addr.IP), Port: addr.Port}
+		}
+	}
+	return socks5UDPBindAddr(tcpConn)
 }
 
 func (t *Socks5Transport) IKEPackets() <-chan []byte      { return t.ikeChan }
