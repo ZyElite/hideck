@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 func snapshotFromSessionResult(result *SessionResult) Snapshot {
@@ -32,6 +34,15 @@ func emitAllRuntimeEvents(
 
 func emitInterrupted(ctx context.Context, req *RuntimeStartRequest, session *SessionResult, outcome InterruptOutcome) {
 	err := interruptionError(ctx, outcome, session)
+	deviceID, traceID := "", ""
+	if req != nil {
+		deviceID = req.DeviceID
+		traceID = req.TraceID
+	}
+	logging.Info("VoWiFi runtime interrupted",
+		"device", deviceID, "trace_id", traceID,
+		"kind", outcome.Kind, "reason", outcome.Reason,
+		"redirect_epdg", outcome.RedirectEPDG, "retry_delay", outcome.RetryDelay)
 	emitAllRuntimeEvents(ctx, req, RuntimeEvent[*SessionResult]{
 		Kind: "interrupted", Handle: session, DeviceID: req.DeviceID, TraceID: req.TraceID,
 		Snapshot: snapshotFromSessionResult(session), Reason: outcome.Reason,

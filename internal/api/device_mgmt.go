@@ -2924,14 +2924,24 @@ func (s *Server) handleDeviceMgmtOverviewStreamSingle(c *gin.Context) {
 				phase = item.VoWiFiRuntime.Phase
 				readiness = *item.VoWiFiRuntime
 			}
-			logger.Debug("overview SSE 推送 VoWiFi 状态变更",
+			fields := []any{
 				"device", deviceID,
 				"phase", phase,
 				"sim_ready", readiness.SIMReady,
 				"access_ready", readiness.AccessReady,
 				"tunnel_ready", readiness.TunnelReady,
 				"ims_ready", readiness.IMSReady,
-				"sms_ready", readiness.SMSReady)
+				"sms_ready", readiness.SMSReady,
+				"last_reason", readiness.LastReason,
+				"last_error", readiness.LastError,
+				"last_error_class", readiness.LastErrorClass,
+			}
+			switch phase {
+			case "interrupted", "error", "retrying":
+				logger.Info("overview SSE 推送 VoWiFi 状态变更", fields...)
+			default:
+				logger.Debug("overview SSE 推送 VoWiFi 状态变更", fields...)
+			}
 		}
 
 		// 仍然使用 devices 结构体包裹返回单项从而无缝对接前台旧结构

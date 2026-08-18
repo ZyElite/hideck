@@ -12,6 +12,10 @@ import (
 
 const waitPollInterval = 200 * time.Millisecond
 
+// ErrEstablishmentTimeout means IKE/SWu did not come up before Wait expired.
+// Callers may start a fresh session (new SOCKS5 associate) once.
+var ErrEstablishmentTimeout = errors.New("等待 ePDG 隧道建立超时")
+
 type Manager struct {
 	mgr *swu.SessionManager
 }
@@ -57,11 +61,17 @@ func (m *Manager) Wait(
 		select {
 		case <-ticker.C:
 		case <-timer.C:
-			return swu.SessionSnapshot{}, errors.New("等待 ePDG 隧道建立超时")
+			return swu.SessionSnapshot{}, ErrEstablishmentTimeout
 		case <-ctx.Done():
 			return swu.SessionSnapshot{}, ctx.Err()
 		}
 	}
+}
+
+// ShouldRetryFreshTunnel reports whether the first SWu wait died of a
+// timeout while the caller is still allowed to start again.
+func ShouldRetryFreshTunnel(ctx context.Context, err error) bool {
+	return err != nil && ctx != nil && ctx.Err() == nil && errors.Is(err, ErrEstablishmentTimeout)
 }
 
 func (m *Manager) waitResult(deviceID string) (swu.SessionSnapshot, bool, error) {

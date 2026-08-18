@@ -52,8 +52,23 @@ func TestManagerWaitHonorsContextAndTimeout(t *testing.T) {
 	if _, err := manager.Wait(ctx, "missing", time.Second); !errors.Is(err, context.Canceled) {
 		t.Fatalf("context error = %v", err)
 	}
-	if _, err := manager.Wait(context.Background(), "missing", time.Millisecond); err == nil || err.Error() != "等待 ePDG 隧道建立超时" {
+	if _, err := manager.Wait(context.Background(), "missing", time.Millisecond); err == nil || !errors.Is(err, ErrEstablishmentTimeout) {
 		t.Fatalf("timeout error = %v", err)
+	}
+}
+
+func TestShouldRetryFreshTunnel(t *testing.T) {
+	ctx := context.Background()
+	if !ShouldRetryFreshTunnel(ctx, ErrEstablishmentTimeout) {
+		t.Fatal("timeout should retry")
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if ShouldRetryFreshTunnel(canceled, ErrEstablishmentTimeout) {
+		t.Fatal("canceled context must not retry")
+	}
+	if ShouldRetryFreshTunnel(ctx, errors.New("ePDG 会话失败: auth failed")) {
+		t.Fatal("auth failure must not retry as a fresh tunnel")
 	}
 }
 

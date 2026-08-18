@@ -8,6 +8,7 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/epdg"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 type swuTunnelAdapter struct {
@@ -34,6 +35,19 @@ func newSWUTunnelAdapter(config swuTunnelAdapterConfig) *swuTunnelAdapter {
 }
 
 func (adapter *swuTunnelAdapter) Connect(ctx context.Context) error {
+	err := adapter.connectOnce(ctx)
+	if !epdg.ShouldRetryFreshTunnel(ctx, err) {
+		return err
+	}
+	// First IKE/SOCKS5 UDP Associate often drops the first datagrams.
+	// A new session (what the UI reconnect button does) usually succeeds.
+	logging.Info("SWu first ePDG wait timed out; retrying with a fresh tunnel",
+		"device", adapter.deviceID)
+	adapter.stopOnce = sync.Once{}
+	return adapter.connectOnce(ctx)
+}
+
+func (adapter *swuTunnelAdapter) connectOnce(ctx context.Context) error {
 	session, err := adapter.manager.Start(ctx, adapter.deviceID, adapter.config)
 	if err != nil {
 		return err

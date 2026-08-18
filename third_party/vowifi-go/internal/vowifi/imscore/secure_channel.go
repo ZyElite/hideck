@@ -35,10 +35,10 @@ func registerConnNetwork(conn net.Conn) string {
 
 func logSecureChannelAttemptResult(annotations []string, err error) {
 	if err != nil {
-		logging.RunDebug("IMS secure signaling channel failed", "attempts", annotations, "err", err)
+		logging.Info("IMS secure signaling channel failed", "attempts", annotations, "err", err)
 		return
 	}
-	logging.RunDebug("IMS secure signaling channel selected", "attempts", annotations)
+	logging.Info("IMS secure signaling channel selected", "attempts", annotations)
 }
 
 func logSecureChannelEstablished(conn net.Conn) {

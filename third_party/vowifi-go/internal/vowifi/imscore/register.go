@@ -101,7 +101,22 @@ func (s *Service) Register(ctx context.Context) error {
 	s.lastError = ""
 	s.lastRegisterErr = ""
 	s.lastRegisterOKAt = time.Now()
+	transport := s.registrationTransport
+	hasTCP := s.registrationTCP != nil
+	publicID := ""
+	secAgree := false
+	if s.regSession != nil {
+		publicID = s.regSession.publicID
+		secAgree = s.regSession.security != nil && strings.TrimSpace(s.regSession.security.verifyHeader) != ""
+	}
 	s.mu.Unlock()
+	logging.Info("IMS REGISTER succeeded",
+		"device", s.DeviceID(),
+		"expires_seconds", int(expires/time.Second),
+		"transport", transport,
+		"protected_tcp", hasTCP,
+		"sec_agree", secAgree,
+		"public_id", loggablePublicID(publicID))
 	s.transitionRegStatus(registrationRegistered)
 	s.regFailCount.Store(0)
 	s.reRegisterPending.Store(false)
@@ -348,8 +363,10 @@ func (s *Service) applyRegistrationFailureStatus(err error) {
 	outcome := decideRegisterFailureOutcome(
 		time.Now(), result, s.cfg.IMSRegisterTemplate.RegisterPolicy, transportFailure,
 	)
-	logging.RunDebug("IMS REGISTER failure",
+	logging.Info("IMS REGISTER failure",
+		"device", s.DeviceID(),
 		"status", result.statusCode, "reason", outcome.reason,
+		"err", err,
 		"register_policy", effectiveRegisterPolicyID(s.cfg.IMSRegisterTemplate, s.cfg.IMSRegisterPolicySource),
 		"register_policy_source", normalizeRegisterPolicySource(s.cfg.IMSRegisterPolicySource))
 	s.regFailCount.Add(1)
@@ -385,7 +402,7 @@ func (s *Service) applyRegisterMinExpires(seconds uint32) {
 func (s *Service) exchangeRegister(ctx context.Context, session *registerSession, authorization string) (*sipResponse, error) {
 	s.recordRegisterSession(session)
 	request := s.buildRegister(session, authorization)
-	logging.RunDebug("IMS REGISTER outbound", "cseq", session.cseq,
+	logging.Debug("IMS REGISTER outbound", "device", s.DeviceID(), "cseq", session.cseq,
 		"authenticated", strings.TrimSpace(authorization) != "",
 		"security_client_mechanisms", securityClientMechanismCount(rawSIPHeaderValue(request, "Security-Client")),
 		"sip", logging.RedactSIPRaw(request))
@@ -400,8 +417,10 @@ func (s *Service) exchangeRegister(ctx context.Context, session *registerSession
 	if !matched {
 		return nil, fmt.Errorf("imscore: REGISTER CSeq %d received mismatched transaction response", session.cseq)
 	}
-	logging.RunDebug("IMS REGISTER response", "cseq", session.cseq, "status", response.StatusCode,
-		"security_server", response.Header("Security-Server") != "", "digest_challenge", isDigestChallengeResponse(response))
+	logging.Info("IMS REGISTER response",
+		"device", s.DeviceID(), "cseq", session.cseq, "status", response.StatusCode,
+		"security_server", response.Header("Security-Server") != "",
+		"digest_challenge", isDigestChallengeResponse(response))
 	s.recordRegisterResponse(response)
 	return response, nil
 }
@@ -873,6 +892,17 @@ func sipLocalAddress(cfg *IMSConfig) string {
 		port = 5060
 	}
 	return net.JoinHostPort(cfg.LocalIP.String(), strconv.Itoa(port))
+}
+
+func loggablePublicID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if index := strings.LastIndexByte(value, '@'); index >= 0 && index+1 < len(value) {
+		return "***@" + strings.Trim(value[index+1:], ">")
+	}
+	return "***"
 }
 
 // extractChallenge extracts the digest challenge from a 401/407 response.

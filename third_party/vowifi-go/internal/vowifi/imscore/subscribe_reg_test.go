@@ -122,6 +122,39 @@ func assertRegistrationSubscriptionRequest(t *testing.T, request string, wantCSe
 	}
 }
 
+func TestRegistrationSubscriptionSkipReason(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	if eligible, reason := service.registrationSubscriptionGate(); eligible || reason != "no_registration_tcp" {
+		t.Fatalf("gate without TCP = eligible=%v reason=%q", eligible, reason)
+	}
+}
+
+func TestLoggablePublicIDMasksUser(t *testing.T) {
+	if got := loggablePublicID("sip:+447785016005@ims.mnc015.mcc234.3gppnetwork.org"); got != "***@ims.mnc015.mcc234.3gppnetwork.org" {
+		t.Fatalf("loggablePublicID = %q", got)
+	}
+	if got := loggablePublicID(""); got != "" {
+		t.Fatalf("empty public id = %q", got)
+	}
+}
+
+func TestSubscriptionFailureKeepsRegistration(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	client, server := net.Pipe()
+	service.activateProtectedRegistrationTCP(client)
+	t.Cleanup(func() { _ = server.Close() })
+
+	service.reportSubscriptionRuntimeError(errors.New("SUBSCRIBE rejected with status 403 (Forbidden)"))
+	select {
+	case err := <-service.RegistrationErrors():
+		t.Fatalf("SUBSCRIBE failure tore down runtime: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if service.RegState() != regRegistered {
+		t.Fatalf("registration state = %s, want %s", service.RegState(), regRegistered)
+	}
+}
+
 func TestRegistrationSubscriptionTimeoutIsRecorded(t *testing.T) {
 	service := newProtectedKeepaliveTestService(t)
 	client, server := net.Pipe()

@@ -33,3 +33,13 @@ func TestSWUTunnelAdapterUsesEPDGManagerLifecycle(t *testing.T) {
 	}
 	adapter.Shutdown()
 }
+
+func TestSWUTunnelAdapterDoesNotRetryCanceledConnect(t *testing.T) {
+	previous := zap.L()
+	t.Cleanup(func() { zap.ReplaceGlobals(previous) })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if epdg.ShouldRetryFreshTunnel(ctx, epdg.ErrEstablishmentTimeout) {
+		t.Fatal("canceled connect must not start a second tunnel")
+	}
+}

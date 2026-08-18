@@ -27,6 +27,11 @@ func StartAndWaitEPDG(
 		manager = epdg.New()
 	}
 	session, snapshot, err := startAndWait(ctx, deviceID, config, manager)
+	if epdg.ShouldRetryFreshTunnel(ctx, err) {
+		zap.S().Infow("SWu first ePDG wait timed out; retrying with a fresh session",
+			"device", strings.TrimSpace(deviceID), "trace_id", strings.TrimSpace(traceID))
+		session, snapshot, err = startAndWait(ctx, deviceID, config, manager)
+	}
 	if err == nil || !shouldRetryDeviceIdentity(config, err) {
 		return session, snapshot, err
 	}

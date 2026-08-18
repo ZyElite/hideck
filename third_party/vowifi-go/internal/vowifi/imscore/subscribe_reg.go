@@ -21,9 +21,13 @@ const (
 )
 
 func (s *Service) startRegistrationSubscription() {
-	if !s.hasProtectedRegistrationTransport() {
+	eligible, skipReason := s.registrationSubscriptionGate()
+	if !eligible {
+		logging.Info("IMS SUBSCRIBE(reg) skipped",
+			"device", s.DeviceID(), "reason", skipReason)
 		return
 	}
+	logging.Info("IMS SUBSCRIBE(reg) starting", "device", s.DeviceID())
 	s.networkDone.Add(1)
 	go func() {
 		defer s.networkDone.Done()
@@ -36,14 +40,38 @@ func (s *Service) startRegistrationSubscription() {
 }
 
 func (s *Service) hasProtectedRegistrationTransport() bool {
+	eligible, _ := s.registrationSubscriptionGate()
+	return eligible
+}
+
+func (s *Service) registrationSubscriptionGate() (bool, string) {
+	if s == nil {
+		return false, "service_nil"
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.subscriptionEligibleLocked()
+	return s.subscriptionGateLocked()
+}
+
+func (s *Service) subscriptionGateLocked() (bool, string) {
+	if s.regState != regRegistered {
+		return false, "not_registered:" + strings.TrimSpace(s.regState)
+	}
+	if s.registrationTCP == nil {
+		return false, "no_registration_tcp"
+	}
+	if s.regSession == nil {
+		return false, "no_reg_session"
+	}
+	if s.regSession.security == nil || strings.TrimSpace(s.regSession.security.verifyHeader) == "" {
+		return false, "no_sec_agree"
+	}
+	return true, ""
 }
 
 func (s *Service) subscriptionEligibleLocked() bool {
-	return s.regState == regRegistered && s.registrationTCP != nil && s.regSession != nil &&
-		s.regSession.security != nil && s.regSession.security.verifyHeader != ""
+	eligible, _ := s.subscriptionGateLocked()
+	return eligible
 }
 
 func (s *Service) stopped() bool {
@@ -59,6 +87,7 @@ func (s *Service) reportRegistrationRuntimeError(err error) {
 	if err == nil || s == nil || s.stopped() {
 		return
 	}
+	logging.Info("IMS runtime reconnect requested", "device", s.DeviceID(), "err", err)
 	select {
 	case s.registerErrors <- err:
 	default:
@@ -72,10 +101,16 @@ func (s *Service) reportSubscriptionRuntimeError(err error) {
 		return
 	}
 	if !s.hasProtectedRegistrationTransport() {
-		logging.RunDebug("IMS SUBSCRIBE result discarded after registration changed", "err", err)
+		logging.Debug("IMS SUBSCRIBE result discarded after registration changed",
+			"device", s.DeviceID(), "err", err)
 		return
 	}
-	s.reportRegistrationRuntimeError(subscriptionRuntimeError(err))
+	// SUBSCRIBE(reg) is for network-initiated deregister NOTIFY. A reject or
+	// timeout must not tear down a REGISTER that already succeeded — that
+	// produced a one-second IMS-ready flash then a full SWu rebuild.
+	logging.WarnRate("ims-subscribe-reg-"+s.DeviceID(), 30*time.Second,
+		"IMS SUBSCRIBE(reg) failed; keeping current registration",
+		"device", s.DeviceID(), "err", subscriptionRuntimeError(err))
 }
 
 func (s *Service) sendSubscribeReg(ctx context.Context) error {
@@ -91,7 +126,7 @@ func (s *Service) sendSubscribeReg(ctx context.Context) error {
 		return s.recordSubscriptionResult(nil, 0, err)
 	}
 	s.recordSubscriptionAttempt(time.Now(), requestedExpires)
-	logging.RunDebug("IMS SUBSCRIBE(reg) outbound", "sip", logging.RedactSIPRaw(request.String()))
+	logging.Debug("IMS SUBSCRIBE(reg) outbound", "device", s.DeviceID(), "sip", logging.RedactSIPRaw(request.String()))
 	response, _, err := s.dispatchOutboundRequest(
 		ctx, registrationSubscriptionFlow, request, registrationSubscriptionTimeout, true,
 	)
