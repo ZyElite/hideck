@@ -190,25 +190,28 @@ func TestInboundSIPTrafficDefersKeepaliveAndResetsFailures(t *testing.T) {
 	}
 }
 
-func TestThreeKeepaliveFailuresRequestRuntimeReconnect(t *testing.T) {
+func TestThreeKeepaliveFailuresScheduleRegistrationRefresh(t *testing.T) {
 	service := newProtectedKeepaliveTestService(t)
+	service.mu.Lock()
+	service.registrationRefreshAt = time.Now().Add(time.Hour)
+	service.mu.Unlock()
 	keepaliveErr := errors.New("OPTIONS timeout")
 	for attempt := 1; attempt <= imsKeepaliveFailureLimit; attempt++ {
 		service.recordIMSKeepaliveResult(keepaliveErr, time.Now())
-		if attempt < imsKeepaliveFailureLimit && service.RegState() != regRegistered {
-			t.Fatalf("registration failed after attempt %d", attempt)
-		}
 	}
-	if service.RegState() != regFailed {
-		t.Fatalf("registration state = %s, want %s", service.RegState(), regFailed)
+	if service.RegState() != regRegistered {
+		t.Fatalf("registration state = %s, want %s", service.RegState(), regRegistered)
+	}
+	if !service.reRegisterPending.Load() {
+		t.Fatal("keepalive failures did not mark registration refresh pending")
+	}
+	if action := service.nextIMSMaintenanceAction(time.Now()); action != imsMaintenanceRefresh {
+		t.Fatalf("maintenance action = %d, want refresh", action)
 	}
 	select {
 	case err := <-service.RegistrationErrors():
-		if !strings.Contains(err.Error(), "fast reconnect requested after 3 keepalive failures") {
-			t.Fatalf("registration error = %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("runtime reconnect was not requested")
+		t.Fatalf("keepalive failures tore down runtime before REGISTER refresh: %v", err)
+	default:
 	}
 }
 

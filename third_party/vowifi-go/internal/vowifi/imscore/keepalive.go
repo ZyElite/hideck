@@ -166,29 +166,9 @@ func (s *Service) recordIMSKeepaliveResult(err error, completedAt time.Time) {
 	s.mu.Unlock()
 	logging.WarnRate("ims-keepalive", "IMS SIP keepalive failed",
 		"device", s.DeviceID(), "attempt", failures, "err", err)
-	if failures >= limit {
-		s.requestRuntimeReconnect(err)
+	if failures == limit {
+		s.triggerRegisterImmediate(fmt.Sprintf("OPTIONS keepalive failed %d times: %v", failures, err))
 	}
-}
-
-func (s *Service) requestRuntimeReconnect(keepaliveErr error) {
-	s.mu.Lock()
-	if s.regState != regRegistered {
-		s.mu.Unlock()
-		return
-	}
-	s.regState = regFailed
-	s.registrationRefreshAt = time.Time{}
-	s.subscriptionRefreshAt = time.Time{}
-	s.mu.Unlock()
-	s.transitionRegStatus(registrationRejectedTemporary)
-	s.notifySMSReadiness()
-	err := fmt.Errorf("imscore: fast reconnect requested after %d keepalive failures: %w",
-		s.keepaliveFailureLimit, keepaliveErr)
-	logging.WarnRate("ims-fast-reconnect", "IMS SIP keepalive requested runtime rebuild",
-		"device", s.DeviceID(), "err", err)
-	s.triggerRegisterReconnect()
-	s.reportRegistrationRuntimeError(err)
 }
 
 func (s *Service) signalIMSMaintenance() {

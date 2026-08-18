@@ -104,6 +104,68 @@ func TestRegisterSwitchesFromInitialUDPToProtectedTCP(t *testing.T) {
 	}
 }
 
+func TestRegisterPreservesIPSecReservationsAcrossInitialTransportFallback(t *testing.T) {
+	initialTCP, initialUDP := listenRegisterTransports(t)
+	defer initialTCP.Close()
+	defer initialUDP.Close()
+	protectedTCP, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer protectedTCP.Close()
+
+	udpSeen := make(chan string, 1)
+	go observeInitialUDPRegister(initialUDP, udpSeen)
+	serverResult := make(chan error, 1)
+	releaseServer := make(chan struct{})
+	go serveFallbackTCPChallenge(initialTCP, protectedTCP, releaseServer, serverResult)
+
+	network := &captureIPSecNetwork{SystemIMSNetwork: NewSystemIMSNetwork(net.IPv4(127, 0, 0, 1))}
+	svc, err := New(&IMSConfig{
+		DeviceID: "dev-sec-fallback", IMEI: "860349055895064", IMSI: "234159612558315",
+		IMPI: "234159612558315@ims.example", IMPU: "sip:234159612558315@ims.example",
+		Domain: "ims.example", LocalIP: net.IPv4(127, 0, 0, 1), Transport: "auto",
+		Registrar: initialUDP.LocalAddr().String(), IMSNetwork: network,
+		AKAProvider: stubAKAProvider{}, EnableIPSec3GPP: enabledBoolPointer(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.transport.timers = sipTransactionTimers{
+		t1: 5 * time.Millisecond, t2: 10 * time.Millisecond, bf: 40 * time.Millisecond,
+		d: 5 * time.Millisecond, k: 5 * time.Millisecond, m: 40 * time.Millisecond,
+	}
+	t.Cleanup(func() {
+		svc.StopCurrent()
+		close(releaseServer)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := svc.Register(ctx); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	select {
+	case request := <-udpSeen:
+		if !strings.HasPrefix(sipHeaderValue(request, "Via"), "SIP/2.0/UDP ") {
+			t.Fatalf("initial REGISTER did not start on UDP: %q", sipHeaderValue(request, "Via"))
+		}
+	case <-ctx.Done():
+		t.Fatal("initial UDP REGISTER was not observed")
+	}
+	select {
+	case err := <-serverResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("protected TCP registration did not complete")
+	}
+	if !network.installed || !svc.IsRegistered() {
+		t.Fatal("UDP timeout fallback did not complete protected TCP registration")
+	}
+}
+
 func TestRegisterKeepsInitialTCPUntilProtectedRegisterCompletes(t *testing.T) {
 	initial, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -287,6 +349,82 @@ func serveUDPChallengeThenTCPSuccess(udpServer *net.UDPConn, tcpServer *net.TCPL
 	}
 	_, err = conn.Write([]byte(registerWireResponse(subscribe, 200, "")))
 	result <- err
+}
+
+func observeInitialUDPRegister(conn *net.UDPConn, seen chan<- string) {
+	buffer := make([]byte, 64*1024)
+	n, _, err := conn.ReadFromUDP(buffer)
+	if err == nil {
+		seen <- string(buffer[:n])
+	}
+}
+
+func serveFallbackTCPChallenge(
+	initial, protected *net.TCPListener,
+	release <-chan struct{},
+	result chan<- error,
+) {
+	initialConn, err := initial.AcceptTCP()
+	if err != nil {
+		result <- err
+		return
+	}
+	defer initialConn.Close()
+	_ = initialConn.SetDeadline(time.Now().Add(3 * time.Second))
+	request, err := readSIPStreamMessage(bufio.NewReader(initialConn))
+	if err != nil {
+		result <- err
+		return
+	}
+	mechanisms := splitSecurityMechanisms(sipHeaderValue(request, "Security-Client"))
+	if len(mechanisms) == 0 {
+		result <- errors.New("fallback REGISTER omitted Security-Client")
+		return
+	}
+	client, err := parseSecurityMechanism(mechanisms[0])
+	if err != nil {
+		result <- err
+		return
+	}
+	serverHeader := fmt.Sprintf("ipsec-3gpp;q=0.98;alg=hmac-sha-1-96;mod=trans;ealg=aes-cbc;spi-c=858993459;spi-s=1145324612;port-c=6059;port-s=%d", tcpPort(protected.Addr()))
+	challenge := strings.TrimPrefix(strings.TrimSpace(digestChallengeHeaderNoQOP()), "WWW-Authenticate: ")
+	headers := "WWW-Authenticate: " + challenge + "\r\nSecurity-Server: " + serverHeader + "\r\n"
+	if _, err = initialConn.Write([]byte(registerWireResponse(request, 401, headers))); err != nil {
+		result <- err
+		return
+	}
+	serveFallbackProtectedRegister(protected, client, serverHeader, release, result)
+}
+
+func serveFallbackProtectedRegister(
+	listener *net.TCPListener,
+	client securityMechanism,
+	serverHeader string,
+	release <-chan struct{},
+	result chan<- error,
+) {
+	conn, err := listener.AcceptTCP()
+	if err != nil {
+		result <- err
+		return
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	request, err := readSIPStreamMessage(bufio.NewReader(conn))
+	if err == nil && tcpPort(conn.RemoteAddr()) != int(client.PortC) {
+		err = fmt.Errorf("protected TCP source port = %d, want %d", tcpPort(conn.RemoteAddr()), client.PortC)
+	}
+	if err == nil && (sipHeaderValue(request, "Security-Verify") != serverHeader || sipHeaderValue(request, "Authorization") == "") {
+		err = errors.New("protected REGISTER omitted security agreement or AKA authorization")
+	}
+	if err == nil {
+		headers := "P-Associated-URI: <sip:+447840844894@ims.example>\r\nService-Route: <sip:pcscf.example;lr>\r\n"
+		_, err = conn.Write([]byte(registerWireResponse(request, 200, headers)))
+	}
+	result <- err
+	if err == nil {
+		<-release
+	}
 }
 
 func sipViaSentBy(via string) string {

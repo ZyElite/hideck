@@ -100,13 +100,14 @@ func (s *Service) activateInitialRegistrationTransport(
 	s.registrationTCP = opened.stream
 	s.registrationTCPProtected = false
 	s.registrationTransport = opened.kind
-	s.securityServerIO = serverListener
-	s.clientPortReserve = clientReservation
 	s.registrationRemote = cloneUDPAddr(opened.remote)
+	// A transport fallback passes nil reservations and must keep the sec-agree ports alive.
 	if serverListener != nil {
+		s.securityServerIO = serverListener
 		s.protectedServerPort = tcpPort(serverListener.Addr())
 	}
 	if clientReservation != nil {
+		s.clientPortReserve = clientReservation
 		s.protectedClientPort = tcpPort(clientReservation.Addr())
 	}
 	s.mu.Unlock()
