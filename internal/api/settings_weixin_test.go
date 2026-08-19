@@ -113,7 +113,10 @@ func TestFeishuSettingsExposeAndBackfillRuntimeChatIDs(t *testing.T) {
 	}
 	t.Cleanup(manager.Close)
 	if err := manager.SaveRuntimeState(notify.RuntimeState{
-		Feishu: notify.FeishuRuntimeState{ChatIDs: []string{"oc_from_message"}},
+		Feishu: notify.FeishuRuntimeState{
+			ChatIDs: []string{"oc_from_message"}, AllowedUsers: []string{"ou_owner"},
+			BindingVerified: true,
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +141,33 @@ func TestFeishuSettingsExposeAndBackfillRuntimeChatIDs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(server.fullCfg.Feishu.ChatIDs, []string{"oc_from_message"}) {
 		t.Fatalf("backfilled config = %#v", server.fullCfg.Feishu.ChatIDs)
+	}
+}
+
+func TestFeishuSettingsIgnoreUnverifiedRuntimeChatIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	directory := t.TempDir()
+	store := notify.NewFileRuntimeStateStore(filepath.Join(directory, "notification-state.json"))
+	manager, err := notify.NewManagerWithOptions(
+		&config.Config{}, nil, notify.ManagerOptions{StateStore: store},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.SaveRuntimeState(notify.RuntimeState{
+		Feishu: notify.FeishuRuntimeState{ChatIDs: []string{"oc_unverified"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		fullCfg:   &config.Config{Feishu: config.FeishuConfig{ChatIDs: []string{"oc_configured"}}},
+		notifyMgr: manager,
+	}
+	if got := server.mergeFeishuBoundChatIDs(server.fullCfg.Feishu.ChatIDs); !reflect.DeepEqual(
+		got, []string{"oc_configured"},
+	) {
+		t.Fatalf("merged chat ids = %#v", got)
 	}
 }
 

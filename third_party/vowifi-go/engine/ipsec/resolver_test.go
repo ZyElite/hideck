@@ -4,11 +4,13 @@ import (
 	"encoding/binary"
 	"net"
 	"testing"
+
+	vowifidns "github.com/iniwex5/vowifi-go/internal/vowifi/dns"
 )
 
 func TestResolveUDPAddrAllUsesConfiguredDNSServer(t *testing.T) {
-	resetEPDGResolveCache()
-	t.Cleanup(resetEPDGResolveCache)
+	vowifidns.ClearHostIPCache()
+	t.Cleanup(vowifidns.ClearHostIPCache)
 	server := newTestDNSServer(t, net.IPv4(192, 0, 2, 25))
 	defer server.Close()
 	preferred, candidates, err := ResolveUDPAddrAll("epdg.test:500", server.LocalAddr().String())
@@ -25,46 +27,30 @@ func TestResolveUDPAddrAllUsesConfiguredDNSServer(t *testing.T) {
 }
 
 func TestResolveUDPAddrAllRejectsInvalidCustomDNS(t *testing.T) {
-	resetEPDGResolveCache()
-	t.Cleanup(resetEPDGResolveCache)
+	vowifidns.ClearHostIPCache()
+	t.Cleanup(vowifidns.ClearHostIPCache)
 	if _, _, err := ResolveUDPAddrAll("epdg.test:500", "not a DNS address"); err == nil {
 		t.Fatal("invalid custom DNS address was accepted")
 	}
 }
 
-func TestResolveUDPAddrAllReusesCachedAddressesWhenDNSTimesOut(t *testing.T) {
-	resetEPDGResolveCache()
-	t.Cleanup(resetEPDGResolveCache)
-	working := newTestDNSServer(t, net.IPv4(192, 0, 2, 31))
-	defer working.Close()
-	if _, _, err := ResolveUDPAddrAll("epdg-fallback.test:500", working.LocalAddr().String()); err != nil {
+func TestResolveUDPAddrAllPrefersLiveLookupOverCache(t *testing.T) {
+	vowifidns.ClearHostIPCache()
+	t.Cleanup(vowifidns.ClearHostIPCache)
+	first := newTestDNSServer(t, net.IPv4(192, 0, 2, 31))
+	defer first.Close()
+	if _, _, err := ResolveUDPAddrAll("epdg-live.test:500", first.LocalAddr().String()); err != nil {
 		t.Fatalf("seed cache: %v", err)
 	}
-	dead := newSilentDNSServer(t)
-	defer dead.Close()
-	preferred, _, err := ResolveUDPAddrAll("epdg-fallback.test:500", dead.LocalAddr().String())
+	second := newTestDNSServer(t, net.IPv4(192, 0, 2, 32))
+	defer second.Close()
+	preferred, _, err := ResolveUDPAddrAll("epdg-live.test:500", second.LocalAddr().String())
 	if err != nil {
-		t.Fatalf("cached lookup: %v", err)
+		t.Fatalf("live lookup: %v", err)
 	}
-	if !preferred.IP.Equal(net.IPv4(192, 0, 2, 31)) {
-		t.Fatalf("preferred = %v", preferred.IP)
+	if !preferred.IP.Equal(net.IPv4(192, 0, 2, 32)) {
+		t.Fatalf("preferred = %v, want 192.0.2.32", preferred.IP)
 	}
-}
-
-func TestEPDGDNSServersIncludesSystemAndPublicFallback(t *testing.T) {
-	got := epdgDNSServers("9.9.9.9:53")
-	if len(got) < 3 || got[0] != "9.9.9.9:53" || got[1] != "" || got[2] != publicFallbackDNSOne {
-		t.Fatalf("servers = %#v", got)
-	}
-}
-
-func newSilentDNSServer(t *testing.T) *net.UDPConn {
-	t.Helper()
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
-	if err != nil {
-		t.Fatalf("ListenUDP: %v", err)
-	}
-	return conn
 }
 
 type testDNSServer struct {

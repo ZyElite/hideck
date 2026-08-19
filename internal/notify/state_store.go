@@ -40,8 +40,9 @@ type TelegramRuntimeState struct {
 }
 
 type FeishuRuntimeState struct {
-	ChatIDs      []string `json:"chat_ids,omitempty"`
-	AllowedUsers []string `json:"allowed_users,omitempty"`
+	ChatIDs         []string `json:"chat_ids,omitempty"`
+	AllowedUsers    []string `json:"allowed_users,omitempty"`
+	BindingVerified bool     `json:"binding_verified,omitempty"`
 }
 
 type RuntimeState struct {

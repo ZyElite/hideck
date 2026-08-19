@@ -12,6 +12,7 @@ import (
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/yibaiba/hideck/internal/config"
 )
 
 func TestStripFeishuMentions(t *testing.T) {
@@ -51,6 +52,88 @@ func TestFeishuAnyTextRepliesWithHelpOnFirstMessage(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(state.Feishu.ChatIDs, []string{"oc_chat"}) ||
 		!reflect.DeepEqual(state.Feishu.AllowedUsers, []string{"ou_owner"}) {
 		t.Fatalf("state = %+v, err = %v", state, err)
+	}
+}
+
+func TestFeishuFirstPrivateBindingRemovesUnverifiedRuntimeChats(t *testing.T) {
+	store := NewFileRuntimeStateStore(t.TempDir() + "/notification-state.json")
+	if err := store.Save(RuntimeState{
+		Feishu: FeishuRuntimeState{ChatIDs: []string{"oc_unverified"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	channel := &FeishuChannel{
+		cfg:        config.FeishuConfig{ChatIDs: []string{"oc_configured"}},
+		stateStore: store,
+		handlers: map[string]CommandHandler{
+			"help": func(CommandContext, []string) string { return "帮助内容" },
+		},
+		replyText: func(*larkim.EventMessage, string) {},
+	}
+	channel.handleMessageEvent(feishuTextEvent("oc_owner", "om_owner", "p2p", "ou_owner", "你好"))
+	state, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(state.Feishu.ChatIDs, []string{"oc_configured", "oc_owner"}) {
+		t.Fatalf("trusted chat ids = %#v", state.Feishu.ChatIDs)
+	}
+	if !reflect.DeepEqual(state.Feishu.AllowedUsers, []string{"ou_owner"}) {
+		t.Fatalf("allowed users = %#v", state.Feishu.AllowedUsers)
+	}
+	if !state.Feishu.BindingVerified {
+		t.Fatal("binding was not marked verified")
+	}
+}
+
+func TestFeishuChannelIgnoresUnverifiedRuntimeChatsOnStartup(t *testing.T) {
+	store := NewFileRuntimeStateStore(t.TempDir() + "/notification-state.json")
+	if err := store.Save(RuntimeState{
+		Feishu: FeishuRuntimeState{
+			ChatIDs: []string{"oc_unverified"}, AllowedUsers: []string{"ou_owner"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	channel, err := NewFeishuChannelWithOptions(FeishuChannelOptions{
+		Config: config.FeishuConfig{
+			Enabled: true, AppID: "cli_test", AppSecret: "secret",
+			ChatIDs: []string{"oc_configured"},
+		},
+		StateStore: store,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := channel.notificationChatIDs(); !reflect.DeepEqual(got, []string{"oc_configured"}) {
+		t.Fatalf("notification chat ids = %#v", got)
+	}
+}
+
+func TestFeishuChannelLoadsVerifiedRuntimeChatsOnStartup(t *testing.T) {
+	store := NewFileRuntimeStateStore(t.TempDir() + "/notification-state.json")
+	if err := store.Save(RuntimeState{
+		Feishu: FeishuRuntimeState{
+			ChatIDs: []string{"oc_verified"}, AllowedUsers: []string{"ou_owner"},
+			BindingVerified: true,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	channel, err := NewFeishuChannelWithOptions(FeishuChannelOptions{
+		Config: config.FeishuConfig{
+			Enabled: true, AppID: "cli_test", AppSecret: "secret",
+			ChatIDs: []string{"oc_configured"},
+		},
+		StateStore: store,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := channel.notificationChatIDs(); !reflect.DeepEqual(
+		got, []string{"oc_configured", "oc_verified"},
+	) {
+		t.Fatalf("notification chat ids = %#v", got)
 	}
 }
 

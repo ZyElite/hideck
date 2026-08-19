@@ -18,6 +18,8 @@ const (
 	socksEventQueueSize  = 16
 )
 
+var socks5UDPKeepaliveEvery = 10 * time.Second
+
 // Socks5TransportStats is a snapshot of the legacy SOCKS5 counters.
 type Socks5TransportStats struct {
 	UDPReadTotal        uint64
@@ -45,26 +47,27 @@ type Socks5Transport struct {
 	droppedIKE          uint64
 	droppedESP          uint64
 
-	cfg        Socks5Config
-	tcpConn    net.Conn
-	udpConn    *net.UDPConn
-	relayAddr  *net.UDPAddr
-	remoteIP   net.IP
-	remotePort int
-	remoteMu   sync.RWMutex
-	localIP    net.IP
-	localPort  uint16
-	ikeChan    chan []byte
-	espChan    chan []byte
-	netEvents  chan NetEvent
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	stopOnce   sync.Once
-	lifecycle  sync.Mutex
-	started    bool
-	stopped    bool
-	startErr   error
+	cfg            Socks5Config
+	tcpConn        net.Conn
+	udpConn        *net.UDPConn
+	relayAddr      *net.UDPAddr
+	remoteIP       net.IP
+	remotePort     int
+	remoteMu       sync.RWMutex
+	localIP        net.IP
+	localPort      uint16
+	ikeChan        chan []byte
+	espChan        chan []byte
+	netEvents      chan NetEvent
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	stopOnce       sync.Once
+	lifecycle      sync.Mutex
+	started        bool
+	stopped        bool
+	startErr       error
+	lastUDPWriteAt int64
 }
 
 type socks5Connections struct {

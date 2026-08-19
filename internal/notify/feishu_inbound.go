@@ -125,28 +125,28 @@ func (f *FeishuChannel) authorizeMessage(event *larkim.P2MessageReceiveV1) (bool
 
 func (f *FeishuChannel) persistDirectBindingLocked(chatID, senderID string) (bool, error) {
 	if f.stateStore == nil {
-		f.chatIDs = mergeUniqueStrings(f.chatIDs, []string{chatID})
-		f.allowedUsers = mergeUniqueStrings(f.allowedUsers, []string{senderID})
-		return true, nil
+		current := FeishuRuntimeState{
+			ChatIDs: f.chatIDs, AllowedUsers: f.allowedUsers, BindingVerified: true,
+		}
+		next := ApplyFeishuDirectBinding(f.cfg, current, chatID, senderID)
+		f.chatIDs = next.ChatIDs
+		f.allowedUsers = next.AllowedUsers
+		return !sameFeishuBinding(current, next), nil
 	}
 	bound := false
 	var stored FeishuRuntimeState
 	if err := f.stateStore.Update(func(state *RuntimeState) error {
-		if !containsString(state.Feishu.ChatIDs, chatID) {
-			state.Feishu.ChatIDs = append(state.Feishu.ChatIDs, chatID)
-			bound = true
-		}
-		if !containsString(state.Feishu.AllowedUsers, senderID) {
-			state.Feishu.AllowedUsers = append(state.Feishu.AllowedUsers, senderID)
-			bound = true
-		}
+		previous := state.Feishu
+		next := ApplyFeishuDirectBinding(f.cfg, state.Feishu, chatID, senderID)
+		bound = !sameFeishuBinding(previous, next)
+		state.Feishu = next
 		stored = cloneRuntimeState(*state).Feishu
 		return nil
 	}); err != nil {
 		return false, err
 	}
-	f.chatIDs = mergeUniqueStrings(f.chatIDs, stored.ChatIDs)
-	f.allowedUsers = mergeUniqueStrings(f.allowedUsers, stored.AllowedUsers)
+	f.chatIDs = stored.ChatIDs
+	f.allowedUsers = stored.AllowedUsers
 	return bound, nil
 }
 
@@ -179,23 +179,4 @@ func (f *FeishuChannel) notificationChatIDs() []string {
 	f.stateMu.RLock()
 	defer f.stateMu.RUnlock()
 	return append([]string(nil), f.chatIDs...)
-}
-
-func mergeUniqueStrings(groups ...[]string) []string {
-	seen := make(map[string]struct{})
-	out := make([]string, 0)
-	for _, group := range groups {
-		for _, value := range group {
-			id := strings.TrimSpace(value)
-			if id == "" {
-				continue
-			}
-			if _, exists := seen[id]; exists {
-				continue
-			}
-			seen[id] = struct{}{}
-			out = append(out, id)
-		}
-	}
-	return out
 }

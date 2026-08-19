@@ -65,16 +65,15 @@ func NewFeishuChannelWithOptions(options FeishuChannelOptions) (*FeishuChannel, 
 	if cfg.AppID == "" || cfg.AppSecret == "" {
 		return nil, fmt.Errorf("飞书配置缺少 app_id 或 app_secret")
 	}
-	chatIDs := mergeUniqueStrings(cfg.ChatIDs, []string{cfg.ChatID})
-	var allowedUsers []string
+	binding := TrustedFeishuBindingFrom(cfg, FeishuRuntimeState{})
 	if options.StateStore != nil {
 		state, err := options.StateStore.Load()
 		if err != nil {
 			return nil, fmt.Errorf("读取飞书绑定状态失败: %w", err)
 		}
-		chatIDs = mergeUniqueStrings(chatIDs, state.Feishu.ChatIDs)
-		allowedUsers = mergeUniqueStrings(state.Feishu.AllowedUsers)
+		binding = TrustedFeishuBindingFrom(cfg, state.Feishu)
 	}
+	chatIDs, allowedUsers := binding.ChatIDs, binding.AllowedUsers
 	if len(chatIDs) == 0 {
 		logger.Warn("飞书渠道已启用但还没有 Chat ID，给机器人发一条消息后会自动绑定")
 	}

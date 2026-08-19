@@ -240,7 +240,7 @@ export const useSettingsStore = defineStore('settings', () => {
     if (!options.silent) {
       loadingNotifications.value = true
     }
-    const result = await systemService.getNotifications()
+    const result = await getNotificationSnapshot()
     if (result.ok) {
       notifications.value = result.data || {}
       const tg = result.data.telegram || {}
@@ -340,7 +340,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   async function refreshTelegramBinding() {
     refreshingTelegramBinding.value = true
-    const result = await systemService.getNotifications()
+    const result = await getNotificationSnapshot()
     if (result.ok) {
       const telegram = result.data.telegram || {}
       telegramForm.value.bound_chat_id = telegram.bound_chat_id ?? null
@@ -365,60 +365,70 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  function applyNotificationChannel(channel: NotificationBindingChannel, data: NotificationsSettingsResponse) {
-    if (channel === 'feishu') {
-      const settings = data.feishu || {}
-      feishuForm.value = {
-        enabled: !!settings.enabled,
-        app_id: settings.app_id || '',
-        app_secret: settings.app_secret || '',
-        chat_ids: Array.isArray(settings.chat_ids) ? settings.chat_ids.join(',') : ''
+  const notificationBindingHandlers: Record<NotificationBindingChannel, {
+    replace: (data: NotificationsSettingsResponse) => void
+    merge: (data: NotificationsSettingsResponse) => void
+  }> = {
+    feishu: {
+      replace(data) {
+        const settings = data.feishu || {}
+        feishuForm.value = {
+          enabled: !!settings.enabled,
+          app_id: settings.app_id || '',
+          app_secret: settings.app_secret || '',
+          chat_ids: Array.isArray(settings.chat_ids) ? settings.chat_ids.join(',') : ''
+        }
+      },
+      merge(data) {
+        feishuForm.value.chat_ids = mergeIDs(feishuForm.value.chat_ids, data.feishu?.chat_ids)
       }
-      return
+    },
+    weixin: {
+      replace(data) {
+        weixinForm.value = weixinFormFromSettings(data.weixin || {})
+      },
+      merge(data) {
+        weixinForm.value.allowed_user_ids = mergeIDs(
+          weixinForm.value.allowed_user_ids, data.weixin?.allowed_user_ids
+        )
+      }
+    },
+    'wecom-bot': {
+      replace(data) {
+        weComBotForm.value = weComBotFormFromSettings(data.wecom_bot || {})
+      },
+      merge(data) {
+        weComBotForm.value.allowed_user_ids = mergeIDs(
+          weComBotForm.value.allowed_user_ids, data.wecom_bot?.allowed_user_ids
+        )
+      }
     }
-    if (channel === 'weixin') {
-      weixinForm.value = weixinFormFromSettings(data.weixin || {})
-      return
-    }
-    weComBotForm.value = weComBotFormFromSettings(data.wecom_bot || {})
   }
 
   function mergeNotificationBinding(channel: NotificationBindingChannel, data: NotificationsSettingsResponse) {
-    if (channel === 'feishu') {
-      feishuForm.value.chat_ids = mergeIDs(feishuForm.value.chat_ids, data.feishu?.chat_ids)
-      return
+    notificationBindingHandlers[channel].merge(data)
+  }
+
+  async function refreshNotificationSnapshot(
+    channel: NotificationBindingChannel,
+    mode: 'replace' | 'merge'
+  ) {
+    const result = await getNotificationSnapshot()
+    if (result.ok) {
+      notificationBindingHandlers[channel][mode](result.data)
+      error.value = null
+    } else {
+      error.value = result.error
     }
-    if (channel === 'weixin') {
-      weixinForm.value.allowed_user_ids = mergeIDs(
-        weixinForm.value.allowed_user_ids, data.weixin?.allowed_user_ids
-      )
-      return
-    }
-    weComBotForm.value.allowed_user_ids = mergeIDs(
-      weComBotForm.value.allowed_user_ids, data.wecom_bot?.allowed_user_ids
-    )
+    return result
   }
 
   async function refreshNotificationChannel(channel: NotificationBindingChannel) {
-    const result = await getNotificationSnapshot()
-    if (result.ok) {
-      applyNotificationChannel(channel, result.data)
-      error.value = null
-    } else {
-      error.value = result.error
-    }
-    return result
+    return refreshNotificationSnapshot(channel, 'replace')
   }
 
   async function refreshNotificationBinding(channel: NotificationBindingChannel) {
-    const result = await getNotificationSnapshot()
-    if (result.ok) {
-      mergeNotificationBinding(channel, result.data)
-      error.value = null
-    } else {
-      error.value = result.error
-    }
-    return result
+    return refreshNotificationSnapshot(channel, 'merge')
   }
 
   function buildNotificationsPayload(): SaveNotificationsPayload {

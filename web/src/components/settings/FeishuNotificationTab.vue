@@ -42,7 +42,7 @@ useNotificationBindingPoll({
       :busy="qr.loading.value"
       :polling="qr.polling.value"
       :error="qr.error.value"
-      activate-hint="请打开飞书，给这个机器人发一条任意消息完成激活，之后通知才会推送给你。群聊里需要先 @机器人。"
+      activate-hint="请用扫码的那个飞书账号给这个机器人发一条消息完成激活，之后通知才会推送给你。群聊里需要先 @机器人。"
       @start="qr.start()"
       @cancel="qr.cancel()"
     />
@@ -54,7 +54,7 @@ useNotificationBindingPoll({
       </div>
       <div class="mb-4 flex min-h-11 flex-wrap items-center justify-between gap-3 text-sm text-gray-700 dark:text-gray-200" aria-live="polite">
         <span class="min-w-0 break-all">
-          {{ boundChats.length ? `已绑定通知目标 ${boundChats.join(', ')}` : '尚未绑定会话。扫码后请给这个机器人发一条消息，这里会自动填入 Chat ID。' }}
+          {{ boundChats.length ? `已绑定通知目标 ${boundChats.join(', ')}` : '尚未绑定会话。扫码后请用同一个飞书账号给机器人发一条消息，这里会自动填入 Chat ID。' }}
         </span>
         <RefreshButton :loading="refreshingBinding" @click="refreshBinding" />
       </div>
@@ -72,7 +72,7 @@ useNotificationBindingPoll({
         <div class="space-y-1">
           <label class="text-xs font-semibold text-gray-500">Chat IDs</label>
           <el-input v-model="feishuForm.chat_ids" placeholder="多个群组用英文逗号分隔" />
-          <div class="text-xs text-gray-400">飞书会话的 Chat ID (oc_xxxx)。扫码只创建应用，给机器人发一条消息后会自动填入。</div>
+          <div class="text-xs text-gray-400">飞书会话的 Chat ID (oc_xxxx)。扫码只创建应用，请用扫码的那个飞书账号发消息后会自动填入。</div>
         </div>
       </div>
     </section>

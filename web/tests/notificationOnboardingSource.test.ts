@@ -55,7 +55,7 @@ test('WeCom QR reminds the user to message the bot after scan', () => {
   assert.match(wecomPanel, /refreshNotificationBinding\('wecom-bot'\)/)
   assert.match(wecomPanel, /RefreshButton/)
   assert.match(feishuPanel, /useNotificationQR\('feishu'/)
-  assert.match(feishuPanel, /请打开飞书，给这个机器人发一条任意消息/)
+  assert.match(feishuPanel, /请用扫码的那个飞书账号给这个机器人发一条消息/)
   assert.match(feishuPanel, /useNotificationBindingPoll/)
   assert.match(feishuPanel, /refreshNotificationBinding\('feishu'\)/)
   assert.match(feishuPanel, /RefreshButton/)
@@ -70,6 +70,7 @@ test('binding polling merges only target IDs and coalesces overlapping requests'
   assert.match(settingsStore, /mergeNotificationBinding/)
   assert.match(settingsStore, /mergeIDs\(feishuForm\.value\.chat_ids/)
   assert.doesNotMatch(bindingPolling, /fetchNotifications/)
+  assert.equal(settingsStore.match(/systemService\.getNotifications\(\)/g)?.length, 1)
 })
 
 test('QR panel renders a stable code and accessible status and actions', () => {

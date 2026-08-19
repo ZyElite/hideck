@@ -37,6 +37,11 @@ func TestFeishuQRHandlersPersistConfirmedCredentialsWithoutLeakingSecret(t *test
 	}
 	cfg := &config.Config{}
 	stateStore := notify.NewFileRuntimeStateStore(filepath.Join(directory, "notification-state.json"))
+	if err := stateStore.Save(notify.RuntimeState{
+		Feishu: notify.FeishuRuntimeState{ChatIDs: []string{"oc_unverified"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	manager, err := notify.NewManagerWithOptions(cfg, nil, notify.ManagerOptions{
 		StateStore: stateStore, DeferCommandReceiverStart: true,
 	})
@@ -76,6 +81,12 @@ func TestFeishuQRHandlersPersistConfirmedCredentialsWithoutLeakingSecret(t *test
 	state, err := stateStore.Load()
 	if err != nil || len(state.Feishu.AllowedUsers) != 1 || state.Feishu.AllowedUsers[0] != "ou_owner" {
 		t.Fatalf("feishu binding state = %+v, err = %v", state.Feishu, err)
+	}
+	if !state.Feishu.BindingVerified {
+		t.Fatal("feishu binding was not marked verified")
+	}
+	if len(state.Feishu.ChatIDs) != 0 {
+		t.Fatalf("unverified chat ids were retained: %#v", state.Feishu.ChatIDs)
 	}
 	configData, err := os.ReadFile(configPath)
 	if err != nil || !strings.Contains(string(configData), "cli_app") {

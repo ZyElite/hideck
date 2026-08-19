@@ -103,7 +103,7 @@ func (s *Server) applyFeishuQRCredentials(credentials notify.FeishuQRCredentials
 	if s.notifyMgr != nil {
 		if openID := strings.TrimSpace(credentials.OpenID); openID != "" {
 			if err := s.notifyMgr.UpdateRuntimeState(func(state *notify.RuntimeState) error {
-				state.Feishu.AllowedUsers = appendUniqueString(state.Feishu.AllowedUsers, openID)
+				state.Feishu = notify.ApplyFeishuQRUserBinding(s.fullCfg.Feishu, state.Feishu, openID)
 				return nil
 			}); err != nil && !errors.Is(err, notify.ErrRuntimeStateStoreUnavailable) {
 				return "凭证已保存，但飞书扫码用户绑定失败: " + err.Error()

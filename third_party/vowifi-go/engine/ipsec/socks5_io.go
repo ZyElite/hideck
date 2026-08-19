@@ -22,10 +22,11 @@ func (t *Socks5Transport) Start() error {
 		return errors.New("SOCKS5 transport is not initialized")
 	}
 	t.started = true
-	t.wg.Add(3)
+	t.wg.Add(4)
 	go t.readLoop()
 	go t.logStatsLoop()
 	go t.tcpKeepalive()
+	go t.udpKeepalive()
 	return t.startErr
 }
 
@@ -77,6 +78,7 @@ func (t *Socks5Transport) sendUDP(data []byte) error {
 	if written != len(datagram) {
 		return io.ErrShortWrite
 	}
+	atomic.StoreInt64(&t.lastUDPWriteAt, time.Now().UnixNano())
 	return nil
 }
 
@@ -156,6 +158,29 @@ func (t *Socks5Transport) logStatsLoop() {
 		case <-ticker.C:
 			stats := t.SnapshotStats()
 			logDebug(fmt.Sprintf("SOCKS5 stats: %+v", stats))
+		}
+	}
+}
+
+func (t *Socks5Transport) udpKeepalive() {
+	defer t.wg.Done()
+	ticker := time.NewTicker(socks5UDPKeepaliveEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-t.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		last := atomic.LoadInt64(&t.lastUDPWriteAt)
+		if last != 0 && time.Since(time.Unix(0, last)) < socks5UDPKeepaliveEvery {
+			continue
+		}
+		if err := t.SendNATKeepalive(); err != nil {
+			if t.ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			logWarn("SOCKS5 UDP keepalive failed: " + err.Error())
 		}
 	}
 }
