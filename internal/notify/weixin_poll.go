@@ -9,6 +9,7 @@ import (
 )
 
 func (w *WeixinChannel) pollLoop(ctx context.Context) error {
+	logger.Info("个人微信命令监听已启动")
 	failures := 0
 	for {
 		state := w.snapshotState()

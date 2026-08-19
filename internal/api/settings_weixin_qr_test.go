@@ -66,7 +66,9 @@ func TestWeixinQRHandlersPersistConfirmedCredentialsWithoutLeakingToken(t *testi
 		t.Fatalf("status response = %+v", statusResponse)
 	}
 	state, err := stateStore.Load()
-	if err != nil || state.Weixin.Token != "private-token" || state.Weixin.AccountID != "bot-1" {
+	if err != nil || state.Weixin.Token != "private-token" || state.Weixin.AccountID != "bot-1" ||
+		state.Weixin.UserID != "user-1" || state.Weixin.DefaultTarget != "user-1" ||
+		len(state.Weixin.AllowedUsers) != 1 || state.Weixin.AllowedUsers[0] != "user-1" {
 		t.Fatalf("state = %+v, %v", state, err)
 	}
 	configData, err := os.ReadFile(configPath)

@@ -834,6 +834,63 @@ paths:
         '404':
           $ref: '#/components/responses/ErrorMessage'
 
+  /settings/notifications/feishu/qr/start:
+    post:
+      tags: [settings]
+      summary: 开始飞书扫码创建应用
+      description: 通过飞书 accounts 注册接口创建 PersonalAgent 应用；扫码服务不可用时可改用 App ID 与 App Secret 手工配置。
+      responses:
+        '200':
+          description: 二维码会话已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeishuQRResponse'
+        '502':
+          $ref: '#/components/responses/QROnboardingError'
+
+  /settings/notifications/feishu/qr/status:
+    get:
+      tags: [settings]
+      summary: 查询飞书扫码创建状态
+      parameters:
+        - $ref: '#/components/parameters/QRSessionID'
+      responses:
+        '200':
+          description: 二维码状态；确认后 App Secret 已尝试写入配置但不会返回。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeishuQRResponse'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+        '502':
+          $ref: '#/components/responses/ErrorMessage'
+
+  /settings/notifications/feishu/qr/cancel:
+    post:
+      tags: [settings]
+      summary: 取消飞书扫码创建会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelQRRequest'
+      responses:
+        '200':
+          description: 已取消
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/ErrorMessage'
+        '404':
+          $ref: '#/components/responses/ErrorMessage'
+
   /settings/password:
     get:
       tags: [settings]
@@ -4609,6 +4666,31 @@ components:
         app_id:
           type: string
         user_openid:
+          type: string
+
+    FeishuQRResponse:
+      type: object
+      required: [session_id, status]
+      properties:
+        session_id:
+          type: string
+        qr_url:
+          type: string
+        open_url:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [wait, scaned, confirmed, expired, error]
+        applied:
+          type: boolean
+        apply_warning:
+          type: string
+        error:
+          type: string
+        app_id:
           type: string
 
     ChangePasswordRequest:

@@ -1,7 +1,7 @@
 import { api } from '../stores/auth'
 import { callService } from './http'
 
-export type NotificationQRChannel = 'weixin' | 'wecom-bot' | 'qq'
+export type NotificationQRChannel = 'weixin' | 'wecom-bot' | 'qq' | 'feishu'
 export type NotificationQRStatus = 'wait' | 'scaned' | 'confirmed' | 'expired' | 'error'
 
 export type NotificationQRSession = {
@@ -25,7 +25,8 @@ export type NotificationQRSession = {
 const channelPaths: Record<NotificationQRChannel, string> = {
   weixin: 'weixin',
   'wecom-bot': 'wecom-bot',
-  qq: 'qq'
+  qq: 'qq',
+  feishu: 'feishu'
 }
 
 function channelPath(channel: NotificationQRChannel): string {

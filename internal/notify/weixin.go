@@ -77,6 +77,16 @@ func (w *WeixinChannel) Send(text string) error {
 	return w.sendTo(context.Background(), target, text)
 }
 
+func (w *WeixinChannel) SendRegistrationHelp(target, text string) error {
+	if w == nil {
+		return errors.New("个人微信渠道未初始化")
+	}
+	if strings.TrimSpace(target) == "" {
+		return errors.New("个人微信注册帮助目标为空")
+	}
+	return w.sendTo(context.Background(), target, text)
+}
+
 func (w *WeixinChannel) RegisterCommand(name string, handler CommandHandler) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" || handler == nil {

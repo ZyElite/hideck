@@ -76,6 +76,7 @@ declare module 'vue' {
     ErrorBoundary: typeof import('./components/ErrorBoundary.vue')['default']
     ErrorState: typeof import('./components/ErrorState.vue')['default']
     EsimCardPolicyInline: typeof import('./components/EsimCardPolicyInline.vue')['default']
+    FeishuNotificationTab: typeof import('./components/settings/FeishuNotificationTab.vue')['default']
     FieldRow: typeof import('./components/FieldRow.vue')['default']
     HelloWorld: typeof import('./components/HelloWorld.vue')['default']
     ListSkeleton: typeof import('./components/ListSkeleton.vue')['default']

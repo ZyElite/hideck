@@ -20,6 +20,7 @@ const qr = useNotificationQR('wecom-bot', {
       :busy="qr.loading.value"
       :polling="qr.polling.value"
       :error="qr.error.value"
+      activate-hint="机器人已接入。请打开企业微信，给这个机器人发一条任意消息完成激活，之后通知才会推送给你。"
       @start="qr.start()"
       @cancel="qr.cancel()"
     />

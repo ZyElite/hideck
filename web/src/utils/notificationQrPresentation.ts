@@ -21,3 +21,7 @@ export function notificationQRPresentation(
   if (session.applied) return { label: '已连接', tone: 'success' }
   return { label: '凭证待应用', tone: 'warning' }
 }
+
+export function shouldShowQRActivateHint(session: NotificationQRSession | null): boolean {
+  return session?.status === 'confirmed' || session?.applied === true
+}

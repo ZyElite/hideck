@@ -88,6 +88,7 @@ type Server struct {
 	weixinQRMu              sync.Mutex
 	wecomQRMu               sync.Mutex
 	qqQRMu                  sync.Mutex
+	feishuQRMu              sync.Mutex
 	voiceGW                 *voicehost.Gateway
 	voiceRecordingDirectory string
 	phone                   *phone.Service
@@ -96,6 +97,7 @@ type Server struct {
 	weixinQR                *notify.WeixinQRService
 	wecomQR                 *notify.WeComQRService
 	qqQR                    *notify.QQQRService
+	feishuQR                *notify.FeishuQRService
 	commandCenter           *commandcenter.Service
 	automaticTasks          automaticTaskService
 	balance                 *balance.Service
@@ -150,6 +152,7 @@ func New(cfg *config.Config, pool *device.Pool, fs http.FileSystem, proxyMgr *se
 		weixinQR:              notify.NewWeixinQRService(notify.WeixinQROptions{}),
 		wecomQR:               notify.NewWeComQRService(notify.WeComQROptions{}),
 		qqQR:                  notify.NewQQQRService(notify.QQQROptions{}),
+		feishuQR:              notify.NewFeishuQRService(notify.FeishuQROptions{}),
 		proxyRepo:             repo.NewDBRepo(),
 		cardPolicies:          databaseCardPolicyStore{},
 		disclaimerAcceptances: db.NewDisclaimerAcceptanceStore(db.DB),
@@ -385,6 +388,9 @@ func (s *Server) newRouter() *gin.Engine {
 		api.POST("/settings/notifications/qq/qr/start", s.handleStartQQQR)
 		api.GET("/settings/notifications/qq/qr/status", s.handleQQQRStatus)
 		api.POST("/settings/notifications/qq/qr/cancel", s.handleCancelQQQR)
+		api.POST("/settings/notifications/feishu/qr/start", s.handleStartFeishuQR)
+		api.GET("/settings/notifications/feishu/qr/status", s.handleFeishuQRStatus)
+		api.POST("/settings/notifications/feishu/qr/cancel", s.handleCancelFeishuQR)
 		api.POST("/settings/password", s.handleChangePassword) // 修改登录密码
 		api.GET("/system/info", s.handleSystemInfo)            // 获取系统运行与版本信息
 		api.GET("/system/time", s.handleSystemTime)            // 获取设备时间和时区

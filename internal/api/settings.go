@@ -152,7 +152,9 @@ func (s *Server) handleGetNotificationSettings(c *gin.Context) {
 
 	resp.Feishu.Enabled = s.fullCfg.Feishu.Enabled
 	resp.Feishu.AppID = s.fullCfg.Feishu.AppID
-	resp.Feishu.AppSecret = s.fullCfg.Feishu.AppSecret
+	if s.fullCfg.Feishu.AppSecret != "" {
+		resp.Feishu.AppSecret = notificationSecretMask
+	}
 	resp.Feishu.ChatIDs = s.fullCfg.Feishu.ChatIDs
 
 	resp.QQ.Enabled = s.fullCfg.QQ.Enabled
@@ -243,10 +245,15 @@ func (s *Server) handleUpdateNotificationSettings(c *gin.Context) {
 		}
 	}
 
+	feishuSecret, err := resolveMaskedNotificationSecret(req.Feishu.AppSecret, s.fullCfg.Feishu.AppSecret, "飞书 App Secret")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+		return
+	}
 	fs := config.FeishuConfig{
 		Enabled:   req.Feishu.Enabled,
 		AppID:     strings.TrimSpace(req.Feishu.AppID),
-		AppSecret: strings.TrimSpace(req.Feishu.AppSecret),
+		AppSecret: feishuSecret,
 		ChatIDs:   fsChatIDs,
 	}
 

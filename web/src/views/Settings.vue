@@ -11,6 +11,7 @@ import QQNotificationTab from '../components/settings/QQNotificationTab.vue'
 import TelegramNotificationTab from '../components/settings/TelegramNotificationTab.vue'
 import WeComBotNotificationTab from '../components/settings/WeComBotNotificationTab.vue'
 import WeixinNotificationTab from '../components/settings/WeixinNotificationTab.vue'
+import FeishuNotificationTab from '../components/settings/FeishuNotificationTab.vue'
 import { 
   Key24Regular, 
   Save24Regular,
@@ -604,40 +605,8 @@ onMounted(() => {
                 <TelegramNotificationTab />
               </el-tab-pane>
 
-              <!-- 飞书 -->
               <el-tab-pane label="飞书 Bot" name="feishu" class="pt-2">
-                <div class="flex items-center justify-between mb-4">
-                  <div class="flex items-center gap-2">
-                    <div class="font-bold text-gray-800 dark:text-gray-100">启用飞书机器人</div>
-                  </div>
-                  <el-switch v-model="feishuForm.enabled" />
-                </div>
-
-                <div class="space-y-4">
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div class="space-y-1">
-                      <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">App ID</label>
-                      <el-input v-model="feishuForm.app_id" :disabled="!feishuForm.enabled" placeholder="cli_xxxx" />
-                    </div>
-                    <div class="space-y-1">
-                      <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">App Secret</label>
-                      <el-input v-model="feishuForm.app_secret" :disabled="!feishuForm.enabled" type="password" show-password placeholder="••••••••" />
-                    </div>
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-bold text-gray-500 uppercase tracking-wider">Chat IDs</label>
-                    <el-input v-model="feishuForm.chat_ids" :disabled="!feishuForm.enabled" placeholder="多个群组用英文逗号分隔" />
-                    <div class="text-[10px] text-gray-400 mt-1">飞书群聊的 Chat ID (oc_xxxx)，可通过飞书开放平台 API 获取，支持逗号分隔多个群组。</div>
-                  </div>
-                  <div class="p-3 rounded-md bg-blue-50/50 dark:bg-blue-500/5 text-xs text-blue-600 dark:text-blue-400/80 leading-relaxed border border-blue-100/50 dark:border-blue-500/10">
-                    <strong>配置说明：</strong>
-                    <ol class="list-decimal ml-4 mt-1 space-y-1">
-                      <li>在<a href="https://open.feishu.cn" target="_blank" class="underline hover:text-blue-700">飞书开放平台</a>创建自建应用，启用「机器人」能力</li>
-                      <li>在「事件与回调 → 事件配置」中选择「使用长连接接收事件」</li>
-                      <li>添加 <code>im:message</code> 和 <code>im:message:send_as_bot</code> 权限</li>
-                    </ol>
-                  </div>
-                </div>
+                <FeishuNotificationTab />
               </el-tab-pane>
 
               <el-tab-pane label="个人微信" name="weixin" class="pt-2">

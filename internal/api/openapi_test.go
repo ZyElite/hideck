@@ -39,7 +39,8 @@ func TestOpenAPIHiDeckYAMLValid(t *testing.T) {
 		"/settings/notifications/weixin/qr/cancel", "/settings/notifications/wecom-bot/qr/start",
 		"/settings/notifications/wecom-bot/qr/status", "/settings/notifications/wecom-bot/qr/cancel",
 		"/settings/notifications/qq/qr/start", "/settings/notifications/qq/qr/status",
-		"/settings/notifications/qq/qr/cancel",
+		"/settings/notifications/qq/qr/cancel", "/settings/notifications/feishu/qr/start",
+		"/settings/notifications/feishu/qr/status", "/settings/notifications/feishu/qr/cancel",
 		"/settings/disclaimer",
 	} {
 		if paths[path] == nil {

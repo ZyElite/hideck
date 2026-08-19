@@ -8,6 +8,9 @@ function source(relativePath: string): string {
 
 const settings = source('../src/views/Settings.vue')
 const qrPanel = source('../src/components/settings/NotificationQrConnect.vue')
+const weixinPanel = source('../src/components/settings/WeixinNotificationTab.vue')
+const wecomPanel = source('../src/components/settings/WeComBotNotificationTab.vue')
+const feishuPanel = source('../src/components/settings/FeishuNotificationTab.vue')
 const telegramPanel = source('../src/components/settings/TelegramNotificationTab.vue')
 const settingsStore = source('../src/stores/settings.ts')
 const systemService = source('../src/services/system.ts')
@@ -23,7 +26,7 @@ test('settings separates personal Weixin, WeCom Bot, WeCom Webhook, and QQ', () 
 test('Telegram uses token onboarding with an explicit private-chat binding state', () => {
   assert.match(settings, /<TelegramNotificationTab/)
   assert.match(telegramPanel, /@BotFather/)
-  assert.match(telegramPanel, /等待管理员首次私聊绑定/)
+  assert.match(telegramPanel, /请打开 Telegram，给这个 Bot 发送任意一条消息完成激活/)
   assert.match(telegramPanel, /通知 Chat ID（可选）/)
   assert.match(telegramPanel, /grid-cols-1 gap-4 sm:grid-cols-2/)
   assert.doesNotMatch(telegramPanel, /NotificationQrConnect|二维码/)
@@ -37,6 +40,15 @@ test('Telegram recording delivery defaults to a voice bubble and remains configu
   assert.match(settingsStore, /recording_mode: 'voice'/)
   assert.match(settingsStore, /recording_mode: telegramForm\.value\.recording_mode/)
   assert.match(systemService, /recording_mode: TelegramRecordingMode/)
+})
+
+test('WeCom QR reminds the user to message the bot after scan', () => {
+  assert.match(weixinPanel, /activate-hint="请打开微信，给这个机器人发一条任意消息完成激活/)
+  assert.match(wecomPanel, /activate-hint="机器人已接入。请打开企业微信，给这个机器人发一条任意消息完成激活/)
+  assert.match(feishuPanel, /useNotificationQR\('feishu'/)
+  assert.match(feishuPanel, /请打开飞书，给这个机器人发一条任意消息/)
+  assert.match(qrPanel, /showActivateHint/)
+  assert.match(qrPanel, /role="status"/)
 })
 
 test('QR panel renders a stable code and accessible status and actions', () => {

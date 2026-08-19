@@ -33,7 +33,7 @@ const recordingModeOptions = [
           aria-hidden="true"
         />
         <span class="break-all text-gray-700 dark:text-gray-200">
-          {{ boundTarget ? `已绑定通知目标 ${boundTarget}` : '等待管理员首次私聊绑定' }}
+          {{ boundTarget ? `已绑定通知目标 ${boundTarget}` : '请打开 Telegram，给这个 Bot 发送任意一条消息完成激活' }}
         </span>
       </div>
       <RefreshButton :loading="refreshingTelegramBinding" @click="settingsStore.refreshTelegramBinding()" />

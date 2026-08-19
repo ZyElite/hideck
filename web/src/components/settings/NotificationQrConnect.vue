@@ -7,7 +7,7 @@ import {
   QrCode24Regular
 } from '@vicons/fluent'
 import type { NotificationQRSession } from '../../services/notification-onboarding'
-import { notificationQRPresentation } from '../../utils/notificationQrPresentation'
+import { notificationQRPresentation, shouldShowQRActivateHint } from '../../utils/notificationQrPresentation'
 
 const props = defineProps<{
   title: string
@@ -16,6 +16,7 @@ const props = defineProps<{
   busy: boolean
   polling: boolean
   error: string
+  activateHint?: string
 }>()
 
 defineEmits<{
@@ -24,6 +25,10 @@ defineEmits<{
 }>()
 
 const presentation = computed(() => notificationQRPresentation(props.session, props.connected))
+const showActivateHint = computed(() => {
+  const hint = String(props.activateHint || '').trim()
+  return hint !== '' && shouldShowQRActivateHint(props.session)
+})
 const openURL = computed(() => {
   const explicit = String(props.session?.open_url || '').trim()
   if (explicit) return explicit
@@ -83,6 +88,7 @@ const openURL = computed(() => {
     </div>
 
     <p v-if="error" class="qr-connect__error" role="alert">{{ error }}</p>
+    <p v-if="showActivateHint" class="qr-connect__activate" role="status">{{ activateHint }}</p>
   </section>
 </template>
 
@@ -180,12 +186,24 @@ const openURL = computed(() => {
   margin-top: 12px;
 }
 
-.qr-connect__error {
+.qr-connect__error,
+.qr-connect__activate {
   margin: 12px 0 0;
-  color: var(--ui-danger);
   font-size: var(--ui-font-body-sm);
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.qr-connect__error {
+  color: var(--ui-danger);
+}
+
+.qr-connect__activate {
+  color: var(--ui-text);
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 4px;
+  background: var(--ui-surface);
 }
 
 @media (max-width: 640px) {

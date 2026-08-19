@@ -7,7 +7,7 @@ import {
   weComBotFormFromSettings,
   weixinFormFromSettings
 } from '../src/stores/notificationChannelForms'
-import { notificationQRPresentation } from '../src/utils/notificationQrPresentation'
+import { notificationQRPresentation, shouldShowQRActivateHint } from '../src/utils/notificationQrPresentation'
 
 test('presents every QR state with explicit text and tone', () => {
   assert.deepEqual(notificationQRPresentation(null, false), { label: '未连接', tone: 'neutral' })
@@ -17,6 +17,14 @@ test('presents every QR state with explicit text and tone', () => {
   assert.deepEqual(notificationQRPresentation({ session_id: '1', status: 'expired' }, false), { label: '二维码已过期', tone: 'warning' })
   assert.deepEqual(notificationQRPresentation({ session_id: '1', status: 'error' }, false), { label: '连接失败', tone: 'danger' })
   assert.deepEqual(notificationQRPresentation({ session_id: '1', status: 'confirmed', applied: true }, false), { label: '已连接', tone: 'success' })
+})
+
+test('shows the first-chat activation hint only after QR is confirmed', () => {
+  assert.equal(shouldShowQRActivateHint(null), false)
+  assert.equal(shouldShowQRActivateHint({ session_id: '1', status: 'wait' }), false)
+  assert.equal(shouldShowQRActivateHint({ session_id: '1', status: 'scaned' }), false)
+  assert.equal(shouldShowQRActivateHint({ session_id: '1', status: 'confirmed' }), true)
+  assert.equal(shouldShowQRActivateHint({ session_id: '1', status: 'confirmed', applied: true }), true)
 })
 
 test('normalizes notification binding IDs without duplicates', () => {

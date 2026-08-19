@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/internal/notify"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 type startWeixinQRRequest struct {
@@ -111,6 +112,12 @@ func (s *Server) applyWeixinQRCredentials(credentials notify.WeixinQRCredentials
 		state.Weixin.Token = credentials.Token
 		state.Weixin.BaseURL = credentials.BaseURL
 		state.Weixin.UserID = credentials.UserID
+		if userID := strings.TrimSpace(credentials.UserID); userID != "" {
+			state.Weixin.AllowedUsers = appendUniqueString(state.Weixin.AllowedUsers, userID)
+			if strings.TrimSpace(state.Weixin.DefaultTarget) == "" {
+				state.Weixin.DefaultTarget = userID
+			}
+		}
 		return nil
 	}); err != nil {
 		return err.Error()
@@ -127,6 +134,12 @@ func (s *Server) applyWeixinQRCredentials(credentials notify.WeixinQRCredentials
 	if err := s.notifyMgr.UpdateConfig(s.fullCfg); err != nil {
 		return "凭证已保存，但渠道启动失败: " + err.Error()
 	}
+	if userID := strings.TrimSpace(credentials.UserID); userID != "" {
+		if err := s.notifyMgr.SendRegistrationHelp("weixin", userID); err != nil {
+			logger.Warn("个人微信扫码后注册帮助发送失败", "user_id", userID, "err", err)
+		}
+	}
+	logger.Info("个人微信扫码绑定已保存", "account_id", credentials.AccountID, "user_id", credentials.UserID)
 	return ""
 }
 
