@@ -57,7 +57,12 @@ coverage.out
 hideck.code-workspace
 PushNotification.pdf
 Quectel_LTE_Standard_UAC_应用指导_V1.0.pdf
-
+old/
+output/
+design-system/
+release/
+scripts/
+web/prototypes/
 # macOS AppleDouble metadata
 **/._*
 .superpowers/*
