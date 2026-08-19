@@ -17,20 +17,20 @@ const refreshingBinding = ref(false)
 async function refreshBinding() {
   refreshingBinding.value = true
   try {
-    await settingsStore.fetchNotifications({ silent: true })
+    await settingsStore.refreshNotificationBinding('wecom-bot')
   } finally {
     refreshingBinding.value = false
   }
 }
 const qr = useNotificationQR('wecom-bot', {
   onApplied: async () => {
-    await settingsStore.fetchNotifications({ silent: true })
+    await settingsStore.refreshNotificationChannel('wecom-bot')
   }
 })
 
 useNotificationBindingPoll({
   shouldPoll: waitingForBinding,
-  refresh: () => settingsStore.fetchNotifications({ silent: true })
+  refresh: () => settingsStore.refreshNotificationBinding('wecom-bot')
 })
 </script>
 

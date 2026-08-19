@@ -38,17 +38,18 @@ func (l *feishuLogger) Error(ctx context.Context, args ...interface{}) {
 // FeishuChannel 实现 Channel 接口的飞书通知渠道
 // 使用飞书开放平台 Bot + WebSocket 长连接
 type FeishuChannel struct {
-	client     *lark.Client
-	wsClient   *larkws.Client
-	chatIDs    []string
-	handlers   map[string]CommandHandler
-	cfg        config.FeishuConfig
-	stateStore RuntimeStateStore
-	stateMu    sync.RWMutex
-	startMu    sync.Mutex
-	cancel     context.CancelFunc
-	replyText  func(msg *larkim.EventMessage, text string)
-	media      feishuMediaAPI
+	client       *lark.Client
+	wsClient     *larkws.Client
+	chatIDs      []string
+	allowedUsers []string
+	handlers     map[string]CommandHandler
+	cfg          config.FeishuConfig
+	stateStore   RuntimeStateStore
+	stateMu      sync.RWMutex
+	startMu      sync.Mutex
+	cancel       context.CancelFunc
+	replyText    func(msg *larkim.EventMessage, text string)
+	media        feishuMediaAPI
 }
 
 // NewFeishuChannel 根据配置创建飞书渠道
@@ -65,12 +66,14 @@ func NewFeishuChannelWithOptions(options FeishuChannelOptions) (*FeishuChannel, 
 		return nil, fmt.Errorf("飞书配置缺少 app_id 或 app_secret")
 	}
 	chatIDs := mergeUniqueStrings(cfg.ChatIDs, []string{cfg.ChatID})
+	var allowedUsers []string
 	if options.StateStore != nil {
 		state, err := options.StateStore.Load()
 		if err != nil {
 			return nil, fmt.Errorf("读取飞书绑定状态失败: %w", err)
 		}
 		chatIDs = mergeUniqueStrings(chatIDs, state.Feishu.ChatIDs)
+		allowedUsers = mergeUniqueStrings(state.Feishu.AllowedUsers)
 	}
 	if len(chatIDs) == 0 {
 		logger.Warn("飞书渠道已启用但还没有 Chat ID，给机器人发一条消息后会自动绑定")
@@ -87,12 +90,13 @@ func NewFeishuChannelWithOptions(options FeishuChannelOptions) (*FeishuChannel, 
 	logger.Info("飞书 Bot 客户端已创建", "app_id", cfg.AppID)
 
 	return &FeishuChannel{
-		client:     client,
-		chatIDs:    chatIDs,
-		handlers:   make(map[string]CommandHandler),
-		cfg:        cfg,
-		stateStore: options.StateStore,
-		media:      feishuSDKMedia{client: client},
+		client:       client,
+		chatIDs:      chatIDs,
+		allowedUsers: allowedUsers,
+		handlers:     make(map[string]CommandHandler),
+		cfg:          cfg,
+		stateStore:   options.StateStore,
+		media:        feishuSDKMedia{client: client},
 	}, nil
 }
 
@@ -193,8 +197,9 @@ func (f *FeishuChannel) Start() error {
 
 // feishuCommandContext 实现了 CommandContext 接口，允许异步回复飞书消息
 type feishuCommandContext struct {
-	channel *FeishuChannel
-	msg     *larkim.EventMessage
+	channel  *FeishuChannel
+	msg      *larkim.EventMessage
+	senderID string
 }
 
 func (c *feishuCommandContext) Reply(text string) {
@@ -216,10 +221,10 @@ func (c *feishuCommandContext) Confirm(prompt string) bool {
 }
 
 func (c *feishuCommandContext) UserKey() string {
-	if c == nil || c.msg == nil || c.msg.ChatId == nil {
+	if c == nil || strings.TrimSpace(c.senderID) == "" {
 		return ""
 	}
-	return fmt.Sprintf("feishu:%s", *c.msg.ChatId)
+	return fmt.Sprintf("feishu:%s", strings.TrimSpace(c.senderID))
 }
 
 // replyToMessage 回复飞书消息（使用 reply API）
@@ -232,9 +237,7 @@ func (f *FeishuChannel) replyToMessage(msg *larkim.EventMessage, text string) {
 		return
 	}
 	if msg == nil || msg.MessageId == nil {
-		if err := f.sendToChat(feishuMessageChatID(msg), text); err != nil {
-			_ = f.Send(text)
-		}
+		f.sendReplyFallback(msg, text)
 		return
 	}
 
@@ -251,16 +254,19 @@ func (f *FeishuChannel) replyToMessage(msg *larkim.EventMessage, text string) {
 	resp, err := f.client.Im.Message.Reply(context.Background(), req)
 	if err != nil {
 		logger.Warn("飞书回复消息失败，尝试直接发送", "err", err)
-		if sendErr := f.sendToChat(feishuMessageChatID(msg), text); sendErr != nil {
-			_ = f.Send(text)
-		}
+		f.sendReplyFallback(msg, text)
 		return
 	}
 	if !resp.Success() {
 		logger.Warn("飞书回复消息失败，尝试直接发送", "code", resp.Code, "msg", resp.Msg)
-		if sendErr := f.sendToChat(feishuMessageChatID(msg), text); sendErr != nil {
-			_ = f.Send(text)
-		}
+		f.sendReplyFallback(msg, text)
+	}
+}
+
+func (f *FeishuChannel) sendReplyFallback(msg *larkim.EventMessage, text string) {
+	chatID := feishuMessageChatID(msg)
+	if err := f.sendToChat(chatID, text); err != nil {
+		logger.Warn("飞书定向发送回复失败", "chat_id", chatID, "err", err)
 	}
 }
 

@@ -21,6 +21,7 @@ import {
   DEFAULT_WEIXIN_FORM,
   buildWeComBotSettings,
   buildWeixinSettings,
+  mergeIDs,
   weComBotFormFromSettings,
   weixinFormFromSettings,
   type WeComBotForm,
@@ -186,6 +187,8 @@ const DEFAULT_WECOM_SETTINGS: WeComSettings = {
 
 const NOTIFICATION_SECRET_MASK = '********'
 
+type NotificationBindingChannel = 'feishu' | 'weixin' | 'wecom-bot'
+
 export function maskSavedWeComURLs(urls: string[]): string[] {
   return urls
     .filter(url => String(url || '').trim())
@@ -218,6 +221,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const changingPassword = ref(false)
 
   const error = ref<AppError | null>(null)
+  let notificationSnapshotRequest: ReturnType<typeof systemService.getNotifications> | null = null
 
   async function fetchSystemInfo() {
     loadingSystemInfo.value = true
@@ -346,6 +350,74 @@ export const useSettingsStore = defineStore('settings', () => {
       error.value = result.error
     }
     refreshingTelegramBinding.value = false
+    return result
+  }
+
+  async function getNotificationSnapshot() {
+    if (!notificationSnapshotRequest) {
+      notificationSnapshotRequest = systemService.getNotifications()
+    }
+    const request = notificationSnapshotRequest
+    try {
+      return await request
+    } finally {
+      if (notificationSnapshotRequest === request) notificationSnapshotRequest = null
+    }
+  }
+
+  function applyNotificationChannel(channel: NotificationBindingChannel, data: NotificationsSettingsResponse) {
+    if (channel === 'feishu') {
+      const settings = data.feishu || {}
+      feishuForm.value = {
+        enabled: !!settings.enabled,
+        app_id: settings.app_id || '',
+        app_secret: settings.app_secret || '',
+        chat_ids: Array.isArray(settings.chat_ids) ? settings.chat_ids.join(',') : ''
+      }
+      return
+    }
+    if (channel === 'weixin') {
+      weixinForm.value = weixinFormFromSettings(data.weixin || {})
+      return
+    }
+    weComBotForm.value = weComBotFormFromSettings(data.wecom_bot || {})
+  }
+
+  function mergeNotificationBinding(channel: NotificationBindingChannel, data: NotificationsSettingsResponse) {
+    if (channel === 'feishu') {
+      feishuForm.value.chat_ids = mergeIDs(feishuForm.value.chat_ids, data.feishu?.chat_ids)
+      return
+    }
+    if (channel === 'weixin') {
+      weixinForm.value.allowed_user_ids = mergeIDs(
+        weixinForm.value.allowed_user_ids, data.weixin?.allowed_user_ids
+      )
+      return
+    }
+    weComBotForm.value.allowed_user_ids = mergeIDs(
+      weComBotForm.value.allowed_user_ids, data.wecom_bot?.allowed_user_ids
+    )
+  }
+
+  async function refreshNotificationChannel(channel: NotificationBindingChannel) {
+    const result = await getNotificationSnapshot()
+    if (result.ok) {
+      applyNotificationChannel(channel, result.data)
+      error.value = null
+    } else {
+      error.value = result.error
+    }
+    return result
+  }
+
+  async function refreshNotificationBinding(channel: NotificationBindingChannel) {
+    const result = await getNotificationSnapshot()
+    if (result.ok) {
+      mergeNotificationBinding(channel, result.data)
+      error.value = null
+    } else {
+      error.value = result.error
+    }
     return result
   }
 
@@ -547,6 +619,8 @@ export const useSettingsStore = defineStore('settings', () => {
     fetchSystemInfo,
     fetchNotifications,
     refreshTelegramBinding,
+    refreshNotificationChannel,
+    refreshNotificationBinding,
     saveNotifications,
     saveNotificationsFromForms,
     testWebhookFromForm,

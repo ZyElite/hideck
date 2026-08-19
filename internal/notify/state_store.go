@@ -40,7 +40,8 @@ type TelegramRuntimeState struct {
 }
 
 type FeishuRuntimeState struct {
-	ChatIDs []string `json:"chat_ids,omitempty"`
+	ChatIDs      []string `json:"chat_ids,omitempty"`
+	AllowedUsers []string `json:"allowed_users,omitempty"`
 }
 
 type RuntimeState struct {
@@ -139,6 +140,7 @@ func cloneRuntimeState(state RuntimeState) RuntimeState {
 	state.WeComBot.AllowedUsers = append([]string(nil), state.WeComBot.AllowedUsers...)
 	state.QQ.AllowedDirect = append([]string(nil), state.QQ.AllowedDirect...)
 	state.Feishu.ChatIDs = append([]string(nil), state.Feishu.ChatIDs...)
+	state.Feishu.AllowedUsers = append([]string(nil), state.Feishu.AllowedUsers...)
 	return state
 }
 

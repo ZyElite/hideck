@@ -15,6 +15,7 @@ const telegramPanel = source('../src/components/settings/TelegramNotificationTab
 const settingsStore = source('../src/stores/settings.ts')
 const systemService = source('../src/services/system.ts')
 const polling = source('../src/composables/useNotificationQR.ts')
+const bindingPolling = source('../src/composables/useNotificationBindingPoll.ts')
 
 test('settings separates personal Weixin, WeCom Bot, WeCom Webhook, and QQ', () => {
   assert.match(settings, /label="个人微信"/)
@@ -46,18 +47,29 @@ test('WeCom QR reminds the user to message the bot after scan', () => {
   assert.match(weixinPanel, /activate-hint="请打开微信，给这个机器人发一条任意消息完成激活/)
   assert.match(weixinPanel, /已绑定通知目标/)
   assert.match(weixinPanel, /useNotificationBindingPoll/)
+  assert.match(weixinPanel, /refreshNotificationBinding\('weixin'\)/)
+  assert.doesNotMatch(weixinPanel, /fetchNotifications\(\{ silent: true \}\)/)
   assert.match(weixinPanel, /RefreshButton/)
   assert.match(wecomPanel, /activate-hint="机器人已接入。请打开企业微信，给这个机器人发一条任意消息完成激活/)
   assert.match(wecomPanel, /useNotificationBindingPoll/)
+  assert.match(wecomPanel, /refreshNotificationBinding\('wecom-bot'\)/)
   assert.match(wecomPanel, /RefreshButton/)
   assert.match(feishuPanel, /useNotificationQR\('feishu'/)
   assert.match(feishuPanel, /请打开飞书，给这个机器人发一条任意消息/)
   assert.match(feishuPanel, /useNotificationBindingPoll/)
+  assert.match(feishuPanel, /refreshNotificationBinding\('feishu'\)/)
   assert.match(feishuPanel, /RefreshButton/)
   assert.match(qrPanel, /showActivateHint/)
   assert.match(qrPanel, /role="status"/)
   assert.match(qrPanel, /ElMessage\.warning/)
   assert.match(qrPanel, /shouldShowQRActivateHint\(props\.session, props\.connected\)/)
+})
+
+test('binding polling merges only target IDs and coalesces overlapping requests', () => {
+  assert.match(settingsStore, /notificationSnapshotRequest/)
+  assert.match(settingsStore, /mergeNotificationBinding/)
+  assert.match(settingsStore, /mergeIDs\(feishuForm\.value\.chat_ids/)
+  assert.doesNotMatch(bindingPolling, /fetchNotifications/)
 })
 
 test('QR panel renders a stable code and accessible status and actions', () => {

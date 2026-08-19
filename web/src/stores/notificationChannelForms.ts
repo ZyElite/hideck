@@ -82,6 +82,10 @@ export function splitIDs(value: string): string[] {
     .filter((item, index, values) => !!item && values.indexOf(item) === index)
 }
 
+export function mergeIDs(current: string, incoming: string[] | undefined): string {
+  return splitIDs([current, ...(incoming || [])].join(',')).join(',')
+}
+
 function joinIDs(values: string[] | undefined): string {
   return Array.isArray(values) ? values.join(',') : ''
 }

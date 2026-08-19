@@ -20,17 +20,23 @@ func (f *FeishuChannel) handleMessageEvent(event *larkim.P2MessageReceiveV1) {
 	}
 	msg := event.Event.Message
 	chatID := feishuMessageChatID(msg)
+	senderID := feishuSenderID(event)
 	text, msgType, err := feishuInboundText(msg)
 	if err != nil {
 		logger.Debug("忽略飞书消息", "chat_id", chatID, "type", msgType, "err", err)
 		return
 	}
-	logger.Info("收到飞书消息", "chat_id", chatID, "type", msgType, "chars", len([]rune(text)))
-	bound, bindErr := f.bindChatID(chatID)
-	if bindErr != nil {
-		logger.Warn("保存飞书会话失败", "chat_id", chatID, "err", bindErr)
+	allowed, bound, authErr := f.authorizeMessage(event)
+	if authErr != nil {
+		logger.Warn("飞书消息鉴权失败", "chat_id", chatID, "err", authErr)
+		return
 	}
-	ctx := &feishuCommandContext{channel: f, msg: msg}
+	if !allowed {
+		logger.Warn("忽略未授权的飞书消息", "chat_id", chatID, "type", msgType)
+		return
+	}
+	logger.Info("收到飞书消息", "chat_id", chatID, "type", msgType, "chars", len([]rune(text)))
+	ctx := &feishuCommandContext{channel: f, msg: msg, senderID: senderID}
 	if bound && !isHelpCommand(text) && f.handlers != nil {
 		if help := f.handlers["help"]; help != nil {
 			if response := help(ctx, nil); response != "" {
@@ -91,34 +97,79 @@ func stripFeishuMentions(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-func (f *FeishuChannel) bindChatID(chatID string) (bool, error) {
-	chatID = strings.TrimSpace(chatID)
-	if chatID == "" {
-		return false, nil
+func (f *FeishuChannel) authorizeMessage(event *larkim.P2MessageReceiveV1) (bool, bool, error) {
+	if f == nil || event == nil || event.Event == nil || event.Event.Message == nil {
+		return false, false, nil
+	}
+	chatID := feishuMessageChatID(event.Event.Message)
+	senderID := feishuSenderID(event)
+	kind := feishuMessageKind(event.Event.Message)
+	if chatID == "" || senderID == "" || kind == "" {
+		return false, false, nil
 	}
 	f.stateMu.Lock()
 	defer f.stateMu.Unlock()
-	if containsString(f.chatIDs, chatID) {
-		return false, nil
+	senderAllowed := containsString(f.allowedUsers, senderID)
+	if kind == "group" {
+		return senderAllowed && containsString(f.chatIDs, chatID), false, nil
 	}
+	if len(f.allowedUsers) > 0 && !senderAllowed {
+		return false, false, nil
+	}
+	if senderAllowed && containsString(f.chatIDs, chatID) {
+		return true, false, nil
+	}
+	bound, err := f.persistDirectBindingLocked(chatID, senderID)
+	return err == nil, bound, err
+}
+
+func (f *FeishuChannel) persistDirectBindingLocked(chatID, senderID string) (bool, error) {
 	if f.stateStore == nil {
-		f.chatIDs = append(f.chatIDs, chatID)
+		f.chatIDs = mergeUniqueStrings(f.chatIDs, []string{chatID})
+		f.allowedUsers = mergeUniqueStrings(f.allowedUsers, []string{senderID})
 		return true, nil
 	}
 	bound := false
-	var stored []string
+	var stored FeishuRuntimeState
 	if err := f.stateStore.Update(func(state *RuntimeState) error {
 		if !containsString(state.Feishu.ChatIDs, chatID) {
 			state.Feishu.ChatIDs = append(state.Feishu.ChatIDs, chatID)
 			bound = true
 		}
-		stored = append([]string(nil), state.Feishu.ChatIDs...)
+		if !containsString(state.Feishu.AllowedUsers, senderID) {
+			state.Feishu.AllowedUsers = append(state.Feishu.AllowedUsers, senderID)
+			bound = true
+		}
+		stored = cloneRuntimeState(*state).Feishu
 		return nil
 	}); err != nil {
 		return false, err
 	}
-	f.chatIDs = mergeUniqueStrings(f.chatIDs, stored)
+	f.chatIDs = mergeUniqueStrings(f.chatIDs, stored.ChatIDs)
+	f.allowedUsers = mergeUniqueStrings(f.allowedUsers, stored.AllowedUsers)
 	return bound, nil
+}
+
+func feishuSenderID(event *larkim.P2MessageReceiveV1) string {
+	if event == nil || event.Event == nil || event.Event.Sender == nil || event.Event.Sender.SenderId == nil {
+		return ""
+	}
+	sender := event.Event.Sender.SenderId
+	return firstNonEmpty(ptrText(sender.OpenId), ptrText(sender.UserId), ptrText(sender.UnionId))
+}
+
+func feishuMessageKind(msg *larkim.EventMessage) string {
+	if msg == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(ptrText(msg.ChatType))) {
+	case "p2p":
+		return "direct"
+	case "group", "topic_group":
+		return "group"
+	default:
+		return ""
+	}
 }
 
 func (f *FeishuChannel) notificationChatIDs() []string {

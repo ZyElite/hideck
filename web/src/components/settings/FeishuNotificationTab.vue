@@ -17,19 +17,19 @@ const refreshingBinding = ref(false)
 async function refreshBinding() {
   refreshingBinding.value = true
   try {
-    await settingsStore.fetchNotifications({ silent: true })
+    await settingsStore.refreshNotificationBinding('feishu')
   } finally {
     refreshingBinding.value = false
   }
 }
 
 const qr = useNotificationQR('feishu', {
-  onApplied: async () => { await settingsStore.fetchNotifications({ silent: true }) }
+  onApplied: async () => { await settingsStore.refreshNotificationChannel('feishu') }
 })
 
 useNotificationBindingPoll({
   shouldPoll: waitingForBinding,
-  refresh: () => settingsStore.fetchNotifications({ silent: true })
+  refresh: () => settingsStore.refreshNotificationBinding('feishu')
 })
 </script>
 

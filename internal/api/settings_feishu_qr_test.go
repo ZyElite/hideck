@@ -24,7 +24,7 @@ func TestFeishuQRHandlersPersistConfirmedCredentialsWithoutLeakingSecret(t *test
 		case "begin":
 			_, _ = w.Write([]byte(`{"device_code":"device-1","verification_uri_complete":"https://accounts.feishu.cn/verify"}`))
 		case "poll":
-			_, _ = w.Write([]byte(`{"client_id":"cli_app","client_secret":"private-secret"}`))
+			_, _ = w.Write([]byte(`{"client_id":"cli_app","client_secret":"private-secret","user_info":{"open_id":"ou_owner"}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -36,7 +36,10 @@ func TestFeishuQRHandlersPersistConfirmedCredentialsWithoutLeakingSecret(t *test
 		t.Fatal(err)
 	}
 	cfg := &config.Config{}
-	manager, err := notify.NewManagerWithOptions(cfg, nil, notify.ManagerOptions{})
+	stateStore := notify.NewFileRuntimeStateStore(filepath.Join(directory, "notification-state.json"))
+	manager, err := notify.NewManagerWithOptions(cfg, nil, notify.ManagerOptions{
+		StateStore: stateStore, DeferCommandReceiverStart: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +72,10 @@ func TestFeishuQRHandlersPersistConfirmedCredentialsWithoutLeakingSecret(t *test
 	}
 	if cfg.Feishu.AppID != "cli_app" || cfg.Feishu.AppSecret != "private-secret" || !cfg.Feishu.Enabled {
 		t.Fatalf("config = %+v", cfg.Feishu)
+	}
+	state, err := stateStore.Load()
+	if err != nil || len(state.Feishu.AllowedUsers) != 1 || state.Feishu.AllowedUsers[0] != "ou_owner" {
+		t.Fatalf("feishu binding state = %+v, err = %v", state.Feishu, err)
 	}
 	configData, err := os.ReadFile(configPath)
 	if err != nil || !strings.Contains(string(configData), "cli_app") {

@@ -17,14 +17,14 @@ const refreshingBinding = ref(false)
 async function refreshBinding() {
   refreshingBinding.value = true
   try {
-    await settingsStore.fetchNotifications({ silent: true })
+    await settingsStore.refreshNotificationBinding('weixin')
   } finally {
     refreshingBinding.value = false
   }
 }
 const qr = useNotificationQR('weixin', {
   onApplied: async (session) => {
-    await settingsStore.fetchNotifications({ silent: true })
+    await settingsStore.refreshNotificationChannel('weixin')
     const userID = String(session.bot_user_id || '').trim()
     if (userID) {
       weixinForm.value.allowed_user_ids = splitIDs(`${weixinForm.value.allowed_user_ids},${userID}`).join(',')
@@ -34,7 +34,7 @@ const qr = useNotificationQR('weixin', {
 
 useNotificationBindingPoll({
   shouldPoll: waitingForBinding,
-  refresh: () => settingsStore.fetchNotifications({ silent: true })
+  refresh: () => settingsStore.refreshNotificationBinding('weixin')
 })
 
 function start() {

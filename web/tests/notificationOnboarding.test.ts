@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   buildWeComBotSettings,
   buildWeixinSettings,
+  mergeIDs,
   splitIDs,
   weComBotFormFromSettings,
   weixinFormFromSettings
@@ -31,6 +32,7 @@ test('shows the first-chat activation hint after scan, after apply, and when alr
 
 test('normalizes notification binding IDs without duplicates', () => {
   assert.deepEqual(splitIDs(' user-1, user-1, group-2, '), ['user-1', 'group-2'])
+  assert.equal(mergeIDs('local-user', ['server-user', 'local-user']), 'local-user,server-user')
 })
 
 test('maps personal Weixin settings between API arrays and editable fields', () => {
