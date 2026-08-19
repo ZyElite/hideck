@@ -95,7 +95,7 @@ Web 入口：`http://YOUR_IP:7575`
 本机使用独立的 `docker-compose.build.yml` 调用 Buildx，一次生成 amd64、arm64 和多架构 manifest。服务器部署仍只使用 `docker-compose.yml`，不会在服务器编译源码。
 
 ```bash
-export HIDECK_VERSION=2.0.12
+export HIDECK_VERSION=2.0.13
 export HIDECK_MINOR_VERSION=2.0
 export HIDECK_REVISION="$(git rev-parse HEAD)"
 export HIDECK_BUILDTIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
