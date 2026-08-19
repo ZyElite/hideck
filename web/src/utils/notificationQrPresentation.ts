@@ -22,6 +22,12 @@ export function notificationQRPresentation(
   return { label: '凭证待应用', tone: 'warning' }
 }
 
-export function shouldShowQRActivateHint(session: NotificationQRSession | null): boolean {
-  return session?.status === 'confirmed' || session?.applied === true
+export function shouldShowQRActivateHint(
+  session: NotificationQRSession | null,
+  connected = false
+): boolean {
+  if (session?.status === 'scaned' || session?.status === 'confirmed' || session?.applied === true) {
+    return true
+  }
+  return connected
 }

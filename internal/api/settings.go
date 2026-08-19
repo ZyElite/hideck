@@ -164,10 +164,7 @@ func (s *Server) handleGetNotificationSettings(c *gin.Context) {
 	}
 	resp.QQ.GroupIDs = s.fullCfg.QQ.GroupIDs
 	resp.QQ.DirectIDs = s.fullCfg.QQ.DirectIDs
-	resp.Weixin.Enabled = s.fullCfg.Weixin.Enabled
-	resp.Weixin.BaseURL = s.fullCfg.Weixin.BaseURL
-	resp.Weixin.AllowedUserIDs = append([]string(nil), s.fullCfg.Weixin.AllowedUserIDs...)
-	resp.Weixin.AllowedGroupIDs = append([]string(nil), s.fullCfg.Weixin.AllowedGroupIDs...)
+	resp.Weixin = s.weixinSettingsForResponse()
 
 	resp.Webhook.Enabled = s.fullCfg.Webhook.Enabled
 	resp.Webhook.URLs = s.fullCfg.Webhook.URLs
@@ -201,6 +198,8 @@ func (s *Server) handleGetNotificationSettings(c *gin.Context) {
 		PayloadTemplate: s.fullCfg.WeCom.PayloadTemplate,
 	}
 	resp.WeComBot = maskedWeComBotSettings(s.fullCfg.WeComBot)
+	resp.WeComBot.AllowedUserIDs = s.mergeWeComBotBoundUserIDs(resp.WeComBot.AllowedUserIDs)
+	s.persistMissingAllowedUserIDs("wecom_bot", resp.WeComBot.AllowedUserIDs)
 
 	c.JSON(http.StatusOK, resp)
 }

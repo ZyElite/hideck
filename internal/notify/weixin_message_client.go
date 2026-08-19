@@ -38,15 +38,15 @@ type weixinUpdatesResponse struct {
 }
 
 type weixinMessage struct {
-	FromUserID   string              `json:"from_user_id"`
-	ToUserID     string              `json:"to_user_id"`
-	RoomID       string              `json:"room_id"`
-	ChatRoomID   string              `json:"chat_room_id"`
-	MessageID    string              `json:"message_id"`
-	ContextToken string              `json:"context_token"`
-	MessageType  int                 `json:"message_type"`
-	MsgType      int                 `json:"msg_type"`
-	Items        []weixinMessageItem `json:"item_list"`
+	FromUserID   string               `json:"from_user_id"`
+	ToUserID     string               `json:"to_user_id"`
+	RoomID       string               `json:"room_id"`
+	ChatRoomID   string               `json:"chat_room_id"`
+	MessageID    weixinFlexibleString `json:"message_id"`
+	ContextToken string               `json:"context_token"`
+	MessageType  int                  `json:"message_type"`
+	MsgType      int                  `json:"msg_type"`
+	Items        []weixinMessageItem  `json:"item_list"`
 }
 
 type weixinMessageItem struct {
@@ -194,6 +194,29 @@ func randomWeixinUIN() string {
 	decimal := strconv.FormatUint(uint64(binary.BigEndian.Uint32(value)), 10)
 	return base64.StdEncoding.EncodeToString([]byte(decimal))
 }
+
+// iLink sometimes returns message_id as a string and sometimes as a number.
+type weixinFlexibleString string
+
+func (s *weixinFlexibleString) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || string(data) == "null" {
+		*s = ""
+		return nil
+	}
+	if data[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*s = weixinFlexibleString(value)
+		return nil
+	}
+	*s = weixinFlexibleString(string(data))
+	return nil
+}
+
+func (s weixinFlexibleString) String() string { return string(s) }
 
 func (m weixinMessage) text() string {
 	for _, item := range m.Items {

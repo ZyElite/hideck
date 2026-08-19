@@ -68,6 +68,20 @@ func TestWeComQRServiceConfirmsHermesCompatibleScan(t *testing.T) {
 	}
 }
 
+func TestWeComQRServiceTreatsInitAsWaiting(t *testing.T) {
+	provider := newWeComQRTestServer(t, `{"data":{"status":"init"}}`)
+	defer provider.Close()
+	service := newWeComQRTestService(provider)
+	started, err := service.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := service.Status(context.Background(), started.SessionID)
+	if err != nil || view.Status != WeComQRWait || view.Error != "" {
+		t.Fatalf("Status() = %+v, %v", view, err)
+	}
+}
+
 func TestWeComQRServiceReportsIncompleteCredentials(t *testing.T) {
 	provider := newWeComQRTestServer(t, `{"data":{"status":"success","bot_info":{"botid":"bot-1"}}}`)
 	defer provider.Close()

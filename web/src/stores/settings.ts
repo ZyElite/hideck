@@ -232,8 +232,10 @@ export const useSettingsStore = defineStore('settings', () => {
     return result
   }
 
-  async function fetchNotifications() {
-    loadingNotifications.value = true
+  async function fetchNotifications(options: { silent?: boolean } = {}) {
+    if (!options.silent) {
+      loadingNotifications.value = true
+    }
     const result = await systemService.getNotifications()
     if (result.ok) {
       notifications.value = result.data || {}
@@ -314,7 +316,9 @@ export const useSettingsStore = defineStore('settings', () => {
     } else {
       error.value = result.error
     }
-    loadingNotifications.value = false
+    if (!options.silent) {
+      loadingNotifications.value = false
+    }
     return result
   }
 

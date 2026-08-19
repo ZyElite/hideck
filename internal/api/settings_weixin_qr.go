@@ -127,6 +127,9 @@ func (s *Server) applyWeixinQRCredentials(credentials notify.WeixinQRCredentials
 	nextConfig := *s.fullCfg
 	nextConfig.Weixin.Enabled = true
 	nextConfig.Weixin.BaseURL = credentials.BaseURL
+	if userID := strings.TrimSpace(credentials.UserID); userID != "" {
+		nextConfig.Weixin.AllowedUserIDs = appendUniqueString(nextConfig.Weixin.AllowedUserIDs, userID)
+	}
 	if err := config.UpdateNotificationInFile(s.configPath, notificationConfigsFrom(&nextConfig)); err != nil {
 		return err.Error()
 	}

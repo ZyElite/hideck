@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 const defaultWeixinBaseURL = "https://ilinkai.weixin.qq.com"
@@ -15,6 +16,79 @@ type weixinNotificationSettings struct {
 	BaseURL         string   `json:"base_url"`
 	AllowedUserIDs  []string `json:"allowed_user_ids"`
 	AllowedGroupIDs []string `json:"allowed_group_ids"`
+}
+
+func (s *Server) weixinSettingsForResponse() weixinNotificationSettings {
+	settings := weixinNotificationSettings{
+		Enabled:         s.fullCfg.Weixin.Enabled,
+		BaseURL:         s.fullCfg.Weixin.BaseURL,
+		AllowedUserIDs:  append([]string(nil), s.fullCfg.Weixin.AllowedUserIDs...),
+		AllowedGroupIDs: append([]string(nil), s.fullCfg.Weixin.AllowedGroupIDs...),
+	}
+	settings.AllowedUserIDs = s.mergeWeixinBoundUserIDs(settings.AllowedUserIDs)
+	s.persistMissingAllowedUserIDs("weixin", settings.AllowedUserIDs)
+	return settings
+}
+
+func (s *Server) mergeWeixinBoundUserIDs(ids []string) []string {
+	if s == nil || s.notifyMgr == nil {
+		return normalizeStringList(ids)
+	}
+	state, err := s.notifyMgr.LoadRuntimeState()
+	if err != nil {
+		return normalizeStringList(ids)
+	}
+	ids = append(ids, state.Weixin.AllowedUsers...)
+	ids = append(ids, state.Weixin.UserID, state.Weixin.DefaultTarget)
+	return normalizeStringList(ids)
+}
+
+func (s *Server) mergeWeComBotBoundUserIDs(ids []string) []string {
+	if s == nil || s.notifyMgr == nil {
+		return normalizeStringList(ids)
+	}
+	state, err := s.notifyMgr.LoadRuntimeState()
+	if err != nil {
+		return normalizeStringList(ids)
+	}
+	ids = append(ids, state.WeComBot.AllowedUsers...)
+	ids = append(ids, state.WeComBot.DefaultTarget)
+	return normalizeStringList(ids)
+}
+
+func (s *Server) persistMissingAllowedUserIDs(channel string, merged []string) {
+	if s == nil || s.fullCfg == nil || strings.TrimSpace(s.configPath) == "" || len(merged) == 0 {
+		return
+	}
+	var current []string
+	switch channel {
+	case "weixin":
+		current = s.fullCfg.Weixin.AllowedUserIDs
+	case "wecom_bot":
+		current = s.fullCfg.WeComBot.AllowedUserIDs
+	default:
+		return
+	}
+	if len(normalizeStringList(current)) > 0 {
+		return
+	}
+	nextConfig := *s.fullCfg
+	switch channel {
+	case "weixin":
+		nextConfig.Weixin.AllowedUserIDs = append([]string(nil), merged...)
+	case "wecom_bot":
+		nextConfig.WeComBot.AllowedUserIDs = append([]string(nil), merged...)
+	}
+	if err := config.UpdateNotificationInFile(s.configPath, notificationConfigsFrom(&nextConfig)); err != nil {
+		logger.Warn("回写通知绑定用户失败", "channel", channel, "err", err)
+		return
+	}
+	switch channel {
+	case "weixin":
+		s.fullCfg.Weixin.AllowedUserIDs = nextConfig.Weixin.AllowedUserIDs
+	case "wecom_bot":
+		s.fullCfg.WeComBot.AllowedUserIDs = nextConfig.WeComBot.AllowedUserIDs
+	}
 }
 
 func buildWeixinConfig(

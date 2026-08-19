@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import QrcodeVue from 'qrcode.vue'
 import {
   Dismiss20Regular,
@@ -24,10 +25,10 @@ defineEmits<{
   cancel: []
 }>()
 
+const activateHintText = computed(() => String(props.activateHint || '').trim())
 const presentation = computed(() => notificationQRPresentation(props.session, props.connected))
 const showActivateHint = computed(() => {
-  const hint = String(props.activateHint || '').trim()
-  return hint !== '' && shouldShowQRActivateHint(props.session)
+  return activateHintText.value !== '' && shouldShowQRActivateHint(props.session, props.connected)
 })
 const openURL = computed(() => {
   const explicit = String(props.session?.open_url || '').trim()
@@ -35,6 +36,23 @@ const openURL = computed(() => {
   const qrURL = String(props.session?.qr_url || '').trim()
   return /^https:\/\//i.test(qrURL) ? qrURL : ''
 })
+
+function sessionNeedsActivateToast(session: NotificationQRSession | null): boolean {
+  return session?.status === 'scaned' || session?.status === 'confirmed' || session?.applied === true
+}
+
+watch(
+  () => props.session,
+  (session, previous) => {
+    if (!activateHintText.value) return
+    if (!sessionNeedsActivateToast(session) || sessionNeedsActivateToast(previous ?? null)) return
+    ElMessage.warning({
+      message: activateHintText.value,
+      duration: 8000,
+      showClose: true
+    })
+  }
+)
 </script>
 
 <template>
@@ -70,6 +88,8 @@ const openURL = computed(() => {
       </div>
     </div>
 
+    <p v-if="showActivateHint" class="qr-connect__activate" role="status">{{ activateHintText }}</p>
+
     <div class="qr-connect__stage">
       <div v-if="session?.qr_url" class="qr-connect__code">
         <QrcodeVue :value="session.qr_url" :size="184" level="M" render-as="svg" />
@@ -88,7 +108,6 @@ const openURL = computed(() => {
     </div>
 
     <p v-if="error" class="qr-connect__error" role="alert">{{ error }}</p>
-    <p v-if="showActivateHint" class="qr-connect__activate" role="status">{{ activateHint }}</p>
   </section>
 </template>
 
@@ -199,11 +218,12 @@ const openURL = computed(() => {
 }
 
 .qr-connect__activate {
+  margin-top: 12px;
   color: var(--ui-text);
   padding: 10px 12px;
-  border: 1px solid var(--ui-border);
+  border: 1px solid color-mix(in srgb, var(--ui-warning) 45%, var(--ui-border));
   border-radius: 4px;
-  background: var(--ui-surface);
+  background: color-mix(in srgb, var(--ui-warning) 12%, var(--ui-surface));
 }
 
 @media (max-width: 640px) {

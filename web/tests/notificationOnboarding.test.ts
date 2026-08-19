@@ -19,12 +19,14 @@ test('presents every QR state with explicit text and tone', () => {
   assert.deepEqual(notificationQRPresentation({ session_id: '1', status: 'confirmed', applied: true }, false), { label: '已连接', tone: 'success' })
 })
 
-test('shows the first-chat activation hint only after QR is confirmed', () => {
+test('shows the first-chat activation hint after scan, after apply, and when already configured', () => {
   assert.equal(shouldShowQRActivateHint(null), false)
   assert.equal(shouldShowQRActivateHint({ session_id: '1', status: 'wait' }), false)
-  assert.equal(shouldShowQRActivateHint({ session_id: '1', status: 'scaned' }), false)
+  assert.equal(shouldShowQRActivateHint({ session_id: '1', status: 'scaned' }), true)
   assert.equal(shouldShowQRActivateHint({ session_id: '1', status: 'confirmed' }), true)
   assert.equal(shouldShowQRActivateHint({ session_id: '1', status: 'confirmed', applied: true }), true)
+  assert.equal(shouldShowQRActivateHint(null, true), true)
+  assert.equal(shouldShowQRActivateHint({ session_id: '1', status: 'wait' }, true), true)
 })
 
 test('normalizes notification binding IDs without duplicates', () => {

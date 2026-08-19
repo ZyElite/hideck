@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/notify"
 )
 
 func TestUpdateNotificationSettingsPersistsWeixinConfig(t *testing.T) {
@@ -51,6 +53,89 @@ func TestUpdateNotificationSettingsPersistsWeixinConfig(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode = %v", info.Mode().Perm())
+	}
+}
+
+func TestWeixinSettingsExposeRuntimeBinding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := notify.NewFileRuntimeStateStore(filepath.Join(t.TempDir(), "notification-state.json"))
+	manager, err := notify.NewManagerWithOptions(&config.Config{}, nil, notify.ManagerOptions{StateStore: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.SaveRuntimeState(notify.RuntimeState{
+		Weixin: notify.WeixinRuntimeState{
+			UserID: "qr-user", AllowedUsers: []string{"qr-user"}, DefaultTarget: "qr-user",
+		},
+		WeComBot: notify.WeComBotRuntimeState{AllowedUsers: []string{"wecom-user"}, DefaultTarget: "wecom-user"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		fullCfg: &config.Config{
+			Weixin:   config.WeixinConfig{Enabled: true, BaseURL: "https://ilink.example.com"},
+			WeComBot: config.WeComBotConfig{Enabled: true, BotID: "bot-1"},
+		},
+		notifyMgr: manager,
+	}
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/settings/notifications", nil)
+	server.handleGetNotificationSettings(context)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response notificationSettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(response.Weixin.AllowedUserIDs, []string{"qr-user"}) {
+		t.Fatalf("weixin allowed users = %#v", response.Weixin.AllowedUserIDs)
+	}
+	if !reflect.DeepEqual(response.WeComBot.AllowedUserIDs, []string{"wecom-user"}) {
+		t.Fatalf("wecom allowed users = %#v", response.WeComBot.AllowedUserIDs)
+	}
+}
+
+func TestWeComSettingsBackfillConfigFromRuntimeBinding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("server:\n  port: 7575\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := notify.NewFileRuntimeStateStore(filepath.Join(directory, "notification-state.json"))
+	manager, err := notify.NewManagerWithOptions(&config.Config{}, nil, notify.ManagerOptions{StateStore: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.SaveRuntimeState(notify.RuntimeState{
+		WeComBot: notify.WeComBotRuntimeState{AllowedUsers: []string{"5894387400451573601"}, DefaultTarget: "5894387400451573601"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		configPath: configPath,
+		fullCfg:    &config.Config{WeComBot: config.WeComBotConfig{Enabled: true, BotID: "bot-1"}},
+		notifyMgr:  manager,
+	}
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/settings/notifications", nil)
+	server.handleGetNotificationSettings(context)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !reflect.DeepEqual(server.fullCfg.WeComBot.AllowedUserIDs, []string{"5894387400451573601"}) {
+		t.Fatalf("backfilled config = %#v", server.fullCfg.WeComBot.AllowedUserIDs)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil || !strings.Contains(string(raw), "5894387400451573601") {
+		t.Fatalf("config = %s, %v", raw, err)
 	}
 }
 

@@ -7,7 +7,7 @@ import NotificationQrConnect from './NotificationQrConnect.vue'
 const settingsStore = useSettingsStore()
 const { feishuForm } = storeToRefs(settingsStore)
 const qr = useNotificationQR('feishu', {
-  onApplied: async () => { await settingsStore.fetchNotifications() }
+  onApplied: async () => { await settingsStore.fetchNotifications({ silent: true }) }
 })
 </script>
 

@@ -44,11 +44,18 @@ test('Telegram recording delivery defaults to a voice bubble and remains configu
 
 test('WeCom QR reminds the user to message the bot after scan', () => {
   assert.match(weixinPanel, /activate-hint="请打开微信，给这个机器人发一条任意消息完成激活/)
+  assert.match(weixinPanel, /已绑定通知目标/)
+  assert.match(weixinPanel, /useNotificationBindingPoll/)
+  assert.match(weixinPanel, /RefreshButton/)
   assert.match(wecomPanel, /activate-hint="机器人已接入。请打开企业微信，给这个机器人发一条任意消息完成激活/)
+  assert.match(wecomPanel, /useNotificationBindingPoll/)
+  assert.match(wecomPanel, /RefreshButton/)
   assert.match(feishuPanel, /useNotificationQR\('feishu'/)
   assert.match(feishuPanel, /请打开飞书，给这个机器人发一条任意消息/)
   assert.match(qrPanel, /showActivateHint/)
   assert.match(qrPanel, /role="status"/)
+  assert.match(qrPanel, /ElMessage\.warning/)
+  assert.match(qrPanel, /shouldShowQRActivateHint\(props\.session, props\.connected\)/)
 })
 
 test('QR panel renders a stable code and accessible status and actions', () => {

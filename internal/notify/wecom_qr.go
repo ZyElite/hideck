@@ -265,7 +265,7 @@ func (s *WeComQRService) pollLocked(ctx context.Context, session *weComQRSession
 
 func applyWeComQRStatus(session *weComQRSession, rawStatus, botID, alternateBotID, secret string) error {
 	switch strings.ToLower(strings.TrimSpace(rawStatus)) {
-	case "", "wait", "waiting", "pending":
+	case "", "wait", "waiting", "pending", "init", "created", "new", "ready":
 		session.status = WeComQRWait
 	case "scaned", "scanned":
 		session.status = WeComQRScanned

@@ -72,7 +72,8 @@ func TestWeixinQRHandlersPersistConfirmedCredentialsWithoutLeakingToken(t *testi
 		t.Fatalf("state = %+v, %v", state, err)
 	}
 	configData, err := os.ReadFile(configPath)
-	if err != nil || !strings.Contains(string(configData), "enabled: true") {
+	if err != nil || !strings.Contains(string(configData), "enabled: true") ||
+		!strings.Contains(string(configData), "user-1") {
 		t.Fatalf("config = %s, %v", configData, err)
 	}
 }
