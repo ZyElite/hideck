@@ -112,11 +112,22 @@ func hasDuplicateActiveRegistration(
 }
 
 func (s *Service) registrationBindingCleanupSession() (*registerSession, error) {
+	session, err := s.nextRegisterSession("binding cleanup")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(session.authHeader) == "" {
+		return nil, errors.New("imscore: registered session has no authorization for binding cleanup")
+	}
+	return session, nil
+}
+
+func (s *Service) nextRegisterSession(operation string) (*registerSession, error) {
 	s.mu.RLock()
 	current := s.regSession
 	if current == nil {
 		s.mu.RUnlock()
-		return nil, errors.New("imscore: no registered session to clear")
+		return nil, fmt.Errorf("imscore: no registered session for %s", operation)
 	}
 	session := &registerSession{
 		callID: current.callID, fromTag: current.fromTag,
@@ -127,9 +138,6 @@ func (s *Service) registrationBindingCleanupSession() (*registerSession, error) 
 		path: current.path, template: current.template,
 	}
 	s.mu.RUnlock()
-	if strings.TrimSpace(session.authHeader) == "" {
-		return nil, errors.New("imscore: registered session has no authorization for binding cleanup")
-	}
 	return session, nil
 }
 
@@ -137,28 +145,81 @@ func (s *Service) exchangeWildcardUnregister(
 	ctx context.Context,
 	session *registerSession,
 ) (*sipResponse, error) {
+	return s.exchangeUnregister(ctx, session, true)
+}
+
+func (s *Service) exchangeUnregister(
+	ctx context.Context,
+	session *registerSession,
+	wildcard bool,
+) (*sipResponse, error) {
 	s.recordRegisterSession(session)
-	request := s.buildWildcardUnregister(session, session.authHeader)
-	logging.Info("IMS wildcard deregistration outbound", "device", s.DeviceID(), "cseq", session.cseq)
-	logging.RunDebug("IMS wildcard deregistration outbound", "cseq", session.cseq,
+	request := s.buildContactUnregister(session, session.authHeader)
+	kind := "contact"
+	if wildcard {
+		request = s.buildWildcardUnregister(session, session.authHeader)
+		kind = "wildcard"
+	}
+	logging.Info("IMS deregistration outbound", "device", s.DeviceID(), "kind", kind, "cseq", session.cseq)
+	logging.RunDebug("IMS deregistration outbound", "kind", kind, "cseq", session.cseq,
 		"sip", logging.RedactSIPRaw(request))
 	response, err := s.transport.RoundTrip(ctx, request)
 	if err != nil {
-		logging.Info("IMS wildcard deregistration transaction failed",
-			"device", s.DeviceID(), "cseq", session.cseq, "err", err)
-		return nil, fmt.Errorf("imscore: wildcard deregistration CSeq %d transaction: %w",
-			session.cseq, err)
+		logging.Info("IMS deregistration transaction failed",
+			"device", s.DeviceID(), "kind", kind, "cseq", session.cseq, "err", err)
+		return nil, fmt.Errorf("imscore: %s deregistration CSeq %d transaction: %w",
+			kind, session.cseq, err)
 	}
-	logging.Info("IMS wildcard deregistration response", "device", s.DeviceID(),
+	logging.Info("IMS deregistration response", "device", s.DeviceID(), "kind", kind,
 		"cseq", session.cseq, "status", response.StatusCode)
 	matched, matchErr := matchesRegisterTransaction(response, session)
 	if matchErr != nil {
 		return nil, matchErr
 	}
 	if !matched {
-		return nil, fmt.Errorf("imscore: wildcard deregistration CSeq %d received mismatched response",
-			session.cseq)
+		return nil, fmt.Errorf("imscore: %s deregistration CSeq %d received mismatched response",
+			kind, session.cseq)
 	}
 	s.recordRegisterResponse(response)
 	return response, nil
+}
+
+// Unregister removes the current Contact binding from the IMS registrar.
+func (s *Service) Unregister(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.registerMu.Lock()
+	defer s.registerMu.Unlock()
+	if !s.hasActiveRegistrationForUnregister() {
+		return nil
+	}
+	session, err := s.nextRegisterSession("deregistration")
+	if err != nil {
+		return err
+	}
+	response, err := s.exchangeUnregister(ctx, session, false)
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("imscore: contact deregistration rejected with status %d %s",
+			response.StatusCode, strings.TrimSpace(response.Reason))
+	}
+	s.mu.Lock()
+	s.regSession = session
+	s.regState = regUnregister
+	s.mu.Unlock()
+	logging.Info("IMS Contact binding removed", "device", s.DeviceID(), "cseq", session.cseq)
+	return nil
+}
+
+func (s *Service) hasActiveRegistrationForUnregister() bool {
+	s.mu.RLock()
+	registered := s.regState == regRegistered && s.regSession != nil
+	s.mu.RUnlock()
+	return registered && s.transport != nil && s.transport.hasSendFn()
 }

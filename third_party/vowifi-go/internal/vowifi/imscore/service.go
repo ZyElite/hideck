@@ -461,19 +461,3 @@ func (s *Service) TriggerRegisterImmediateCurrent() error {
 	defer cancel()
 	return s.Register(ctx)
 }
-
-// Unregister deregisters from the IMS network.
-func (s *Service) Unregister(ctx context.Context) error {
-	if s == nil || s.regSession == nil {
-		return nil
-	}
-	s.regSession.cseq++
-	req := s.buildRegister(s.regSession, "")
-	if err := s.sendSIP(req); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.regState = regUnregister
-	s.mu.Unlock()
-	return nil
-}

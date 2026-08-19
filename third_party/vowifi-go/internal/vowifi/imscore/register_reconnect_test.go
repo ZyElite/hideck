@@ -26,7 +26,13 @@ func TestProtectedRegistrationReconnectsAndReusesAuthorization(t *testing.T) {
 	defer tcpServer.Close()
 	initialComplete := make(chan struct{})
 	serverResult := make(chan error, 1)
-	go serveProtectedRegistrationReconnect(udpServer, tcpServer, initialComplete, serverResult)
+	releaseConnection := make(chan struct{})
+	defer close(releaseConnection)
+	server := protectedRegistrationReconnectServer{
+		udp: udpServer, tcp: tcpServer, initialComplete: initialComplete,
+		result: serverResult, release: releaseConnection,
+	}
+	go server.serve()
 
 	svc, err := New(protectedReconnectConfig(udpServer.LocalAddr().String()))
 	if err != nil {
@@ -46,9 +52,8 @@ func TestProtectedRegistrationReconnectsAndReusesAuthorization(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("initial protected registration did not complete")
 	}
-	waitForRegistrationTCPClose(t, svc)
-	if err := svc.TriggerRegisterImmediateCurrent(); err != nil {
-		t.Fatalf("refresh Register: %v", err)
+	if sent, pingErr := svc.sendPing(); !sent || pingErr == nil {
+		t.Fatalf("keepalive during TCP reset = sent %t, err %v", sent, pingErr)
 	}
 	select {
 	case err := <-serverResult:
@@ -57,6 +62,14 @@ func TestProtectedRegistrationReconnectsAndReusesAuthorization(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("reconnected registration exchange did not complete")
+	}
+	if !svc.IsRegistered() {
+		t.Fatal("automatic protected transport recovery did not restore registration")
+	}
+	select {
+	case runtimeErr := <-svc.RegistrationErrors():
+		t.Fatalf("successful in-place recovery requested a full runtime rebuild: %v", runtimeErr)
+	default:
 	}
 }
 
@@ -84,32 +97,33 @@ func protectedReconnectConfig(registrar string) *IMSConfig {
 	}
 }
 
-func waitForRegistrationTCPClose(t *testing.T, svc *Service) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		svc.mu.RLock()
-		closed := svc.registrationTCP == nil
-		svc.mu.RUnlock()
-		if closed {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("closed protected TCP connection remained active")
+type protectedRegistrationReconnectServer struct {
+	udp             *net.UDPConn
+	tcp             *net.TCPListener
+	initialComplete chan<- struct{}
+	result          chan<- error
+	release         <-chan struct{}
 }
 
-func serveProtectedRegistrationReconnect(udpServer *net.UDPConn, tcpServer *net.TCPListener, initialComplete chan<- struct{}, result chan<- error) {
-	authorization, err := serveInitialProtectedRegistration(udpServer, tcpServer)
+func (s protectedRegistrationReconnectServer) serve() {
+	authorization, err := serveInitialProtectedRegistration(s.udp, s.tcp, s.initialComplete)
 	if err != nil {
-		result <- err
+		s.result <- err
 		return
 	}
-	close(initialComplete)
-	result <- serveReconnectedRegistration(tcpServer, authorization)
+	conn, err := serveReconnectedRegistration(s.tcp, authorization)
+	s.result <- err
+	if conn != nil {
+		<-s.release
+		_ = conn.Close()
+	}
 }
 
-func serveInitialProtectedRegistration(udpServer *net.UDPConn, tcpServer *net.TCPListener) (string, error) {
+func serveInitialProtectedRegistration(
+	udpServer *net.UDPConn,
+	tcpServer *net.TCPListener,
+	ready chan<- struct{},
+) (string, error) {
 	buffer := make([]byte, 64*1024)
 	n, remote, err := udpServer.ReadFromUDP(buffer)
 	if err != nil {
@@ -154,37 +168,53 @@ func serveInitialProtectedRegistration(udpServer *net.UDPConn, tcpServer *net.TC
 	if _, err = conn.Write([]byte(registerWireResponse(subscribe, 200, ""))); err != nil {
 		return "", err
 	}
+	close(ready)
+	keepalive, err := readSIPStreamMessage(reader)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(keepalive, "OPTIONS ") {
+		return "", fmt.Errorf("request during reset = %q, want OPTIONS", sipRequestMethod(keepalive))
+	}
 	return sipHeaderValue(registered, "Authorization"), nil
 }
 
-func serveReconnectedRegistration(tcpServer *net.TCPListener, authorization string) error {
+func serveReconnectedRegistration(tcpServer *net.TCPListener, authorization string) (net.Conn, error) {
 	conn, err := tcpServer.AcceptTCP()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer conn.Close()
+	failed := true
+	defer func() {
+		if failed {
+			_ = conn.Close()
+		}
+	}()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	reader := bufio.NewReader(conn)
 	refresh, err := readSIPStreamMessage(reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if sipHeaderValue(refresh, "CSeq") != "4 REGISTER" {
-		return fmt.Errorf("refresh CSeq = %q", sipHeaderValue(refresh, "CSeq"))
+		return nil, fmt.Errorf("refresh CSeq = %q", sipHeaderValue(refresh, "CSeq"))
 	}
 	if authorization == "" || strings.Contains(authorization, `response=""`) || sipHeaderValue(refresh, "Authorization") != authorization {
-		return errors.New("refresh REGISTER did not reuse the authenticated AKA response")
+		return nil, errors.New("refresh REGISTER did not reuse the authenticated AKA response")
 	}
 	if _, err = conn.Write([]byte(registerWireResponse(refresh, 200, ""))); err != nil {
-		return err
+		return nil, err
 	}
 	subscribe, err := readSIPStreamMessage(reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if sipHeaderValue(subscribe, "Route") != "<sip:pcscf.example;lr>" {
-		return errors.New("refresh discarded the established Service-Route")
+		return nil, errors.New("refresh discarded the established Service-Route")
 	}
-	_, err = conn.Write([]byte(registerWireResponse(subscribe, 200, "")))
-	return err
+	if _, err = conn.Write([]byte(registerWireResponse(subscribe, 200, ""))); err != nil {
+		return nil, err
+	}
+	failed = false
+	return conn, nil
 }

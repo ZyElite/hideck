@@ -23,6 +23,9 @@ func (s *Service) markSignalingDead(err error) {
 	if s == nil || err == nil {
 		return
 	}
+	if s.startProtectedRegistrationRecovery(nil, err) {
+		return
+	}
 	packet, stream, marked := s.detachDeadSignaling(err, nil)
 	if !marked {
 		return

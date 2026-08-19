@@ -308,6 +308,75 @@ func TestClearRegistrationBindingsUsesAuthenticatedWildcardRegister(t *testing.T
 	}
 }
 
+func TestUnregisterRemovesOnlyCurrentAuthenticatedContact(t *testing.T) {
+	service, err := New(registerTransportTestConfig("udp", "127.0.0.1:5060"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.StopCurrent()
+	service.regState = regRegistered
+	service.regSession = &registerSession{
+		callID: "call-1", fromTag: "tag-1", contactUser: "contact-1",
+		cseq: 7, authHeader: "Digest username=\"user\"", expires: time.Hour,
+	}
+	requests := make(chan string, 1)
+	service.transport.SetSendFn(func(request string) error {
+		requests <- request
+		service.transport.DeliverResponse(registerResponseForRequest(request, 200, nil))
+		return nil
+	})
+
+	if err := service.Unregister(context.Background()); err != nil {
+		t.Fatalf("Unregister: %v", err)
+	}
+	request := <-requests
+	if got := sipHeaderValue(request, "Contact"); got == "*" || !strings.Contains(got, "expires=0") {
+		t.Fatalf("Contact = %q, want current Contact with expires=0", got)
+	}
+	if got := sipHeaderValue(request, "Expires"); got != "0" {
+		t.Fatalf("Expires = %q, want 0", got)
+	}
+	if got := sipHeaderValue(request, "Authorization"); got != "Digest username=\"user\"" {
+		t.Fatalf("Authorization = %q", got)
+	}
+	if got := parseCSeq(sipHeaderValue(request, "CSeq")); got != 8 {
+		t.Fatalf("CSeq = %d, want 8", got)
+	}
+	if service.regState != regUnregister || service.regSession.cseq != 8 {
+		t.Fatalf("registration state/session = %s/%+v", service.regState, service.regSession)
+	}
+}
+
+func TestStopUnregistersBeforeClosingRegisteredTransport(t *testing.T) {
+	service, err := New(registerTransportTestConfig("udp", "127.0.0.1:5060"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.regState = regRegistered
+	service.regSession = &registerSession{
+		callID: "call-1", fromTag: "tag-1", contactUser: "contact-1",
+		cseq: 3, authHeader: "Digest username=\"user\"", expires: time.Hour,
+	}
+	requests := make(chan string, 1)
+	service.transport.SetSendFn(func(request string) error {
+		requests <- request
+		service.transport.DeliverResponse(registerResponseForRequest(request, 200, nil))
+		return nil
+	})
+
+	if err := service.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	select {
+	case request := <-requests:
+		if sipHeaderValue(request, "Expires") != "0" {
+			t.Fatalf("shutdown REGISTER Expires = %q", sipHeaderValue(request, "Expires"))
+		}
+	default:
+		t.Fatal("Stop closed the transport without deregistering")
+	}
+}
+
 func TestRegisterClearsProvenDuplicateBindingsBeforeRegistering(t *testing.T) {
 	config := registerTransportTestConfig("udp", "127.0.0.1:5060")
 	config.DeviceID = "dev-1"

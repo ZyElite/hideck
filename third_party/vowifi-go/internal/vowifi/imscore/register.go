@@ -51,6 +51,11 @@ type registerAttemptError struct {
 	err    error
 }
 
+type registerRequestOptions struct {
+	unregister bool
+	wildcard   bool
+}
+
 func (e *registerAttemptError) Error() string { return e.err.Error() }
 func (e *registerAttemptError) Unwrap() error { return e.err }
 
@@ -533,31 +538,43 @@ func (s *Service) recordRegisterResponse(response *sipResponse) {
 
 // buildRegister builds a REGISTER request.
 func (s *Service) buildRegister(session *registerSession, authHeader string) string {
-	return s.buildRegisterRequest(session, authHeader, false)
+	return s.buildRegisterRequest(session, authHeader, registerRequestOptions{})
+}
+
+// buildContactUnregister removes only the current Contact binding.
+func (s *Service) buildContactUnregister(session *registerSession, authHeader string) string {
+	return s.buildRegisterRequest(session, authHeader, registerRequestOptions{unregister: true})
 }
 
 // buildWildcardUnregister builds an authenticated REGISTER that removes all
 // bindings for the current public identity.
 func (s *Service) buildWildcardUnregister(session *registerSession, authHeader string) string {
-	return s.buildRegisterRequest(session, authHeader, true)
+	return s.buildRegisterRequest(session, authHeader, registerRequestOptions{
+		unregister: true,
+		wildcard:   true,
+	})
 }
 
 func (s *Service) buildRegisterRequest(
 	session *registerSession,
 	authHeader string,
-	wildcardUnregister bool,
+	options registerRequestOptions,
 ) string {
 	cfg := s.cfg
 	// Each request starts a distinct SIP transaction even when refresh reuses
 	// the registration Call-ID.
 	session.branch = "z9hG4bK" + newBranch()
 	expires := registerExpires(cfg)
+	if options.unregister {
+		expires = 0
+	}
 	contact := registerContact(s.registerContactOptions(session), s.registerRequestTransport(
 		registerUsesProtectedTransport(session),
 	), int(expires.Seconds()))
-	if wildcardUnregister {
-		expires = 0
+	if options.wildcard {
 		contact = "*"
+	} else if options.unregister && !strings.Contains(strings.ToLower(contact), ";expires=") {
+		contact += ";expires=0"
 	}
 	authenticated := strings.TrimSpace(authHeader) != ""
 	protected := registerUsesProtectedTransport(session)

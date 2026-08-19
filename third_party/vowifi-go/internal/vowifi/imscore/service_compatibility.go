@@ -12,6 +12,8 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/sipkit"
 )
 
+const gracefulUnregisterTimeout = 5 * time.Second
+
 // Status restores the v1.5.5 map status API.
 func (s *Service) Status() map[string]interface{} {
 	return s.captureStatusSnapshot().ToMap()
@@ -203,12 +205,21 @@ func (s *Service) ListenPacket(ctx context.Context, network string, address net.
 
 // Stop restores the context-bearing v1.5.5 lifecycle API.
 func (s *Service) Stop(ctx context.Context) error {
-	var contextErr error
-	if ctx != nil {
-		contextErr = ctx.Err()
+	if s == nil {
+		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		s.StopCurrent()
+		return err
+	}
+	unregisterCtx, cancel := context.WithTimeout(ctx, gracefulUnregisterTimeout)
+	unregisterErr := s.Unregister(unregisterCtx)
+	cancel()
 	s.StopCurrent()
-	return contextErr
+	return unregisterErr
 }
 
 // TriggerRegisterImmediate schedules production maintenance to REGISTER now.
