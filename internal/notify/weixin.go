@@ -206,9 +206,13 @@ func (w *WeixinChannel) executeMessage(ctx context.Context, chatID, text string)
 
 func (w *WeixinChannel) sendTo(ctx context.Context, target, text string) error {
 	state := w.snapshotState()
-	contextToken := state.Weixin.ContextTokens[strings.TrimSpace(target)]
+	target = strings.TrimSpace(target)
+	contextToken := strings.TrimSpace(state.Weixin.ContextTokens[target])
+	if contextToken == "" {
+		return errors.New("个人微信还没有会话令牌，请先在微信里给这个机器人发一条消息")
+	}
 	return w.client.sendText(ctx, weixinSendTextRequest{
-		Credentials: weixinCredentials(state), Target: strings.TrimSpace(target),
+		Credentials: weixinCredentials(state), Target: target,
 		Text: text, ContextToken: contextToken,
 	})
 }

@@ -61,8 +61,12 @@ func (w *WeixinChannel) processMessage(ctx context.Context, message weixinMessag
 	text := message.text()
 	state := w.snapshotState()
 	if sender == "" || sender == state.Weixin.AccountID || text == "" {
+		if sender != "" && sender != state.Weixin.AccountID && text == "" {
+			logger.Debug("个人微信消息没有文本，已忽略", "sender", sender)
+		}
 		return nil
 	}
+	logger.Info("收到个人微信消息", "sender", sender, "chars", len([]rune(text)))
 	chatKind, chatID := message.chat(state.Weixin.AccountID)
 	allowed, bound, err := w.authorizeMessage(weixinAuthorizationRequest{
 		Kind: chatKind, ChatID: chatID, Sender: sender, ContextToken: message.ContextToken,

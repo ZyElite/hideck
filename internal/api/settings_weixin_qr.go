@@ -108,6 +108,9 @@ func (s *Server) applyWeixinQRCredentials(credentials notify.WeixinQRCredentials
 		return "通知管理器不可用，凭证尚未保存"
 	}
 	if err := s.notifyMgr.UpdateRuntimeState(func(state *notify.RuntimeState) error {
+		if strings.TrimSpace(state.Weixin.Token) != strings.TrimSpace(credentials.Token) {
+			state.Weixin.SyncBuffer = ""
+		}
 		state.Weixin.AccountID = credentials.AccountID
 		state.Weixin.Token = credentials.Token
 		state.Weixin.BaseURL = credentials.BaseURL
@@ -136,11 +139,6 @@ func (s *Server) applyWeixinQRCredentials(credentials notify.WeixinQRCredentials
 	s.fullCfg.Weixin = nextConfig.Weixin
 	if err := s.notifyMgr.UpdateConfig(s.fullCfg); err != nil {
 		return "凭证已保存，但渠道启动失败: " + err.Error()
-	}
-	if userID := strings.TrimSpace(credentials.UserID); userID != "" {
-		if err := s.notifyMgr.SendRegistrationHelp("weixin", userID); err != nil {
-			logger.Warn("个人微信扫码后注册帮助发送失败", "user_id", userID, "err", err)
-		}
 	}
 	logger.Info("个人微信扫码绑定已保存", "account_id", credentials.AccountID, "user_id", credentials.UserID)
 	return ""

@@ -16,12 +16,13 @@ import (
 )
 
 const (
-	weixinChannelVersion  = "2.2.0"
-	weixinLongPollTimeout = 35_000
-	weixinMessageUser     = 1
-	weixinMessageBot      = 2
-	weixinMessageFinished = 2
-	weixinItemText        = 1
+	weixinChannelVersion   = "2.4.3"
+	weixinLongPollTimeout  = 25_000
+	weixinAppClientVersion = "132099"
+	weixinMessageUser      = 1
+	weixinMessageBot       = 2
+	weixinMessageFinished  = 2
+	weixinItemText         = 1
 )
 
 type weixinMessageClient struct {
@@ -91,7 +92,10 @@ func (c *weixinMessageClient) getUpdates(ctx context.Context, credentials Weixin
 	var response weixinUpdatesResponse
 	err := c.post(ctx, weixinPostRequest{
 		Credentials: credentials, Endpoint: "/ilink/bot/getupdates",
-		Payload: map[string]any{"get_updates_buf": syncBuffer}, Target: &response,
+		Payload: map[string]any{
+			"get_updates_buf":        syncBuffer,
+			"longpolling_timeout_ms": weixinLongPollTimeout,
+		}, Target: &response,
 	})
 	return response, err
 }
@@ -183,7 +187,7 @@ func setWeixinMessageHeaders(request *http.Request, token string, contentLength 
 	request.Header.Set("Content-Length", strconv.Itoa(contentLength))
 	request.Header.Set("X-WECHAT-UIN", randomWeixinUIN())
 	request.Header.Set("iLink-App-Id", "bot")
-	request.Header.Set("iLink-App-ClientVersion", "131584")
+	request.Header.Set("iLink-App-ClientVersion", weixinAppClientVersion)
 }
 
 func randomWeixinUIN() string {
