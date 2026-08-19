@@ -65,6 +65,17 @@ type weixinAPIResponse struct {
 	ErrMsg  string `json:"errmsg"`
 }
 
+type weixinAPIError struct {
+	operation string
+	ret       int
+	errCode   int
+	errMsg    string
+}
+
+func (e *weixinAPIError) Error() string {
+	return fmt.Sprintf("iLink %s 失败: ret=%d errcode=%d errmsg=%s", e.operation, e.ret, e.errCode, e.errMsg)
+}
+
 type weixinSendTextRequest struct {
 	Credentials  WeixinQRCredentials
 	Target       string
@@ -151,7 +162,7 @@ func (c *weixinMessageClient) sendText(ctx context.Context, input weixinSendText
 		return err
 	}
 	if response.Ret != 0 || response.ErrCode != 0 {
-		return fmt.Errorf("iLink sendmessage 失败: ret=%d errcode=%d errmsg=%s", response.Ret, response.ErrCode, response.ErrMsg)
+		return newWeixinAPIError("sendmessage", response)
 	}
 	return nil
 }
@@ -177,9 +188,23 @@ func (c *weixinMessageClient) sendItem(ctx context.Context, input weixinSendItem
 		return err
 	}
 	if response.Ret != 0 || response.ErrCode != 0 {
-		return fmt.Errorf("iLink sendmessage 失败: ret=%d errcode=%d errmsg=%s", response.Ret, response.ErrCode, response.ErrMsg)
+		return newWeixinAPIError("sendmessage", response)
 	}
 	return nil
+}
+
+func newWeixinAPIError(operation string, response weixinAPIResponse) error {
+	return &weixinAPIError{
+		operation: operation,
+		ret:       response.Ret,
+		errCode:   response.ErrCode,
+		errMsg:    response.ErrMsg,
+	}
+}
+
+func isWeixinStaleContextError(err error) bool {
+	var apiErr *weixinAPIError
+	return errors.As(err, &apiErr) && apiErr.operation == "sendmessage" && apiErr.ret == -2
 }
 
 func (c *weixinMessageClient) post(ctx context.Context, input weixinPostRequest) error {

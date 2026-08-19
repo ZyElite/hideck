@@ -33,6 +33,7 @@ type WeixinChannel struct {
 	authMu    sync.Mutex
 	commandMu sync.RWMutex
 	commands  map[string]CommandHandler
+	persistMu sync.Mutex
 	stateMu   sync.RWMutex
 	state     RuntimeState
 	runMu     sync.Mutex
@@ -233,12 +234,32 @@ func (w *WeixinChannel) sendTo(ctx context.Context, target, text string) error {
 	state := w.snapshotState()
 	target = strings.TrimSpace(target)
 	contextToken := strings.TrimSpace(state.Weixin.ContextTokens[target])
-	if contextToken == "" {
-		return errors.New("个人微信还没有会话令牌，请先在微信里给这个机器人发一条消息")
-	}
-	return w.client.sendText(ctx, weixinSendTextRequest{
+	request := weixinSendTextRequest{
 		Credentials: weixinCredentials(state), Target: target,
 		Text: text, ContextToken: contextToken,
+	}
+	err := w.client.sendText(ctx, request)
+	if err == nil || contextToken == "" || !isWeixinStaleContextError(err) {
+		return err
+	}
+	logger.Warn("个人微信会话令牌失效，改用主动通知发送", "target", target, "err", err)
+	request.ContextToken = ""
+	if retryErr := w.client.sendText(ctx, request); retryErr != nil {
+		return fmt.Errorf("个人微信会话令牌发送失败，主动通知重试也失败: %w", errors.Join(err, retryErr))
+	}
+	if clearErr := w.clearContextToken(target, contextToken); clearErr != nil {
+		logger.Warn("清理个人微信失效会话令牌失败", "target", target, "err", clearErr)
+	}
+	return nil
+}
+
+func (w *WeixinChannel) clearContextToken(target, staleToken string) error {
+	w.authMu.Lock()
+	defer w.authMu.Unlock()
+	return w.updateState(func(current *RuntimeState) {
+		if current.Weixin.ContextTokens[target] == staleToken {
+			delete(current.Weixin.ContextTokens, target)
+		}
 	})
 }
 
@@ -253,12 +274,25 @@ func (w *WeixinChannel) snapshotState() RuntimeState {
 }
 
 func (w *WeixinChannel) updateState(update func(*RuntimeState)) error {
-	state := w.snapshotState()
-	update(&state)
-	return w.saveState(state)
+	w.persistMu.Lock()
+	defer w.persistMu.Unlock()
+	var stored RuntimeState
+	if err := w.stateStore.Update(func(current *RuntimeState) error {
+		update(current)
+		stored = cloneRuntimeState(*current)
+		return nil
+	}); err != nil {
+		return err
+	}
+	w.stateMu.Lock()
+	w.state = stored
+	w.stateMu.Unlock()
+	return nil
 }
 
 func (w *WeixinChannel) saveState(state RuntimeState) error {
+	w.persistMu.Lock()
+	defer w.persistMu.Unlock()
 	var stored RuntimeState
 	if err := w.stateStore.Update(func(current *RuntimeState) error {
 		current.Weixin = cloneRuntimeState(state).Weixin

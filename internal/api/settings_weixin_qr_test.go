@@ -35,7 +35,10 @@ func TestWeixinQRHandlersPersistConfirmedCredentialsWithoutLeakingToken(t *testi
 	cfg := &config.Config{Weixin: config.WeixinConfig{BaseURL: provider.URL}}
 	stateStore := notify.NewFileRuntimeStateStore(filepath.Join(directory, "notification-state.json"))
 	if err := stateStore.Save(notify.RuntimeState{
-		Weixin: notify.WeixinRuntimeState{Token: "old-token", SyncBuffer: "stale-cursor"},
+		Weixin: notify.WeixinRuntimeState{
+			Token: "old-token", SyncBuffer: "stale-cursor",
+			ContextTokens: map[string]string{"user-1": "stale-context"},
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +77,7 @@ func TestWeixinQRHandlersPersistConfirmedCredentialsWithoutLeakingToken(t *testi
 	if err != nil || state.Weixin.Token != "private-token" || state.Weixin.AccountID != "bot-1" ||
 		state.Weixin.UserID != "user-1" || state.Weixin.DefaultTarget != "user-1" ||
 		state.Weixin.SyncBuffer != "" ||
+		len(state.Weixin.ContextTokens) != 0 ||
 		len(state.Weixin.AllowedUsers) != 1 || state.Weixin.AllowedUsers[0] != "user-1" {
 		t.Fatalf("state = %+v, %v", state, err)
 	}

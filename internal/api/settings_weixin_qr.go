@@ -108,8 +108,9 @@ func (s *Server) applyWeixinQRCredentials(credentials notify.WeixinQRCredentials
 		return "通知管理器不可用，凭证尚未保存"
 	}
 	if err := s.notifyMgr.UpdateRuntimeState(func(state *notify.RuntimeState) error {
-		if strings.TrimSpace(state.Weixin.Token) != strings.TrimSpace(credentials.Token) {
+		if weixinCredentialsChanged(state.Weixin, credentials) {
 			state.Weixin.SyncBuffer = ""
+			state.Weixin.ContextTokens = nil
 		}
 		state.Weixin.AccountID = credentials.AccountID
 		state.Weixin.Token = credentials.Token
@@ -142,6 +143,13 @@ func (s *Server) applyWeixinQRCredentials(credentials notify.WeixinQRCredentials
 	}
 	logger.Info("个人微信扫码绑定已保存", "account_id", credentials.AccountID, "user_id", credentials.UserID)
 	return ""
+}
+
+func weixinCredentialsChanged(current notify.WeixinRuntimeState, next notify.WeixinQRCredentials) bool {
+	return strings.TrimSpace(current.AccountID) != strings.TrimSpace(next.AccountID) ||
+		strings.TrimSpace(current.Token) != strings.TrimSpace(next.Token) ||
+		strings.TrimRight(strings.TrimSpace(current.BaseURL), "/") !=
+			strings.TrimRight(strings.TrimSpace(next.BaseURL), "/")
 }
 
 func buildWeixinQRResponse(view notify.WeixinQRView) weixinQRResponse {
