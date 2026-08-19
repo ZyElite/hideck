@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yibaiba/hideck/internal/device"
 	"github.com/yibaiba/hideck/internal/phone"
 )
 
@@ -69,12 +70,13 @@ func (s *Server) handlePhoneDevices(c *gin.Context) {
 			}
 			devices = append(devices, gin.H{
 				"id": worker.ID, "name": worker.Config.Name, "iccid": worker.CurrentICCID(),
-				"voice": voice,
+				"voice":           voice,
 				"phone_mode":      phoneMode,
 				"data_strategy":   worker.Config.DataStrategy,
 				"network_enabled": worker.Config.NetworkEnabled,
 				"vowifi_enabled":  worker.Config.VoWiFiEnabled,
 				"vowifi_active":   s.pool.IsVoWiFiActive(worker.ID),
+				"rf_lock":         device.ClassifyWorkerLebaraUK(worker).RFLock(),
 			})
 		}
 	}

@@ -389,6 +389,7 @@ type deviceMgmtOverviewLiteItem struct {
 	LocalPhone             string             `json:"local_phone,omitempty"`
 	E911SetupAvailable     bool               `json:"e911_setup_available,omitempty"`
 	ActiveESIMProfileName  string             `json:"active_esim_profile_name,omitempty"`
+	RFLock                 string             `json:"rf_lock,omitempty"`
 	SMSEnabled             bool               `json:"sms_enabled"`
 	NetworkEnabled         bool               `json:"network_enabled"`
 	PhoneMode              string             `json:"phone_mode,omitempty"`
@@ -650,6 +651,7 @@ func (s *Server) buildOverviewLiteItemFromWorkerWithModem(w *device.Worker, cfg 
 			item.ActiveESIMProfileName = name
 		}
 	}
+	item.RFLock = device.ClassifyWorkerLebaraUK(w).RFLock()
 	s.applyLifecycleToOverviewLiteItem(&item, w, cfg)
 	return item
 }
@@ -2651,6 +2653,9 @@ func (s *Server) handleDeviceMgmtSetFlightMode(c *gin.Context) {
 	}
 	if s.pool.IsESIMSwitching(id) {
 		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "设备正在切卡，请稍后再切换飞行模式"})
+		return
+	}
+	if !req.Enabled && rejectLebaraUKRFUnlock(c, s.classifyLebaraUKForDevice(id)) {
 		return
 	}
 

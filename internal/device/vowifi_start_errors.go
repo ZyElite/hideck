@@ -5,12 +5,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/runtimehost"
+	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 	"github.com/yibaiba/hideck/internal/apduarbiter"
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/vowifihost"
 	"github.com/yibaiba/hideck/pkg/logger"
-	"github.com/iniwex5/vowifi-go/runtimehost"
-	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
 )
 
 func logVoWiFiFailureSummary(traceID, deviceID, stage, errorClass, reason string, retryable bool, nextRetry time.Duration) {
@@ -77,7 +77,7 @@ func shouldRetryVoWiFiAutoStart(err error) bool {
 	if err == nil {
 		return false
 	}
-	return !carrier.IsVoWiFiPolicyBlockedError(err)
+	return !carrier.IsVoWiFiPolicyBlockedError(err) && !IsLebaraUKPolicyError(err)
 }
 
 func (p *Pool) scheduleVoWiFiAPDUBusyRecover(deviceID, overrideEPDG string, generation uint64) {

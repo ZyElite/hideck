@@ -20,6 +20,8 @@ var builtInRules = []Rule{
 		"历史项目记录观察到 BAL 发往 888 并收到 888 回复；本功能本轮未重新发送，资费状态仍未知"),
 	smsRule("giffgaff_23410", "234", "10", "giffgaff", "85075", "INFO", "GBP", costUnknown,
 		"https://help.giffgaff.com/en/articles/258872-guide-to-the-usage-statement", []string{"85075", "giffgaff"}),
+	unsupportedRule("lebara_uk_23487", "234", "87", "Lebara UK", "使用 Lebara App 或账户页查询",
+		"https://www.lebara.co.uk/en/help.html", "未找到可审计的统一免费短信/USSD 查询码；NextGen 归属 234/87，不要和旧 234/15 Lebara 混用"),
 	unsupportedRule("o2_de_26203", "262", "03", "O2 Germany", "S/M/L 套餐使用 *105#，其他套餐使用 *101#",
 		"https://www.o2online.de/service/guthaben-aufladen/", "查询码取决于套餐，当前无法从 SIM 身份可靠判定"),
 	unsupportedRule("o2_de_26207", "262", "07", "O2 Germany", "S/M/L 套餐使用 *105#，其他套餐使用 *101#",

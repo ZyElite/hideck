@@ -807,6 +807,46 @@ func GetSMSByICCID(iccid string, limit int) ([]SMS, error) {
 	return smsList, err
 }
 
+// ListIMSIsForICCID 返回这张卡见过的 IMSI：sim_subscriptions 按 current_iccid，
+// 以及 sim_cards 当前行。sim_cards.imsi 会被 upsert 盖掉，历史只靠订阅行。
+func ListIMSIsForICCID(iccid string) []string {
+	iccid = strings.TrimSpace(iccid)
+	if DB == nil || iccid == "" {
+		return nil
+	}
+	canon := CanonicalICCID(iccid)
+	keys := []string{iccid}
+	if canon != "" && canon != iccid {
+		keys = append(keys, canon)
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(imsi string) {
+		imsi = strings.TrimSpace(imsi)
+		if imsi == "" {
+			return
+		}
+		if _, ok := seen[imsi]; ok {
+			return
+		}
+		seen[imsi] = struct{}{}
+		out = append(out, imsi)
+	}
+	var subs []SIMSubscription
+	if err := DB.Where("current_iccid IN ?", keys).Find(&subs).Error; err == nil {
+		for _, sub := range subs {
+			add(sub.IMSI)
+		}
+	}
+	var cards []SIMCard
+	if err := DB.Where("iccid IN ?", keys).Find(&cards).Error; err == nil {
+		for _, card := range cards {
+			add(card.IMSI)
+		}
+	}
+	return out
+}
+
 // GetICCIDForIMSI 从 sim_cards 查 IMSI 对应的真实 ICCID；
 // 无映射或为 reader-imsi- 合成 ICCID 时返回 "imsi:" 前缀合成键，与 P4 回填逻辑对齐。
 func GetICCIDForIMSI(imsi string) string {

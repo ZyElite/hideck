@@ -17,4 +17,7 @@ func TestShouldRetryVoWiFiAutoStart(t *testing.T) {
 	if shouldRetryVoWiFiAutoStart(carrier.NewVoWiFiBlockedMCCError("460")) {
 		t.Fatalf("policy-blocked error should not retry")
 	}
+	if shouldRetryVoWiFiAutoStart(NewLebaraUKFlippedIMSIError("204040000000001")) {
+		t.Fatalf("Lebara flipped IMSI should not retry")
+	}
 }

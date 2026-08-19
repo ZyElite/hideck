@@ -92,6 +92,7 @@ export type DeviceOverviewItem = {
   local_phone?: string
   e911_setup_available?: boolean
   active_esim_profile_name?: string
+  rf_lock?: string
   network_enabled: boolean
   phone_mode?: string
   vowifi_enabled?: boolean

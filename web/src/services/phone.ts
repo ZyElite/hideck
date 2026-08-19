@@ -11,6 +11,7 @@ export type PhoneDevice = {
   network_enabled?: boolean
   vowifi_enabled?: boolean
   vowifi_active?: boolean
+  rf_lock?: string
 }
 
 export type PhoneCall = {

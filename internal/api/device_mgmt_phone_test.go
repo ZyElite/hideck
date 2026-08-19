@@ -176,6 +176,23 @@ func TestBuildOverviewLiteItemIncludesActiveEsimProfileName(t *testing.T) {
 	}
 }
 
+func TestBuildOverviewLiteItemIncludesLebaraUKRFLock(t *testing.T) {
+	p := device.NewPool(&config.Config{})
+	w := &device.Worker{ID: "dev-lebara"}
+	setNestedPrivateField(t, w, []string{"state", "Identity", "IMSI"}, "234870000000001")
+	server := &Server{pool: p}
+
+	item := server.buildOverviewLiteItemFromWorker(
+		w,
+		config.DeviceConfig{ID: "dev-lebara", Name: "Lebara"},
+		modem.DeviceStatus{IMSI: "234870000000001"},
+		nil,
+	)
+	if item.RFLock != device.RFLockLebaraUKNextGen {
+		t.Fatalf("RFLock=%q want %q", item.RFLock, device.RFLockLebaraUKNextGen)
+	}
+}
+
 func TestBuildOverviewLiteItemSeparatesControlOnlineFromDataNetwork(t *testing.T) {
 	p := device.NewPool(&config.Config{})
 	w := &device.Worker{ID: "dev-qmi"}

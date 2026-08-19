@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/internal/device"
 )
 
 var errCardPolicyIdentityUnavailable = errors.New("SIM 身份未就绪，无法保存卡策略")
@@ -112,6 +113,24 @@ func (s *Server) handlePutCardPolicy(c *gin.Context) {
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取卡策略失败: " + err.Error()})
 		return
+	}
+
+	class := s.classifyLebaraUKForICCID(iccid)
+	if class.IsLebara {
+		unlocksRadio := req.NetworkEnabled != nil && *req.NetworkEnabled
+		if req.AirplaneEnabled != nil && !*req.AirplaneEnabled {
+			unlocksRadio = true
+		}
+		if normalizePhoneMode(req.PhoneMode) == "cellular" {
+			unlocksRadio = true
+		}
+		if unlocksRadio {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":   device.ErrLebaraUKRFLocked.Error(),
+				"rf_lock": class.RFLock(),
+			})
+			return
+		}
 	}
 
 	if req.NetworkEnabled != nil {

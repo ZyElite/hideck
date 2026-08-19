@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/cardpolicy"
 	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/db"
 	"github.com/yibaiba/hideck/internal/vowifihost"
 )
 
@@ -251,6 +253,44 @@ func TestDesiredVoWiFiRecoverResetsAfterSuccess(t *testing.T) {
 
 	if p.voWiFiHost().HasDesiredRecoverState("dev-1") {
 		t.Fatal("recover state should be cleared after success")
+	}
+}
+
+func TestDesiredVoWiFiSkipsLebaraUKFlippedIMSI(t *testing.T) {
+	p := newDesiredVoWiFiTestPool(t, "dev-1", true, "204040000000001")
+	w := p.GetWorker("dev-1")
+	if ClassifyWorkerLebaraUK(w).IsLebara {
+		t.Fatal("bare 20404 must not classify as Lebara")
+	}
+	if !p.shouldReconcileVoWiFi(w) {
+		t.Fatal("bare 20404 should still reconcile")
+	}
+
+	iccid := "8944000000000000087"
+	w.state.Identity.ICCID = iccid
+	w.Backend = &vowifiLockBackendStub{mode: backend.BackendQMI, imsi: "204040000000001"}
+	if err := db.Init(filepath.Join(t.TempDir(), "lebara.db")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if db.DB != nil {
+			if sqlDB, err := db.DB.DB(); err == nil && sqlDB != nil {
+				_ = sqlDB.Close()
+			}
+			db.DB = nil
+		}
+	})
+	if err := db.UpsertSIMCard(iccid, "234870000000001", "", "Lebara", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertSIMCard(iccid, "204040000000001", "", "Lebara", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !ClassifyWorkerLebaraUK(w).BlocksVoWiFi() {
+		t.Fatalf("history should mark flipped Lebara: %+v", ClassifyWorkerLebaraUK(w))
+	}
+	if p.shouldReconcileVoWiFi(w) {
+		t.Fatal("flipped Lebara should not reconcile")
 	}
 }
 

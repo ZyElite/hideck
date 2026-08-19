@@ -117,6 +117,24 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 	}) {
 		t.Fatalf("vodafone uk contact order = %v", vodafoneUK.IMSRegisterTemplate.ContactParamOrder)
 	}
+	lebaraUK := ResolveEffectiveCarrierConfig("234", "87")
+	if lebaraUK.PresetID != "lebara_uk_23487" || lebaraUK.DeviceModel != "rmx3366" ||
+		lebaraUK.EPDGAddr != "epdg.epc.mnc087.mcc234.pub.3gppnetwork.org" ||
+		lebaraUK.EPDGAddrSource != "standard" ||
+		lebaraUK.IMSRegisterTemplate.ID != "lebara_uk_23487" {
+		t.Fatalf("lebara uk = %+v", lebaraUK)
+	}
+	if !strings.Contains(lebaraUK.IMSRegisterTemplate.ICSIRef, "ims.icsi.sms") {
+		t.Fatalf("lebara uk ICSI missing SMS: %q", lebaraUK.IMSRegisterTemplate.ICSIRef)
+	}
+	if !reflect.DeepEqual(lebaraUK.IMSRegisterTemplate.ContactParamOrder[:5], []string{
+		"access_type", "sip_instance", "audio", "smsip", "icsi_ref",
+	}) {
+		t.Fatalf("lebara uk contact order = %v", lebaraUK.IMSRegisterTemplate.ContactParamOrder)
+	}
+	if vodafoneNL := ResolveEffectiveCarrierConfig("204", "04"); vodafoneNL.PresetID != "vodafone_nl_20404" {
+		t.Fatalf("vodafone nl stolen by lebara: %+v", vodafoneNL)
+	}
 	att := ResolveEffectiveCarrierConfig("310", "280")
 	if att.PresetID != "att_310280" || att.EPDGAddr != "epdg.epc.att.net" ||
 		att.IMSRegisterTemplate.RegisterPolicy.ID != "att_main" || att.IMSRegisterPolicySource != "preset" {

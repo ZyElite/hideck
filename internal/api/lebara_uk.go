@@ -1,0 +1,64 @@
+package api
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/yibaiba/hideck/internal/db"
+	"github.com/yibaiba/hideck/internal/device"
+)
+
+func (s *Server) classifyLebaraUKForDevice(deviceID string) device.LebaraUKClass {
+	if s == nil || s.pool == nil {
+		return device.LebaraUKClass{}
+	}
+	return device.ClassifyWorkerLebaraUK(s.pool.GetWorker(deviceID))
+}
+
+func (s *Server) classifyLebaraUKForICCID(iccid string) device.LebaraUKClass {
+	if w := s.workerForICCID(iccid); w != nil {
+		return device.ClassifyWorkerLebaraUK(w)
+	}
+	return device.ClassifyLebaraUKNextGen("", "", db.ListIMSIsForICCID(iccid))
+}
+
+func (s *Server) workerForICCID(iccid string) *device.Worker {
+	if s == nil || s.pool == nil {
+		return nil
+	}
+	iccid = db.CanonicalICCID(iccid)
+	if iccid == "" {
+		return nil
+	}
+	for _, w := range s.pool.GetAllWorkers() {
+		if db.CanonicalICCID(w.CurrentICCID()) == iccid {
+			return w
+		}
+	}
+	return nil
+}
+
+func rejectLebaraUKRFUnlock(c *gin.Context, class device.LebaraUKClass) bool {
+	if !class.IsLebara {
+		return false
+	}
+	c.JSON(http.StatusConflict, gin.H{
+		"status":  "error",
+		"message": device.ErrLebaraUKRFLocked.Error(),
+		"rf_lock": class.RFLock(),
+	})
+	return true
+}
+
+func writeLebaraUKRFLockError(c *gin.Context, err error) bool {
+	if err == nil || !device.IsLebaraUKPolicyError(err) {
+		return false
+	}
+	status := http.StatusConflict
+	if errors.Is(err, device.ErrLebaraUKRFLocked) {
+		status = http.StatusConflict
+	}
+	c.JSON(status, gin.H{"status": "error", "message": err.Error(), "rf_lock": device.RFLockLebaraUKNextGen})
+	return true
+}

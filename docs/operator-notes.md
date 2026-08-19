@@ -26,6 +26,16 @@
 - 国家代理仍按 MCC `234` 走 GB 规则。VOXI 官方写明漫游不支持 WiFi calling，人在国内需走代理。
 - 真卡验收前：IKE/ESP 仍可能要按日志改。余额查询未做自动短码（走 App）。
 
+## Lebara UK NextGen（234/87）
+
+- 分享 eSIM，LPA 显示名常见 `Lebara UK`，有的列表会写成 `0 Lebara UK`（前面的数字是序号，不是 PLMN）。认卡靠 IMSI `23487…`，不要靠卡名里的 `0`。
+- 不是旧的 Vodafone-hosted Lebara（234/15 + GID 90）。234/15 仍走 `vodafone_uk_23415`。
+- 自有 MNC `87`，宿主网仍是 Vodafone UK。预设 `lebara_uk_23487`：标准 ePDG `epdg.epc.mnc087.mcc234.pub.3gppnetwork.org`，`device_model=rmx3366`，IKE/ESP 先用英国已通提案加宽列表，REGISTER 带 `smsip`。
+- 双 IMSI：一驻国内 460 常会切到 `20404`。切过去之后不要当荷兰沃达丰去连；英国 WFC 不可用。分享卡运行时锁射频、拒绝开网络/关飞行/蜂窝模式，避免踩这条路。
+- `20404` 且没有 Lebara 证据时，仍是 `vodafone_nl_20404`。
+- 国家代理按活 IMSI 的 MCC：`23487` 走 GB。人在国内必须走英国代理。
+- 真卡验收前：IKE/ESP 仍可能要按日志改。余额查询未做自动短码（走 Lebara App）。
+
 ## 英国侧已有预设
 
 | 运营商 | PLMN | 预设 |
@@ -34,3 +44,4 @@
 | Vodafone UK / VOXI | 234/15 | `vodafone_uk_23415` |
 | Three UK | 234/20 | `three_uk_234020` |
 | CTExcel | 234/33 | `CTEUK_23433` |
+| Lebara UK NextGen | 234/87 | `lebara_uk_23487` |

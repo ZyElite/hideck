@@ -133,6 +133,30 @@ func TestSIMCardsSchemaNoLongerStoresPhoneFields(t *testing.T) {
 	}
 }
 
+func TestListIMSIsForICCIDKeepsHistoryAfterFlip(t *testing.T) {
+	initPhoneNumberTestDB(t)
+	iccid := "8944000000000000087"
+	if err := UpsertSIMCard(iccid, "234870000000001", "", "Lebara", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertSIMCard(iccid, "204040000000001", "", "Lebara", nil); err != nil {
+		t.Fatal(err)
+	}
+	got := ListIMSIsForICCID(iccid)
+	hasHome, hasFlip := false, false
+	for _, imsi := range got {
+		if imsi == "234870000000001" {
+			hasHome = true
+		}
+		if imsi == "204040000000001" {
+			hasFlip = true
+		}
+	}
+	if !hasHome || !hasFlip {
+		t.Fatalf("ListIMSIsForICCID = %v, want both 23487 and 20404", got)
+	}
+}
+
 func TestUpdateSIMCardModemPhoneNumberByIMSIStoresFinalPhoneNumber(t *testing.T) {
 	initPhoneNumberTestDB(t)
 

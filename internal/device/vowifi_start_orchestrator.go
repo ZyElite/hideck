@@ -7,6 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/engine/ipsec"
+	"github.com/iniwex5/vowifi-go/engine/swu"
+	"github.com/iniwex5/vowifi-go/runtimehost"
+	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
+	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/db"
 	"github.com/yibaiba/hideck/internal/netprobe"
@@ -15,11 +20,6 @@ import (
 	"github.com/yibaiba/hideck/internal/vowifihost"
 	"github.com/yibaiba/hideck/pkg/logger"
 	"github.com/yibaiba/hideck/pkg/mbim"
-	"github.com/iniwex5/vowifi-go/engine/ipsec"
-	"github.com/iniwex5/vowifi-go/engine/swu"
-	"github.com/iniwex5/vowifi-go/runtimehost"
-	"github.com/iniwex5/vowifi-go/runtimehost/carrier"
-	"github.com/iniwex5/vowifi-go/runtimehost/identity"
 )
 
 type voWiFiStartContext struct {
@@ -218,6 +218,16 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 			"device", deviceID,
 			"mcc", formatVoWiFiPLMN3(startProfile.MCC),
 			"imsi", startProfile.IMSI,
+			"err", err)
+		logVoWiFiFailureSummary(traceID, deviceID, "startup", "policy", err.Error(), false, 0)
+		return startCtx, err
+	}
+	if class := ClassifyWorkerLebaraUK(w); class.BlocksVoWiFi() {
+		err := NewLebaraUKFlippedIMSIError(class.LiveIMSI)
+		logger.Warn("VoWiFi 启动被 Lebara UK 切卡拦截",
+			"trace_id", traceID,
+			"device", deviceID,
+			"imsi", class.LiveIMSI,
 			"err", err)
 		logVoWiFiFailureSummary(traceID, deviceID, "startup", "policy", err.Error(), false, 0)
 		return startCtx, err

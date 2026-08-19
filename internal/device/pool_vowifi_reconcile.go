@@ -51,6 +51,10 @@ func (p *Pool) reconcileDesiredVoWiFiOnce(now time.Time) {
 
 	candidates := make([]string, 0, len(workers))
 	for _, w := range workers {
+		if class := ClassifyWorkerLebaraUK(w); class.BlocksVoWiFi() {
+			p.stopLebaraUKFlippedVoWiFi(w, class)
+			continue
+		}
 		if p.shouldReconcileVoWiFi(w) {
 			candidates = append(candidates, w.ID)
 		}
@@ -118,7 +122,31 @@ func (p *Pool) shouldReconcileVoWiFiForReason(w *Worker, reason string) bool {
 		logger.Warn("VoWiFi 目标态恢复跳过：MCC 策略禁止", "event", "VOWIFI_DESIRED_RECOVER_SKIPPED_POLICY", "device", deviceID, "mcc", formatVoWiFiPLMN3(mcc), "imsi", imsi)
 		return false
 	}
+	if class := ClassifyWorkerLebaraUK(w); class.BlocksVoWiFi() {
+		p.clearDesiredVoWiFiRecoverState(deviceID)
+		logger.Warn("VoWiFi 目标态恢复跳过：Lebara UK IMSI 已切卡",
+			"event", "VOWIFI_DESIRED_RECOVER_SKIPPED_POLICY",
+			"device", deviceID, "imsi", class.LiveIMSI)
+		return false
+	}
 	return true
+}
+
+func (p *Pool) stopLebaraUKFlippedVoWiFi(w *Worker, class LebaraUKClass) {
+	if p == nil || w == nil {
+		return
+	}
+	p.clearDesiredVoWiFiRecoverState(w.ID)
+	if !p.IsVoWiFiActive(w.ID) && p.GetVoWiFiAppForDevice(w.ID) == nil {
+		return
+	}
+	logger.Warn("停止误匹配的 VoWiFi：Lebara UK IMSI 已切卡",
+		"event", "VOWIFI_LEBARA_UK_FLIPPED_STOP",
+		"device", w.ID,
+		"imsi", class.LiveIMSI)
+	if err := p.voWiFiHost().Disable(p.Context(), w.ID, "lebara_uk_imsi_flipped", true); err != nil {
+		logger.Warn("停止 Lebara UK 切卡后的 VoWiFi 失败", "device", w.ID, "err", err)
+	}
 }
 
 func (p *Pool) isWorkerRebuilding(deviceID string) bool {
@@ -245,7 +273,7 @@ func (p *Pool) markDesiredVoWiFiRecoverResult(deviceID string, err error) {
 			"device", deviceID)
 		return
 	}
-	if carrier.IsVoWiFiPolicyBlockedError(err) {
+	if carrier.IsVoWiFiPolicyBlockedError(err) || IsLebaraUKPolicyError(err) {
 		p.clearDesiredVoWiFiRecoverState(deviceID)
 		logger.Warn("VoWiFi 目标态恢复跳过：策略禁止", "event", "VOWIFI_DESIRED_RECOVER_SKIPPED_POLICY", "device", deviceID, "err", err)
 		return

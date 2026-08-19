@@ -13,6 +13,7 @@ const props = defineProps<{
   iccid: string | undefined
   policy: CardPolicy | null
   deviceOnline: boolean
+  rfLock?: string
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +21,7 @@ const emit = defineEmits<{
 }>()
 
 const canToggle = computed(() => props.deviceOnline && !!props.iccid)
+const rfLocked = computed(() => !!props.rfLock)
 const canEditPolicy = computed(() => !!props.iccid)
 
 // 上游 policy → 三开关镜像（喂给 composable）
@@ -123,6 +125,9 @@ const policyProjection = computed(() => [
 ].join(' · '))
 
 const airplaneHint = computed(() => {
+  if (rfLocked.value) {
+    return '这张 Lebara UK 分享卡不能关飞行或开网络，驻国内网会切到 20404，WiFi calling 会废'
+  }
   if (wifiCallingLocksRadio.value) {
     return 'WiFi calling 占用射频，飞行已锁定。改成蜂窝或关掉软件电话后才能注册运营商'
   }
@@ -220,7 +225,7 @@ const airplaneHint = computed(() => {
             <el-icon v-if="airplanePending" class="animate-spin text-gray-400"><Loading /></el-icon>
             <el-switch
               :model-value="radioMode === 'airplane'"
-              :disabled="!canToggle || airplanePending || wifiCallingLocksRadio"
+              :disabled="!canToggle || airplanePending || wifiCallingLocksRadio || rfLocked"
               @change="onAirplaneToggle"
             />
           </div>
@@ -236,7 +241,7 @@ const airplaneHint = computed(() => {
               <el-icon v-if="networkPending" class="animate-spin text-gray-400"><Loading /></el-icon>
               <el-switch
                 v-model="local.network_enabled"
-                :disabled="!canToggle || radioMode === 'airplane' || networkPending || wifiCallingLocksRadio"
+                :disabled="!canToggle || radioMode === 'airplane' || networkPending || wifiCallingLocksRadio || rfLocked"
                 @change="onNetworkToggle"
               />
           </div>
@@ -264,11 +269,11 @@ const airplaneHint = computed(() => {
             <el-select
               :model-value="local.phone_mode ?? 'wifi'"
               class="w-full"
-              :disabled="!canToggle || phoneModePending"
+              :disabled="!canToggle || phoneModePending || rfLocked"
               @change="onPhoneModeChange"
             >
               <el-option label="WiFi calling" value="wifi" />
-              <el-option label="蜂窝数据" value="cellular" />
+              <el-option label="蜂窝数据" value="cellular" :disabled="rfLocked" />
             </el-select>
             <small v-if="phoneModePending">正在切换...</small>
             <div v-if="phoneModeFailed" class="text-xs text-orange-500 dark:text-orange-400">切换未生效</div>

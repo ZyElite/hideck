@@ -85,6 +85,10 @@ const modePending = ref(false)
 
 async function changePhoneMode(mode: string) {
   if (!selectedDevice.value || !!call.value || modePending.value) return
+  if (mode === 'cellular' && selected.value?.rf_lock) {
+    ElMessage.warning('这张 Lebara UK 分享卡不能切蜂窝，驻国内网会切到 20404，WiFi calling 会废')
+    return
+  }
   if (
     mode === selectedMode.value
     && selected.value
@@ -294,7 +298,7 @@ async function sendDTMF(digit: string) {
                 :disabled="!!call || modePending"
               >
                 <el-radio-button value="wifi" @click="void changePhoneMode('wifi')">WiFi calling</el-radio-button>
-                <el-radio-button value="cellular" @click="void changePhoneMode('cellular')">蜂窝数据</el-radio-button>
+                <el-radio-button value="cellular" :disabled="!!selected?.rf_lock" @click="void changePhoneMode('cellular')">蜂窝数据</el-radio-button>
               </el-radio-group>
               <el-select
                 v-if="selectedMode === 'cellular'"
@@ -311,6 +315,9 @@ async function sendDTMF(digit: string) {
                 {{ selected?.network_enabled
                   ? (selectedStrategy === 'always' ? '网络已开，数据会保持连接。' : '网络已开，只有拨号时才连数据，挂断后关闭。')
                   : '会正常驻网，待机不走流量。打蜂窝电话会临时打开数据。' }}
+              </p>
+              <p v-else-if="selected?.rf_lock" class="phone-mode-hint">
+                这张分享卡不能驻国内网，否则 IMSI 会切到 20404，WiFi calling 会废
               </p>
               <p v-else-if="selected && !isDeviceReady(selected) && !selected.vowifi_active" class="phone-mode-hint">
                 软件电话未开启，点 WiFi calling 即可拉起

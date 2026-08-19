@@ -434,3 +434,53 @@ func TestPutCardPolicyAirplaneField(t *testing.T) {
 		t.Fatalf("未传的 network 被错误覆盖: %+v", got)
 	}
 }
+
+func TestLebaraUKRFLockRejectsNetworkAndCellular(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	openTestDB(t)
+
+	iccid := "8944000000000000087"
+	_ = db.UpsertCardPolicy(db.CardPolicy{ICCID: iccid, AirplaneEnabled: true, NetworkEnabled: false, IPVersion: "v4", Source: "auto"})
+	p := device.NewPool(&config.Config{})
+	w := &device.Worker{ID: "wwan-lebara", Config: config.DeviceConfig{ID: "wwan-lebara"}}
+	setNestedPrivateField(t, w, []string{"state", "Identity", "ICCID"}, iccid)
+	setNestedPrivateField(t, w, []string{"state", "Identity", "IMSI"}, "234870000000001")
+	injectWorker(p, w)
+
+	s := &Server{pool: p}
+	r := gin.New()
+	r.PATCH("/api/devices/:device_id/network", s.handleDeviceNetworkPatch)
+	r.PATCH("/api/devices/:device_id/vowifi", s.handleDeviceVoWiFiPatch)
+	r.PUT("/api/cards/:iccid/policy", s.handlePutCardPolicy)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/api/devices/wwan-lebara/network", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("network enable code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPatch, "/api/devices/wwan-lebara/vowifi", strings.NewReader(`{"enabled":true,"mode":"cellular"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("cellular mode code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/cards/"+iccid+"/policy", strings.NewReader(`{"network_enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("put policy code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	got, err := db.GetCardPolicy(iccid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NetworkEnabled {
+		t.Fatalf("Lebara 拒绝后不得改写 card-policy: %+v", got)
+	}
+}

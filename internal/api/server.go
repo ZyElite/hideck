@@ -1026,6 +1026,9 @@ func (s *Server) handleDeviceMgmtStartNetwork(c *gin.Context) {
 		}
 	}
 	if err := worker.StartNetwork(); err != nil {
+		if writeLebaraUKRFLockError(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "启动数据网络失败: " + err.Error()})
 		return
 	}

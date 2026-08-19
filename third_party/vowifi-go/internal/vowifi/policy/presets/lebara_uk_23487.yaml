@@ -1,0 +1,34 @@
+mcc: "234"
+mnc: "87"
+id: lebara_uk_23487
+device_model: rmx3366
+dpd_interval_seconds: 120
+ike_proposals:
+  - aes256-sha512-prfsha512-modp2048
+  - aes256-sha256-prfsha512-modp2048
+  - aes256-sha256-modp2048
+  - aes128-sha256-modp2048
+  - aes128-sha256-modp1024
+  - aes128-sha1-modp1024
+  - aes256-sha1-modp1024
+esp_proposals:
+  - aes256-sha512
+  - aes256-sha256
+  - aes128-sha256
+  - aes256gcm16
+  - aes128gcm16
+  - aes128-sha1
+ims_register_template:
+  id: lebara_uk_23487
+  include_pani_authenticated: true
+  strict_security_server_offer: true
+  enable_initial_reject_fallback: false
+  contact_param_order:
+    - access_type
+    - sip_instance
+    - audio
+    - smsip
+    - icsi_ref
+    - mid_call
+    - srvcc_alerting
+    - ps2cs_srvcc_orig_pre_alerting

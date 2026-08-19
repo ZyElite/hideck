@@ -43,6 +43,37 @@ func TestApplyPolicyCellularIdleKeepsCamped(t *testing.T) {
 	}
 }
 
+func TestApplyPolicyLocksLebaraUKRadioWithoutRewritingIntent(t *testing.T) {
+	w := &Worker{ID: "wwan-lebara"}
+	w.state.Identity.IMSI = "234870000000001"
+	w.state.Identity.ICCID = "8944000000000000087"
+	pol := cardpolicy.Policy{
+		ICCID: "8944000000000000087", AirplaneEnabled: false, NetworkEnabled: true,
+		PhoneMode: "cellular", VoWiFiEnabled: true, DataStrategy: "always",
+	}
+	applyPolicyToWorker(w, pol)
+	if !w.Config.AirplaneEnabled || w.Config.NetworkEnabled || w.Config.PhoneMode != "wifi" {
+		t.Fatalf("Lebara 运行时应锁射频: %+v", w.Config)
+	}
+	if !w.cellularRadioIsSuppressed() {
+		t.Fatal("Lebara 运行时应抑制射频")
+	}
+	if !pol.NetworkEnabled || pol.AirplaneEnabled || pol.PhoneMode != "cellular" {
+		t.Fatalf("不得改写传入策略: %+v", pol)
+	}
+}
+
+func TestApplyPolicyDoesNotLockBareVodafoneNL(t *testing.T) {
+	w := &Worker{ID: "wwan-nl"}
+	w.state.Identity.IMSI = "204040000000001"
+	applyPolicyToWorker(w, cardpolicy.Policy{
+		ICCID: "x", AirplaneEnabled: false, NetworkEnabled: true, PhoneMode: "cellular",
+	})
+	if w.Config.AirplaneEnabled || !w.Config.NetworkEnabled || w.Config.PhoneMode != "cellular" {
+		t.Fatalf("光秃 20404 不应当 Lebara 锁: %+v", w.Config)
+	}
+}
+
 func TestApplyPolicyProjectsFields(t *testing.T) {
 	w := &Worker{ID: "wwan0"}
 	applyPolicyToWorker(w, cardpolicy.Policy{

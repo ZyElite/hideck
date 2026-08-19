@@ -16,6 +16,7 @@ func TestOriginalCarrierPresetAssetsRemainExact(t *testing.T) {
 		"csl_454000.yaml":        "250f9ec40e6c6a4203a5f29063491317c96276753c42980dd37c491f7d3cfc56",
 		"cteuk_23433.yaml":       "52ec96bdca5e6e789862f47d9200eb5de3ddacd103c3374882898c8ec8b74517",
 		"giffgaff_23410.yaml":    "011ead8b3e068fbabf34d05b0a6d11eb7e445ea9ff61f132a7fb0a80b22dd8c5",
+		"lebara_uk_23487.yaml":   "517744d02af103bf396102297003d116998368100826879873bfb7e6456d8c91",
 		"o2_de_26203.yaml":       "4772a3f0babe9f5da7cc160315f3344b63e0221b1d94fb8d18ee8739eec0d5a6",
 		"o2_de_26207_alias.yaml": "a9a182ff9bc59e262d0c348dc8a65ff9c86cdd8ded3fe04803f1c1b7ea214cf2",
 		"one_nz_53001.yaml":      "3a8bf0b20d12a121d226621472b855166208426bb75ff58b4b9fef67480340f5",
@@ -48,7 +49,7 @@ func TestOriginalCarrierPresetAssetsRemainExact(t *testing.T) {
 
 func TestEmbeddedCarrierPresetInventory(t *testing.T) {
 	want := []string{
-		"204004", "228002", "234010", "234015", "234020", "234033", "262003", "262007", "310240",
+		"204004", "228002", "234010", "234015", "234020", "234033", "234087", "262003", "262007", "310240",
 		"310260", "310280", "310410", "454000", "454003", "530001", "530005", "530024",
 	}
 	got := make([]string, 0, len(embeddedCarrierPresets))
