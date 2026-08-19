@@ -102,7 +102,7 @@ func (s *Service) Register(ctx context.Context) error {
 	s.lastRegisterErr = ""
 	s.lastRegisterOKAt = time.Now()
 	transport := s.registrationTransport
-	hasTCP := s.registrationTCP != nil
+	protectedTCP := s.registrationTCP != nil && s.registrationTCPProtected
 	publicID := ""
 	secAgree := false
 	if s.regSession != nil {
@@ -114,7 +114,7 @@ func (s *Service) Register(ctx context.Context) error {
 		"device", s.DeviceID(),
 		"expires_seconds", int(expires/time.Second),
 		"transport", transport,
-		"protected_tcp", hasTCP,
+		"protected_tcp", protectedTCP,
 		"sec_agree", secAgree,
 		"public_id", loggablePublicID(publicID))
 	s.transitionRegStatus(registrationRegistered)

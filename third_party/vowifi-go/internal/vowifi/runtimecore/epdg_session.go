@@ -8,17 +8,23 @@ import (
 
 	"github.com/iniwex5/vowifi-go/engine/swu"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/epdg"
-	"go.uber.org/zap"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 )
 
 const epdgEstablishmentTimeout = 45 * time.Second
+
+type epdgSessionManager interface {
+	Start(context.Context, string, *swu.Config) (*swu.Session, error)
+	Wait(context.Context, string, time.Duration) (swu.SessionSnapshot, error)
+	Stop(string) error
+}
 
 func StartAndWaitEPDG(
 	ctx context.Context,
 	deviceID string,
 	traceID string,
 	config *swu.Config,
-	manager *epdg.Manager,
+	manager epdgSessionManager,
 ) (*swu.Session, swu.SessionSnapshot, error) {
 	if config == nil {
 		return nil, swu.SessionSnapshot{}, errors.New("runtimecore: nil SWu config")
@@ -28,14 +34,14 @@ func StartAndWaitEPDG(
 	}
 	session, snapshot, err := startAndWait(ctx, deviceID, config, manager)
 	if epdg.ShouldRetryFreshTunnel(ctx, err) {
-		zap.S().Infow("SWu first ePDG wait timed out; retrying with a fresh session",
+		logging.Info("SWu first ePDG wait timed out; retrying with a fresh session",
 			"device", strings.TrimSpace(deviceID), "trace_id", strings.TrimSpace(traceID))
 		session, snapshot, err = startAndWait(ctx, deviceID, config, manager)
 	}
 	if err == nil || !shouldRetryDeviceIdentity(config, err) {
 		return session, snapshot, err
 	}
-	zap.S().Warnw("SWu device identity rejected; retrying without spoofed identity",
+	logging.Info("SWu device identity rejected; retrying without spoofed identity",
 		"device", strings.TrimSpace(deviceID), "trace_id", strings.TrimSpace(traceID), "error", err)
 	retryConfig := *config
 	retryConfig.EnableDeviceIdentitySpoof = false
@@ -47,7 +53,7 @@ func startAndWait(
 	ctx context.Context,
 	deviceID string,
 	config *swu.Config,
-	manager *epdg.Manager,
+	manager epdgSessionManager,
 ) (*swu.Session, swu.SessionSnapshot, error) {
 	session, err := manager.Start(ctx, deviceID, config)
 	if err != nil {
