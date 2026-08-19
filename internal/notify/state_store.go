@@ -39,12 +39,17 @@ type TelegramRuntimeState struct {
 	DefaultTarget int64 `json:"default_target,omitempty"`
 }
 
+type FeishuRuntimeState struct {
+	ChatIDs []string `json:"chat_ids,omitempty"`
+}
+
 type RuntimeState struct {
 	Version  int                  `json:"version"`
 	Telegram TelegramRuntimeState `json:"telegram"`
 	Weixin   WeixinRuntimeState   `json:"weixin"`
 	WeComBot WeComBotRuntimeState `json:"wecom_bot"`
 	QQ       QQRuntimeState       `json:"qq"`
+	Feishu   FeishuRuntimeState   `json:"feishu"`
 }
 
 type RuntimeStateStore interface {
@@ -133,6 +138,7 @@ func cloneRuntimeState(state RuntimeState) RuntimeState {
 	state.Weixin.AllowedUsers = append([]string(nil), state.Weixin.AllowedUsers...)
 	state.WeComBot.AllowedUsers = append([]string(nil), state.WeComBot.AllowedUsers...)
 	state.QQ.AllowedDirect = append([]string(nil), state.QQ.AllowedDirect...)
+	state.Feishu.ChatIDs = append([]string(nil), state.Feishu.ChatIDs...)
 	return state
 }
 

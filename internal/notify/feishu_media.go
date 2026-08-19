@@ -20,8 +20,16 @@ import (
 const feishuFileMaxSize = 30 * 1024 * 1024
 
 type feishuMediaAPI interface {
-	Upload(ctx context.Context, filename string, body io.Reader) (string, error)
-	SendFile(ctx context.Context, chatID, fileKey string) error
+	Upload(ctx context.Context, filename, fileType string, durationMs int, body io.Reader) (string, error)
+	SendMedia(ctx context.Context, chatID, fileKey, msgType string) error
+}
+
+type feishuSendPlan struct {
+	path     string
+	filename string
+	fileType string
+	msgType  string
+	duration int
 }
 
 type feishuSDKMedia struct {
@@ -49,10 +57,6 @@ func (f *FeishuChannel) sendRecording(msg *larkim.EventMessage, attachment Comma
 	if f == nil {
 		return errors.New("飞书渠道未初始化")
 	}
-	path, name, err := feishuRecordingFile(attachment)
-	if err != nil {
-		return err
-	}
 	chatID := feishuMessageChatID(msg)
 	if chatID == "" && len(f.chatIDs) > 0 {
 		chatID = f.chatIDs[0]
@@ -60,7 +64,11 @@ func (f *FeishuChannel) sendRecording(msg *larkim.EventMessage, attachment Comma
 	if chatID == "" {
 		return errors.New("飞书会话缺少 Chat ID")
 	}
-	file, err := os.Open(path)
+	plan, err := f.prepareFeishuSend(attachment)
+	if err != nil {
+		return err
+	}
+	file, err := os.Open(plan.path)
 	if err != nil {
 		return fmt.Errorf("打开飞书录音失败: %w", err)
 	}
@@ -69,11 +77,37 @@ func (f *FeishuChannel) sendRecording(msg *larkim.EventMessage, attachment Comma
 	if media == nil {
 		media = feishuSDKMedia{client: f.client}
 	}
-	fileKey, err := media.Upload(context.Background(), name, file)
+	fileKey, err := media.Upload(context.Background(), plan.filename, plan.fileType, plan.duration, file)
 	if err != nil {
 		return err
 	}
-	return media.SendFile(context.Background(), chatID, fileKey)
+	return media.SendMedia(context.Background(), chatID, fileKey, plan.msgType)
+}
+
+func (f *FeishuChannel) prepareFeishuSend(attachment CommandAttachment) (feishuSendPlan, error) {
+	path, name, err := feishuRecordingFile(attachment)
+	if err != nil {
+		return feishuSendPlan{}, err
+	}
+	// Official Feishu voice bubbles only accept opus. The existing recording
+	// stack (lame / AMR) cannot encode opus, so keep the playable file card.
+	if strings.EqualFold(filepath.Ext(path), ".opus") {
+		return feishuSendPlan{
+			path: path, filename: replaceAudioExtension(filepath.Base(name), ".opus"),
+			fileType: larkim.FileTypeOpus, msgType: "audio",
+		}, nil
+	}
+	return feishuSendPlan{
+		path: path, filename: name, fileType: larkim.FileTypeStream, msgType: "file",
+	}, nil
+}
+
+func replaceAudioExtension(name, ext string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "recording" + ext
+	}
+	return strings.TrimSuffix(name, filepath.Ext(name)) + ext
 }
 
 func feishuRecordingFile(attachment CommandAttachment) (string, string, error) {
@@ -111,7 +145,7 @@ func feishuMessageChatID(msg *larkim.EventMessage) string {
 	return strings.TrimSpace(*msg.ChatId)
 }
 
-func (m feishuSDKMedia) Upload(ctx context.Context, filename string, body io.Reader) (string, error) {
+func (m feishuSDKMedia) Upload(ctx context.Context, filename, fileType string, durationMs int, body io.Reader) (string, error) {
 	if m.client == nil {
 		return "", errors.New("飞书客户端未初始化")
 	}
@@ -119,13 +153,18 @@ func (m feishuSDKMedia) Upload(ctx context.Context, filename string, body io.Rea
 	if filename == "" {
 		filename = "recording.bin"
 	}
-	req := larkim.NewCreateFileReqBuilder().
-		Body(larkim.NewCreateFileReqBodyBuilder().
-			FileType(larkim.FileTypeStream).
-			FileName(filename).
-			File(body).
-			Build()).
-		Build()
+	fileType = strings.TrimSpace(fileType)
+	if fileType == "" {
+		fileType = larkim.FileTypeStream
+	}
+	builder := larkim.NewCreateFileReqBodyBuilder().
+		FileType(fileType).
+		FileName(filename).
+		File(body)
+	if durationMs > 0 {
+		builder = builder.Duration(durationMs)
+	}
+	req := larkim.NewCreateFileReqBuilder().Body(builder.Build()).Build()
 	resp, err := m.client.Im.File.Create(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("上传飞书录音失败: %w", err)
@@ -136,9 +175,13 @@ func (m feishuSDKMedia) Upload(ctx context.Context, filename string, body io.Rea
 	return strings.TrimSpace(*resp.Data.FileKey), nil
 }
 
-func (m feishuSDKMedia) SendFile(ctx context.Context, chatID, fileKey string) error {
+func (m feishuSDKMedia) SendMedia(ctx context.Context, chatID, fileKey, msgType string) error {
 	if m.client == nil {
 		return errors.New("飞书客户端未初始化")
+	}
+	msgType = strings.TrimSpace(msgType)
+	if msgType == "" {
+		msgType = "file"
 	}
 	content, err := json.Marshal(map[string]string{"file_key": fileKey})
 	if err != nil {
@@ -148,7 +191,7 @@ func (m feishuSDKMedia) SendFile(ctx context.Context, chatID, fileKey string) er
 		ReceiveIdType("chat_id").
 		Body(larkim.NewCreateMessageReqBodyBuilder().
 			ReceiveId(chatID).
-			MsgType("file").
+			MsgType(msgType).
 			Content(string(content)).
 			Build()).
 		Build()

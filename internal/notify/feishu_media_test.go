@@ -17,6 +17,9 @@ import (
 
 type fakeFeishuMedia struct {
 	filename  string
+	fileType  string
+	msgType   string
+	duration  int
 	payload   []byte
 	chatID    string
 	fileKey   string
@@ -24,8 +27,8 @@ type fakeFeishuMedia struct {
 	sendErr   error
 }
 
-func (f *fakeFeishuMedia) Upload(_ context.Context, filename string, body io.Reader) (string, error) {
-	f.filename = filename
+func (f *fakeFeishuMedia) Upload(_ context.Context, filename, fileType string, durationMs int, body io.Reader) (string, error) {
+	f.filename, f.fileType, f.duration = filename, fileType, durationMs
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return "", err
@@ -37,8 +40,8 @@ func (f *fakeFeishuMedia) Upload(_ context.Context, filename string, body io.Rea
 	return "file-key-1", nil
 }
 
-func (f *fakeFeishuMedia) SendFile(_ context.Context, chatID, fileKey string) error {
-	f.chatID, f.fileKey = chatID, fileKey
+func (f *fakeFeishuMedia) SendMedia(_ context.Context, chatID, fileKey, msgType string) error {
+	f.chatID, f.fileKey, f.msgType = chatID, fileKey, msgType
 	return f.sendErr
 }
 
@@ -66,7 +69,8 @@ func TestFeishuCommandContextSendsRecordingAfterText(t *testing.T) {
 	if len(texts) != 1 || texts[0] != "呼叫完成\n录音    call.mp3" {
 		t.Fatalf("texts = %#v", texts)
 	}
-	if media.filename != "call.mp3" || string(media.payload) != "ID3-audio" || media.chatID != chatID || media.fileKey != "file-key-1" {
+	if media.filename != "call.mp3" || media.fileType != "stream" || media.msgType != "file" ||
+		string(media.payload) != "ID3-audio" || media.chatID != chatID || media.fileKey != "file-key-1" {
 		t.Fatalf("media = %+v", media)
 	}
 }
@@ -102,7 +106,25 @@ func TestFeishuRecordingFallsBackToAMRSource(t *testing.T) {
 	ctx.ReplyWithAttachments("呼叫完成", []CommandAttachment{
 		{Path: filepath.Join(t.TempDir(), "missing.mp3"), Codec: "MP3", SourcePath: source, SourceCodec: "AMR"},
 	})
-	if media.filename != "call.amr" || string(media.payload) != "#!AMR\nvoice" {
+	if media.filename != "call.amr" || media.msgType != "file" || string(media.payload) != "#!AMR\nvoice" {
+		t.Fatalf("media = %+v payload=%q", media, media.payload)
+	}
+}
+
+func TestFeishuExistingOpusSendsVoiceBubble(t *testing.T) {
+	opus := filepath.Join(t.TempDir(), "call.opus")
+	if err := os.WriteFile(opus, []byte("opus-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	media := &fakeFeishuMedia{}
+	channel := &FeishuChannel{
+		media:     media,
+		replyText: func(*larkim.EventMessage, string) {},
+	}
+	ctx := &feishuCommandContext{channel: channel, msg: &larkim.EventMessage{ChatId: strPtr("oc_group")}}
+	ctx.ReplyWithAttachments("呼叫完成", []CommandAttachment{{Path: opus, Codec: "OPUS", Recording: "call.opus"}})
+	if media.filename != "call.opus" || media.fileType != "opus" || media.msgType != "audio" ||
+		string(media.payload) != "opus-bytes" {
 		t.Fatalf("media = %+v payload=%q", media, media.payload)
 	}
 }

@@ -155,7 +155,8 @@ func (s *Server) handleGetNotificationSettings(c *gin.Context) {
 	if s.fullCfg.Feishu.AppSecret != "" {
 		resp.Feishu.AppSecret = notificationSecretMask
 	}
-	resp.Feishu.ChatIDs = s.fullCfg.Feishu.ChatIDs
+	resp.Feishu.ChatIDs = s.mergeFeishuBoundChatIDs(s.fullCfg.Feishu.ChatIDs)
+	s.persistMissingFeishuChatIDs(resp.Feishu.ChatIDs)
 
 	resp.QQ.Enabled = s.fullCfg.QQ.Enabled
 	resp.QQ.AppID = s.fullCfg.QQ.AppID

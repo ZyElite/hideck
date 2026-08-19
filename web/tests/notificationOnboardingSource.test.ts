@@ -52,6 +52,8 @@ test('WeCom QR reminds the user to message the bot after scan', () => {
   assert.match(wecomPanel, /RefreshButton/)
   assert.match(feishuPanel, /useNotificationQR\('feishu'/)
   assert.match(feishuPanel, /请打开飞书，给这个机器人发一条任意消息/)
+  assert.match(feishuPanel, /useNotificationBindingPoll/)
+  assert.match(feishuPanel, /RefreshButton/)
   assert.match(qrPanel, /showActivateHint/)
   assert.match(qrPanel, /role="status"/)
   assert.match(qrPanel, /ElMessage\.warning/)

@@ -63,7 +63,9 @@ func (m *Manager) channelFactories(cfg *config.Config) []channelFactory {
 				Config: cfg.Telegram, StateStore: m.stateStore,
 			})
 		}},
-		{name: "feishu", enabled: cfg.Feishu.Enabled, build: func() (Channel, error) { return NewFeishuChannel(cfg.Feishu) }},
+		{name: "feishu", enabled: cfg.Feishu.Enabled, build: func() (Channel, error) {
+			return NewFeishuChannelWithOptions(FeishuChannelOptions{Config: cfg.Feishu, StateStore: m.stateStore})
+		}},
 		{name: "qq", enabled: cfg.QQ.Enabled, build: func() (Channel, error) { return m.buildQQChannel(cfg.QQ) }},
 		{name: "weixin", enabled: cfg.Weixin.Enabled, build: func() (Channel, error) {
 			return NewWeixinChannel(WeixinChannelOptions{Config: cfg.Weixin, StateStore: m.stateStore})

@@ -99,6 +99,48 @@ func TestWeixinSettingsExposeRuntimeBinding(t *testing.T) {
 	}
 }
 
+func TestFeishuSettingsExposeAndBackfillRuntimeChatIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("server:\n  port: 7575\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := notify.NewFileRuntimeStateStore(filepath.Join(directory, "notification-state.json"))
+	manager, err := notify.NewManagerWithOptions(&config.Config{}, nil, notify.ManagerOptions{StateStore: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.SaveRuntimeState(notify.RuntimeState{
+		Feishu: notify.FeishuRuntimeState{ChatIDs: []string{"oc_from_message"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		configPath: configPath,
+		fullCfg:    &config.Config{Feishu: config.FeishuConfig{Enabled: true, AppID: "cli_app"}},
+		notifyMgr:  manager,
+	}
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/settings/notifications", nil)
+	server.handleGetNotificationSettings(context)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response notificationSettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(response.Feishu.ChatIDs, []string{"oc_from_message"}) {
+		t.Fatalf("feishu chat ids = %#v", response.Feishu.ChatIDs)
+	}
+	if !reflect.DeepEqual(server.fullCfg.Feishu.ChatIDs, []string{"oc_from_message"}) {
+		t.Fatalf("backfilled config = %#v", server.fullCfg.Feishu.ChatIDs)
+	}
+}
+
 func TestWeComSettingsBackfillConfigFromRuntimeBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	directory := t.TempDir()

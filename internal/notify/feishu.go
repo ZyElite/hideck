@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/pkg/logger"
@@ -37,43 +38,42 @@ func (l *feishuLogger) Error(ctx context.Context, args ...interface{}) {
 // FeishuChannel 实现 Channel 接口的飞书通知渠道
 // 使用飞书开放平台 Bot + WebSocket 长连接
 type FeishuChannel struct {
-	client    *lark.Client
-	wsClient  *larkws.Client
-	chatIDs   []string
-	handlers  map[string]CommandHandler
-	cfg       config.FeishuConfig
-	replyText func(msg *larkim.EventMessage, text string)
-	media     feishuMediaAPI
+	client     *lark.Client
+	wsClient   *larkws.Client
+	chatIDs    []string
+	handlers   map[string]CommandHandler
+	cfg        config.FeishuConfig
+	stateStore RuntimeStateStore
+	stateMu    sync.RWMutex
+	startMu    sync.Mutex
+	cancel     context.CancelFunc
+	replyText  func(msg *larkim.EventMessage, text string)
+	media      feishuMediaAPI
 }
 
 // NewFeishuChannel 根据配置创建飞书渠道
 func NewFeishuChannel(cfg config.FeishuConfig) (*FeishuChannel, error) {
+	return NewFeishuChannelWithOptions(FeishuChannelOptions{Config: cfg})
+}
+
+func NewFeishuChannelWithOptions(options FeishuChannelOptions) (*FeishuChannel, error) {
+	cfg := options.Config
 	if !cfg.Enabled {
 		return nil, nil
 	}
 	if cfg.AppID == "" || cfg.AppSecret == "" {
 		return nil, fmt.Errorf("飞书配置缺少 app_id 或 app_secret")
 	}
-	chatIDs := make([]string, 0, len(cfg.ChatIDs)+1)
-	seen := make(map[string]struct{}, len(cfg.ChatIDs)+1)
-	appendChatID := func(v string) {
-		id := strings.TrimSpace(v)
-		if id == "" {
-			return
+	chatIDs := mergeUniqueStrings(cfg.ChatIDs, []string{cfg.ChatID})
+	if options.StateStore != nil {
+		state, err := options.StateStore.Load()
+		if err != nil {
+			return nil, fmt.Errorf("读取飞书绑定状态失败: %w", err)
 		}
-		if _, ok := seen[id]; ok {
-			return
-		}
-		seen[id] = struct{}{}
-		chatIDs = append(chatIDs, id)
+		chatIDs = mergeUniqueStrings(chatIDs, state.Feishu.ChatIDs)
 	}
-	for _, id := range cfg.ChatIDs {
-		appendChatID(id)
-	}
-	// 兼容旧配置：chat_id（单值）
-	appendChatID(cfg.ChatID)
 	if len(chatIDs) == 0 {
-		logger.Warn("飞书渠道已启用但未配置 chat_ids/chat_id，消息不会推送")
+		logger.Warn("飞书渠道已启用但还没有 Chat ID，给机器人发一条消息后会自动绑定")
 	}
 
 	sdkLogger := &feishuLogger{}
@@ -87,11 +87,12 @@ func NewFeishuChannel(cfg config.FeishuConfig) (*FeishuChannel, error) {
 	logger.Info("飞书 Bot 客户端已创建", "app_id", cfg.AppID)
 
 	return &FeishuChannel{
-		client:   client,
-		chatIDs:  chatIDs,
-		handlers: make(map[string]CommandHandler),
-		cfg:      cfg,
-		media:    feishuSDKMedia{client: client},
+		client:     client,
+		chatIDs:    chatIDs,
+		handlers:   make(map[string]CommandHandler),
+		cfg:        cfg,
+		stateStore: options.StateStore,
+		media:      feishuSDKMedia{client: client},
 	}, nil
 }
 
@@ -102,38 +103,50 @@ func (f *FeishuChannel) Send(text string) error {
 	if f == nil || f.client == nil {
 		return nil
 	}
-	if len(f.chatIDs) == 0 {
-		return fmt.Errorf("飞书未配置 chat_ids/chat_id")
+	chatIDs := f.notificationChatIDs()
+	if len(chatIDs) == 0 {
+		return fmt.Errorf("飞书还没有绑定 Chat ID，请先给这个机器人发一条消息")
 	}
-
-	// 构建消息内容（飞书使用 JSON 格式）
-	content, _ := json.Marshal(map[string]string{"text": text})
-
 	var lastErr error
-	for _, chatID := range f.chatIDs {
-		req := larkim.NewCreateMessageReqBuilder().
-			ReceiveIdType("chat_id").
-			Body(larkim.NewCreateMessageReqBodyBuilder().
-				ReceiveId(chatID).
-				MsgType("text").
-				Content(string(content)).
-				Build()).
-			Build()
-
-		resp, err := f.client.Im.Message.Create(context.Background(), req)
-		if err != nil {
-			logger.Error("发送飞书消息失败", "chat_id", chatID, "err", err)
+	for _, chatID := range chatIDs {
+		if err := f.sendToChat(chatID, text); err != nil {
 			lastErr = err
-			continue
-		}
-		if !resp.Success() {
-			logger.Error("发送飞书消息失败", "chat_id", chatID, "code", resp.Code, "msg", resp.Msg)
-			lastErr = fmt.Errorf("飞书 API 错误 %d: %s", resp.Code, resp.Msg)
-			continue
 		}
 	}
-
 	return lastErr
+}
+
+func (f *FeishuChannel) sendToChat(chatID, text string) error {
+	if f == nil || f.client == nil {
+		return nil
+	}
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return fmt.Errorf("飞书会话缺少 Chat ID")
+	}
+	content, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return err
+	}
+	req := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType("chat_id").
+		Body(larkim.NewCreateMessageReqBodyBuilder().
+			ReceiveId(chatID).
+			MsgType("text").
+			Content(string(content)).
+			Build()).
+		Build()
+	resp, err := f.client.Im.Message.Create(context.Background(), req)
+	if err != nil {
+		logger.Error("发送飞书消息失败", "chat_id", chatID, "err", err)
+		return err
+	}
+	if !resp.Success() {
+		err = fmt.Errorf("飞书 API 错误 %d: %s", resp.Code, resp.Msg)
+		logger.Error("发送飞书消息失败", "chat_id", chatID, "err", err)
+		return err
+	}
+	return nil
 }
 
 func (f *FeishuChannel) RegisterCommand(cmd string, handler CommandHandler) {
@@ -166,10 +179,14 @@ func (f *FeishuChannel) Start() error {
 		larkws.WithLogger(&feishuLogger{}),
 	)
 
-	logger.Info("飞书 Bot WebSocket 长连接启动中...")
-	err := f.wsClient.Start(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	f.startMu.Lock()
+	f.cancel = cancel
+	f.startMu.Unlock()
+	logger.Info("飞书 Bot WebSocket 长连接启动中...", "app_id", f.cfg.AppID)
+	err := f.wsClient.Start(ctx)
 	if err != nil {
-		logger.Error("飞书 Bot WebSocket 连接失败", "err", err)
+		logger.Error("飞书 Bot WebSocket 连接失败", "app_id", f.cfg.AppID, "err", err)
 	}
 	return err
 }
@@ -205,61 +222,6 @@ func (c *feishuCommandContext) UserKey() string {
 	return fmt.Sprintf("feishu:%s", *c.msg.ChatId)
 }
 
-// handleMessageEvent 处理飞书消息事件，解析命令并调用 handler
-func (f *FeishuChannel) handleMessageEvent(event *larkim.P2MessageReceiveV1) {
-	if event == nil || event.Event == nil || event.Event.Message == nil {
-		return
-	}
-
-	msg := event.Event.Message
-	msgType := msg.MessageType
-	if msgType == nil || *msgType != "text" {
-		return // 仅处理文本消息
-	}
-
-	// 解析消息内容（飞书文本消息格式：{"text":"内容"}）
-	var textContent struct {
-		Text string `json:"text"`
-	}
-	if msg.Content == nil {
-		return
-	}
-	if err := json.Unmarshal([]byte(*msg.Content), &textContent); err != nil {
-		return
-	}
-
-	text := strings.TrimSpace(textContent.Text)
-	if !strings.HasPrefix(text, "/") {
-		return // 不是命令消息
-	}
-
-	// 解析命令和参数
-	parts := strings.Fields(text)
-	command := strings.TrimPrefix(parts[0], "/")
-	var args []string
-	if len(parts) > 1 {
-		args = parts[1:]
-	}
-
-	logger.Info("收到飞书命令", "command", command, "args", args)
-
-	handler, ok := f.handlers[command]
-	if !ok {
-		f.replyToMessage(msg, unknownCommandReply(command))
-		return
-	}
-
-	ctx := &feishuCommandContext{
-		channel: f,
-		msg:     msg,
-	}
-
-	response := handler(ctx, args)
-	if response != "" {
-		ctx.Reply(response)
-	}
-}
-
 // replyToMessage 回复飞书消息（使用 reply API）
 func (f *FeishuChannel) replyToMessage(msg *larkim.EventMessage, text string) {
 	if f != nil && f.replyText != nil {
@@ -270,8 +232,9 @@ func (f *FeishuChannel) replyToMessage(msg *larkim.EventMessage, text string) {
 		return
 	}
 	if msg == nil || msg.MessageId == nil {
-		// 无法 reply 则直接发到群聊
-		f.Send(text)
+		if err := f.sendToChat(feishuMessageChatID(msg), text); err != nil {
+			_ = f.Send(text)
+		}
 		return
 	}
 
@@ -288,12 +251,16 @@ func (f *FeishuChannel) replyToMessage(msg *larkim.EventMessage, text string) {
 	resp, err := f.client.Im.Message.Reply(context.Background(), req)
 	if err != nil {
 		logger.Warn("飞书回复消息失败，尝试直接发送", "err", err)
-		f.Send(text)
+		if sendErr := f.sendToChat(feishuMessageChatID(msg), text); sendErr != nil {
+			_ = f.Send(text)
+		}
 		return
 	}
 	if !resp.Success() {
 		logger.Warn("飞书回复消息失败，尝试直接发送", "code", resp.Code, "msg", resp.Msg)
-		f.Send(text)
+		if sendErr := f.sendToChat(feishuMessageChatID(msg), text); sendErr != nil {
+			_ = f.Send(text)
+		}
 	}
 }
 
@@ -301,7 +268,13 @@ func (f *FeishuChannel) Close() error {
 	if f == nil {
 		return nil
 	}
-	// larkws.Client 没有显式的 close 方法，websocket 在 context cancel 时自动关闭
+	f.startMu.Lock()
+	cancel := f.cancel
+	f.cancel = nil
+	f.startMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	logger.Info("飞书 Bot 已关闭")
 	return nil
 }

@@ -13,7 +13,11 @@ import (
 type FeishuChannel struct{}
 
 func NewFeishuChannel(cfg config.FeishuConfig) (*FeishuChannel, error) {
-	if !cfg.Enabled {
+	return NewFeishuChannelWithOptions(FeishuChannelOptions{Config: cfg})
+}
+
+func NewFeishuChannelWithOptions(options FeishuChannelOptions) (*FeishuChannel, error) {
+	if !options.Config.Enabled {
 		return nil, nil
 	}
 	return nil, fmt.Errorf("飞书通知渠道在 linux/arm 构建中不可用")
