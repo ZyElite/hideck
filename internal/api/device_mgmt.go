@@ -651,7 +651,11 @@ func (s *Server) buildOverviewLiteItemFromWorkerWithModem(w *device.Worker, cfg 
 			item.ActiveESIMProfileName = name
 		}
 	}
-	item.RFLock = device.ClassifyWorkerLebaraUK(w).RFLock()
+	class, err := device.ClassifyWorkerLebaraUK(w)
+	if err != nil {
+		logger.Warn("设备概览识别 Lebara UK 射频策略失败", "device", w.ID, "err", err)
+	}
+	item.RFLock = class.RFLock()
 	s.applyLifecycleToOverviewLiteItem(&item, w, cfg)
 	return item
 }
@@ -2655,8 +2659,11 @@ func (s *Server) handleDeviceMgmtSetFlightMode(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"status": "error", "message": "设备正在切卡，请稍后再切换飞行模式"})
 		return
 	}
-	if !req.Enabled && rejectLebaraUKRFUnlock(c, s.classifyLebaraUKForDevice(id)) {
-		return
+	if !req.Enabled {
+		class, classifyErr := s.classifyLebaraUKForDevice(c.Request.Context(), id)
+		if rejectLebaraUKRFUnlock(c, class, classifyErr) {
+			return
+		}
 	}
 
 	if s.pool.IsVoWiFiActive(id) && worker.Config.PhoneMode != "cellular" {

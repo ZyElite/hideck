@@ -51,7 +51,9 @@ func TestApplyPolicyLocksLebaraUKRadioWithoutRewritingIntent(t *testing.T) {
 		ICCID: "8944000000000000087", AirplaneEnabled: false, NetworkEnabled: true,
 		PhoneMode: "cellular", VoWiFiEnabled: true, DataStrategy: "always",
 	}
-	applyPolicyToWorker(w, pol)
+	if err := applyPolicyToWorker(w, pol); err != nil {
+		t.Fatal(err)
+	}
 	if !w.Config.AirplaneEnabled || w.Config.NetworkEnabled || w.Config.PhoneMode != "wifi" {
 		t.Fatalf("Lebara 运行时应锁射频: %+v", w.Config)
 	}
@@ -60,6 +62,31 @@ func TestApplyPolicyLocksLebaraUKRadioWithoutRewritingIntent(t *testing.T) {
 	}
 	if !pol.NetworkEnabled || pol.AirplaneEnabled || pol.PhoneMode != "cellular" {
 		t.Fatalf("不得改写传入策略: %+v", pol)
+	}
+}
+
+func TestResolveAndApplyPolicyKeepsLebaraUKRadioOff(t *testing.T) {
+	p := &Pool{ctx: context.Background()}
+	p.SetPolicyResolver(&stubPolicyResolver{pol: cardpolicy.Policy{
+		ICCID: "8944000000000000087", AirplaneEnabled: false,
+		NetworkEnabled: true, PhoneMode: "cellular",
+	}})
+	stub := &workerStatusBackendStub{opMode: backend.ModeRFOff}
+	w := &Worker{ID: "wwan-lebara", Backend: stub}
+	w.state.Identity.ICCID = "8944000000000000087"
+	w.state.Identity.IMSI = "234870000000001"
+
+	result := p.resolveAndApplyPolicy(w, "test")
+	if result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	for _, mode := range stub.setOpModeCalls {
+		if mode == backend.ModeOnline {
+			t.Fatalf("Lebara policy projection restored Online: %v", stub.setOpModeCalls)
+		}
+	}
+	if !w.Config.AirplaneEnabled || w.Config.PhoneMode != "wifi" || w.Config.NetworkEnabled {
+		t.Fatalf("effective Lebara policy was not retained: %+v", w.Config)
 	}
 }
 

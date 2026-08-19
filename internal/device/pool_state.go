@@ -216,6 +216,29 @@ func (w *Worker) MarkSIMIdentityDegraded(reason string, err error) {
 	w.state.Meta.UpdatedAt = now
 }
 
+func (w *Worker) restoreSIMIdentityAfterTransitionFailure(iccid, imsi, reason string) {
+	if w == nil {
+		return
+	}
+	now := time.Now()
+	w.cacheMu.Lock()
+	defer w.cacheMu.Unlock()
+	w.state.Identity.ICCID = normalizeSIMIdentity(iccid)
+	w.state.Identity.IMSI = normalizeSIMIdentity(imsi)
+	w.state.Identity.Ready = w.state.Identity.ICCID != "" || w.state.Identity.IMSI != ""
+	if w.state.Identity.Ready {
+		w.state.Identity.Phase = simIdentityPhaseReady
+		w.state.Identity.LastError = ""
+	} else {
+		w.state.Identity.Phase = simIdentityPhaseDegraded
+		w.state.Identity.LastError = "esim_switch_failed_without_previous_identity"
+	}
+	w.state.Identity.TargetICCID = ""
+	w.state.Identity.LastReason = strings.TrimSpace(reason)
+	w.state.Meta.IdentityUpdatedAt = now
+	w.state.Meta.UpdatedAt = now
+}
+
 func (w *Worker) SIMIdentityAllowsOverviewFallback() bool {
 	if w == nil {
 		return false

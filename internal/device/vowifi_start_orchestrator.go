@@ -154,6 +154,14 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 	w.restoreNetworkAfterVoWiFi = w.Config.NetworkEnabled
 
 	if w.Config.PhoneMode == "cellular" {
+		class, err := ClassifyWorkerLebaraUKForControl(p.Context(), w)
+		if err != nil {
+			return startCtx, fmt.Errorf("识别 Lebara UK 蜂窝模式策略失败: %w", err)
+		}
+		if class.IsLebara {
+			p.enforceLebaraUKRadioOff(w, "cellular_start_blocked")
+			return startCtx, ErrLebaraUKRFLocked
+		}
 		return p.prepareCellularStartContext(startCtx, w, deviceID, traceID, runtimeEPDGOverride)
 	}
 
@@ -222,7 +230,13 @@ func (p *Pool) prepareVoWiFiStartContext(deviceID, traceID, runtimeEPDGOverride 
 		logVoWiFiFailureSummary(traceID, deviceID, "startup", "policy", err.Error(), false, 0)
 		return startCtx, err
 	}
-	if class := ClassifyWorkerLebaraUK(w); class.BlocksVoWiFi() {
+	class, classifyErr := ClassifyWorkerLebaraUK(w)
+	if classifyErr != nil {
+		err := fmt.Errorf("识别 Lebara UK VoWiFi 策略失败: %w", classifyErr)
+		logVoWiFiFailureSummary(traceID, deviceID, "startup", "policy", err.Error(), false, 0)
+		return startCtx, err
+	}
+	if class.BlocksVoWiFi() {
 		err := NewLebaraUKFlippedIMSIError(class.LiveIMSI)
 		logger.Warn("VoWiFi 启动被 Lebara UK 切卡拦截",
 			"trace_id", traceID,

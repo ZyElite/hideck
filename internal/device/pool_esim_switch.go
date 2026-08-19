@@ -26,18 +26,20 @@ const (
 )
 
 type esimSwitchContext struct {
-	VoWiFiActiveBefore   bool
-	FlightModeBefore     bool
-	QMIConnectedBefore   bool
-	NetworkEnabledBefore bool
-	ICCIDBefore          string
-	IMSIBefore           string
-	TargetICCID          string
-	SwitchToken          uint64
-	IdentityGeneration   uint64
-	CapturedAt           time.Time
-	Phase                esim.SwitchPhase
-	PhaseUpdatedAt       time.Time
+	VoWiFiActiveBefore    bool
+	FlightModeBefore      bool
+	QMIConnectedBefore    bool
+	NetworkEnabledBefore  bool
+	ICCIDBefore           string
+	IMSIBefore            string
+	TargetICCID           string
+	TargetLebaraCandidate bool
+	TargetClassifyFailed  bool
+	SwitchToken           uint64
+	IdentityGeneration    uint64
+	CapturedAt            time.Time
+	Phase                 esim.SwitchPhase
+	PhaseUpdatedAt        time.Time
 }
 
 var (
@@ -72,6 +74,19 @@ func (p *Pool) captureESIMSwitchContext(deviceID string, targetICCID string) esi
 	worker := p.GetWorker(deviceID)
 	if worker == nil {
 		return ctx
+	}
+	if ctx.TargetICCID != "" {
+		profileName := ""
+		if worker.EsimMgr != nil {
+			profileName, _ = worker.EsimMgr.CachedProfileNameForICCID(ctx.TargetICCID)
+		}
+		class, err := ClassifyLebaraUKForICCID(ctx.TargetICCID, profileName)
+		ctx.TargetLebaraCandidate = class.IsLebara
+		ctx.TargetClassifyFailed = err != nil
+		if err != nil {
+			logger.Warn("切卡前识别目标 Lebara UK 状态失败，将保持射频关闭",
+				"device", deviceID, "target_iccid", ctx.TargetICCID, "err", err)
+		}
 	}
 
 	cached := worker.GetCachedDeviceStatus()
@@ -135,6 +150,8 @@ func (p *Pool) beginESIMSwitch(deviceID string, targetICCID string) esimSwitchCo
 		"qmi_connected_before", snapshot.QMIConnectedBefore,
 		"network_enabled_before", snapshot.NetworkEnabledBefore,
 		"target_iccid", snapshot.TargetICCID,
+		"target_lebara_candidate", snapshot.TargetLebaraCandidate,
+		"target_classify_failed", snapshot.TargetClassifyFailed,
 		"switch_phase", snapshot.Phase)
 	return snapshot
 }
@@ -325,6 +342,7 @@ func (p *Pool) bringRadioOnlineAfterSwitch(deviceID string, worker *Worker, snap
 
 func (p *Pool) handleESIMSwitchBefore(deviceID string, targetICCID string) uint64 {
 	snapshot := p.beginESIMSwitch(deviceID, targetICCID)
+	holdTargetRadio := snapshot.TargetLebaraCandidate || snapshot.TargetClassifyFailed
 	if worker := p.GetWorker(deviceID); worker != nil {
 		worker.markHealthRecoveryWindow(qmiHealthGraceAfterSwitch)
 		snapshot.IdentityGeneration = worker.BeginSIMIdentityTransition(snapshot.TargetICCID, "esim_switch_begin")
@@ -349,7 +367,9 @@ func (p *Pool) handleESIMSwitchBefore(deviceID string, targetICCID string) uint6
 		logger.Warn("切卡前注销 VoWiFi 隧道失败", "device", deviceID, "err", err)
 	}
 	if worker := p.GetWorker(deviceID); worker != nil && worker.QMICore != nil {
-		if worker.Config.ESIMSwitch.RadioCycle {
+		if holdTargetRadio {
+			p.holdRadioOffForLebaraSwitchTarget(worker)
+		} else if worker.Config.ESIMSwitch.RadioCycle {
 			releaseRadioBeforeSwitch(deviceID, worker)
 		}
 		worker.QMICore.ReleaseAPDULeasesForSwitchTeardown()
@@ -358,10 +378,27 @@ func (p *Pool) handleESIMSwitchBefore(deviceID string, targetICCID string) uint6
 		if snap := worker.QMICore.GetDeviceSnapshot(); snap != nil {
 			snap.ResetIdentities(false)
 		}
-	} else if worker := p.GetWorker(deviceID); worker != nil && worker.Config.ESIMSwitch.RadioCycle {
-		releaseRadioBeforeSwitch(deviceID, worker)
+	} else if worker := p.GetWorker(deviceID); worker != nil {
+		if holdTargetRadio {
+			p.holdRadioOffForLebaraSwitchTarget(worker)
+		} else if worker.Config.ESIMSwitch.RadioCycle {
+			releaseRadioBeforeSwitch(deviceID, worker)
+		}
 	}
 	return snapshot.SwitchToken
+}
+
+func (p *Pool) holdRadioOffForLebaraSwitchTarget(worker *Worker) {
+	if worker == nil {
+		return
+	}
+	worker.setCellularRadioSuppressed(true)
+	if nc := worker.NetworkController(); nc != nil && nc.IsConnected() {
+		if err := worker.StopNetwork(); err != nil {
+			logger.Warn("切换 Lebara UK 前关闭数据连接失败", "device", worker.ID, "err", err)
+		}
+	}
+	releaseRadioBeforeSwitch(worker.ID, worker)
 }
 
 func (p *Pool) refreshPostSwitchIdentity(deviceID string, worker *Worker, snapshot esimSwitchContext) (bool, error) {
@@ -894,6 +931,9 @@ func (p *Pool) restoreRadioDataForSwitchSnapshot(deviceID string, worker *Worker
 	if worker != nil && worker.Backend != nil && resolvedBackendMode(worker.Config) == backend.BackendPCSC {
 		return
 	}
+	if p.keepLebaraUKRadioOffAfterSwitch(worker, snapshot, reason) {
+		return
+	}
 	if snapshot.FlightModeBefore {
 		if worker.Backend != nil {
 			if err := p.setOperatingModeWithRetry(worker, backend.ModeRFOff); err != nil {
@@ -923,6 +963,32 @@ func (p *Pool) restoreRadioDataForSwitchSnapshot(deviceID string, worker *Worker
 	}
 }
 
+func (p *Pool) keepLebaraUKRadioOffAfterSwitch(worker *Worker, snapshot esimSwitchContext, reason string) bool {
+	if worker == nil {
+		return false
+	}
+	class, err := ClassifyWorkerLebaraUK(worker)
+	if err != nil {
+		logger.Warn("切卡后识别 Lebara UK 状态失败，保持射频关闭",
+			"device", worker.ID, "reason", reason, "err", err)
+		p.enforceLebaraUKRadioOff(worker, reason)
+		return true
+	}
+	liveIMSI := strings.TrimSpace(class.LiveIMSI)
+	targetStillAmbiguous := (snapshot.TargetLebaraCandidate || snapshot.TargetClassifyFailed) &&
+		(liveIMSI == "" || strings.HasPrefix(liveIMSI, "20404"))
+	if !class.IsLebara && !targetStillAmbiguous {
+		return false
+	}
+	p.enforceLebaraUKRadioOff(worker, reason)
+	return true
+}
+
+func (p *Pool) enforceLebaraUKRadioOff(worker *Worker, reason string) {
+	applyLebaraUKRFLock(worker)
+	p.enterAirplaneModeFromPolicy(worker, reason)
+}
+
 func (p *Pool) handleESIMSwitchFailed(deviceID string, token uint64) {
 	snapshot, ok := p.finishESIMSwitchForFailure(deviceID, token)
 	if !ok {
@@ -940,6 +1006,8 @@ func (p *Pool) handleESIMSwitchFailed(deviceID string, token uint64) {
 		"flight_before", snapshot.FlightModeBefore,
 		"qmi_connected_before", snapshot.QMIConnectedBefore,
 		"network_enabled_before", snapshot.NetworkEnabledBefore)
+	worker.restoreSIMIdentityAfterTransitionFailure(snapshot.ICCIDBefore, snapshot.IMSIBefore, "esim_switch_failed")
+	worker.setCellularRadioSuppressed(shouldSuppressCellularRadio(worker.Config))
 	p.restoreRadioDataForSwitchSnapshot(deviceID, worker, snapshot, "switch_failed", false)
 	p.broadcastVoWiFiStateChange(deviceID)
 }
@@ -1045,7 +1113,8 @@ func (p *Pool) handleESIMSwitchAfter(deviceID string, token uint64) {
 		return
 	}
 
-	if worker.Config.ESIMSwitch.RadioCycle {
+	allowPostSwitchRadioOnline := !snapshot.TargetLebaraCandidate && !snapshot.TargetClassifyFailed
+	if worker.Config.ESIMSwitch.RadioCycle && allowPostSwitchRadioOnline {
 		attachTimeout := time.Duration(worker.Config.ESIMSwitch.NASAttachTimeoutMS) * time.Millisecond
 		p.bringRadioOnlineAfterSwitch(deviceID, worker, snapshot, attachTimeout)
 		if !p.switchTokenStillCurrent(deviceID, token, "radio_online") {

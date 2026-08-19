@@ -71,6 +71,13 @@ func (p *Pool) RestoreRadioAfterVoWiFi(deviceID string) error {
 		w.setCellularRadioSuppressed(true)
 		return nil
 	}
+	blocked, guardErr := p.guardLebaraUKRadioRestore(w, "vowifi_teardown")
+	if guardErr != nil {
+		return guardErr
+	}
+	if blocked {
+		return nil
+	}
 
 	w.setCellularRadioSuppressed(shouldSuppressCellularRadio(w.Config))
 

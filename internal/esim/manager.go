@@ -1966,6 +1966,23 @@ func (m *Manager) ActiveProfileName() (string, error) {
 	return "", nil
 }
 
+// CachedProfileNameForICCID returns profile metadata without starting an APDU load.
+func (m *Manager) CachedProfileNameForICCID(iccid string) (string, bool) {
+	overview := m.cachedOverview()
+	if overview == nil {
+		return "", false
+	}
+	target := normalizeICCIDValue(iccid)
+	for _, group := range overview.Profiles {
+		for _, profile := range group.Profiles {
+			if normalizeICCIDValue(profile.ICCID) == target && target != "" {
+				return strings.TrimSpace(profile.Name), true
+			}
+		}
+	}
+	return "", false
+}
+
 func (m *Manager) RefreshProfiles() error {
 	if m == nil {
 		return nil

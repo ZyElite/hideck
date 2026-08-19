@@ -63,6 +63,13 @@ func (p *Pool) restoreNetworkAfterVoWiFiStartupFailure(traceID, deviceID string,
 	if nc == nil || !w.restoreNetworkAfterVoWiFi || w.Backend == nil {
 		return
 	}
+	blocked, guardErr := p.guardLebaraUKRadioRestore(w, "vowifi_start_failed")
+	if guardErr != nil {
+		logger.Warn("VoWiFi 启动失败后恢复数据已中止", "trace_id", traceID, "device", deviceID, "err", guardErr)
+	}
+	if blocked {
+		return
+	}
 	w.setCellularRadioSuppressed(false)
 	if restoreErr := w.Backend.SetOperatingMode(p.ctx, backend.ModeOnline); restoreErr != nil {
 		logger.Warn("恢复射频失败", "trace_id", traceID, "device", deviceID, "err", restoreErr)

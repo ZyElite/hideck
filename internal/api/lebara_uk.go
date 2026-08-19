@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -9,18 +11,18 @@ import (
 	"github.com/yibaiba/hideck/internal/device"
 )
 
-func (s *Server) classifyLebaraUKForDevice(deviceID string) device.LebaraUKClass {
+func (s *Server) classifyLebaraUKForDevice(ctx context.Context, deviceID string) (device.LebaraUKClass, error) {
 	if s == nil || s.pool == nil {
-		return device.LebaraUKClass{}
+		return device.LebaraUKClass{}, nil
 	}
-	return device.ClassifyWorkerLebaraUK(s.pool.GetWorker(deviceID))
+	return device.ClassifyWorkerLebaraUKForControl(ctx, s.pool.GetWorker(deviceID))
 }
 
-func (s *Server) classifyLebaraUKForICCID(iccid string) device.LebaraUKClass {
+func (s *Server) classifyLebaraUKForICCID(ctx context.Context, iccid string) (device.LebaraUKClass, error) {
 	if w := s.workerForICCID(iccid); w != nil {
-		return device.ClassifyWorkerLebaraUK(w)
+		return device.ClassifyWorkerLebaraUKForControl(ctx, w)
 	}
-	return device.ClassifyLebaraUKNextGen("", "", db.ListIMSIsForICCID(iccid))
+	return device.ClassifyLebaraUKForICCID(iccid, "")
 }
 
 func (s *Server) workerForICCID(iccid string) *device.Worker {
@@ -39,7 +41,14 @@ func (s *Server) workerForICCID(iccid string) *device.Worker {
 	return nil
 }
 
-func rejectLebaraUKRFUnlock(c *gin.Context, class device.LebaraUKClass) bool {
+func rejectLebaraUKRFUnlock(c *gin.Context, class device.LebaraUKClass, err error) bool {
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": fmt.Sprintf("识别 Lebara UK 射频策略失败: %v", err),
+		})
+		return true
+	}
 	if !class.IsLebara {
 		return false
 	}

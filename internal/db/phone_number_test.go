@@ -142,7 +142,10 @@ func TestListIMSIsForICCIDKeepsHistoryAfterFlip(t *testing.T) {
 	if err := UpsertSIMCard(iccid, "204040000000001", "", "Lebara", nil); err != nil {
 		t.Fatal(err)
 	}
-	got := ListIMSIsForICCID(iccid)
+	got, err := ListIMSIsForICCID(iccid)
+	if err != nil {
+		t.Fatal(err)
+	}
 	hasHome, hasFlip := false, false
 	for _, imsi := range got {
 		if imsi == "234870000000001" {
@@ -154,6 +157,35 @@ func TestListIMSIsForICCIDKeepsHistoryAfterFlip(t *testing.T) {
 	}
 	if !hasHome || !hasFlip {
 		t.Fatalf("ListIMSIsForICCID = %v, want both 23487 and 20404", got)
+	}
+}
+
+func TestListIMSIsForICCIDMatchesPaddedHistory(t *testing.T) {
+	initPhoneNumberTestDB(t)
+	canonical := "8944000000000000087"
+	if err := UpsertSIMCard(canonical+"F", "234870000000001", "", "Lebara", nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ListIMSIsForICCID(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "234870000000001" {
+		t.Fatalf("ListIMSIsForICCID = %v", got)
+	}
+}
+
+func TestListIMSIsForICCIDReturnsDatabaseErrors(t *testing.T) {
+	initPhoneNumberTestDB(t)
+	sqlDB, err := DB.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ListIMSIsForICCID("8944000000000000087"); err == nil {
+		t.Fatal("closed database should return an explicit history lookup error")
 	}
 }
 

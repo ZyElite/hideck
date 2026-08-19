@@ -1,15 +1,21 @@
 package device
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/db"
 )
 
-const RFLockLebaraUKNextGen = "lebara_uk_nextgen"
+const (
+	RFLockLebaraUKNextGen       = "lebara_uk_nextgen"
+	lebaraUKLiveIdentityTimeout = 3 * time.Second
+)
 
 var (
 	// ErrLebaraUKRFLocked 是分享卡射频锁：不能关飞行、开网络或切蜂窝。
@@ -36,7 +42,7 @@ func (c LebaraUKClass) RFLock() string {
 }
 
 func (c LebaraUKClass) BlocksVoWiFi() bool {
-	return c.IsLebara && !c.LiveHome23487 && strings.TrimSpace(c.LiveIMSI) != ""
+	return c.IsLebara && c.LiveFlipped
 }
 
 func NewLebaraUKFlippedIMSIError(imsi string) error {
@@ -57,27 +63,73 @@ func ClassifyLebaraUKNextGen(imsi, profileName string, seenIMSIs []string) Lebar
 	imsi = strings.TrimSpace(imsi)
 	class := LebaraUKClass{LiveIMSI: imsi}
 	liveHome := strings.HasPrefix(imsi, "23487")
-	if liveHome || profileNameLooksLikeLebaraUK(profileName) || hasIMSIPrefix(seenIMSIs, "23487") {
+	liveFlipped := strings.HasPrefix(imsi, "20404")
+	hasLebaraEvidence := profileNameLooksLikeLebaraUK(profileName) || hasIMSIPrefix(seenIMSIs, "23487")
+	if liveHome || (hasLebaraEvidence && (imsi == "" || liveFlipped)) {
 		class.IsLebara = true
 	}
 	class.LiveHome23487 = liveHome
-	class.LiveFlipped = class.IsLebara && strings.HasPrefix(imsi, "20404")
+	class.LiveFlipped = class.IsLebara && liveFlipped
 	return class
 }
 
-func ClassifyWorkerLebaraUK(w *Worker) LebaraUKClass {
+func ClassifyWorkerLebaraUK(w *Worker) (LebaraUKClass, error) {
 	if w == nil {
-		return LebaraUKClass{}
+		return LebaraUKClass{}, nil
 	}
-	imsi := strings.TrimSpace(w.GetIMSI())
-	if imsi == "" {
-		imsi = w.GetCachedIMSI()
+	return classifyLebaraUKWithHistory(w.GetCachedIMSI(), workerLebaraUKProfileName(w), w.CurrentICCID())
+}
+
+// ClassifyWorkerLebaraUKForControl may read IMSI only while the identity cache is empty.
+// The bounded read is reserved for operations that can enable radio or cellular data.
+func ClassifyWorkerLebaraUKForControl(ctx context.Context, w *Worker) (LebaraUKClass, error) {
+	if w == nil {
+		return LebaraUKClass{}, nil
 	}
-	name := ""
-	if w.EsimMgr != nil {
-		name, _ = w.EsimMgr.ActiveProfileName()
+	imsi := w.GetCachedIMSI()
+	canReadLive := w.Backend != nil && backend.NormalizeBackendMode(w.Backend.Mode()) != backend.BackendAT
+	if imsi == "" && canReadLive {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		liveCtx, cancel := context.WithTimeout(ctx, lebaraUKLiveIdentityTimeout)
+		defer cancel()
+		liveIMSI, err := w.Backend.GetIMSI(liveCtx)
+		if err != nil {
+			return LebaraUKClass{}, fmt.Errorf("读取实时 IMSI 失败: %w", err)
+		}
+		imsi = strings.TrimSpace(liveIMSI)
 	}
-	return ClassifyLebaraUKNextGen(imsi, name, db.ListIMSIsForICCID(w.CurrentICCID()))
+	return classifyLebaraUKWithHistory(imsi, workerLebaraUKProfileName(w), w.CurrentICCID())
+}
+
+func ClassifyLebaraUKForICCID(iccid, profileName string) (LebaraUKClass, error) {
+	return classifyLebaraUKWithHistory("", profileName, iccid)
+}
+
+func classifyLebaraUKWithHistory(imsi, profileName, iccid string) (LebaraUKClass, error) {
+	class := ClassifyLebaraUKNextGen(imsi, profileName, nil)
+	if class.IsLebara || !lebaraUKHistoryCanDisambiguate(imsi) {
+		return class, nil
+	}
+	seenIMSIs, err := db.ListIMSIsForICCID(iccid)
+	if err != nil {
+		return LebaraUKClass{}, err
+	}
+	return ClassifyLebaraUKNextGen(imsi, profileName, seenIMSIs), nil
+}
+
+func lebaraUKHistoryCanDisambiguate(imsi string) bool {
+	imsi = strings.TrimSpace(imsi)
+	return imsi == "" || strings.HasPrefix(imsi, "20404")
+}
+
+func workerLebaraUKProfileName(w *Worker) string {
+	if w == nil || w.EsimMgr == nil {
+		return ""
+	}
+	name, _ := w.EsimMgr.ActiveProfileName()
+	return name
 }
 
 func applyLebaraUKRFLock(w *Worker) {
@@ -89,6 +141,26 @@ func applyLebaraUKRFLock(w *Worker) {
 	w.Config.PhoneMode = "wifi"
 	w.restoreNetworkAfterVoWiFi = false
 	w.setCellularRadioSuppressed(true)
+}
+
+func (p *Pool) guardLebaraUKRadioRestore(w *Worker, reason string) (bool, error) {
+	class, err := ClassifyWorkerLebaraUK(w)
+	if err != nil {
+		if w != nil {
+			w.setCellularRadioSuppressed(true)
+		}
+		if p != nil {
+			p.enterAirplaneModeFromPolicy(w, reason)
+		}
+		return true, fmt.Errorf("识别 Lebara UK 射频策略失败: %w", err)
+	}
+	if !class.IsLebara {
+		return false, nil
+	}
+	if p != nil {
+		p.enforceLebaraUKRadioOff(w, reason)
+	}
+	return true, nil
 }
 
 func profileNameLooksLikeLebaraUK(name string) bool {

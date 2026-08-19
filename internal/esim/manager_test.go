@@ -1713,6 +1713,24 @@ func TestActiveProfileNameDoesNotTriggerLoadWhenCacheMissing(t *testing.T) {
 	}
 }
 
+func TestCachedProfileNameForICCIDMatchesCanonicalValue(t *testing.T) {
+	mgr := &Manager{}
+	mgr.setOverviewCache(&EsimOverview{Profiles: []EUICCProfiles{{Profiles: []ProfileItem{
+		{ICCID: "8944000000000000087F", Name: "Lebara UK"},
+	}}}}, nil, 0)
+	name, ok := mgr.CachedProfileNameForICCID("8944000000000000087")
+	if !ok || name != "Lebara UK" {
+		t.Fatalf("CachedProfileNameForICCID = %q, %v", name, ok)
+	}
+}
+
+func TestCachedProfileNameForICCIDDoesNotLoadMissingCache(t *testing.T) {
+	mgr := &Manager{}
+	if name, ok := mgr.CachedProfileNameForICCID("8944000000000000087"); ok || name != "" {
+		t.Fatalf("CachedProfileNameForICCID = %q, %v", name, ok)
+	}
+}
+
 func TestRefreshProfilesPreservesCachedChipInfo(t *testing.T) {
 	var profileLoads atomic.Int32
 	mgr := newTestManagerWithOverviewLoader(func() (*EsimOverview, error) {

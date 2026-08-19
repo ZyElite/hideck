@@ -1,8 +1,12 @@
 package device
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/yibaiba/hideck/internal/backend"
 )
 
 func TestClassifyLebaraUKNextGen(t *testing.T) {
@@ -19,6 +23,7 @@ func TestClassifyLebaraUKNextGen(t *testing.T) {
 		{name: "profile 0 Lebara UK", imsi: "204040000000001", profile: "0 Lebara UK", wantLebara: true, wantFlipped: true, wantBlock: true},
 		{name: "history 23487", imsi: "204040000000001", seen: []string{"234870000000001"}, wantLebara: true, wantFlipped: true, wantBlock: true},
 		{name: "bare 20404 is NL", imsi: "204040000000001"},
+		{name: "old 23415 Lebara profile stays Vodafone UK", imsi: "234150000000001", profile: "Lebara UK"},
 		{name: "voxi stays voxi", imsi: "234150000000001", profile: "VOXI"},
 		{name: "lebara nl name ignored", imsi: "204040000000001", profile: "Lebara NL"},
 		{name: "empty imsi name only does not block vowifi", profile: "Lebara UK", wantLebara: true},
@@ -37,6 +42,41 @@ func TestClassifyLebaraUKNextGen(t *testing.T) {
 				t.Fatalf("unexpected RFLock %q", got.RFLock())
 			}
 		})
+	}
+}
+
+func TestClassifyWorkerLebaraUKUsesCachedIMSI(t *testing.T) {
+	w := &Worker{Backend: &vowifiLockBackendStub{mode: "qmi", imsi: "234150000000001"}}
+	w.state.Identity.IMSI = "234870000000001"
+	class, err := ClassifyWorkerLebaraUK(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !class.LiveHome23487 {
+		t.Fatalf("classifier ignored cached identity: %+v", class)
+	}
+}
+
+func TestClassifyWorkerLebaraUKForControlHonorsContext(t *testing.T) {
+	w := &Worker{Backend: &vowifiLockBackendStub{
+		mode: backend.BackendQMI, getIMSIDelay: time.Hour,
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ClassifyWorkerLebaraUKForControl(ctx, w); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ClassifyWorkerLebaraUKForControl error = %v", err)
+	}
+}
+
+func TestClassifyWorkerLebaraUKForControlDoesNotQueryAT(t *testing.T) {
+	stub := &vowifiLockBackendStub{
+		mode: backend.BackendAT, imsi: "234870000000001", getIMSIDelay: time.Hour,
+	}
+	if _, err := ClassifyWorkerLebaraUKForControl(context.Background(), &Worker{Backend: stub}); err != nil {
+		t.Fatal(err)
+	}
+	if stub.imsiCalls.Load() != 0 {
+		t.Fatalf("AT IMSI calls = %d, want 0", stub.imsiCalls.Load())
 	}
 }
 

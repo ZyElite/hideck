@@ -2160,7 +2160,11 @@ func (w *Worker) StartNetwork() error {
 	if w == nil || nc == nil {
 		return fmt.Errorf("network_not_available")
 	}
-	if ClassifyWorkerLebaraUK(w).IsLebara {
+	class, err := ClassifyWorkerLebaraUKForControl(context.Background(), w)
+	if err != nil {
+		return fmt.Errorf("识别 Lebara UK 射频策略失败: %w", err)
+	}
+	if class.IsLebara {
 		return ErrLebaraUKRFLocked
 	}
 	configChanged, err := nc.ApplyNetworkConfig(w.Config)

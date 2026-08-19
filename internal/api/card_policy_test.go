@@ -56,6 +56,7 @@ func openTestDB(t *testing.T) {
 				_ = sqlDB.Close()
 			}
 		}
+		db.DB = nil
 	})
 }
 
@@ -482,5 +483,39 @@ func TestLebaraUKRFLockRejectsNetworkAndCellular(t *testing.T) {
 	}
 	if got.NetworkEnabled {
 		t.Fatalf("Lebara 拒绝后不得改写 card-policy: %+v", got)
+	}
+}
+
+func TestLebaraUKRFLockClassificationErrorBlocksNetworkMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	openTestDB(t)
+	iccid := "8944000000000000087"
+	p := device.NewPool(&config.Config{})
+	w := &device.Worker{ID: "wwan-lebara-error", Config: config.DeviceConfig{ID: "wwan-lebara-error"}}
+	setNestedPrivateField(t, w, []string{"state", "Identity", "ICCID"}, iccid)
+	setNestedPrivateField(t, w, []string{"state", "Identity", "IMSI"}, "204040000000001")
+	injectWorker(p, w)
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.DB = nil })
+
+	s := &Server{pool: p}
+	r := gin.New()
+	r.PATCH("/api/devices/:device_id/network", s.handleDeviceNetworkPatch)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/api/devices/wwan-lebara-error/network", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("network enable code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "识别 Lebara UK 射频策略失败") {
+		t.Fatalf("classification failure was hidden: %s", rec.Body.String())
 	}
 }

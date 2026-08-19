@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yibaiba/hideck/internal/device"
 	"github.com/yibaiba/hideck/internal/phone"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 const maxPhoneRequestBytes = 1 << 20
@@ -57,6 +58,10 @@ func (s *Server) handlePhoneDevices(c *gin.Context) {
 	devices := make([]gin.H, 0)
 	if s.pool != nil {
 		for _, worker := range s.pool.GetAllWorkers() {
+			class, err := device.ClassifyWorkerLebaraUK(worker)
+			if err != nil {
+				logger.Warn("电话设备列表识别 Lebara UK 射频策略失败", "device", worker.ID, "err", err)
+			}
 			voice := map[string]interface{}{}
 			if s.voiceGW != nil {
 				voice = s.voiceGW.DeviceStatus(worker.ID)
@@ -76,7 +81,7 @@ func (s *Server) handlePhoneDevices(c *gin.Context) {
 				"network_enabled": worker.Config.NetworkEnabled,
 				"vowifi_enabled":  worker.Config.VoWiFiEnabled,
 				"vowifi_active":   s.pool.IsVoWiFiActive(worker.ID),
-				"rf_lock":         device.ClassifyWorkerLebaraUK(worker).RFLock(),
+				"rf_lock":         class.RFLock(),
 			})
 		}
 	}

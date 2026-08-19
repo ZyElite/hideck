@@ -51,7 +51,13 @@ func (p *Pool) reconcileDesiredVoWiFiOnce(now time.Time) {
 
 	candidates := make([]string, 0, len(workers))
 	for _, w := range workers {
-		if class := ClassifyWorkerLebaraUK(w); class.BlocksVoWiFi() {
+		class, err := ClassifyWorkerLebaraUK(w)
+		if err != nil {
+			logger.Warn("VoWiFi 目标态检查失败：无法识别 Lebara UK 状态",
+				"event", "VOWIFI_DESIRED_RECOVER_CLASSIFY_FAILED", "device", w.ID, "err", err)
+			continue
+		}
+		if class.BlocksVoWiFi() {
 			p.stopLebaraUKFlippedVoWiFi(w, class)
 			continue
 		}
@@ -122,7 +128,13 @@ func (p *Pool) shouldReconcileVoWiFiForReason(w *Worker, reason string) bool {
 		logger.Warn("VoWiFi 目标态恢复跳过：MCC 策略禁止", "event", "VOWIFI_DESIRED_RECOVER_SKIPPED_POLICY", "device", deviceID, "mcc", formatVoWiFiPLMN3(mcc), "imsi", imsi)
 		return false
 	}
-	if class := ClassifyWorkerLebaraUK(w); class.BlocksVoWiFi() {
+	class, err := ClassifyWorkerLebaraUK(w)
+	if err != nil {
+		logger.Warn("VoWiFi 目标态恢复跳过：无法识别 Lebara UK 状态",
+			"event", "VOWIFI_DESIRED_RECOVER_CLASSIFY_FAILED", "device", deviceID, "err", err)
+		return false
+	}
+	if class.BlocksVoWiFi() {
 		p.clearDesiredVoWiFiRecoverState(deviceID)
 		logger.Warn("VoWiFi 目标态恢复跳过：Lebara UK IMSI 已切卡",
 			"event", "VOWIFI_DESIRED_RECOVER_SKIPPED_POLICY",

@@ -1,6 +1,7 @@
 package device
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -29,9 +30,13 @@ func shouldSuppressCellularRadio(cfg config.DeviceConfig) bool {
 
 // applyPolicyToWorker 把卡策略投影进 worker.Config 的运行时有效字段。
 // 不在此触发 re-apply，仅做纯投影，便于单测。
-func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
+func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) error {
 	if w == nil {
-		return
+		return nil
+	}
+	class, err := ClassifyWorkerLebaraUK(w)
+	if err != nil {
+		return fmt.Errorf("识别 Lebara UK 射频策略失败: %w", err)
 	}
 	w.Config.NetworkEnabled = p.NetworkEnabled
 	w.Config.VoWiFiEnabled = p.VoWiFiEnabled
@@ -57,10 +62,11 @@ func applyPolicyToWorker(w *Worker, p cardpolicy.Policy) {
 	w.Config.APN = strings.TrimSpace(p.APN)
 	w.Config.SMSEnabled = true // SMS 恒开
 	w.restoreNetworkAfterVoWiFi = p.NetworkEnabled
-	if ClassifyWorkerLebaraUK(w).IsLebara {
+	if class.IsLebara {
 		applyLebaraUKRFLock(w)
 	}
 	w.setCellularRadioSuppressed(shouldSuppressCellularRadio(w.Config))
+	return nil
 }
 
 type policyApplyResult struct {
@@ -85,24 +91,28 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 		logger.Warn("解析卡策略失败", "device", worker.ID, "iccid", iccid, "err", err)
 		return policyApplyResult{ICCID: iccid, Reason: "resolve_failed", Err: err}
 	}
-	applyPolicyToWorker(worker, pol)
+	if err := applyPolicyToWorker(worker, pol); err != nil {
+		logger.Warn("投影卡策略失败", "device", worker.ID, "iccid", iccid, "err", err)
+		return policyApplyResult{ICCID: iccid, Reason: "apply_failed", Err: err}
+	}
+	effective := worker.Config
 	logger.Info("已投影卡策略", "device", worker.ID, "iccid", iccid,
-		"network", pol.NetworkEnabled, "vowifi", pol.VoWiFiEnabled,
-		"airplane", worker.Config.AirplaneEnabled, "reason", reason)
+		"network", effective.NetworkEnabled, "vowifi", effective.VoWiFiEnabled,
+		"airplane", effective.AirplaneEnabled, "reason", reason)
 
 	// 三态分支：VoWiFi / 纯飞行 / 在线(含连网)。射频模式按策略真正切换，
 	// 补齐此前“airplane 字段被投影但从不执行”的缺口。
 	switch {
-	case pol.AirplaneEnabled:
+	case effective.AirplaneEnabled:
 		// 飞行优先：蜂窝软件电话可以保持开启，只关射频和流量。
 		p.enterAirplaneModeFromPolicy(worker, reason)
-	case pol.VoWiFiEnabled && pol.PhoneMode == "cellular":
+	case effective.VoWiFiEnabled && effective.PhoneMode == "cellular":
 		// 蜂窝：射频保持在线以驻网。网络开着才连数据；on_demand 拨号时再开数据。
 		p.exitAirplaneModeIfNeeded(worker, reason)
 		if err := p.applyNetworkPreference(worker); err != nil {
 			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
 		}
-	case pol.VoWiFiEnabled:
+	case effective.VoWiFiEnabled:
 		// WiFi calling 原有路径：网络偏好按 false 走(停数据网)，射频由 VoWiFi 恢复流程切 RFOff。
 		if err := p.applyNetworkPreference(worker); err != nil {
 			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
@@ -114,7 +124,7 @@ func (p *Pool) resolveAndApplyPolicy(worker *Worker, reason string) policyApplyR
 			logger.Warn("应用网络偏好失败", "device", worker.ID, "err", err)
 		}
 	}
-	if pol.VoWiFiEnabled && !cellularSoftwarePhoneHeld(worker, pol) {
+	if effective.VoWiFiEnabled && !cellularSoftwarePhoneHeld(worker, pol) {
 		p.scheduleDesiredVoWiFiRecover(worker.ID, reason, time.Now())
 	} else {
 		p.clearDesiredVoWiFiRecoverState(worker.ID)

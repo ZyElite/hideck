@@ -115,7 +115,11 @@ func (s *Server) handlePutCardPolicy(c *gin.Context) {
 		return
 	}
 
-	class := s.classifyLebaraUKForICCID(iccid)
+	class, classifyErr := s.classifyLebaraUKForICCID(c.Request.Context(), iccid)
+	if classifyErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "识别 Lebara UK 射频策略失败: " + classifyErr.Error()})
+		return
+	}
 	if class.IsLebara {
 		unlocksRadio := req.NetworkEnabled != nil && *req.NetworkEnabled
 		if req.AirplaneEnabled != nil && !*req.AirplaneEnabled {

@@ -259,7 +259,11 @@ func TestDesiredVoWiFiRecoverResetsAfterSuccess(t *testing.T) {
 func TestDesiredVoWiFiSkipsLebaraUKFlippedIMSI(t *testing.T) {
 	p := newDesiredVoWiFiTestPool(t, "dev-1", true, "204040000000001")
 	w := p.GetWorker("dev-1")
-	if ClassifyWorkerLebaraUK(w).IsLebara {
+	class, err := ClassifyWorkerLebaraUK(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if class.IsLebara {
 		t.Fatal("bare 20404 must not classify as Lebara")
 	}
 	if !p.shouldReconcileVoWiFi(w) {
@@ -286,8 +290,12 @@ func TestDesiredVoWiFiSkipsLebaraUKFlippedIMSI(t *testing.T) {
 	if err := db.UpsertSIMCard(iccid, "204040000000001", "", "Lebara", nil); err != nil {
 		t.Fatal(err)
 	}
-	if !ClassifyWorkerLebaraUK(w).BlocksVoWiFi() {
-		t.Fatalf("history should mark flipped Lebara: %+v", ClassifyWorkerLebaraUK(w))
+	class, err = ClassifyWorkerLebaraUK(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !class.BlocksVoWiFi() {
+		t.Fatalf("history should mark flipped Lebara: %+v", class)
 	}
 	if p.shouldReconcileVoWiFi(w) {
 		t.Fatal("flipped Lebara should not reconcile")

@@ -15,14 +15,15 @@ import (
 
 	qmimanager "github.com/iniwex5/quectel-qmi-go/pkg/manager"
 	"github.com/iniwex5/quectel-qmi-go/pkg/qmi"
+	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/cardpolicy"
 	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/internal/db"
 	"github.com/yibaiba/hideck/internal/esim"
 	qmicore "github.com/yibaiba/hideck/internal/qmi"
 	"github.com/yibaiba/hideck/internal/vowifihost"
 	"github.com/yibaiba/hideck/pkg/logger"
-	"github.com/iniwex5/vowifi-go/runtimehost"
 )
 
 type esimSwitchRestoreBackendStub struct {
@@ -464,6 +465,38 @@ func TestHandleESIMSwitchBeforeRadioCycleReleasesRadioAfterSwitchBegin(t *testin
 	want := []string{"switch_begin:dev-1", fmt.Sprintf("set_mode:%d", backend.ModeLowPower)}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("operations=%v want %v", got, want)
+	}
+}
+
+func TestHandleESIMSwitchBeforeLebaraTargetHoldsRadioWithoutRadioCycle(t *testing.T) {
+	if err := db.Init(filepath.Join(t.TempDir(), "lebara-switch.db")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if db.DB != nil {
+			if sqlDB, err := db.DB.DB(); err == nil {
+				_ = sqlDB.Close()
+			}
+			db.DB = nil
+		}
+	})
+	targetICCID := "8944000000000000087"
+	if err := db.UpsertSIMCard(targetICCID, "234870000000001", "", "Lebara", nil); err != nil {
+		t.Fatal(err)
+	}
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+	be := &esimSwitchRestoreBackendStub{mode: backend.BackendQMI, getMode: backend.ModeOnline}
+	w := &Worker{ID: "dev-1", Backend: be, Config: config.DeviceConfig{ID: "dev-1"}}
+	p.workers[w.ID] = w
+
+	p.handleESIMSwitchBefore(w.ID, targetICCID)
+
+	if len(be.setCalls) != 1 || be.setCalls[0] != backend.ModeLowPower {
+		t.Fatalf("setCalls=%v want [%v]", be.setCalls, backend.ModeLowPower)
+	}
+	if !w.cellularRadioIsSuppressed() {
+		t.Fatal("Lebara target should suppress cellular registration before profile activation")
 	}
 }
 
@@ -1020,6 +1053,43 @@ func TestHandleESIMSwitchAfterRestoresOnlineWhenVoWiFiSwitchOff(t *testing.T) {
 
 	if len(be.setCalls) != 1 || be.setCalls[0] != backend.ModeOnline {
 		t.Fatalf("setCalls=%v want [%v]", be.setCalls, backend.ModeOnline)
+	}
+}
+
+func TestHandleESIMSwitchAfterDoesNotRestoreOnlineForLebaraUK(t *testing.T) {
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+	targetICCID := "8944000000000000087"
+	p.SetPolicyResolver(&stubPolicyResolver{pol: cardpolicy.Policy{
+		ICCID: targetICCID, AirplaneEnabled: false, NetworkEnabled: true, PhoneMode: "cellular",
+	}})
+	be := &esimSwitchRestoreBackendStub{
+		mode: backend.BackendQMI, getMode: backend.ModeOnline,
+		liveICCID: targetICCID, liveIMSI: "234870000000001",
+	}
+	be.setModeHook = func(mode backend.OperatingMode) { be.getMode = mode }
+	w := &Worker{ID: "dev-1", Config: config.DeviceConfig{
+		ID: "dev-1", ESIMSwitch: config.ESIMSwitchConfig{RadioCycle: true},
+	}, Backend: be}
+	p.workers[w.ID] = w
+	withSwitchSnapshot(p, w.ID, esimSwitchContext{
+		FlightModeBefore:      false,
+		TargetICCID:           targetICCID,
+		TargetLebaraCandidate: true,
+	})
+
+	p.handleESIMSwitchAfter(w.ID, 0)
+
+	for _, mode := range be.setCalls {
+		if mode == backend.ModeOnline {
+			t.Fatalf("Lebara switch restored Online from the previous snapshot: %v", be.setCalls)
+		}
+	}
+	if len(be.setCalls) == 0 || be.setCalls[len(be.setCalls)-1] != backend.ModeRFOff {
+		t.Fatalf("setCalls=%v want final RFOff", be.setCalls)
+	}
+	if !w.Config.AirplaneEnabled || w.Config.NetworkEnabled || w.Config.PhoneMode != "wifi" {
+		t.Fatalf("Lebara switch lost effective RF lock: %+v", w.Config)
 	}
 }
 
@@ -1627,6 +1697,48 @@ func TestHandleESIMSwitchFailedClearsSwitchingAndRestoresRadioData(t *testing.T)
 
 	if p.IsESIMSwitching("dev-1") {
 		t.Fatal("expected switching flag cleared after switch failure")
+	}
+	if len(be.setCalls) != 1 || be.setCalls[0] != backend.ModeOnline {
+		t.Fatalf("setCalls=%v want [%v]", be.setCalls, backend.ModeOnline)
+	}
+}
+
+func TestHandleESIMSwitchFailedRestoresPreviousIdentityBeforeLebaraCheck(t *testing.T) {
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+	be := &esimSwitchRestoreBackendStub{mode: backend.BackendQMI, getMode: backend.ModeRFOff}
+	w := &Worker{
+		ID:      "dev-1",
+		Config:  config.DeviceConfig{ID: "dev-1", NetworkEnabled: true},
+		Backend: be,
+	}
+	w.state.Identity.Phase = simIdentityPhaseTransitioning
+	w.state.Identity.TargetICCID = "target-lebara-iccid"
+	w.setCellularRadioSuppressed(true)
+	p.workers[w.ID] = w
+	snapshot := esimSwitchContext{
+		SwitchToken:           8,
+		ICCIDBefore:           "old-vodafone-iccid",
+		IMSIBefore:            "234150000000001",
+		TargetICCID:           "target-lebara-iccid",
+		TargetLebaraCandidate: true,
+	}
+	withSwitchSnapshot(p, w.ID, snapshot)
+	p.switchMu.Lock()
+	p.switchTokens[w.ID] = snapshot.SwitchToken
+	p.switchMu.Unlock()
+
+	p.handleESIMSwitchFailed(w.ID, snapshot.SwitchToken)
+
+	status := w.ProjectDeviceStatus()
+	if status.ICCID != snapshot.ICCIDBefore || status.IMSI != snapshot.IMSIBefore {
+		t.Fatalf("restored identity=(%q,%q), want (%q,%q)", status.ICCID, status.IMSI, snapshot.ICCIDBefore, snapshot.IMSIBefore)
+	}
+	if w.CurrentICCID() != snapshot.ICCIDBefore {
+		t.Fatalf("CurrentICCID()=%q want %q", w.CurrentICCID(), snapshot.ICCIDBefore)
+	}
+	if w.cellularRadioIsSuppressed() {
+		t.Fatal("expected previous cellular policy suppression to be restored")
 	}
 	if len(be.setCalls) != 1 || be.setCalls[0] != backend.ModeOnline {
 		t.Fatalf("setCalls=%v want [%v]", be.setCalls, backend.ModeOnline)

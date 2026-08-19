@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/yibaiba/hideck/internal/backend"
 	"github.com/yibaiba/hideck/internal/config"
 	"github.com/yibaiba/hideck/internal/modem"
-	"github.com/iniwex5/vowifi-go/runtimehost"
 )
 
 type vowifiLockBackendStub struct {
@@ -35,7 +35,13 @@ func (s *vowifiLockBackendStub) GetIMEI(ctx context.Context) (string, error) { r
 func (s *vowifiLockBackendStub) GetIMSI(ctx context.Context) (string, error) {
 	s.imsiCalls.Add(1)
 	if s.getIMSIDelay > 0 {
-		time.Sleep(s.getIMSIDelay)
+		timer := time.NewTimer(s.getIMSIDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-timer.C:
+		}
 	}
 	if s.imsiErr != nil {
 		return "", s.imsiErr
@@ -116,6 +122,91 @@ func TestEnableVoWiFiBlockedWhenESIMSwitching(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "正在切卡") {
 		t.Fatalf("EnableVoWiFi error = %v, want contains %q", err, "正在切卡")
+	}
+}
+
+func TestVoWiFiStartupFailureDoesNotRestoreLebaraUKRadio(t *testing.T) {
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+	backendStub := &workerStatusBackendStub{mode: backend.BackendQMI, opMode: backend.ModeRFOff}
+	controller := &fakeController{}
+	w := &Worker{
+		ID:                        "dev-lebara-start-failed",
+		Backend:                   backendStub,
+		netOverride:               controller,
+		restoreNetworkAfterVoWiFi: true,
+		Config:                    config.DeviceConfig{NetworkEnabled: true},
+	}
+	w.state.Identity.ICCID = "8944000000000000087"
+	w.state.Identity.IMSI = "234870000000001"
+
+	p.restoreNetworkAfterVoWiFiStartupFailure("trace-lebara", w.ID, w)
+
+	if len(backendStub.setOpModeCalls) != 0 {
+		t.Fatalf("Lebara startup failure restored radio: %v", backendStub.setOpModeCalls)
+	}
+	if controller.connected {
+		t.Fatal("Lebara startup failure restored data connection")
+	}
+	if !w.Config.AirplaneEnabled || w.Config.NetworkEnabled || !w.cellularRadioIsSuppressed() {
+		t.Fatalf("Lebara RF lock not retained after startup failure: %+v", w.Config)
+	}
+	if w.restoreNetworkAfterVoWiFi {
+		t.Fatal("startup failure restore flag was not cleared")
+	}
+}
+
+func TestRestoreRadioAfterVoWiFiDoesNotUnlockLebaraUK(t *testing.T) {
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+	backendStub := &workerStatusBackendStub{mode: backend.BackendQMI, opMode: backend.ModeRFOff}
+	w := &Worker{
+		ID:      "dev-lebara-teardown",
+		Backend: backendStub,
+		Config:  config.DeviceConfig{AirplaneEnabled: false, NetworkEnabled: true},
+	}
+	w.state.Identity.ICCID = "8944000000000000087"
+	w.state.Identity.IMSI = "234870000000001"
+	p.workers[w.ID] = w
+
+	if err := p.RestoreRadioAfterVoWiFi(w.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(backendStub.setOpModeCalls) != 0 {
+		t.Fatalf("Lebara teardown restored radio: %v", backendStub.setOpModeCalls)
+	}
+	if !w.Config.AirplaneEnabled || w.Config.NetworkEnabled || !w.cellularRadioIsSuppressed() {
+		t.Fatalf("Lebara RF lock not retained after teardown: %+v", w.Config)
+	}
+}
+
+func TestPrepareVoWiFiStartBlocksLebaraUKCellularMode(t *testing.T) {
+	p := NewPool(&config.Config{})
+	defer p.cancel()
+	backendStub := &workerStatusBackendStub{mode: backend.BackendQMI, opMode: backend.ModeRFOff}
+	w := &Worker{
+		ID:      "dev-lebara-cellular",
+		Backend: backendStub,
+		Config: config.DeviceConfig{
+			PhoneMode:      "cellular",
+			DataStrategy:   "always",
+			NetworkEnabled: true,
+		},
+	}
+	w.state.Identity.ICCID = "8944000000000000087"
+	w.state.Identity.IMSI = "234870000000001"
+	p.workers[w.ID] = w
+
+	_, err := p.prepareVoWiFiStartContext(w.ID, "trace-cellular", "")
+	if !errors.Is(err, ErrLebaraUKRFLocked) {
+		t.Fatalf("prepareVoWiFiStartContext() error = %v", err)
+	}
+	if len(backendStub.setOpModeCalls) != 0 {
+		t.Fatalf("Lebara cellular start restored radio: %v", backendStub.setOpModeCalls)
+	}
+	if !w.Config.AirplaneEnabled || w.Config.NetworkEnabled || w.Config.PhoneMode != "wifi" {
+		t.Fatalf("Lebara cellular start did not retain RF lock: %+v", w.Config)
 	}
 }
 

@@ -31,7 +31,8 @@ func (s *Server) handleDeviceNetworkPatch(c *gin.Context) {
 	deviceID := deviceIDParam(c)
 
 	if *req.Enabled {
-		if rejectLebaraUKRFUnlock(c, s.classifyLebaraUKForDevice(deviceID)) {
+		class, classifyErr := s.classifyLebaraUKForDevice(c.Request.Context(), deviceID)
+		if rejectLebaraUKRFUnlock(c, class, classifyErr) {
 			return
 		}
 		ipVersion, err := normalizedOptionalIPVersion(req.IPVersion)
@@ -88,8 +89,11 @@ func (s *Server) handleDeviceVoWiFiPatch(c *gin.Context) {
 		// 落库：置 vowifi_enabled=true。若带 mode/data_strategy 则一并落库。
 		mode := normalizePhoneMode(req.Mode)
 		strategy := normalizeDataStrategy(req.DataStrategy)
-		if mode == "cellular" && rejectLebaraUKRFUnlock(c, s.classifyLebaraUKForDevice(deviceID)) {
-			return
+		if mode == "cellular" {
+			class, classifyErr := s.classifyLebaraUKForDevice(c.Request.Context(), deviceID)
+			if rejectLebaraUKRFUnlock(c, class, classifyErr) {
+				return
+			}
 		}
 		if _, _, err := s.patchCardPolicyForDevice(deviceID, func(p *db.CardPolicy) {
 			if req.Mode != nil {
