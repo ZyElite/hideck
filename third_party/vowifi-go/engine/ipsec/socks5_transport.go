@@ -83,7 +83,7 @@ func NewSocks5Transport(cfg Socks5Config, compatibility ...any) (*Socks5Transpor
 	}
 	remoteAddr, _, err := ResolveUDPAddrAll(cfg.RemoteAddr, cfg.DNSServer)
 	if err != nil {
-		return nil, fmt.Errorf("resolve SOCKS5 target %q: %w", cfg.RemoteAddr, err)
+		return nil, fmt.Errorf("resolve ePDG address %q: %w", cfg.RemoteAddr, err)
 	}
 	tcpConn, err := connectSocks5(cfg, timeout)
 	if err != nil {

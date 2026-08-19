@@ -1072,14 +1072,23 @@ func (s *Session) startIKEReauthTimer(intervals ...time.Duration) {
 	})
 }
 
+func (s *Session) usingSOCKS5() bool {
+	return strings.TrimSpace(configuredProxyAddress(s.cfg)) != ""
+}
+
 // startNATKeepalive arms the NAT keepalive timer (RFC 3948 §2.4).
 func (s *Session) startNATKeepalive(intervals ...time.Duration) {
-	if !s.natDetected {
+	// SOCKS5 UDP Associate dies without periodic datagrams even when IKE
+	// NAT-D does not report NAT, so keep the relay alive independently.
+	if !s.natDetected && !s.usingSOCKS5() {
 		return
 	}
 	every := configuredTimerInterval(intervals, s.cfg.NATKeepaliveEvery, s.cfg.NATKeepaliveSeconds)
 	if len(intervals) == 0 && every <= 0 {
 		every = 20 * time.Second
+	}
+	if s.usingSOCKS5() && (every <= 0 || every > 10*time.Second) {
+		every = 10 * time.Second
 	}
 	if every <= 0 || !s.beginNATKeepalive() {
 		return

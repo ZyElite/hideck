@@ -249,6 +249,13 @@ func TestRuntimeEventNamesAndStateAreRecovered(t *testing.T) {
 	if state.LastEvent != "terminal_error" || state.LastError != "authentication rejected" {
 		t.Fatalf("terminal state = %+v", state)
 	}
+	observer.OnRuntimeEvent(context.Background(), runtimecore.RuntimeEvent[*runtimecore.SessionResult]{
+		Kind: "ims_registered",
+	})
+	state = instance.State()
+	if state.Phase != "ims_ready" || state.LastError != "" || state.LastErrorClass != "" || state.Error != "" {
+		t.Fatalf("recovered state still has last_error = %+v", state)
+	}
 }
 
 func restoredRuntimeRequest() StartRequest {

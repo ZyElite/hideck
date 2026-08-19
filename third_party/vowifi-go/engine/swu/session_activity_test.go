@@ -29,6 +29,18 @@ func TestNATKeepaliveDecisionRestoresTrafficAwareness(t *testing.T) {
 	}
 }
 
+func TestNATKeepaliveStartsForSOCKS5WithoutNAT(t *testing.T) {
+	session := NewSession(&Config{ProxyAddr: "127.0.0.1:1080"})
+	session.startNATKeepalive(time.Hour)
+	session.timersMu.Lock()
+	armed := session.natKeepalive != nil
+	session.timersMu.Unlock()
+	if !armed || session.natDetected {
+		t.Fatalf("socks5 keepalive armed=%v natDetected=%v", armed, session.natDetected)
+	}
+	session.Shutdown()
+}
+
 func TestRecoveredTimerIntervalCallShapes(t *testing.T) {
 	session := NewSession(&Config{})
 	session.natDetected = true

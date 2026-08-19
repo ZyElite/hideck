@@ -66,6 +66,7 @@ func (observer *instanceObserver) applyEvent(
 		state.SessionState = "established"
 		state.TunnelReady = event.Snapshot.Established || event.Handle != nil
 		state.DataPlaneUp = state.TunnelReady
+		clearRuntimeError(state)
 		if observer.ready != nil {
 			observer.readyOnce.Do(func() { close(observer.ready) })
 		}
@@ -76,9 +77,11 @@ func (observer *instanceObserver) applyEvent(
 		state.IMSReady = true
 		state.RegStatus = 1
 		state.RegStatusText = "registered"
+		clearRuntimeError(state)
 	case "sms_ready":
 		state.Phase = "sms_ready"
 		state.SMSReady = true
+		clearRuntimeError(state)
 	case "interrupted":
 		state.Phase = "interrupted"
 		state.TunnelReady = false
@@ -106,6 +109,15 @@ func (observer *instanceObserver) applyEvent(
 		state.SMSReady = false
 		state.DataPlaneUp = false
 	}
+}
+
+func clearRuntimeError(state *State) {
+	if state == nil {
+		return
+	}
+	state.LastError = ""
+	state.LastErrorClass = ""
+	state.Error = ""
 }
 
 func readyPhase(state State) string {
