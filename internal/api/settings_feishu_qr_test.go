@@ -35,7 +35,7 @@ func TestFeishuQRHandlersPersistConfirmedCredentialsWithoutLeakingSecret(t *test
 	if err := os.WriteFile(configPath, []byte("server:\n  port: 7575\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{}
+	cfg := &config.Config{Feishu: config.FeishuConfig{ChatIDs: []string{"oc_configured"}}}
 	stateStore := notify.NewFileRuntimeStateStore(filepath.Join(directory, "notification-state.json"))
 	if err := stateStore.Save(notify.RuntimeState{
 		Feishu: notify.FeishuRuntimeState{ChatIDs: []string{"oc_unverified"}},

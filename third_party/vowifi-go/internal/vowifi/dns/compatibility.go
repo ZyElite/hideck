@@ -170,11 +170,14 @@ func resolverForEndpoint(endpoint string) (queryResolver, error) {
 	if err != nil {
 		host, port = endpoint, defaultDNSPort
 	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	if ip == nil {
-		return nil, fmt.Errorf("dns: DNS server must be an IP address: %q", endpoint)
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if ip := net.ParseIP(host); ip != nil {
+		return newServerResolverAt(nil, ip, port), nil
 	}
-	return newServerResolverAt(nil, ip, port), nil
+	if err != nil || host == "" {
+		return nil, fmt.Errorf("dns: DNS server must be an IP address or host:port: %q", endpoint)
+	}
+	return newServerResolverForAddress(nil, net.JoinHostPort(host, port)), nil
 }
 
 // NormalizeRegistrarCandidates retains structured defaulting and deduplication.

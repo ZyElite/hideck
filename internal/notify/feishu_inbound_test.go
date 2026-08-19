@@ -75,14 +75,17 @@ func TestFeishuFirstPrivateBindingRemovesUnverifiedRuntimeChats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(state.Feishu.ChatIDs, []string{"oc_configured", "oc_owner"}) {
-		t.Fatalf("trusted chat ids = %#v", state.Feishu.ChatIDs)
+	if !reflect.DeepEqual(state.Feishu.ChatIDs, []string{"oc_owner"}) {
+		t.Fatalf("runtime chat ids = %#v", state.Feishu.ChatIDs)
 	}
 	if !reflect.DeepEqual(state.Feishu.AllowedUsers, []string{"ou_owner"}) {
 		t.Fatalf("allowed users = %#v", state.Feishu.AllowedUsers)
 	}
 	if !state.Feishu.BindingVerified {
 		t.Fatal("binding was not marked verified")
+	}
+	if got := channel.notificationChatIDs(); !reflect.DeepEqual(got, []string{"oc_configured", "oc_owner"}) {
+		t.Fatalf("notification chat ids = %#v", got)
 	}
 }
 

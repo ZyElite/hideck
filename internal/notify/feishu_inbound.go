@@ -129,8 +129,7 @@ func (f *FeishuChannel) persistDirectBindingLocked(chatID, senderID string) (boo
 			ChatIDs: f.chatIDs, AllowedUsers: f.allowedUsers, BindingVerified: true,
 		}
 		next := ApplyFeishuDirectBinding(f.cfg, current, chatID, senderID)
-		f.chatIDs = next.ChatIDs
-		f.allowedUsers = next.AllowedUsers
+		f.applyTrustedBindingLocked(next)
 		return !sameFeishuBinding(current, next), nil
 	}
 	bound := false
@@ -145,9 +144,14 @@ func (f *FeishuChannel) persistDirectBindingLocked(chatID, senderID string) (boo
 	}); err != nil {
 		return false, err
 	}
-	f.chatIDs = stored.ChatIDs
-	f.allowedUsers = stored.AllowedUsers
+	f.applyTrustedBindingLocked(stored)
 	return bound, nil
+}
+
+func (f *FeishuChannel) applyTrustedBindingLocked(state FeishuRuntimeState) {
+	binding := TrustedFeishuBindingFrom(f.cfg, state)
+	f.chatIDs = binding.ChatIDs
+	f.allowedUsers = binding.AllowedUsers
 }
 
 func feishuSenderID(event *larkim.P2MessageReceiveV1) string {

@@ -21,31 +21,47 @@ func TrustedFeishuBindingFrom(cfg config.FeishuConfig, state FeishuRuntimeState)
 	allowed := mergeUniqueStrings(state.AllowedUsers)
 	chats := configured
 	if state.BindingVerified && len(allowed) > 0 {
-		chats = mergeUniqueStrings(configured, state.ChatIDs)
+		chats = mergeUniqueStrings(configured, runtimeFeishuChatIDs(cfg, state))
 	}
 	return TrustedFeishuBinding{ChatIDs: chats, AllowedUsers: allowed}
 }
 
-// ApplyFeishuDirectBinding appends a private-chat sender and chat onto the
-// trusted binding and marks the binding verified.
+// ApplyFeishuDirectBinding records an automatically discovered private chat
+// without duplicating statically configured notification targets.
 func ApplyFeishuDirectBinding(cfg config.FeishuConfig, state FeishuRuntimeState, chatID, senderID string) FeishuRuntimeState {
-	binding := TrustedFeishuBindingFrom(cfg, state)
 	return FeishuRuntimeState{
-		ChatIDs:         mergeUniqueStrings(binding.ChatIDs, []string{chatID}),
-		AllowedUsers:    mergeUniqueStrings(binding.AllowedUsers, []string{senderID}),
+		ChatIDs:         mergeUniqueStrings(runtimeFeishuChatIDs(cfg, state), []string{chatID}),
+		AllowedUsers:    mergeUniqueStrings(state.AllowedUsers, []string{senderID}),
 		BindingVerified: true,
 	}
 }
 
-// ApplyFeishuQRUserBinding records the scanned Open ID without trusting leftover
-// unverified runtime chats.
+// ApplyFeishuQRUserBinding records the scanned Open ID without copying static or
+// leftover unverified chats into runtime state.
 func ApplyFeishuQRUserBinding(cfg config.FeishuConfig, state FeishuRuntimeState, openID string) FeishuRuntimeState {
-	binding := TrustedFeishuBindingFrom(cfg, state)
 	return FeishuRuntimeState{
-		ChatIDs:         binding.ChatIDs,
-		AllowedUsers:    mergeUniqueStrings(binding.AllowedUsers, []string{openID}),
+		ChatIDs:         runtimeFeishuChatIDs(cfg, state),
+		AllowedUsers:    mergeUniqueStrings(state.AllowedUsers, []string{openID}),
 		BindingVerified: true,
 	}
+}
+
+func runtimeFeishuChatIDs(cfg config.FeishuConfig, state FeishuRuntimeState) []string {
+	if !state.BindingVerified || len(mergeUniqueStrings(state.AllowedUsers)) == 0 {
+		return nil
+	}
+	configured := mergeUniqueStrings(cfg.ChatIDs, []string{cfg.ChatID})
+	configuredSet := make(map[string]struct{}, len(configured))
+	for _, chatID := range configured {
+		configuredSet[chatID] = struct{}{}
+	}
+	runtime := make([]string, 0, len(state.ChatIDs))
+	for _, chatID := range mergeUniqueStrings(state.ChatIDs) {
+		if _, isConfigured := configuredSet[chatID]; !isConfigured {
+			runtime = append(runtime, chatID)
+		}
+	}
+	return runtime
 }
 
 func sameFeishuBinding(left, right FeishuRuntimeState) bool {

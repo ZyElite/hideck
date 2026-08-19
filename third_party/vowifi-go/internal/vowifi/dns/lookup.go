@@ -29,6 +29,10 @@ func newServerResolver(bindIP, server net.IP) queryResolver {
 
 func newServerResolverAt(bindIP, server net.IP, port string) queryResolver {
 	address := net.JoinHostPort(server.String(), port)
+	return newServerResolverForAddress(bindIP, address)
+}
+
+func newServerResolverForAddress(bindIP net.IP, address string) queryResolver {
 	dialer := &net.Dialer{}
 	if bindIP != nil {
 		dialer.LocalAddr = &net.UDPAddr{IP: bindIP}

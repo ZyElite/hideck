@@ -31,15 +31,17 @@ func TestTrustedFeishuBindingFromMergesVerifiedRuntimeChats(t *testing.T) {
 	}
 }
 
-func TestApplyFeishuDirectBindingAppendsOntoTrustedSet(t *testing.T) {
+func TestApplyFeishuDirectBindingPersistsOnlyRuntimeChats(t *testing.T) {
 	cfg := config.FeishuConfig{ChatIDs: []string{"oc_configured"}}
 	got := ApplyFeishuDirectBinding(cfg, FeishuRuntimeState{
-		ChatIDs: []string{"oc_unverified"},
+		ChatIDs:         []string{"oc_configured", "oc_runtime"},
+		AllowedUsers:    []string{"ou_existing"},
+		BindingVerified: true,
 	}, "oc_owner", "ou_owner")
-	if !reflect.DeepEqual(got.ChatIDs, []string{"oc_configured", "oc_owner"}) {
+	if !reflect.DeepEqual(got.ChatIDs, []string{"oc_runtime", "oc_owner"}) {
 		t.Fatalf("bound chats = %#v", got.ChatIDs)
 	}
-	if !reflect.DeepEqual(got.AllowedUsers, []string{"ou_owner"}) || !got.BindingVerified {
+	if !reflect.DeepEqual(got.AllowedUsers, []string{"ou_existing", "ou_owner"}) || !got.BindingVerified {
 		t.Fatalf("bound state = %+v", got)
 	}
 }
@@ -49,10 +51,13 @@ func TestApplyFeishuQRUserBindingDropsUnverifiedChats(t *testing.T) {
 	got := ApplyFeishuQRUserBinding(cfg, FeishuRuntimeState{
 		ChatIDs: []string{"oc_unverified"},
 	}, "ou_owner")
-	if !reflect.DeepEqual(got.ChatIDs, []string{"oc_configured"}) {
+	if len(got.ChatIDs) != 0 {
 		t.Fatalf("qr chats = %#v", got.ChatIDs)
 	}
 	if !reflect.DeepEqual(got.AllowedUsers, []string{"ou_owner"}) || !got.BindingVerified {
 		t.Fatalf("qr state = %+v", got)
+	}
+	if reloaded := TrustedFeishuBindingFrom(config.FeishuConfig{}, got); len(reloaded.ChatIDs) != 0 {
+		t.Fatalf("removed configured chat was restored: %#v", reloaded.ChatIDs)
 	}
 }

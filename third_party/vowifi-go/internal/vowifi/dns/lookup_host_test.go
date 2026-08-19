@@ -16,6 +16,29 @@ func TestLookupHostIPStagedRejectsInvalidConfiguredServer(t *testing.T) {
 	}
 }
 
+func TestLookupHostIPStagedAcceptsConfiguredHostnameEndpoint(t *testing.T) {
+	ClearHostIPCache()
+	t.Cleanup(ClearHostIPCache)
+	got, err := lookupHostIPStaged(context.Background(), "epdg.test", "dns.google:53", hostLookupFuncs{
+		viaServer: func(_ context.Context, _ string, server string) ([]net.IP, error) {
+			if server != "dns.google:53" {
+				t.Fatalf("server = %q", server)
+			}
+			return []net.IP{net.IPv4(192, 0, 2, 41)}, nil
+		},
+		viaSystem: func(context.Context, string) ([]net.IP, error) {
+			t.Fatal("system resolver should not run after configured success")
+			return nil, errors.New("unused")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ipStrings(got), []string{"192.0.2.41"}) {
+		t.Fatalf("ips = %v", ipStrings(got))
+	}
+}
+
 func TestLookupHostIPStagedPrefersLiveLookupOverCache(t *testing.T) {
 	ClearHostIPCache()
 	t.Cleanup(ClearHostIPCache)

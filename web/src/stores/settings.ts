@@ -240,7 +240,7 @@ export const useSettingsStore = defineStore('settings', () => {
     if (!options.silent) {
       loadingNotifications.value = true
     }
-    const result = await getNotificationSnapshot()
+    const result = await getNotificationSnapshot(true)
     if (result.ok) {
       notifications.value = result.data || {}
       const tg = result.data.telegram || {}
@@ -353,7 +353,8 @@ export const useSettingsStore = defineStore('settings', () => {
     return result
   }
 
-  async function getNotificationSnapshot() {
+  async function getNotificationSnapshot(fresh = false) {
+    if (fresh) return systemService.getNotifications()
     if (!notificationSnapshotRequest) {
       notificationSnapshotRequest = systemService.getNotifications()
     }
@@ -405,15 +406,11 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  function mergeNotificationBinding(channel: NotificationBindingChannel, data: NotificationsSettingsResponse) {
-    notificationBindingHandlers[channel].merge(data)
-  }
-
   async function refreshNotificationSnapshot(
     channel: NotificationBindingChannel,
     mode: 'replace' | 'merge'
   ) {
-    const result = await getNotificationSnapshot()
+    const result = await getNotificationSnapshot(mode === 'replace')
     if (result.ok) {
       notificationBindingHandlers[channel][mode](result.data)
       error.value = null

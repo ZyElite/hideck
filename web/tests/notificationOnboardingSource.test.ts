@@ -65,12 +65,17 @@ test('WeCom QR reminds the user to message the bot after scan', () => {
   assert.match(qrPanel, /shouldShowQRActivateHint\(props\.session, props\.connected\)/)
 })
 
-test('binding polling merges only target IDs and coalesces overlapping requests', () => {
+test('binding polling coalesces snapshots while full refresh starts a fresh request', () => {
   assert.match(settingsStore, /notificationSnapshotRequest/)
-  assert.match(settingsStore, /mergeNotificationBinding/)
+  assert.match(settingsStore, /notificationBindingHandlers\[channel\]\[mode\]/)
   assert.match(settingsStore, /mergeIDs\(feishuForm\.value\.chat_ids/)
   assert.doesNotMatch(bindingPolling, /fetchNotifications/)
-  assert.equal(settingsStore.match(/systemService\.getNotifications\(\)/g)?.length, 1)
+  assert.match(
+    settingsStore,
+    /async function fetchNotifications[\s\S]*?const result = await getNotificationSnapshot\(true\)/
+  )
+  assert.match(settingsStore, /getNotificationSnapshot\(mode === 'replace'\)/)
+  assert.equal(settingsStore.match(/systemService\.getNotifications\(\)/g)?.length, 2)
 })
 
 test('QR panel renders a stable code and accessible status and actions', () => {
