@@ -418,7 +418,7 @@ func (m *Manager) handleCmdSMSInbox(cmdCtx CommandContext, args []string) string
 			peer = sms.Recipient
 		}
 
-		timeStr := sms.Timestamp.Format("2006-01-02 15:04:05")
+		timeStr := m.formatNotificationTime(sms.Timestamp)
 		sb.WriteString(fmt.Sprintf("%d. %s / %s\n", i+1, direction, peer))
 		sb.WriteString(fmt.Sprintf("内容  %s\n", sms.Content))
 		sb.WriteString(fmt.Sprintf("时间  %s\n\n", timeStr))

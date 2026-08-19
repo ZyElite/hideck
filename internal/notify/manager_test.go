@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -188,7 +189,7 @@ func TestManagerNotifyEventsToWebhookWithTemplate(t *testing.T) {
 		t.Fatalf("NewWebhookChannel() error = %v", err)
 	}
 
-	m := &Manager{channels: []Channel{wh}}
+	m := &Manager{channels: []Channel{wh}, notificationLocation: time.UTC}
 
 	ts := time.Date(2026, 4, 13, 12, 0, 0, 0, time.UTC)
 	m.NotifySMS("wwan0", "+8613800000000", "hello", ts)
@@ -493,7 +494,7 @@ func TestManagerNotifySMSLogsBroadcastSummary(t *testing.T) {
 
 func TestManagerNotifySMSWithSourceUsesProvidedSourceLabel(t *testing.T) {
 	capture := &captureChannel{}
-	m := &Manager{channels: []Channel{capture}}
+	m := &Manager{channels: []Channel{capture}, notificationLocation: time.UTC}
 	notifier, ok := any(m).(interface {
 		NotifySMSWithSource(deviceID, sender, content, source string, timestamp time.Time)
 	})
@@ -511,6 +512,24 @@ func TestManagerNotifySMSWithSourceUsesProvidedSourceLabel(t *testing.T) {
 	}
 	if got := capture.LastContext().Event; got != "sms_received" {
 		t.Fatalf("event=%q, want sms_received", got)
+	}
+}
+
+func TestManagerNotifySMSConvertsNetworkTimeToNotificationLocation(t *testing.T) {
+	capture := &captureChannel{}
+	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
+	londonSummer := time.FixedZone("Europe/London", 60*60)
+	m := &Manager{channels: []Channel{capture}, notificationLocation: shanghai}
+	timestamp := time.Date(2026, 8, 19, 9, 25, 36, 0, londonSummer)
+
+	m.NotifySMSWithSource("wwan1", "888", "verification code", "VoWiFi", timestamp)
+
+	waitUntil(t, time.Second, func() bool { return capture.Last() != "" })
+	if !strings.Contains(capture.Last(), "时间  2026-08-19 16:25:36") {
+		t.Fatalf("notification time was not converted: %q", capture.Last())
+	}
+	if got := capture.LastContext().Timestamp; !got.Equal(timestamp) || got.Location() != londonSummer {
+		t.Fatalf("structured timestamp changed: %v", got)
 	}
 }
 

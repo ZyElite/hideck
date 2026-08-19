@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/yibaiba/hideck/internal/config"
+	"github.com/yibaiba/hideck/pkg/logger"
 )
 
 const (
@@ -108,6 +109,7 @@ func (w *WeixinChannel) Start() error {
 	w.cancel, w.done = cancel, done
 	w.runMu.Unlock()
 	defer close(done)
+	w.notifyStarted(ctx)
 	return w.pollLoop(ctx)
 }
 
@@ -121,6 +123,29 @@ func (w *WeixinChannel) Close() error {
 	}
 	cancel()
 	<-done
+	return w.notifyStopped()
+}
+
+func (w *WeixinChannel) notifyStarted(ctx context.Context) {
+	lifecycleCtx, cancel := context.WithTimeout(ctx, weixinLifecycleTimeout)
+	defer cancel()
+	state := w.snapshotState()
+	if err := w.client.notifyStart(lifecycleCtx, weixinCredentials(state)); err != nil {
+		logger.Warn("个人微信在线状态登记失败", "action", "start", "err", err)
+		return
+	}
+	logger.Info("个人微信在线状态已登记")
+}
+
+func (w *WeixinChannel) notifyStopped() error {
+	lifecycleCtx, cancel := context.WithTimeout(context.Background(), weixinLifecycleTimeout)
+	defer cancel()
+	state := w.snapshotState()
+	if err := w.client.notifyStop(lifecycleCtx, weixinCredentials(state)); err != nil {
+		logger.Warn("个人微信在线状态登记失败", "action", "stop", "err", err)
+		return err
+	}
+	logger.Info("个人微信离线状态已登记")
 	return nil
 }
 

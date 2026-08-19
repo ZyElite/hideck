@@ -13,12 +13,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	weixinChannelVersion   = "2.4.3"
 	weixinLongPollTimeout  = 25_000
 	weixinAppClientVersion = "132099"
+	weixinLifecycleTimeout = 10 * time.Second
 	weixinMessageUser      = 1
 	weixinMessageBot       = 2
 	weixinMessageFinished  = 2
@@ -98,6 +100,31 @@ func (c *weixinMessageClient) getUpdates(ctx context.Context, credentials Weixin
 		}, Target: &response,
 	})
 	return response, err
+}
+
+func (c *weixinMessageClient) notifyStart(ctx context.Context, credentials WeixinQRCredentials) error {
+	return c.notifyLifecycle(ctx, credentials, "notifystart")
+}
+
+func (c *weixinMessageClient) notifyStop(ctx context.Context, credentials WeixinQRCredentials) error {
+	return c.notifyLifecycle(ctx, credentials, "notifystop")
+}
+
+func (c *weixinMessageClient) notifyLifecycle(
+	ctx context.Context, credentials WeixinQRCredentials, action string,
+) error {
+	var response weixinAPIResponse
+	endpoint := "/ilink/bot/msg/" + action
+	if err := c.post(ctx, weixinPostRequest{
+		Credentials: credentials, Endpoint: endpoint,
+		Payload: map[string]any{}, Target: &response,
+	}); err != nil {
+		return err
+	}
+	if response.Ret != 0 || response.ErrCode != 0 {
+		return fmt.Errorf("iLink %s 失败: ret=%d errcode=%d errmsg=%s", action, response.Ret, response.ErrCode, response.ErrMsg)
+	}
+	return nil
 }
 
 func (c *weixinMessageClient) sendText(ctx context.Context, input weixinSendTextRequest) error {

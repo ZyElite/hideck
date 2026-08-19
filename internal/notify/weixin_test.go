@@ -18,8 +18,12 @@ func TestWeixinChannelBindsFirstDirectMessageAndExecutesHelp(t *testing.T) {
 	var mu sync.Mutex
 	updateCalls := 0
 	sentBodies := make(chan map[string]any, 2)
+	lifecycleCalls := make(chan string, 2)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/ilink/bot/msg/notifystart", "/ilink/bot/msg/notifystop":
+			lifecycleCalls <- r.URL.Path
+			_, _ = w.Write([]byte(`{"ret":0,"errcode":0}`))
 		case "/ilink/bot/getupdates":
 			mu.Lock()
 			updateCalls++
@@ -83,6 +87,12 @@ func TestWeixinChannelBindsFirstDirectMessageAndExecutesHelp(t *testing.T) {
 	}
 	if err := <-startResult; err != nil {
 		t.Fatalf("Start() error = %v", err)
+	}
+	if got := <-lifecycleCalls; got != "/ilink/bot/msg/notifystart" {
+		t.Fatalf("first lifecycle call = %q", got)
+	}
+	if got := <-lifecycleCalls; got != "/ilink/bot/msg/notifystop" {
+		t.Fatalf("second lifecycle call = %q", got)
 	}
 	message := sent["msg"].(map[string]any)
 	if message["to_user_id"] != "user-1" || message["context_token"] != "context-1" {
@@ -173,6 +183,10 @@ func TestWeixinAllowedDirectMessageSetsMissingDefaultTarget(t *testing.T) {
 func TestWeixinChannelUsesPersistedCursorAfterRestart(t *testing.T) {
 	cursorSeen := make(chan string, 1)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ilink/bot/msg/notifystart" || r.URL.Path == "/ilink/bot/msg/notifystop" {
+			_, _ = w.Write([]byte(`{"ret":0,"errcode":0}`))
+			return
+		}
 		var body struct {
 			Cursor string `json:"get_updates_buf"`
 		}

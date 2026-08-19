@@ -27,12 +27,14 @@ type Manager struct {
 	commandExecutor         ChannelCommandExecutor
 	commandReceiversStarted bool
 	confirmRegistry         *confirmRegistry
+	notificationLocation    *time.Location
 }
 
 type ManagerOptions struct {
 	StateStore                RuntimeStateStore
 	QQChannelFactory          func(config.QQConfig) (Channel, error)
 	DeferCommandReceiverStart bool
+	NotificationLocation      *time.Location
 }
 
 type NotificationContext struct {
@@ -75,6 +77,7 @@ func NewManagerWithOptions(cfg *config.Config, pool *device.Pool, options Manage
 		stateStore:              options.StateStore,
 		qqChannelFactory:        options.QQChannelFactory,
 		commandReceiversStarted: !options.DeferCommandReceiverStart,
+		notificationLocation:    options.NotificationLocation,
 	}
 	m.commandService = m.newCommandService()
 
@@ -169,7 +172,7 @@ func (m *Manager) NotifySMSWithSource(deviceID, sender, content, source string, 
 		source = "蜂窝"
 	}
 	msg := fmt.Sprintf("收到新短信 / %s\n设备  %s\n号码  %s\n时间  %s\n内容  %s",
-		source, deviceID, sender, timestamp.Format("2006-01-02 15:04:05"), content)
+		source, deviceID, sender, m.formatNotificationTime(timestamp), content)
 
 	logger.Info("开始发送短信通知",
 		"event", "sms_received",
@@ -186,6 +189,14 @@ func (m *Manager) NotifySMSWithSource(deviceID, sender, content, source string, 
 		Content:    content,
 		Timestamp:  timestamp,
 	})
+}
+
+func (m *Manager) formatNotificationTime(timestamp time.Time) string {
+	location := time.Local
+	if m != nil && m.notificationLocation != nil {
+		location = m.notificationLocation
+	}
+	return timestamp.In(location).Format("2006-01-02 15:04:05")
 }
 
 // NotifyRaw 发送原始文本通知到所有渠道
