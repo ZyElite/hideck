@@ -119,6 +119,9 @@ func (c *weComCommandContext) respond(ctx context.Context, reply weComCommandRep
 	if err := c.channel.sendText(ctx, c.target, c.requestID, text); err != nil {
 		return err
 	}
+	// /vocall is async: the first reply consumes aibot_respond_msg.
+	// Later recordings must use aibot_send_msg with a new request id.
+	c.requestID = ""
 	return nil
 }
 

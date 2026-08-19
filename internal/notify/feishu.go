@@ -37,11 +37,13 @@ func (l *feishuLogger) Error(ctx context.Context, args ...interface{}) {
 // FeishuChannel 实现 Channel 接口的飞书通知渠道
 // 使用飞书开放平台 Bot + WebSocket 长连接
 type FeishuChannel struct {
-	client   *lark.Client
-	wsClient *larkws.Client
-	chatIDs  []string
-	handlers map[string]CommandHandler
-	cfg      config.FeishuConfig
+	client    *lark.Client
+	wsClient  *larkws.Client
+	chatIDs   []string
+	handlers  map[string]CommandHandler
+	cfg       config.FeishuConfig
+	replyText func(msg *larkim.EventMessage, text string)
+	media     feishuMediaAPI
 }
 
 // NewFeishuChannel 根据配置创建飞书渠道
@@ -89,6 +91,7 @@ func NewFeishuChannel(cfg config.FeishuConfig) (*FeishuChannel, error) {
 		chatIDs:  chatIDs,
 		handlers: make(map[string]CommandHandler),
 		cfg:      cfg,
+		media:    feishuSDKMedia{client: client},
 	}, nil
 }
 
@@ -181,6 +184,13 @@ func (c *feishuCommandContext) Reply(text string) {
 	c.channel.replyToMessage(c.msg, text)
 }
 
+func (c *feishuCommandContext) ReplyWithAttachments(text string, attachments []CommandAttachment) {
+	if c == nil || c.channel == nil {
+		return
+	}
+	c.channel.deliverCommandResult(c.msg, text, attachments)
+}
+
 func (c *feishuCommandContext) Confirm(prompt string) bool {
 	// Feishu supports interactive replies. When UserKey is available,
 	// confirmation is handled via confirmRegistry. This method is only
@@ -252,7 +262,14 @@ func (f *FeishuChannel) handleMessageEvent(event *larkim.P2MessageReceiveV1) {
 
 // replyToMessage 回复飞书消息（使用 reply API）
 func (f *FeishuChannel) replyToMessage(msg *larkim.EventMessage, text string) {
-	if msg.MessageId == nil {
+	if f != nil && f.replyText != nil {
+		f.replyText(msg, text)
+		return
+	}
+	if f == nil || f.client == nil {
+		return
+	}
+	if msg == nil || msg.MessageId == nil {
 		// 无法 reply 则直接发到群聊
 		f.Send(text)
 		return

@@ -693,24 +693,45 @@ func replyVoiceCallCompletion(cmdCtx CommandContext, message string, result *voi
 }
 
 func voiceRecordingAttachment(result *voicehost.SimulateCallResult) (CommandAttachment, bool) {
-	if result == nil || !strings.EqualFold(strings.TrimSpace(result.AudioCodec), "MP3") {
+	if result == nil {
 		return CommandAttachment{}, false
 	}
 	path := strings.TrimSpace(result.AudioPath)
+	codec := strings.TrimSpace(result.AudioCodec)
 	name := filepath.Base(path)
-	if name == "." || !strings.EqualFold(filepath.Ext(name), ".mp3") {
+	sourcePath := strings.TrimSpace(result.SourceAudioPath)
+	sourceCodec := strings.TrimSpace(result.SourceAudioCodec)
+	if strings.EqualFold(codec, "MP3") && name != "." && strings.EqualFold(filepath.Ext(name), ".mp3") {
+		var size int64
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+			size = info.Size()
+		}
+		return CommandAttachment{
+			Type: "audio", Recording: name, ContentType: "audio/mpeg",
+			Path: path, Codec: codec, Size: size,
+			SourcePath: sourcePath, SourceCodec: sourceCodec,
+		}, true
+	}
+	if sourcePath == "" {
+		sourcePath, sourceCodec = path, codec
+	}
+	if sourcePath == "" || !voiceRecordingIsAMR(sourceCodec) {
 		return CommandAttachment{}, false
 	}
-	var size int64
-	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
-		size = info.Size()
+	info, err := os.Stat(sourcePath)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 {
+		return CommandAttachment{}, false
 	}
-	sourcePath := strings.TrimSpace(result.SourceAudioPath)
 	return CommandAttachment{
-		Type: "audio", Recording: name, ContentType: "audio/mpeg",
-		Path: path, Codec: strings.TrimSpace(result.AudioCodec), Size: size,
-		SourcePath: sourcePath, SourceCodec: strings.TrimSpace(result.SourceAudioCodec),
+		Type: "audio", Recording: filepath.Base(sourcePath), ContentType: "audio/amr",
+		Path: sourcePath, Codec: sourceCodec, Size: info.Size(),
+		SourcePath: sourcePath, SourceCodec: sourceCodec,
 	}, true
+}
+
+func voiceRecordingIsAMR(codec string) bool {
+	codec = strings.ToUpper(strings.TrimSpace(codec))
+	return codec == "AMR" || codec == "AMR-NB" || codec == "AMR-WB"
 }
 
 // handleCmdCellCall 处理 /cellcall 命令，用于发起蜂窝数据模拟呼叫

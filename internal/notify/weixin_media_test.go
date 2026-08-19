@@ -197,6 +197,32 @@ func TestVoiceRecordingAttachmentCarriesPrivatePathAndMetadata(t *testing.T) {
 	}
 }
 
+func TestVoiceCallRecordingChannelsDoNotReuseOneShotRespond(t *testing.T) {
+	if _, ok := any(&tgCommandContext{}).(commandAttachmentContext); !ok {
+		t.Fatal("telegram must send vocall recordings as new messages")
+	}
+	if _, ok := any(&weixinCommandContext{}).(commandAttachmentContext); !ok {
+		t.Fatal("personal weixin must send vocall recordings as new messages")
+	}
+	if _, ok := any(&weComCommandContext{}).(commandAttachmentContext); !ok {
+		t.Fatal("wecom must send vocall recordings")
+	}
+}
+
+func TestVoiceRecordingAttachmentFallsBackToAMRWhenMP3Missing(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "call_test.amr")
+	if err := os.WriteFile(sourcePath, []byte("#!AMR\nvoice"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	attachment, ok := voiceRecordingAttachment(&voicehost.SimulateCallResult{
+		AudioPath: sourcePath, AudioCodec: "AMR",
+	})
+	if !ok || attachment.Path != sourcePath || attachment.SourcePath != sourcePath ||
+		attachment.Codec != "AMR" || attachment.SourceCodec != "AMR" {
+		t.Fatalf("attachment = %+v, ok = %v", attachment, ok)
+	}
+}
+
 func decryptECBForTest(t *testing.T, ciphertext, key []byte) []byte {
 	t.Helper()
 	block, err := aes.NewCipher(key)

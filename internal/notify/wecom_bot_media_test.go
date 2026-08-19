@@ -150,6 +150,54 @@ func TestWeComBotCommandAttachmentUploadsExactChunksAndRepliesWithFile(t *testin
 	}
 }
 
+func TestWeComAsyncVocallRecordingUsesSendAfterFirstReply(t *testing.T) {
+	replies := make(chan map[string]any, 4)
+	provider := newWeComWebSocketServer(t, func(conn *websocket.Conn, _ int) {
+		authenticateWeComTestConnection(t, conn)
+		for {
+			frame, err := readWeComTestFrame(conn)
+			if err != nil {
+				return
+			}
+			switch frameCommand(frame) {
+			case weComCommandUploadInit:
+				respondWeComTestFrame(t, conn, frame, map[string]any{"upload_id": "upload-1"}, 0, "")
+			case weComCommandUploadChunk:
+				ackWeComTestFrame(t, conn, frame)
+			case weComCommandUploadFinish:
+				respondWeComTestFrame(t, conn, frame, map[string]any{"media_id": "media-1", "type": "file"}, 0, "")
+			case weComCommandRespond, weComCommandSend:
+				replies <- frame
+				ackWeComTestFrame(t, conn, frame)
+			}
+		}
+	})
+	defer provider.Close()
+	path := writeWeComMediaTestFile(t, t.TempDir(), "recording.mp3", []byte("ID3-audio"))
+	channel := newWeComBotTestChannel(t, provider, NewFileRuntimeStateStore(filepath.Join(t.TempDir(), "state.json")), nil)
+	startDone := startWeComBotTestChannel(channel)
+	waitUntil(t, time.Second, func() bool { return channel.currentConnection() != nil })
+	commandContext := &weComCommandContext{channel: channel, target: "direct-1", requestID: "callback-1"}
+	if err := commandContext.respond(context.Background(), weComCommandReply{text: "已受理"}); err != nil {
+		t.Fatal(err)
+	}
+	commandContext.release()
+	commandContext.ReplyWithAttachments("呼叫完成", []CommandAttachment{{Path: path, Codec: "MP3"}})
+	first := receiveWeComTestFrame(t, replies)
+	media := receiveWeComTestFrame(t, replies)
+	text := receiveWeComTestFrame(t, replies)
+	closeWeComBotTestChannel(t, channel, startDone)
+	if frameCommand(first) != weComCommandRespond || frameRequestID(first) != "callback-1" {
+		t.Fatalf("first reply = %#v", first)
+	}
+	if frameCommand(media) != weComCommandSend || frameChatID(media) != "direct-1" || frameBody(media)["msgtype"] != "file" {
+		t.Fatalf("media reply = %#v", media)
+	}
+	if frameCommand(text) != weComCommandSend || frameChatID(text) != "direct-1" {
+		t.Fatalf("text reply = %#v", text)
+	}
+}
+
 func TestWeComBotCommandMediaRejectionDoesNotSendCompletionText(t *testing.T) {
 	replies := make(chan map[string]any, 2)
 	provider := newWeComWebSocketServer(t, func(conn *websocket.Conn, _ int) {
