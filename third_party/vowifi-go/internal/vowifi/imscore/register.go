@@ -426,6 +426,7 @@ func (s *Service) exchangeRegister(ctx context.Context, session *registerSession
 		"device", s.DeviceID(), "cseq", session.cseq, "status", response.StatusCode,
 		"security_server", response.Header("Security-Server") != "",
 		"digest_challenge", isDigestChallengeResponse(response))
+	s.logRegisterFlowNegotiation(response)
 	s.recordRegisterResponse(response)
 	return response, nil
 }

@@ -2,6 +2,8 @@ package policy
 
 import "github.com/iniwex5/vowifi-go/internal/vowifi/common"
 
+const cteUKPLMNKey = "234033"
+
 func plmnKey(mcc, mnc string) string { return common.Plmn3(mcc) + common.Plmn3(mnc) }
 
 func resolveMergedCarrierPreset(mcc, mnc string) (CarrierPreset, bool) {
@@ -14,6 +16,7 @@ func resolveCarrierPreset(mcc, mnc string, candidate *CarrierOverride) (CarrierP
 	preset, found := embeddedCarrierPresets[key]
 	if found {
 		preset = cloneCarrierPreset(preset)
+		preset = applyBuiltInCarrierExtensions(key, preset)
 	} else {
 		preset = CarrierPreset{MCC: common.Plmn3(mcc), MNC: common.Plmn3(mnc)}
 	}
@@ -32,6 +35,19 @@ func resolveCarrierPreset(mcc, mnc string, candidate *CarrierOverride) (CarrierP
 	}
 	preset.MCC, preset.MNC = common.Plmn3(mcc), common.Plmn3(mnc)
 	return preset, found, external
+}
+
+func applyBuiltInCarrierExtensions(key string, preset CarrierPreset) CarrierPreset {
+	if key != cteUKPLMNKey {
+		return preset
+	}
+	preset.IMSRegisterTemplate.SupportedHeader = "path,sec-agree,outbound"
+	contactOrder := []string{
+		"access_type", "sip_instance", "reg_id", "audio", "smsip", "icsi_ref",
+	}
+	preset.IMSRegisterTemplate.ContactParamOrder = cloneStrings(contactOrder)
+	preset.IMSRegisterTemplate.ContactOrder = cloneStrings(contactOrder)
+	return preset
 }
 
 func ResolveEffectiveCarrierConfig(mcc, mnc string) EffectiveCarrierConfig {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
@@ -16,10 +17,12 @@ import (
 )
 
 const (
-	imsTCPMSS        = 1100
-	imsIPv4LinkMTU   = imsTCPMSS + header.IPv4MinimumSize + header.TCPMinimumSize
-	imsIPv6LinkMTU   = header.IPv6MinimumMTU
-	tcpListenBacklog = 4096
+	imsTCPMSS             = 1100
+	imsIPv4LinkMTU        = imsTCPMSS + header.IPv4MinimumSize + header.TCPMinimumSize
+	imsIPv6LinkMTU        = header.IPv6MinimumMTU
+	tcpListenBacklog      = 4096
+	imsTCPKeepalivePeriod = 30 * time.Second
+	imsTCPKeepaliveProbes = 3
 )
 
 type tcpDialConfig struct {
@@ -50,6 +53,10 @@ func dialTCPWithMSS(ctx context.Context, networkStack *stack.Stack, cfg tcpDialC
 		endpoint.Close()
 		return nil, fmt.Errorf("set IMS TCP MSS: %s", err)
 	}
+	if err := configureIMSTCPKeepalive(endpoint); err != nil {
+		endpoint.Close()
+		return nil, err
+	}
 	if cfg.local != (tcpip.FullAddress{}) {
 		if err := endpoint.Bind(cfg.local); err != nil {
 			endpoint.Close()
@@ -61,6 +68,22 @@ func dialTCPWithMSS(ctx context.Context, networkStack *stack.Stack, cfg tcpDialC
 		return nil, err
 	}
 	return gonet.NewTCPConn(&queue, endpoint), nil
+}
+
+func configureIMSTCPKeepalive(endpoint tcpip.Endpoint) error {
+	endpoint.SocketOptions().SetKeepAlive(true)
+	idle := tcpip.KeepaliveIdleOption(imsTCPKeepalivePeriod)
+	if err := endpoint.SetSockOpt(&idle); err != nil {
+		return fmt.Errorf("set IMS TCP keepalive idle: %s", err)
+	}
+	interval := tcpip.KeepaliveIntervalOption(imsTCPKeepalivePeriod)
+	if err := endpoint.SetSockOpt(&interval); err != nil {
+		return fmt.Errorf("set IMS TCP keepalive interval: %s", err)
+	}
+	if err := endpoint.SetSockOptInt(tcpip.KeepaliveCountOption, imsTCPKeepaliveProbes); err != nil {
+		return fmt.Errorf("set IMS TCP keepalive probes: %s", err)
+	}
+	return nil
 }
 
 func connectTCPEndpoint(ctx context.Context, endpoint tcpip.Endpoint, queue *waiter.Queue, remote tcpip.FullAddress) error {

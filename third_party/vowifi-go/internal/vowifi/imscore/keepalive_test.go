@@ -166,6 +166,22 @@ func TestIMSMaintenancePrioritizesDueSubscriptionBeforeKeepalive(t *testing.T) {
 	}
 }
 
+func TestProtectedTCPMaintenanceKeepsSIPOptionsEnabled(t *testing.T) {
+	service := newProtectedKeepaliveTestService(t)
+	client, server := net.Pipe()
+	service.activateProtectedRegistrationTCP(client)
+	t.Cleanup(func() { _ = server.Close() })
+
+	now := time.Now()
+	service.mu.Lock()
+	service.registrationRefreshAt = now.Add(time.Hour)
+	service.subscriptionRefreshAt = now.Add(time.Hour)
+	service.mu.Unlock()
+	if action := service.nextIMSMaintenanceAction(now.Add(service.keepaliveInterval)); action != imsMaintenanceKeepalive {
+		t.Fatalf("protected TCP maintenance action = %d, want keepalive", action)
+	}
+}
+
 func TestInboundSIPTrafficDefersKeepaliveAndResetsFailures(t *testing.T) {
 	service := newProtectedKeepaliveTestService(t)
 	service.mu.Lock()

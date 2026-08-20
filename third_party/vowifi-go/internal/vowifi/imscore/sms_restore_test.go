@@ -170,7 +170,7 @@ func TestFragmentStateCompletesOutOfOrderAndAuditsCollision(t *testing.T) {
 	}
 }
 
-func TestRPReportDirectWriteSurfacesTransportFailure(t *testing.T) {
+func TestRPReportTransactionSurfacesTransportFailure(t *testing.T) {
 	service, _, _ := newInboundSMSTestService(t)
 	attempts := 0
 	service.transport.SetSendFn(func(string) error {
@@ -186,7 +186,7 @@ func TestRPReportDirectWriteSurfacesTransportFailure(t *testing.T) {
 	}
 }
 
-func TestRPReportUsesOriginalStatelessWrite(t *testing.T) {
+func TestRPReportWaitsForFinalResponse(t *testing.T) {
 	service, _, _ := newInboundSMSTestService(t)
 	outbound := make(chan string, 1)
 	service.transport.SetSendFn(func(raw string) error {
@@ -194,13 +194,22 @@ func TestRPReportUsesOriginalStatelessWrite(t *testing.T) {
 		return nil
 	})
 	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 0x32, "+447700900123", "ack"))
-	err := service.sendRPReport(rpReportRequest{
-		Inbound: raw, Body: smscodec.BuildRPAck(0x32), RPMR: 0x32, Fingerprint: "fingerprint",
-	})
-	if err != nil {
+	result := make(chan error, 1)
+	go func() {
+		result <- service.sendRPReport(rpReportRequest{
+			Inbound: raw, Body: smscodec.BuildRPAck(0x32), RPMR: 0x32, Fingerprint: "fingerprint",
+		})
+	}()
+	request := waitForOutboundSMSControl(t, outbound)
+	select {
+	case err := <-result:
+		t.Fatalf("RP report completed before final response: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	service.transport.DeliverResponse(registerResponseForRequest(request, 202, nil))
+	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
-	request := waitForOutboundSMSControl(t, outbound)
 	if body, err := rawSIPBody(request); err != nil || string(body) != string(smscodec.BuildRPAck(0x32)) {
 		t.Fatalf("RP-ACK body = %x, err = %v", body, err)
 	}
@@ -212,14 +221,16 @@ func TestRPReportUsesOriginalStatelessWrite(t *testing.T) {
 	}
 }
 
-func TestRPReportUsesOriginalRetrySchedule(t *testing.T) {
+func TestRPReportRetriesRejectedFinalResponses(t *testing.T) {
 	service, _, _ := newInboundSMSTestService(t)
 	attempts := 0
 	service.transport.SetSendFn(func(raw string) error {
 		attempts++
-		if attempts < rpReportMaxAttempts {
-			return syscall.EAGAIN
+		status := 488
+		if attempts == rpReportMaxAttempts {
+			status = 202
 		}
+		service.transport.DeliverResponse(registerResponseForRequest(raw, status, nil))
 		return nil
 	})
 	raw := inboundSMSRequest(t, imsSMSContentType, inboundRPData(t, 0x33, "+447700900123", "ack"))
@@ -231,6 +242,34 @@ func TestRPReportUsesOriginalRetrySchedule(t *testing.T) {
 	}
 	if service.mtAckSendOK.Load() != 1 || service.mtAckSendErr.Load() != rpReportMaxAttempts-1 {
 		t.Fatalf("ok=%d err=%d", service.mtAckSendOK.Load(), service.mtAckSendErr.Load())
+	}
+}
+
+func TestRPReportTransactionError(t *testing.T) {
+	testErr := errors.New("dispatch failed")
+	tests := []struct {
+		name     string
+		status   int
+		dispatch error
+		wantErr  bool
+	}{
+		{name: "accepted", status: 202},
+		{name: "ok", status: 200},
+		{name: "missing response", wantErr: true},
+		{name: "rejected", status: 488, wantErr: true},
+		{name: "redirect", status: 302, wantErr: true},
+		{name: "dispatch failure", dispatch: testErr, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := rpReportTransactionError(test.status, test.dispatch)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("error = %v, wantErr %t", err, test.wantErr)
+			}
+			if test.dispatch != nil && !errors.Is(err, test.dispatch) {
+				t.Fatalf("error = %v, want dispatch error", err)
+			}
+		})
 	}
 }
 

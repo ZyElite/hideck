@@ -22,7 +22,7 @@ type inboundSMSProtocolTrace struct {
 	rpType, rpMR, rpCause, causeIEBytes                          int
 	causeDiagnostic                                              string
 	rpUserDataBytes, tpFCS                                       int
-	tpSubmitReport                                                bool
+	tpSubmitReport                                               bool
 }
 
 func (s *Service) smsProtocolTraceEnabled() bool {
@@ -198,6 +198,7 @@ func (s *Service) logRPReportProtocolTrace(
 	request *sip.Request,
 	modeCtx outboundModeContext,
 	report rpReportRequest,
+	status int,
 	sendErr error,
 ) {
 	if !s.smsProtocolTraceEnabled() || request == nil {
@@ -211,8 +212,8 @@ func (s *Service) logRPReportProtocolTrace(
 		"target_domain", strings.ToLower(strings.Trim(strings.TrimSpace(request.Recipient.Host), "[]")),
 		"destination_hash", smsTraceToken(destinationFromContext(modeCtx)),
 		"transport", strings.ToLower(strings.TrimSpace(modeCtx.Transport)),
-		"rp_mr", int(report.RPMR), "write_ok", sendErr == nil,
-		"write_error", traceErrorText(sendErr))
+		"rp_mr", int(report.RPMR), "sip_status", status,
+		"transaction_ok", sendErr == nil, "transaction_error", traceErrorText(sendErr))
 }
 
 func traceErrorText(err error) string {

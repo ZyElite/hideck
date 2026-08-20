@@ -292,9 +292,6 @@ func (s *Service) clearClosedRegistrationTCP(conn net.Conn, readErr error) {
 	}
 	err := fmt.Errorf("imscore: registration SIP stream closed: %w", readErr)
 	logging.WarnRate("ims-registration-stream", "IMS registration SIP stream closed", "err", err)
-	if s.startProtectedRegistrationRecovery(conn, err) {
-		return
-	}
 	_ = conn.Close()
 	stopped := s.stopped()
 	s.mu.Lock()

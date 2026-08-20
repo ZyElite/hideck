@@ -12,7 +12,7 @@ import (
 const maxIMSExpiresSeconds = int64(1<<63-1) / int64(time.Second)
 
 var knownContactParameters = map[string]struct{}{
-	"access_type": {}, "sip_instance": {}, "audio": {}, "smsip": {},
+	"access_type": {}, "sip_instance": {}, "reg_id": {}, "audio": {}, "smsip": {},
 	"icsi_ref": {}, "mid_call": {}, "srvcc_alerting": {},
 	"ps2cs_srvcc_orig_pre_alerting": {},
 }

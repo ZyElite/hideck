@@ -102,6 +102,15 @@ func TestResolveEmbeddedCarrierPresets(t *testing.T) {
 	if !reflect.DeepEqual(giffgaff.IKEProposals, []string{"aes256-sha512-prfsha512-modp2048"}) {
 		t.Fatalf("giffgaff IKE = %+v", giffgaff.IKEProposals)
 	}
+	cteUK := ResolveEffectiveCarrierConfig("234", "33")
+	if cteUK.PresetID != "CTEUK_23433" ||
+		cteUK.IMSRegisterTemplate.SupportedHeader != "path,sec-agree,outbound" ||
+		!reflect.DeepEqual(cteUK.IMSRegisterTemplate.ContactParamOrder[:3], []string{
+			"access_type", "sip_instance", "reg_id",
+		}) || !reflect.DeepEqual(cteUK.IMSRegisterTemplate.ContactOrder,
+			cteUK.IMSRegisterTemplate.ContactParamOrder) {
+		t.Fatalf("CTEUK outbound registration = %+v", cteUK.IMSRegisterTemplate)
+	}
 	vodafoneUK := ResolveEffectiveCarrierConfig("234", "15")
 	if vodafoneUK.PresetID != "vodafone_uk_23415" || vodafoneUK.DeviceModel != "rmx3366" ||
 		vodafoneUK.EPDGAddr != "epdg.epc.mnc015.mcc234.pub.3gppnetwork.org" ||

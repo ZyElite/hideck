@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"github.com/iniwex5/vowifi-go/internal/vowifi/ipsec3gpp"
+	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
+	"gvisor.dev/gvisor/pkg/waiter"
 )
 
 type channelPacketIO struct {
@@ -135,6 +138,36 @@ func TestIMSLinkMTUClampsIPv4TCPSegments(t *testing.T) {
 	}
 	if got := imsLinkMTU(ipv6.ProtocolNumber); got < header.IPv6MinimumMTU {
 		t.Fatalf("IPv6 IMS link MTU = %d, below IPv6 minimum", got)
+	}
+}
+
+func TestConfigureIMSTCPKeepalive(t *testing.T) {
+	networkStack := newStack()
+	defer networkStack.Close()
+	var queue waiter.Queue
+	endpoint, err := networkStack.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &queue)
+	if err != nil {
+		t.Fatalf("NewEndpoint: %s", err)
+	}
+	defer endpoint.Close()
+
+	if err := configureIMSTCPKeepalive(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if !endpoint.SocketOptions().GetKeepAlive() {
+		t.Fatal("IMS TCP keepalive was not enabled")
+	}
+	var idle tcpip.KeepaliveIdleOption
+	if err := endpoint.GetSockOpt(&idle); err != nil || time.Duration(idle) != imsTCPKeepalivePeriod {
+		t.Fatalf("keepalive idle = %s, err = %v", time.Duration(idle), err)
+	}
+	var interval tcpip.KeepaliveIntervalOption
+	if err := endpoint.GetSockOpt(&interval); err != nil || time.Duration(interval) != imsTCPKeepalivePeriod {
+		t.Fatalf("keepalive interval = %s, err = %v", time.Duration(interval), err)
+	}
+	probes, err := endpoint.GetSockOptInt(tcpip.KeepaliveCountOption)
+	if err != nil || probes != imsTCPKeepaliveProbes {
+		t.Fatalf("keepalive probes = %d, err = %v", probes, err)
 	}
 }
 

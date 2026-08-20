@@ -202,7 +202,6 @@ type Service struct {
 	subscriptionInFlight      atomic.Bool
 	notifyReconnectPending    atomic.Bool
 	bindingCleanupPending     atomic.Bool
-	registrationRecoveryBusy  atomic.Bool
 	keepaliveInterval         time.Duration
 	keepaliveTimeout          time.Duration
 	keepaliveFailureLimit     int

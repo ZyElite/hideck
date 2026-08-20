@@ -73,8 +73,9 @@ func (s *Service) sendRPReport(report rpReportRequest) error {
 		"transport", audit.transport, "call_id", audit.callID, "rp_mr", audit.rpMR)
 	ctx, cancel := context.WithTimeout(common.WithTraceID(context.Background(), traceID), inboundSMSAckTimeout)
 	defer cancel()
-	err = s.sendOutOfDialogRequest(ctx, modeCtx, request)
-	s.logRPReportProtocolTrace(request, modeCtx, report, err)
+	result, dispatchErr := s.dispatchOutboundMESSAGE(ctx, "mt-rp-ack", request, inboundSMSAckTimeout)
+	err = rpReportTransactionError(result.SIPCode, dispatchErr)
+	s.logRPReportProtocolTrace(request, modeCtx, report, result.SIPCode, err)
 	if err != nil {
 		s.mtAckSendErr.Add(1)
 		s.recordMTAckAudit(audit, err)
@@ -82,6 +83,20 @@ func (s *Service) sendRPReport(report rpReportRequest) error {
 	}
 	s.mtAckSendOK.Add(1)
 	s.recordMTAckAudit(audit, nil)
+	return nil
+}
+
+func rpReportTransactionError(status int, dispatchErr error) error {
+	if dispatchErr != nil {
+		return dispatchErr
+	}
+	if status < 1 {
+		return errors.New("imscore: RP report transaction completed without a final response")
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("imscore: RP report rejected with SIP status %d %s",
+			status, SIPStatusText(status))
+	}
 	return nil
 }
 
