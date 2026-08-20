@@ -610,6 +610,14 @@ onMounted(() => {
               </el-tab-pane>
 
               <el-tab-pane label="个人微信" name="weixin" class="pt-2">
+                <template #label>
+                  <span class="inline-flex items-center gap-2" aria-label="个人微信（会话型通知渠道）">
+                    <span>个人微信</span>
+                    <span class="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs font-semibold leading-none text-amber-700 dark:text-amber-300">
+                      会话型
+                    </span>
+                  </span>
+                </template>
                 <WeixinNotificationTab />
               </el-tab-pane>
 

@@ -19,6 +19,7 @@ const bindingPolling = source('../src/composables/useNotificationBindingPoll.ts'
 
 test('settings separates personal Weixin, WeCom Bot, WeCom Webhook, and QQ', () => {
   assert.match(settings, /label="个人微信"/)
+  assert.match(settings, /aria-label="个人微信（会话型通知渠道）"/)
   assert.match(settings, /label="企微机器人"/)
   assert.match(settings, /label="企微 Webhook"/)
   assert.match(settings, /label="QQ Bot"/)
@@ -44,8 +45,10 @@ test('Telegram recording delivery defaults to a voice bubble and remains configu
 })
 
 test('WeCom QR reminds the user to message the bot after scan', () => {
-  assert.match(weixinPanel, /activate-hint="请打开微信，给这个机器人发一条任意消息完成激活/)
-  assert.match(weixinPanel, /已绑定通知目标/)
+  assert.match(weixinPanel, /activate-hint="扫码后，记得在微信里给机器人发句话/)
+  assert.match(weixinPanel, /会话型通知渠道/)
+  assert.match(weixinPanel, /太久没互动时，微信可能会暂停推送/)
+  assert.match(weixinPanel, /通知会发给/)
   assert.match(weixinPanel, /useNotificationBindingPoll/)
   assert.match(weixinPanel, /refreshNotificationBinding\('weixin'\)/)
   assert.doesNotMatch(weixinPanel, /fetchNotifications\(\{ silent: true \}\)/)
