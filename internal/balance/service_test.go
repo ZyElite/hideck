@@ -91,6 +91,18 @@ func TestStartSMSQueryUsesOnlyVoWiFiAndBlocksSecondPending(t *testing.T) {
 	}
 }
 
+func TestSendSMSKeepsVoWiFiRouteDuringRuntimeRecovery(t *testing.T) {
+	gateway := &fakeGateway{}
+	service := NewService(gateway, nil, nil)
+	snapshot := DeviceSnapshot{DeviceID: "wwan0", RouteSMSViaVoWiFi: true}
+	if err := service.sendSMS(context.Background(), snapshot, smsTestRule()); err != nil {
+		t.Fatal(err)
+	}
+	if gateway.wifiSMS != 1 || gateway.backendSMS != 0 {
+		t.Fatalf("SMS calls wifi/backend = %d/%d", gateway.wifiSMS, gateway.backendSMS)
+	}
+}
+
 func TestStartQueryFailureIsPersistedWithoutRetry(t *testing.T) {
 	now := time.Date(2026, 8, 11, 10, 0, 0, 0, time.UTC)
 	gateway := &fakeGateway{snapshot: DeviceSnapshot{DeviceID: "wwan0", ICCID: "iccid-1", MCC: "234", MNC: "10"}, sendErr: errors.New("send failed")}

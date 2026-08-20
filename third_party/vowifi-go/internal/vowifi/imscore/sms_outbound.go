@@ -15,6 +15,7 @@ import (
 	"github.com/iniwex5/vowifi-go/internal/vowifi/events"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/logging"
 	"github.com/iniwex5/vowifi-go/internal/vowifi/policy"
+	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
 )
 
 const (
@@ -84,7 +85,7 @@ func (s *Service) prepareSendEnv(
 	}
 	readiness := s.SMSReadiness()
 	if !readiness.Ready {
-		return nil, fmt.Errorf("imscore: SMS not ready: %s", readiness.Reason)
+		return nil, fmt.Errorf("imscore: %w: %s", smsdelivery.ErrSMSNotReady, readiness.Reason)
 	}
 	recipient, err := normalizeSMSRecipient(to)
 	if err != nil {

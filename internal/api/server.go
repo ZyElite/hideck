@@ -1173,7 +1173,7 @@ func (s *Server) handleSendSMS(c *gin.Context) {
 	partsTotal := 1
 	deliveryState := "acked"
 
-	if s.pool.IsVoWiFiActive(deviceID) {
+	if s.pool.ShouldRouteSMSViaVoWiFi(deviceID) {
 		// VoWiFi 模式下使用 IMS Core 发送；短信历史由宿主侧 runtime event / failure recorder 入库。
 		outcome, err := s.pool.SendVoWiFiSMSWithOptions(c.Request.Context(), deviceID, req.Phone, req.Message, sendOpts)
 		if outcome.PartsTotal > 0 {

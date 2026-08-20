@@ -68,14 +68,14 @@ func (m *Manager) handleCmdSendSMS(cmdCtx CommandContext, args []string) string 
 	}
 
 	displayName := m.deviceLabel(worker.ID)
-	isVoWiFi := m.pool.IsVoWiFiActive(deviceID)
+	isVoWiFi := m.pool.ShouldRouteSMSViaVoWiFi(deviceID)
 
 	// /send 是用户的显式操作，不能因 notifyPool 满载被丢弃。
 	// 这里使用独立 goroutine，确保命令被执行并回执结果。
 	go func() {
 		var sendErr error
 		if isVoWiFi {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
 			ctx = messaging.WithSuppressSendTGSuccess(ctx)
 			sendErr = m.pool.SendVoWiFiSMS(ctx, deviceID, phone, message)

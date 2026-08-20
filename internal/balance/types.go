@@ -37,12 +37,13 @@ var (
 )
 
 type DeviceSnapshot struct {
-	DeviceID     string `json:"device_id"`
-	ICCID        string `json:"iccid"`
-	MCC          string `json:"mcc"`
-	MNC          string `json:"mnc"`
-	SPN          string `json:"spn,omitempty"`
-	VoWiFiActive bool   `json:"vowifi_active"`
+	DeviceID          string `json:"device_id"`
+	ICCID             string `json:"iccid"`
+	MCC               string `json:"mcc"`
+	MNC               string `json:"mnc"`
+	SPN               string `json:"spn,omitempty"`
+	VoWiFiActive      bool   `json:"vowifi_active"`
+	RouteSMSViaVoWiFi bool   `json:"-"`
 }
 
 type USSDResponse struct {

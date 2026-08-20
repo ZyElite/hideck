@@ -36,7 +36,8 @@ func (g *PoolGateway) Snapshot(deviceID string) (DeviceSnapshot, error) {
 		return DeviceSnapshot{}, ErrIdentityMissing
 	}
 	return DeviceSnapshot{DeviceID: worker.ID, ICCID: status.ICCID, MCC: status.NativeMCC,
-		MNC: status.NativeMNC, SPN: status.NativeSPN, VoWiFiActive: g.pool.IsVoWiFiActive(worker.ID)}, nil
+		MNC: status.NativeMNC, SPN: status.NativeSPN, VoWiFiActive: g.pool.IsVoWiFiActive(worker.ID),
+		RouteSMSViaVoWiFi: g.pool.ShouldRouteSMSViaVoWiFi(worker.ID)}, nil
 }
 
 func (g *PoolGateway) SendVoWiFiSMS(ctx context.Context, deviceID, destination, payload string) error {

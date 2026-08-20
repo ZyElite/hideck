@@ -71,7 +71,7 @@ func TestInstanceObservers(t *testing.T) {
 func TestInstanceSMSDelegation(t *testing.T) {
 	ctx := context.Background()
 	i := &Instance{}
-	if _, err := i.SendSMSWithResult(ctx, "+8613800000000", "hi"); !errors.Is(err, errNoService) {
+	if _, err := i.SendSMSWithResult(ctx, "+8613800000000", "hi"); !errors.Is(err, errNoService) || !errors.Is(err, messaging.ErrSMSNotReady) {
 		t.Errorf("no-service err = %v", err)
 	}
 	svc := &stubService{}

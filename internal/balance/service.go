@@ -64,7 +64,7 @@ func (s *Service) send(ctx context.Context, snapshot DeviceSnapshot, rule carrie
 }
 
 func (s *Service) sendSMS(ctx context.Context, snapshot DeviceSnapshot, rule carrierquery.Rule) error {
-	if snapshot.VoWiFiActive {
+	if snapshot.VoWiFiActive || snapshot.RouteSMSViaVoWiFi {
 		return s.gateway.SendVoWiFiSMS(ctx, snapshot.DeviceID, rule.Destination, rule.Payload)
 	}
 	return s.gateway.SendBackendSMS(ctx, snapshot.DeviceID, rule.Destination, rule.Payload)

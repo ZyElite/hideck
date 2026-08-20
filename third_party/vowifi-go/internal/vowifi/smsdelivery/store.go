@@ -8,6 +8,9 @@ import (
 // ErrDeliveryNotFound reports a missing persisted SMS delivery.
 var ErrDeliveryNotFound = errors.New("sms delivery not found")
 
+// ErrSMSNotReady reports that the IMS signaling path cannot submit an SMS yet.
+var ErrSMSNotReady = errors.New("IMS SMS is not ready")
+
 // SendOutcome is returned after IMS accepts all SMS parts for delivery.
 type SendOutcome struct {
 	MessageID     string `json:"message_id"`

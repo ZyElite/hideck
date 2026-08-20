@@ -3,10 +3,11 @@ package device
 import (
 	"context"
 	"fmt"
+	"strings"
 
-	"github.com/yibaiba/hideck/pkg/smscodec"
 	"github.com/iniwex5/vowifi-go/runtimehost"
 	"github.com/iniwex5/vowifi-go/runtimehost/messaging"
+	"github.com/yibaiba/hideck/pkg/smscodec"
 )
 
 func (p *Pool) GetVoWiFiApp() *runtimehost.Instance {
@@ -39,18 +40,34 @@ func (p *Pool) SendVoWiFiSMSWithResult(ctx context.Context, deviceID, to, text s
 }
 
 func (p *Pool) SendVoWiFiSMSWithOptions(ctx context.Context, deviceID, to, text string, opts smscodec.SubmitOptions) (messaging.SendOutcome, error) {
-	if inst := p.voWiFiHost().Instance(deviceID); inst != nil {
-		svc := inst.Service()
-		if svc == nil {
-			return messaging.SendOutcome{}, fmt.Errorf("设备 %s 的 VoWiFi IMS 服务未就绪", deviceID)
-		}
-		return svc.SendSMSWithOptions(ctx, to, text, messaging.SendOptions{Encoding: string(opts.Encoding)})
-	}
-	return messaging.SendOutcome{}, fmt.Errorf("设备 %s 的 VoWiFi 未启动", deviceID)
+	waitCtx, cancel := context.WithTimeout(contextOrBackground(ctx), voWiFiSMSSendRecoveryTimeout)
+	defer cancel()
+	updates, unsubscribe := p.SubscribeVoWiFiState(deviceID)
+	defer unsubscribe()
+	return sendVoWiFiSMSWhenReady(waitCtx, voWiFiSMSSendRequest{
+		DeviceID: deviceID, To: to, Text: text,
+		Options: messaging.SendOptions{Encoding: string(opts.Encoding)}, Updates: updates,
+		Runtime: func() voWiFiSMSRuntime { return p.voWiFiHost().Instance(deviceID) },
+	})
 }
 
 func (p *Pool) IsVoWiFiActive(deviceID string) bool {
 	return p.voWiFiHost().Active(deviceID)
+}
+
+func (p *Pool) ShouldRouteSMSViaVoWiFi(deviceID string) bool {
+	if p == nil {
+		return false
+	}
+	if p.IsVoWiFiActive(deviceID) {
+		return true
+	}
+	worker := p.GetWorker(deviceID)
+	if worker == nil || !worker.Config.VoWiFiEnabled {
+		return false
+	}
+	return strings.TrimSpace(worker.Config.PhoneMode) != "cellular" ||
+		strings.TrimSpace(worker.Config.DataStrategy) == "always"
 }
 
 // SendVoWiFiUSSD 通过 VoWiFi 发送 USSD 请求（首轮）。

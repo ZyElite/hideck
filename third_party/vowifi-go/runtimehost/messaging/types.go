@@ -16,6 +16,9 @@ import (
 // ErrDeliveryNotFound is returned when a delivery record does not exist.
 var ErrDeliveryNotFound = errors.New("sms delivery not found")
 
+// ErrSMSNotReady allows hosts to wait across a transient IMS runtime recovery.
+var ErrSMSNotReady = smsdelivery.ErrSMSNotReady
+
 // DeliveryStatus is the delivery status of an SMS.
 type DeliveryStatus struct {
 	MessageID  string               `json:"message_id"`

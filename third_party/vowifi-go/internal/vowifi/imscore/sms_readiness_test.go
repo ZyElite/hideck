@@ -1,6 +1,11 @@
 package imscore
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"github.com/iniwex5/vowifi-go/internal/vowifi/smsdelivery"
+)
 
 func TestEvaluateSMSReadinessRequiresEveryPrerequisite(t *testing.T) {
 	tests := []struct {
@@ -67,5 +72,16 @@ func TestSMSReadinessObserverReceivesCurrentAndChangedState(t *testing.T) {
 	}
 	if states[0].ReceiverReady || !states[1].ReceiverReady {
 		t.Fatalf("observer states = %+v", states)
+	}
+}
+
+func TestPrepareSendEnvironmentReturnsTypedNotReadyError(t *testing.T) {
+	service, err := New(&IMSConfig{SMSC: "+123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.prepareSendEnv(nil, "+15551234567", "test", SendOptions{})
+	if !errors.Is(err, smsdelivery.ErrSMSNotReady) {
+		t.Fatalf("prepareSendEnv() error = %v, want ErrSMSNotReady", err)
 	}
 }

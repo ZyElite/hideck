@@ -382,7 +382,7 @@ func (i *Instance) publish(ctx context.Context, ev Event) {
 func (i *Instance) SendSMSWithResult(ctx context.Context, to, text string) (messaging.SendOutcome, error) {
 	svc := i.Service()
 	if svc == nil {
-		return messaging.SendOutcome{}, errNoService
+		return messaging.SendOutcome{}, fmt.Errorf("%w: %w", messaging.ErrSMSNotReady, errNoService)
 	}
 	return svc.SendSMSWithResult(ctx, to, text)
 }
@@ -391,7 +391,7 @@ func (i *Instance) SendSMSWithResult(ctx context.Context, to, text string) (mess
 func (i *Instance) SendSMSWithOptions(ctx context.Context, to, text string, opts messaging.SendOptions) (messaging.SendOutcome, error) {
 	svc := i.Service()
 	if svc == nil {
-		return messaging.SendOutcome{}, errNoService
+		return messaging.SendOutcome{}, fmt.Errorf("%w: %w", messaging.ErrSMSNotReady, errNoService)
 	}
 	return svc.SendSMSWithOptions(ctx, to, text, opts)
 }
