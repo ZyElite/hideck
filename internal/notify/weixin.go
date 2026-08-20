@@ -233,34 +233,65 @@ func (w *WeixinChannel) executeMessage(ctx context.Context, chatID, text string)
 func (w *WeixinChannel) sendTo(ctx context.Context, target, text string) error {
 	state := w.snapshotState()
 	target = strings.TrimSpace(target)
-	contextToken := strings.TrimSpace(state.Weixin.ContextTokens[target])
+	contextToken, err := requiredWeixinContextToken(state, target)
+	if err != nil {
+		return err
+	}
 	request := weixinSendTextRequest{
 		Credentials: weixinCredentials(state), Target: target,
 		Text: text, ContextToken: contextToken,
 	}
-	err := w.client.sendText(ctx, request)
-	if err == nil || contextToken == "" || !isWeixinStaleContextError(err) {
-		return err
-	}
-	logger.Warn("个人微信会话令牌失效，改用主动通知发送", "target", target, "err", err)
-	request.ContextToken = ""
-	if retryErr := w.client.sendText(ctx, request); retryErr != nil {
-		return fmt.Errorf("个人微信会话令牌发送失败，主动通知重试也失败: %w", errors.Join(err, retryErr))
-	}
-	if clearErr := w.clearContextToken(target, contextToken); clearErr != nil {
-		logger.Warn("清理个人微信失效会话令牌失败", "target", target, "err", clearErr)
-	}
-	return nil
+	return w.sendWithContext(target, contextToken, func(activeToken string) error {
+		request.ContextToken = activeToken
+		return w.client.sendText(ctx, request)
+	})
 }
 
-func (w *WeixinChannel) clearContextToken(target, staleToken string) error {
+func requiredWeixinContextToken(state RuntimeState, target string) (string, error) {
+	contextToken := strings.TrimSpace(state.Weixin.ContextTokens[target])
+	if contextToken == "" {
+		return "", errors.New("个人微信没有可用会话上下文；请先在微信中给机器人发一条消息刷新会话")
+	}
+	return contextToken, nil
+}
+
+func (w *WeixinChannel) sendWithContext(
+	target, contextToken string,
+	send func(string) error,
+) error {
+	sendErr := send(contextToken)
+	if sendErr == nil || !isWeixinStaleContextError(sendErr) {
+		return sendErr
+	}
+	logger.Warn("个人微信会话上下文已失效", "target", target, "err", sendErr)
+	replacement, clearErr := w.invalidateContextToken(target, contextToken)
+	if clearErr != nil {
+		logger.Warn("清理个人微信失效会话上下文失败", "target", target, "err", clearErr)
+		return fmt.Errorf("个人微信会话上下文失效且清理失败: %w", errors.Join(sendErr, clearErr))
+	}
+	if replacement != "" {
+		logger.Info("个人微信已收到新的会话上下文，重试发送", "target", target)
+		return send(replacement)
+	}
+	return fmt.Errorf(
+		"个人微信会话上下文已失效；当前 iLink 需要有效 context_token，请先在微信中给机器人发一条消息刷新会话: %w",
+		sendErr,
+	)
+}
+
+func (w *WeixinChannel) invalidateContextToken(target, staleToken string) (string, error) {
 	w.authMu.Lock()
 	defer w.authMu.Unlock()
-	return w.updateState(func(current *RuntimeState) {
-		if current.Weixin.ContextTokens[target] == staleToken {
+	replacement := ""
+	err := w.updateState(func(current *RuntimeState) {
+		activeToken := strings.TrimSpace(current.Weixin.ContextTokens[target])
+		if activeToken == staleToken {
 			delete(current.Weixin.ContextTokens, target)
+			return
 		}
+		replacement = activeToken
 	})
+	return replacement, err
 }
 
 func (w *WeixinChannel) allowedDirect(state RuntimeState, userID string) bool {

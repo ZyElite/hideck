@@ -204,7 +204,11 @@ func newWeixinAPIError(operation string, response weixinAPIResponse) error {
 
 func isWeixinStaleContextError(err error) bool {
 	var apiErr *weixinAPIError
-	return errors.As(err, &apiErr) && apiErr.operation == "sendmessage" && apiErr.ret == -2
+	if !errors.As(err, &apiErr) || apiErr.operation != "sendmessage" || apiErr.ret != -2 {
+		return false
+	}
+	errMsg := strings.TrimSpace(apiErr.errMsg)
+	return errMsg == "" || strings.EqualFold(errMsg, "prepare failed")
 }
 
 func (c *weixinMessageClient) post(ctx context.Context, input weixinPostRequest) error {

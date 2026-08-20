@@ -59,6 +59,11 @@ func (w *WeixinChannel) sendAttachment(ctx context.Context, target string, attac
 	if err != nil {
 		return fmt.Errorf("读取录音文件失败: %w", err)
 	}
+	state := w.snapshotState()
+	contextToken, err := requiredWeixinContextToken(state, target)
+	if err != nil {
+		return err
+	}
 	key := make([]byte, aes.BlockSize)
 	if _, err := rand.Read(key); err != nil {
 		return fmt.Errorf("生成微信媒体密钥失败: %w", err)
@@ -71,7 +76,6 @@ func (w *WeixinChannel) sendAttachment(ctx context.Context, target string, attac
 	if err != nil {
 		return fmt.Errorf("生成微信媒体文件标识失败: %w", err)
 	}
-	state := w.snapshotState()
 	credentials := weixinCredentials(state)
 	upload, err := w.requestUpload(ctx, weixinUploadRequest{
 		Credentials: credentials, Target: target, FileKey: fileKey, RawSize: len(plaintext),
@@ -95,9 +99,11 @@ func (w *WeixinChannel) sendAttachment(ctx context.Context, target string, attac
 	item := buildWeixinFileItem(weixinFileItemInput{
 		Filename: filename, RawSize: len(plaintext), Key: key, EncryptedParam: encryptedParam,
 	})
-	return w.client.sendItem(ctx, weixinSendItemRequest{
-		Credentials: credentials, Target: target, Item: item,
-		ContextToken: state.Weixin.ContextTokens[target],
+	return w.sendWithContext(target, contextToken, func(activeToken string) error {
+		return w.client.sendItem(ctx, weixinSendItemRequest{
+			Credentials: credentials, Target: target, Item: item,
+			ContextToken: activeToken,
+		})
 	})
 }
 

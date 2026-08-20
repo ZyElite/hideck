@@ -6,55 +6,42 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/yibaiba/hideck/internal/config"
 )
 
-func TestWeixinChannelSendsNotificationWithoutContextToken(t *testing.T) {
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		message := decodeWeixinSendMessage(t, r)
-		if _, exists := message["context_token"]; exists {
-			t.Fatalf("tokenless notification included context_token: %#v", message)
-		}
+func TestWeixinChannelRejectsNotificationWithoutContextToken(t *testing.T) {
+	requests := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
 		_, _ = w.Write([]byte(`{"ret":0,"errcode":0}`))
 	}))
 	t.Cleanup(provider.Close)
 
 	channel, _ := newWeixinDeliveryTestChannel(t, provider.URL, nil)
-	if err := channel.Send("server alert"); err != nil {
-		t.Fatalf("Send() error = %v", err)
+	err := channel.Send("server alert")
+	if err == nil || !strings.Contains(err.Error(), "没有可用会话上下文") || requests != 0 {
+		t.Fatalf("Send() error = %v, requests = %d", err, requests)
 	}
 }
 
-func TestWeixinChannelRetriesStaleContextWithoutToken(t *testing.T) {
-	var mu sync.Mutex
-	contexts := make([]string, 0, 2)
+func TestWeixinChannelClearsStaleContextWithoutRetry(t *testing.T) {
+	requests := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		message := decodeWeixinSendMessage(t, r)
-		contextToken, _ := message["context_token"].(string)
-		mu.Lock()
-		contexts = append(contexts, contextToken)
-		attempt := len(contexts)
-		mu.Unlock()
-		if attempt == 1 {
-			_, _ = w.Write([]byte(`{"ret":-2,"errcode":0,"errmsg":"prepare failed"}`))
-			return
+		if message["context_token"] != "stale-context" {
+			t.Fatalf("context_token = %#v", message["context_token"])
 		}
-		_, _ = w.Write([]byte(`{"ret":0,"errcode":0}`))
+		_, _ = w.Write([]byte(`{"ret":-2,"errcode":0,"errmsg":"prepare failed"}`))
 	}))
 	t.Cleanup(provider.Close)
 
 	channel, store := newWeixinDeliveryTestChannel(t, provider.URL, map[string]string{"user-1": "stale-context"})
-	if err := channel.Send("server alert"); err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
-	mu.Lock()
-	gotContexts := append([]string(nil), contexts...)
-	mu.Unlock()
-	if len(gotContexts) != 2 || gotContexts[0] != "stale-context" || gotContexts[1] != "" {
-		t.Fatalf("send contexts = %#v", gotContexts)
+	err := channel.Send("server alert")
+	if err == nil || !strings.Contains(err.Error(), "会话上下文已失效") || requests != 1 {
+		t.Fatalf("Send() error = %v, requests = %d", err, requests)
 	}
 	state, err := store.Load()
 	if err != nil {
@@ -65,28 +52,39 @@ func TestWeixinChannelRetriesStaleContextWithoutToken(t *testing.T) {
 	}
 }
 
-func TestWeixinChannelSurfacesTokenlessRetryFailure(t *testing.T) {
+func TestWeixinChannelDoesNotClearUnrelatedSendFailure(t *testing.T) {
 	requests := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests++
-		_, _ = w.Write([]byte(`{"ret":-2,"errcode":0,"errmsg":"prepare failed"}`))
+		_, _ = w.Write([]byte(`{"ret":-2,"errcode":0,"errmsg":"media busy"}`))
 	}))
 	t.Cleanup(provider.Close)
 
-	channel, _ := newWeixinDeliveryTestChannel(t, provider.URL, map[string]string{"user-1": "stale-context"})
+	channel, store := newWeixinDeliveryTestChannel(t, provider.URL, map[string]string{"user-1": "active-context"})
 	err := channel.Send("server alert")
-	if err == nil || !strings.Contains(err.Error(), "主动通知重试也失败") || requests != 2 {
+	if err == nil || !strings.Contains(err.Error(), "media busy") || requests != 1 {
 		t.Fatalf("Send() error = %v, requests = %d", err, requests)
+	}
+	state, loadErr := store.Load()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if state.Weixin.ContextTokens["user-1"] != "active-context" {
+		t.Fatalf("context token was cleared: %#v", state.Weixin.ContextTokens)
 	}
 }
 
-func TestWeixinChannelDoesNotClearNewContextAfterFallback(t *testing.T) {
+func TestWeixinChannelDoesNotClearNewContextAfterStaleResponse(t *testing.T) {
 	var channel *WeixinChannel
 	requests := 0
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if requests == 1 {
-			_, _ = w.Write([]byte(`{"ret":-2,"errcode":0,"errmsg":"prepare failed"}`))
+		message := decodeWeixinSendMessage(t, r)
+		if requests == 2 {
+			if message["context_token"] != "fresh-context" {
+				t.Fatalf("retry context_token = %#v", message["context_token"])
+			}
+			_, _ = w.Write([]byte(`{"ret":0,"errcode":0}`))
 			return
 		}
 		allowed, _, err := channel.authorizeMessage(weixinAuthorizationRequest{
@@ -95,7 +93,7 @@ func TestWeixinChannelDoesNotClearNewContextAfterFallback(t *testing.T) {
 		if err != nil || !allowed {
 			t.Errorf("authorizeMessage() = allowed:%v error:%v", allowed, err)
 		}
-		_, _ = w.Write([]byte(`{"ret":0,"errcode":0}`))
+		_, _ = w.Write([]byte(`{"ret":-2,"errcode":0,"errmsg":"prepare failed"}`))
 	}))
 	t.Cleanup(provider.Close)
 
@@ -106,6 +104,9 @@ func TestWeixinChannelDoesNotClearNewContextAfterFallback(t *testing.T) {
 	channel.config.AllowedUserIDs = []string{"user-1"}
 	if err := channel.Send("server alert"); err != nil {
 		t.Fatalf("Send() error = %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d", requests)
 	}
 	state, err := store.Load()
 	if err != nil {
